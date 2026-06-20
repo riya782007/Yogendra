@@ -1,129 +1,140 @@
 export const dynamic = "force-dynamic";
-
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getProductBySku, getPricingFormula } from "@/lib/supabase/queries";
+import { getProductBySku, getPricingFormula, getProductReviews, getStorefront } from "@/lib/supabase/queries";
 import { resolveProductContent } from "@/lib/content";
 import { liveOffer } from "@/lib/offers";
 import { formatPaise, computePrices } from "@/lib/pricing";
-import { ProductImage } from "@/components/Placeholder";
+import { Gallery } from "@/components/site/Gallery";
+import { BuyBox } from "@/components/site/BuyBox";
+import { Stars } from "@/components/site/Stars";
+import { Back } from "@/components/site/Back";
+import { Reveal } from "@/components/site/Reveal";
+import { ProductCard } from "@/components/site/ProductCard";
 
 type Params = { params: { category: string; sku: string } };
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const p = await getProductBySku(params.sku);
   if (!p) return { title: "Product not found" };
-  const content = resolveProductContent({
-    name: p.name, sku: p.sku, categoryName: p.category?.name,
-    colors: p.variants?.map((v) => v.color ?? "").filter(Boolean),
-    generated_content: p.generated_content,
-  });
-  return {
-    title: content.seo.metaTitle,
-    description: content.seo.metaDescription,
-    keywords: content.seo.keywords,
-    openGraph: { title: content.seo.metaTitle, description: content.seo.metaDescription },
-  };
+  const c = resolveProductContent({ name: p.name, sku: p.sku, categoryName: p.category?.name, colors: p.variants?.map((v) => v.color ?? "").filter(Boolean), generated_content: p.generated_content });
+  return { title: c.seo.metaTitle, description: c.seo.metaDescription, keywords: c.seo.keywords, openGraph: { title: c.seo.metaTitle, description: c.seo.metaDescription } };
 }
 
 export default async function ProductPage({ params }: Params) {
   const [p, formula] = await Promise.all([getProductBySku(params.sku), getPricingFormula()]);
   if (!p) notFound();
+  const [reviews, store] = await Promise.all([getProductReviews(p.id), getStorefront()]);
 
-  const content = resolveProductContent({
-    name: p.name, sku: p.sku, categoryName: p.category?.name,
-    colors: p.variants?.map((v) => v.color ?? "").filter(Boolean),
-    keywords: content_keywords(p),
-    generated_content: p.generated_content,
-  });
+  const colors = (p.variants ?? []).map((v) => v.color ?? "").filter(Boolean);
+  const content = resolveProductContent({ name: p.name, sku: p.sku, categoryName: p.category?.name, colors, generated_content: p.generated_content });
   const o = liveOffer(p.base_wholesale, formula);
   const w = computePrices(p.base_wholesale, formula);
-  const hero = (p.images ?? []).find((i) => i.kind === "model") ?? p.images?.[0];
+  const waText = `Please place an order for ${p.name} (SKU:${p.sku})`;
+  const waHref = `https://wa.me/919873151767?text=${encodeURIComponent(waText)}`;
+  const related = store.products.filter((x) => x.category.slug === p.category.slug && x.sku !== p.sku).slice(0, 4);
 
-  // LocalBusiness + Product structured data (Req 16.3) — SEO/Maps.
   const jsonLd = {
-    "@context": "https://schema.org", "@type": "Product",
-    name: p.name, sku: p.sku, category: p.category?.name,
-    description: content.seo.metaDescription,
-    brand: { "@type": "Brand", name: "Blythe Diva" },
-    offers: { "@type": "Offer", priceCurrency: "INR", price: (o.price / 100).toFixed(2), availability: p.qty > 0 ? "InStock" : "OutOfStock" },
+    "@context": "https://schema.org", "@type": "Product", name: p.name, sku: p.sku, category: p.category?.name,
+    description: content.seo.metaDescription, brand: { "@type": "Brand", name: "Blythe Diva" },
+    aggregateRating: { "@type": "AggregateRating", ratingValue: reviews.avg, reviewCount: reviews.count },
+    offers: { "@type": "Offer", priceCurrency: "INR", price: (o.price / 100).toFixed(2), availability: p.qty > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock" },
   };
 
   return (
-    <main className="max-w-5xl mx-auto px-6 py-8">
+    <div className="max-w-6xl mx-auto px-5 py-6">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
-      <nav className="text-xs text-diva-ink/50 mb-5">
-        <Link href="/shop" className="hover:text-diva-rose">Shop</Link> ·{" "}
-        <Link href={`/shop/${p.category.slug}`} className="hover:text-diva-rose">{p.category.name}</Link> · {p.sku}
-      </nav>
+      <div className="flex items-center justify-between gap-4 mb-5">
+        <Back label="Back" />
+        <nav className="text-xs text-muted">
+          <Link href="/shop" className="hover:text-emerald">Home</Link> /{" "}
+          <Link href={`/shop/c/${p.category.slug}`} className="hover:text-emerald">{p.category.name}</Link> / <span className="text-ink">{p.sku}</span>
+        </nav>
+      </div>
 
-      <div className="grid md:grid-cols-2 gap-8">
-        <div>
-          <div className="aspect-[4/5] rounded-2xl overflow-hidden bg-white shadow-sm relative">
-            <ProductImage src={hero?.path} name={p.name} />
-            {o.hasOffer && (
-              <span className="absolute top-3 left-3 bg-diva-rose text-white text-sm font-semibold px-3 py-1 rounded-full">{o.offerPct}% OFF</span>
-            )}
+      <div className="grid md:grid-cols-2 gap-10">
+        <div className="animate-fadeIn"><Gallery name={p.name} images={p.images ?? []} /></div>
+
+        <div className="md:py-2">
+          <p className="text-[11px] uppercase tracking-[0.2em] text-gold-dark">{p.category.name} · {p.sku}</p>
+          <h1 className="font-display text-4xl text-ink mt-1 leading-tight">{content.title}</h1>
+          <div className="mt-3 flex items-center gap-3">
+            <Stars rating={reviews.avg} count={reviews.count} size="md" />
+            <a href="#reviews" className="text-xs text-emerald nav-link">Read reviews</a>
           </div>
-          <div className="grid grid-cols-4 gap-2 mt-2">
-            {(p.images ?? []).slice(0, 4).map((img) => (
-              <div key={img.id} className="aspect-square rounded-lg overflow-hidden bg-white"><ProductImage src={img.path} name={p.name} /></div>
-            ))}
+
+          <div className="mt-5 flex items-baseline gap-3">
+            <span className="text-3xl font-semibold text-ink">{formatPaise(o.price)}</span>
+            {o.hasOffer && <span className="text-lg text-muted line-through">{formatPaise(o.mrp)}</span>}
+            {o.hasOffer && <span className="text-sm font-semibold text-white bg-rose px-2 py-0.5 rounded-full">{o.offerPct}% OFF</span>}
           </div>
-        </div>
+          <p className="text-xs text-muted mt-1">Inclusive of all taxes · You save {formatPaise(o.savings)}</p>
 
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.2em] text-diva-gold">{p.category.name} · {p.sku}</p>
-          <h1 className="font-serif text-3xl text-diva-ink mt-1">{content.title}</h1>
+          <BuyBox colors={colors} waText={waText} waHref={waHref} />
 
-          <div className="mt-4 flex items-baseline gap-3">
-            <span className="text-3xl font-semibold text-diva-ink">{formatPaise(o.price)}</span>
-            {o.hasOffer && <span className="text-lg text-diva-ink/40 line-through">{formatPaise(o.mrp)}</span>}
-            {o.hasOffer && <span className="text-sm font-semibold text-green-700">Save {formatPaise(o.savings)} ({o.offerPct}%)</span>}
-          </div>
-          <p className="text-xs text-diva-ink/50 mt-1">Inclusive of taxes · MRP {formatPaise(o.mrp)}</p>
-
-          {p.variants && p.variants.length > 0 && (
-            <div className="mt-5">
-              <p className="text-sm font-medium text-diva-ink mb-2">Colour</p>
-              <div className="flex flex-wrap gap-2">
-                {p.variants.map((v) => (
-                  <span key={v.id} className="px-3 py-1.5 rounded-full border border-diva-ink/15 text-sm text-diva-ink/80">
-                    {v.color}{v.qty <= 2 ? " · low" : ""}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="mt-6 flex gap-3">
-            <button className="flex-1 px-6 py-3 rounded-full bg-diva-rose text-white font-medium">Add to cart</button>
-            <a href={`https://wa.me/919873151767?text=${encodeURIComponent("I want to order " + p.name + " (" + p.sku + ")")}`}
-               className="px-6 py-3 rounded-full bg-green-600 text-white font-medium">WhatsApp</a>
-          </div>
-          <p className="text-xs text-diva-ink/50 mt-2">COD available · Ships from Sadar Bazar, Delhi</p>
-
-          <div className="mt-7 prose prose-sm">
-            <p className="text-diva-ink/80 leading-relaxed">{content.description}</p>
+          <div className="mt-7 border-t border-sand pt-5">
+            <p className="text-ink/80 leading-relaxed">{content.description}</p>
           </div>
 
           <div className="mt-6">
-            <h3 className="text-sm font-semibold text-diva-ink mb-2">Specifications</h3>
-            <dl className="grid grid-cols-2 gap-y-1 text-sm">
+            <h3 className="text-sm font-semibold text-ink mb-2">Specifications</h3>
+            <dl className="grid grid-cols-2 gap-y-2 text-sm">
               {Object.entries(content.specs).map(([k, v]) => (
-                <div key={k} className="contents"><dt className="text-diva-ink/50">{k}</dt><dd className="text-diva-ink/90">{v}</dd></div>
+                <div key={k} className="contents"><dt className="text-muted">{k}</dt><dd className="text-ink/90">{v}</dd></div>
               ))}
             </dl>
           </div>
-
-          <p className="mt-6 text-xs text-diva-ink/40">Wholesale rate: {formatPaise(w.wholesaleRate)} · MOQ applies for retailers</p>
+          <p className="mt-6 text-xs text-muted">Wholesale rate: {formatPaise(w.wholesaleRate)} · MOQ applies · <Link href="/wholesale" className="text-emerald nav-link">Retailer? See trade pricing</Link></p>
         </div>
       </div>
-    </main>
-  );
-}
 
-function content_keywords(p: any): string[] {
-  return [p.category?.name, "Sadar Bazar", "Delhi"].filter(Boolean);
+      {/* REVIEWS */}
+      <section id="reviews" className="mt-16 grid md:grid-cols-3 gap-8">
+        <div className="md:col-span-1">
+          <h2 className="font-display text-3xl text-ink">Customer Reviews</h2>
+          <div className="mt-3 flex items-end gap-3">
+            <span className="text-5xl font-semibold text-ink">{reviews.avg}</span>
+            <div className="pb-1"><Stars rating={reviews.avg} /><p className="text-xs text-muted mt-1">{reviews.count} verified reviews</p></div>
+          </div>
+          <div className="mt-4 space-y-1.5">
+            {[5, 4, 3, 2, 1].map((s) => {
+              const pct = reviews.count ? Math.round(((reviews.dist[s] ?? 0) / reviews.count) * 100) : 0;
+              return (
+                <div key={s} className="flex items-center gap-2 text-xs">
+                  <span className="w-6 text-muted">{s}★</span>
+                  <div className="flex-1 h-2 rounded-full bg-cream overflow-hidden"><div className="h-full bg-gold" style={{ width: `${pct}%` }} /></div>
+                  <span className="w-8 text-right text-muted">{pct}%</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div className="md:col-span-2 space-y-4">
+          {reviews.list.length === 0 && <p className="text-sm text-muted">Be the first to review this design.</p>}
+          {reviews.list.map((r) => (
+            <Reveal key={r.id}>
+              <div className="bg-white rounded-2xl p-5 shadow-card">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium text-ink">{r.author_name} <span className="text-muted font-normal text-xs">· verified buyer</span></p>
+                  <Stars rating={r.rating} />
+                </div>
+                {r.body && <p className="text-ink/80 mt-2 leading-relaxed">“{r.body}”</p>}
+              </div>
+            </Reveal>
+          ))}
+        </div>
+      </section>
+
+      {/* RELATED */}
+      {related.length > 0 && (
+        <section className="mt-16">
+          <h2 className="font-display text-3xl text-ink mb-6">You may also love</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
+            {related.map((rp, i) => (<Reveal key={rp.sku} delay={i * 70}><ProductCard p={rp as any} formula={formula} /></Reveal>))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
 }

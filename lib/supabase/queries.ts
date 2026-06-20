@@ -157,3 +157,16 @@ export async function getFeaturedReviews(): Promise<FeaturedReview[]> {
   const { data } = await sb.from("reviews").select("id,author_name,rating,body").gte("rating", 4).order("created_at", { ascending: false }).limit(3);
   return ((data as any[]) ?? []).map((r) => ({ id: r.id, author_name: r.author_name, rating: r.rating, body: r.body }));
 }
+
+export type ProductReview = { id: string; author_name: string; rating: number; body: string | null; created_at: string };
+export async function getProductReviews(productId: string): Promise<{ avg: number; count: number; list: ProductReview[]; dist: Record<number, number> }> {
+  const sb = supabaseServer();
+  const { data } = await sb.from("reviews").select("id,author_name,rating,body,created_at").eq("product_id", productId).order("created_at", { ascending: false });
+  const rows = ((data as any[]) ?? []);
+  const count = rows.length;
+  const avg = count ? rows.reduce((s, r) => s + r.rating, 0) / count : 4.6;
+  const dist: Record<number, number> = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+  for (const r of rows) dist[r.rating] = (dist[r.rating] ?? 0) + 1;
+  const list = rows.filter((r) => r.body).slice(0, 6);
+  return { avg: Math.round(avg * 10) / 10, count, list, dist };
+}
