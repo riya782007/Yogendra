@@ -5,26 +5,41 @@ const LINKS = [
   { href: "/admin/catalogue", label: "Catalogue", icon: "✦" },
   { href: "/admin/inventory", label: "Inventory", icon: "▤" },
   { href: "/admin/approvals", label: "Approvals", icon: "✓" },
-  { href: "/shop", label: "Retail store ↗", icon: "🛍" },
-  { href: "/wholesale", label: "Wholesale ↗", icon: "📦" },
+];
+const EXTERNAL = [
+  { href: "/shop", label: "Retail store", icon: "🛍" },
+  { href: "/wholesale", label: "Wholesale", icon: "📦" },
 ];
 
 export function AdminNav() {
   return (
-    <aside className="w-56 shrink-0 min-h-screen bg-diva-ink text-white/90 px-4 py-6">
+    <aside className="w-60 shrink-0 min-h-screen bg-ink text-cream/90 px-4 py-6 flex flex-col">
       <div className="px-2 mb-8">
-        <p className="font-serif text-xl text-white">Blythe Diva</p>
-        <p className="text-[10px] tracking-[0.2em] uppercase text-diva-gold">Owner Console</p>
+        <p className="font-display text-2xl text-ivory leading-none">Blythe Diva</p>
+        <p className="text-[10px] tracking-[0.25em] uppercase text-gold-light mt-1">Owner Console</p>
       </div>
       <nav className="space-y-1">
         {LINKS.map((l) => (
           <Link key={l.href} href={l.href}
-            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm hover:bg-white/10 transition">
-            <span className="w-4 text-center text-diva-gold">{l.icon}</span>{l.label}
+            className="group flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm hover:bg-white/10 transition-all hover:translate-x-0.5">
+            <span className="w-5 text-center text-gold-light">{l.icon}</span>{l.label}
           </Link>
         ))}
       </nav>
-      <p className="mt-10 px-3 text-[11px] text-white/40">Yogendra Industries · Sadar Bazar, Delhi</p>
+      <p className="px-3 mt-7 mb-2 text-[10px] uppercase tracking-widest text-cream/40">Storefront</p>
+      <nav className="space-y-1">
+        {EXTERNAL.map((l) => (
+          <Link key={l.href} href={l.href}
+            className="group flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-cream/70 hover:bg-white/10 transition-all">
+            <span className="w-5 text-center text-gold-light/70">{l.icon}</span>{l.label} <span className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity">↗</span>
+          </Link>
+        ))}
+      </nav>
+      <div className="mt-auto px-3 pt-6">
+        <div className="flex items-center gap-2 text-[11px] text-cream/50">
+          <span className="h-2 w-2 rounded-full bg-emerald-light animate-pulse" /> Live · Sadar Bazar, Delhi
+        </div>
+      </div>
     </aside>
   );
 }

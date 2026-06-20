@@ -170,3 +170,47 @@ export async function getProductReviews(productId: string): Promise<{ avg: numbe
   const list = rows.filter((r) => r.body).slice(0, 6);
   return { avg: Math.round(avg * 10) / 10, count, list, dist };
 }
+
+// ---------- dashboard analytics (animated charts) ----------
+export type Analytics = {
+  weekly: { label: string; revenue: number }[];
+  channels: { channel: string; count: number; revenue: number }[];
+  categories: { name: string; revenue: number }[];
+  topProducts: { name: string; revenue: number; qty: number }[];
+};
+
+export async function getDashboardAnalytics(fromISO: string, toISO: string): Promise<Analytics> {
+  const sb = supabaseServer();
+  const [{ data: orders }, { data: items }] = await Promise.all([
+    sb.from("orders").select("total,channel,created_at").gte("created_at", fromISO).lte("created_at", toISO),
+    sb.from("order_items").select("line_total,qty,order:orders(created_at,channel),product:products(name,category:categories(name))"),
+  ]);
+  const os = (orders as any[]) ?? [];
+  const its = ((items as any[]) ?? []).filter((i) => i.order && i.order.created_at >= fromISO && i.order.created_at <= toISO);
+
+  // weekly buckets (8)
+  const weeks = 8;
+  const now = new Date(toISO).getTime();
+  const wk = Array.from({ length: weeks }, (_, i) => ({ label: `W${i + 1}`, revenue: 0 }));
+  for (const o of os) {
+    const ageDays = (now - new Date(o.created_at).getTime()) / 86400000;
+    const idx = weeks - 1 - Math.min(weeks - 1, Math.floor(ageDays / 7));
+    if (idx >= 0 && idx < weeks) wk[idx].revenue += o.total ?? 0;
+  }
+
+  const chMap = new Map<string, { count: number; revenue: number }>();
+  for (const o of os) { const c = chMap.get(o.channel) ?? { count: 0, revenue: 0 }; c.count++; c.revenue += o.total ?? 0; chMap.set(o.channel, c); }
+  const channels = ["retail", "wholesale", "pos"].map((c) => ({ channel: c, ...(chMap.get(c) ?? { count: 0, revenue: 0 }) }));
+
+  const catMap = new Map<string, number>();
+  const prodMap = new Map<string, { revenue: number; qty: number }>();
+  for (const it of its) {
+    const cat = it.product?.category?.name ?? "Other";
+    catMap.set(cat, (catMap.get(cat) ?? 0) + (it.line_total ?? 0));
+    const pn = it.product?.name ?? "—";
+    const pm = prodMap.get(pn) ?? { revenue: 0, qty: 0 }; pm.revenue += it.line_total ?? 0; pm.qty += it.qty ?? 0; prodMap.set(pn, pm);
+  }
+  const categories = [...catMap.entries()].map(([name, revenue]) => ({ name, revenue })).sort((a, b) => b.revenue - a.revenue);
+  const topProducts = [...prodMap.entries()].map(([name, v]) => ({ name, ...v })).sort((a, b) => b.revenue - a.revenue).slice(0, 5);
+  return { weekly: wk, channels, categories, topProducts };
+}
