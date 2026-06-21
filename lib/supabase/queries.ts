@@ -354,3 +354,9 @@ export async function getRecommendations(sku: string, n = 4): Promise<StoreProdu
   }
   return ranked.slice(0, n);
 }
+
+export async function getReviewsForResponse() {
+  const sb = supabaseServer();
+  const { data } = await sb.from("reviews").select("id,author_name,rating,body,response,product:products(name)").not("body", "is", null).order("created_at", { ascending: false }).limit(20);
+  return (data as any[]) ?? [];
+}
