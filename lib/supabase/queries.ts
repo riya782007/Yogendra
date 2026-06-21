@@ -384,3 +384,15 @@ export async function getAdminReels() {
   const { data } = await sb.from("reels").select("id,caption,video_url,posted_at, reel_products(product:products(sku,name))").order("posted_at", { ascending: false });
   return ((data as any[]) ?? []).map((r) => ({ id: r.id, caption: r.caption, video_url: r.video_url, products: (r.reel_products ?? []).map((rp: any) => rp.product).filter(Boolean) }));
 }
+
+// ---------- product media manager ----------
+export async function getProductsWithMedia() {
+  const sb = supabaseServer();
+  const { data } = await sb.from("products")
+    .select("id,sku,name,category:categories(name,slug), images:product_images(id,path,kind,sort)")
+    .eq("status", "published").order("sku");
+  return ((data as any[]) ?? []).map((p) => ({
+    id: p.id, sku: p.sku, name: p.name, category: p.category?.name ?? "—", categorySlug: p.category?.slug ?? "all",
+    images: (p.images ?? []).filter((i: any) => typeof i.path === "string" && i.path.startsWith("http")).sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0)),
+  }));
+}
