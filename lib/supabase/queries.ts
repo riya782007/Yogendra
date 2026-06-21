@@ -315,3 +315,17 @@ export async function getSitemapData() {
   const { data: cats } = await sb.from("categories").select("slug");
   return { products: ((data as any[]) ?? []).map((p) => ({ sku: p.sku, slug: p.category?.slug ?? "all" })), categories: ((cats as any[]) ?? []).map((c) => c.slug) };
 }
+
+// ---------- AI reorder agent ----------
+import { classify as _classify, DEFAULT_RULE as _RULE } from "../inventory";
+export type ReorderCandidate = { sku: string; name: string; category: string; qty: number; base_wholesale: number; daysSince: number | null; cls: string };
+export async function getReorderCandidates(): Promise<ReorderCandidate[]> {
+  const sb = supabaseServer();
+  const { data } = await sb.from("products").select("sku,name,qty,base_wholesale,last_movement_at,category:categories(name)");
+  const now = new Date();
+  return ((data as any[]) ?? []).map((p) => {
+    const cls = _classify({ qty: p.qty, lastMovementAt: p.last_movement_at }, _RULE, now);
+    const daysSince = p.last_movement_at ? Math.floor((now.getTime() - new Date(p.last_movement_at).getTime()) / 86400000) : null;
+    return { sku: p.sku, name: p.name, category: p.category?.name ?? "—", qty: p.qty, base_wholesale: p.base_wholesale, daysSince, cls };
+  }).filter((p) => p.cls === "low" || p.cls === "dead" || p.cls === "inactive");
+}

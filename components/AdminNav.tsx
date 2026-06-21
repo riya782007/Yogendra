@@ -13,6 +13,7 @@ const LINKS = [
   { href: "/admin/customers", label: "Customers", icon: "♚" },
   { href: "/admin/abandoned", label: "Abandoned carts", icon: "⊘" },
   { href: "/admin/inventory", label: "Inventory", icon: "▤" },
+  { href: "/admin/reorder", label: "AI Reorder", icon: "✨" },
   { href: "/admin/approvals", label: "Approvals", icon: "✓" },
   { href: "/admin/inbox", label: "Notifications", icon: "✉" },
   { href: "/admin/roles", label: "Roles", icon: "⚿" },
