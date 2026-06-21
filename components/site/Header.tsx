@@ -2,6 +2,7 @@ import Link from "next/link";
 import { PromoBar } from "./PromoBar";
 import { MobileMenu } from "./MobileMenu";
 import { CartWidget } from "@/components/cart/CartWidget";
+import { SearchBox } from "./SearchBox";
 
 type Cat = { name: string; slug: string };
 
@@ -40,7 +41,7 @@ export function Header({ categories }: { categories: Cat[] }) {
           </nav>
 
           <div className="flex items-center gap-4 text-ink">
-            <button aria-label="Search" className="text-lg hover:text-emerald transition-colors hover:scale-110">⌕</button>
+            <SearchBox />
             <Link href="/account" aria-label="Account" className="hidden sm:inline text-lg hover:text-emerald transition-colors hover:scale-110">♢</Link>
             <button aria-label="Wishlist" className="text-lg hover:text-rose transition-colors hover:scale-110">♡</button>
             <CartWidget />

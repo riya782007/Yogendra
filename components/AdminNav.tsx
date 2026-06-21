@@ -11,6 +11,8 @@ const LINKS = [
   { href: "/admin/purchases", label: "Purchases", icon: "⇪" },
   { href: "/admin/inventory", label: "Inventory", icon: "▤" },
   { href: "/admin/approvals", label: "Approvals", icon: "✓" },
+  { href: "/admin/inbox", label: "Notifications", icon: "✉" },
+  { href: "/admin/roles", label: "Roles", icon: "⚿" },
 ];
 const EXTERNAL = [
   { href: "/shop", label: "Retail store", icon: "🛍" },

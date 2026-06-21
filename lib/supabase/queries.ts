@@ -260,3 +260,28 @@ export async function getRecentPurchases() {
     .order("created_at", { ascending: false }).limit(15);
   return (data as any[]) ?? [];
 }
+
+export async function searchProducts(q: string) {
+  const { products, formula } = await getStorefront();
+  const s = q.trim().toLowerCase();
+  const results = s ? products.filter((p) => (p.name + " " + p.category.name + " " + p.sku).toLowerCase().includes(s)) : [];
+  return { formula, results };
+}
+
+// ---------- RBAC ----------
+export async function getRoles() {
+  const sb = supabaseServer();
+  const { data } = await sb.from("roles").select("id,name,permissions").order("name");
+  return (data as any[]) ?? [];
+}
+// ---------- notifications / assignments ----------
+export async function getNotifications() {
+  const sb = supabaseServer();
+  const { data } = await sb.from("notifications").select("id,subject,channel,status,deep_link,sent_at,contact:contacts(name)").order("sent_at", { ascending: false }).limit(20);
+  return (data as any[]) ?? [];
+}
+export async function getAssignmentsRegistry() {
+  const sb = supabaseServer();
+  const { data } = await sb.from("assignments").select("id,responsibility,channel,sla_minutes,assignee:contacts!assignments_assigned_contact_id_fkey(name),backup:contacts!assignments_backup_contact_id_fkey(name)");
+  return (data as any[]) ?? [];
+}
