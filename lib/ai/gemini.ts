@@ -12,9 +12,14 @@
  * primary model first, then fall back down the chain — so generation still succeeds even
  * if the key's tier can't access the newer Gemini 3 image models (they fall through to 2.5).
  *
+ * If the entire Gemini chain fails (e.g. billing/429), we automatically fall back to
+ * OpenAI gpt-image-1.5 (see lib/ai/openaiImage.ts) so generation still succeeds.
+ *
  * NEVER called on a render path — only from an explicit "Generate" action.
- * Until GEMINI_API_KEY is set: { ok:false, reason:'no_key' }.
+ * Until GEMINI_API_KEY is set: we go straight to the OpenAI fallback if its key exists.
  */
+import { generateImageOpenAI } from "./openaiImage";
+
 const PRIMARY = () => process.env.GEMINI_IMAGE_MODEL ?? "gemini-3-pro-image";
 
 /** primary first, then the rest (deduped) — best fidelity first, reliable last. */
@@ -34,7 +39,24 @@ export type GenImageResult =
   | { ok: true; base64: string; mime: string; model: string }
   | { ok: false; reason: "no_key" | "no_source" | "api_error" | "no_image"; error?: string };
 
-export function geminiConfigured(): boolean { return !!process.env.GEMINI_API_KEY; }
+function openaiKeyPresent(): boolean {
+  return !!(process.env.OPENAI_API_KEY ?? process.env.openai_api_key ?? process.env.OpenAI_api_key);
+}
+
+/** True if EITHER provider can generate images (Gemini primary, OpenAI fallback). */
+export function geminiConfigured(): boolean {
+  return !!process.env.GEMINI_API_KEY || openaiKeyPresent();
+}
+
+/** Run the OpenAI fallback and adapt its result to GenImageResult. */
+async function openaiFallback(opts: {
+  prompt: string; referenceBase64?: string; referenceMime?: string; aspectRatio?: string; timeoutMs?: number;
+}, priorErr: string): Promise<GenImageResult> {
+  if (!openaiKeyPresent()) return { ok: false, reason: "api_error", error: priorErr || "no provider available" };
+  const r = await generateImageOpenAI(opts);
+  if (r.ok) return { ok: true, base64: r.base64, mime: r.mime, model: r.model };
+  return { ok: false, reason: r.reason === "no_key" ? "api_error" : r.reason, error: r.error ?? priorErr };
+}
 
 export async function generateImage(opts: {
   prompt: string;
@@ -44,7 +66,8 @@ export async function generateImage(opts: {
   timeoutMs?: number;
 }): Promise<GenImageResult> {
   const key = process.env.GEMINI_API_KEY;
-  if (!key) return { ok: false, reason: "no_key" };
+  // No Gemini key → go straight to the OpenAI fallback.
+  if (!key) return openaiFallback(opts, "");
 
   // Image FIRST, then the instruction — keeps the reference design front-and-centre.
   const parts: any[] = [];
@@ -76,9 +99,10 @@ export async function generateImage(opts: {
         const txt = (await res.text()).slice(0, 400);
         lastErr = `[${model}] HTTP ${res.status}: ${txt}`;
         console.error("[gemini] image api error:", lastErr);
-        // 400/403/404 → this model is unavailable/incompatible on this key; try the next.
-        if (res.status === 400 || res.status === 403 || res.status === 404) continue;
-        // 429/5xx → not model-specific; stop and report.
+        // 400/403/404 → model unavailable/incompatible on this key; try the next.
+        // 429 → quota/credits exhausted for THIS model; a cheaper/free-tier model may still work.
+        if ([400, 403, 404, 429].includes(res.status)) continue;
+        // 5xx → not model-specific; stop and report.
         return { ok: false, reason: "api_error", error: lastErr };
       }
       const json: any = await res.json();
@@ -101,5 +125,7 @@ export async function generateImage(opts: {
     }
   }
 
-  return { ok: false, reason: "api_error", error: lastErr || "all models failed" };
+  // Whole Gemini chain failed (billing/429, unavailable models, etc.) → OpenAI fallback.
+  console.error("[gemini] all models failed, falling back to OpenAI:", lastErr);
+  return openaiFallback(opts, lastErr);
 }

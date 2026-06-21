@@ -40,7 +40,10 @@ export function buildImagePrompt(opts: {
   const background = BACKGROUNDS[i % BACKGROUNDS.length];
   const shot = shotTypeFor(opts.category);
   const aspect = opts.aspect ?? "4:5";
-  const aspectNote = aspect === "1:1" ? "1:1 for thumbnails/grid" : "4:5 for product page hero";
+  const aspectNote =
+    aspect === "1:1"
+      ? "a SQUARE 1:1 aspect ratio (equal width and height, e.g. 1024x1024), suitable for a product grid thumbnail"
+      : "a VERTICAL PORTRAIT 4:5 aspect ratio (taller than it is wide, e.g. 1080 wide by 1350 tall), suitable for a product-page hero — compose the model and jewelry centered with comfortable margins so nothing important is cropped at the edges";
 
   return `This is a REAL, manufactured jewellery product that a customer will physically receive — the design in your output MUST be a pixel-faithful reproduction of the reference image. Use the attached image as the EXACT product reference. Generate a professional, editorial-grade e-commerce photograph of a model wearing this exact piece of jewelry.
 
@@ -56,5 +59,6 @@ STYLING & WARDROBE: minimal, neutral clothing (soft beige, white, or muted tone)
 LIGHTING: soft, diffused studio lighting with gentle directional highlights to make metal catch light and gemstones sparkle, no harsh shadows, no blown-out highlights on the piece. Color-accurate so the metal and stones read true.
 BACKGROUND & MOOD: ${background}. Calm, aspirational, trustworthy — luxury brand feel. The background must be plain and free of any text, signage, or writing.
 TECHNICAL: photorealistic, shot on a 85mm lens look, shallow depth of field with the jewelry tack-sharp, high resolution, natural skin texture (real pores, no plastic airbrushing), professional color grading.
-OUTPUT: ${aspectNote}. A clean photograph with NO text, NO watermark, NO logo, and NO graphic overlays anywhere.`;
+OUTPUT FRAMING: Render the final image in ${aspectNote}.
+OUTPUT: A clean photograph with NO text, NO watermark, NO logo, and NO graphic overlays anywhere.`;
 }
