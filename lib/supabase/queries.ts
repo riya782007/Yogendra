@@ -329,3 +329,28 @@ export async function getReorderCandidates(): Promise<ReorderCandidate[]> {
     return { sku: p.sku, name: p.name, category: p.category?.name ?? "—", qty: p.qty, base_wholesale: p.base_wholesale, daysSince, cls };
   }).filter((p) => p.cls === "low" || p.cls === "dead" || p.cls === "inactive");
 }
+
+import { cosine as _cosine } from "../ai/embeddings";
+export async function getRecommendations(sku: string, n = 4): Promise<StoreProduct[]> {
+  const { products } = await getStorefront();
+  const sb = supabaseServer();
+  const { data: embRows } = await sb.from("products").select("sku,embedding");
+  const embBy = new Map<string, number[]>();
+  for (const r of (embRows as any[]) ?? []) if (Array.isArray(r.embedding)) embBy.set(r.sku, r.embedding);
+  const self = products.find((p) => p.sku === sku);
+  if (!self) return [];
+  const selfEmb = embBy.get(sku);
+  let ranked: StoreProduct[];
+  if (selfEmb) {
+    ranked = products.filter((p) => p.sku !== sku && embBy.has(p.sku))
+      .map((p) => ({ p, s: _cosine(selfEmb, embBy.get(p.sku)!) }))
+      .sort((a, b) => b.s - a.s).map((x) => x.p);
+  } else {
+    ranked = products.filter((p) => p.sku !== sku && p.category.slug === self.category.slug);
+  }
+  if (ranked.length < n) {
+    const extra = products.filter((p) => p.sku !== sku && !ranked.some((r) => r.sku === p.sku));
+    ranked = [...ranked, ...extra];
+  }
+  return ranked.slice(0, n);
+}

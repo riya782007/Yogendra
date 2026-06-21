@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getProductBySku, getPricingFormula, getProductReviews, getStorefront } from "@/lib/supabase/queries";
+import { getProductBySku, getPricingFormula, getProductReviews, getRecommendations } from "@/lib/supabase/queries";
 import { resolveProductContent } from "@/lib/content";
 import { liveOffer } from "@/lib/offers";
 import { formatPaise, computePrices } from "@/lib/pricing";
@@ -25,7 +25,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 export default async function ProductPage({ params }: Params) {
   const [p, formula] = await Promise.all([getProductBySku(params.sku), getPricingFormula()]);
   if (!p) notFound();
-  const [reviews, store] = await Promise.all([getProductReviews(p.id), getStorefront()]);
+  const [reviews, related] = await Promise.all([getProductReviews(p.id), getRecommendations(p.sku, 4)]);
 
   const colors = (p.variants ?? []).map((v) => v.color ?? "").filter(Boolean);
   const content = resolveProductContent({ name: p.name, sku: p.sku, categoryName: p.category?.name, colors, generated_content: p.generated_content });
@@ -33,7 +33,7 @@ export default async function ProductPage({ params }: Params) {
   const w = computePrices(p.base_wholesale, formula);
   const waText = `Please place an order for ${p.name} (SKU:${p.sku})`;
   const waHref = `https://wa.me/919873151767?text=${encodeURIComponent(waText)}`;
-  const related = store.products.filter((x) => x.category.slug === p.category.slug && x.sku !== p.sku).slice(0, 4);
+  
 
   const jsonLd = {
     "@context": "https://schema.org", "@type": "Product", name: p.name, sku: p.sku, category: p.category?.name,

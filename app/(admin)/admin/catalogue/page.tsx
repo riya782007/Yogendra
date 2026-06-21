@@ -8,6 +8,7 @@ import { aiProvidersStatus } from "@/lib/ai/listingAgent";
 import { ProductImage } from "@/components/Placeholder";
 import { generateOneAction, generateAllAction } from "@/app/actions/images";
 import { generateContentAction, generateAllContentAction } from "@/app/actions/aiContent";
+import { generateEmbeddingsAction } from "@/app/actions/embeddings";
 
 export const metadata = { title: "Owner Console · Catalogue" };
 
@@ -19,6 +20,7 @@ export default async function AdminCatalogue() {
   async function genContent(fd: FormData) { "use server"; await generateContentAction(String(fd.get("sku"))); }
   async function genAllContent() { "use server"; await generateAllContentAction(); }
   async function genPhoto(fd: FormData) { "use server"; await generateOneAction(String(fd.get("sku"))); }
+  async function genEmbeddings() { "use server"; await generateEmbeddingsAction(); }
 
   const Pill = ({ on, label }: { on: boolean; label: string }) => (
     <span className={`text-xs px-2.5 py-1 rounded-full ${on ? "bg-emerald-mist text-emerald-dark" : "bg-cream text-muted"}`}>
@@ -36,6 +38,7 @@ export default async function AdminCatalogue() {
         <form action={genAllContent}>
           <button className="btn-primary px-5 py-2.5 text-sm font-medium">✨ Generate all AI pages</button>
         </form>
+        <form action={genEmbeddings}><button className="ml-2 px-5 py-2.5 text-sm font-medium rounded-full border border-emerald text-emerald hover:bg-emerald-mist transition-colors">⌖ Build recommendations</button></form>
       </div>
 
       <div className="flex flex-wrap gap-2 mb-5 items-center">
