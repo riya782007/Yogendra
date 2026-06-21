@@ -26,7 +26,6 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       if (ex) return prev.map((p) => (same(p, i.sku, i.color) ? { ...p, qty: p.qty + qty } : p));
       return [...prev, { ...i, qty }];
     });
-    setOpen(true);
   };
   const remove: Ctx["remove"] = (sku, color) => setItems((p) => p.filter((x) => !same(x, sku, color)));
   const setQty: Ctx["setQty"] = (sku, color, qty) => setItems((p) => p.map((x) => (same(x, sku, color) ? { ...x, qty: Math.max(1, qty) } : x)));

@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useCart } from "./CartContext";
 import { formatPaise } from "@/lib/pricing";
+import { ProductImage } from "@/components/Placeholder";
 
 export function CartWidget() {
   const { items, count, total, open, setOpen, remove, setQty } = useCart();
@@ -22,7 +23,7 @@ export function CartWidget() {
               {items.length === 0 && <p className="text-muted text-sm text-center mt-10">Your bag is empty. Discover something beautiful ✦</p>}
               {items.map((i) => (
                 <div key={i.sku + (i.color ?? "")} className="flex gap-3 items-center">
-                  <div className="h-16 w-14 rounded-lg bg-gradient-to-br from-rose-light to-gold-light shrink-0" />
+                  <div className="h-16 w-14 rounded-lg overflow-hidden shrink-0"><ProductImage name={i.name} /></div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-ink truncate">{i.name}</p>
                     {i.color && <p className="text-xs text-muted">{i.color}</p>}
