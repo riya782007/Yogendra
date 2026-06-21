@@ -37,7 +37,7 @@ export default async function ProductPage({ params }: Params) {
 
   const jsonLd = {
     "@context": "https://schema.org", "@type": "Product", name: p.name, sku: p.sku, category: p.category?.name,
-    description: content.seo.metaDescription, brand: { "@type": "Brand", name: "Blythe Diva" },
+    description: content.seo.metaDescription, keywords: content.seo.keywords.join(", "), brand: { "@type": "Brand", name: "Blythe Diva" },
     aggregateRating: { "@type": "AggregateRating", ratingValue: reviews.avg, reviewCount: reviews.count },
     offers: { "@type": "Offer", priceCurrency: "INR", price: (o.price / 100).toFixed(2), availability: p.qty > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock" },
   };
@@ -85,6 +85,17 @@ export default async function ProductPage({ params }: Params) {
               ))}
             </dl>
           </div>
+
+          {content.tags && content.tags.length > 0 && (
+            <div className="mt-6">
+              <h3 className="text-xs uppercase tracking-wide text-muted mb-2">Style & tags</h3>
+              <div className="flex flex-wrap gap-2">
+                {content.tags.slice(0, 12).map((t) => (
+                  <span key={t} className="text-xs px-2.5 py-1 rounded-full bg-cream text-ink/70 border border-sand">{t}</span>
+                ))}
+              </div>
+            </div>
+          )}
           <p className="mt-6 text-xs text-muted">Wholesale rate: {formatPaise(w.wholesaleRate)} · MOQ applies · <Link href="/wholesale" className="text-emerald nav-link">Retailer? See trade pricing</Link></p>
         </div>
       </div>

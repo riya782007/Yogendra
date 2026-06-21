@@ -1,7 +1,7 @@
 "use client";
 import { useState, useRef } from "react";
 import { useToast } from "@/components/ui/Toast";
-import { createProductWithImageAction, bulkUploadAction, createCategoryJsonAction, type RowResult } from "@/app/actions/catalog";
+import { createProductWithImageAction, bulkUploadAction, aiBulkUploadAction, createCategoryJsonAction, type RowResult } from "@/app/actions/catalog";
 
 type Cat = { id: string; name: string };
 
@@ -42,6 +42,13 @@ export function UploadClient({ categories }: { categories: Cat[] }) {
     else setMsg(`✕ ${res.error}`);
   }
 
+  async function addBulkAi() {
+    setBusy(true); setMsg(""); setResults([]);
+    const res = await aiBulkUploadAction(catId, csv);
+    setBusy(false); setResults(res.results);
+    setMsg(`${res.created} of ${res.results.length} imported into ${catName}${res.usedAi ? " · AI mapped your columns" : ""}`);
+    toast(res.usedAi ? "AI processed your spreadsheet" : `${res.created} rows imported`);
+  }
   async function addBulk() {
     setBusy(true); setMsg(""); setResults([]);
     const rows = csv.split("\n").map((l) => l.trim()).filter(Boolean).filter((l) => !/^name\s*,/i.test(l)).map((l) => {
@@ -106,7 +113,11 @@ export function UploadClient({ categories }: { categories: Cat[] }) {
           <div className="space-y-3">
             <p className="text-xs text-muted">Format per line: <code className="bg-cream px-1 rounded">name, base_price, qty, type, colours|pipe|separated</code></p>
             <textarea className={`${input} font-mono text-xs`} rows={6} placeholder={"Kundan Choker, 850, 12, configurable, Red|Green|Blue\nPearl Studs, 160, 40, simple,"} value={csv} onChange={(e) => setCsv(e.target.value)} />
-            <button onClick={addBulk} disabled={busy} className="btn-primary px-6 py-2.5 text-sm font-medium disabled:opacity-60">{busy ? "Importing…" : "Import CSV"}</button>
+            <div className="flex flex-wrap gap-2 items-center">
+              <button onClick={addBulkAi} disabled={busy} className="btn-primary px-6 py-2.5 text-sm font-medium disabled:opacity-60">{busy ? "Processing…" : "✨ Import with AI"}</button>
+              <button onClick={addBulk} disabled={busy} className="px-6 py-2.5 text-sm font-medium rounded-full border border-sand text-ink hover:border-emerald transition-colors disabled:opacity-60">Import (strict format)</button>
+            </div>
+            <p className="text-xs text-muted">Messy spreadsheet, different column order or headers? Use <b>Import with AI</b> — it figures out which value goes where.</p>
           </div>
         )}
 

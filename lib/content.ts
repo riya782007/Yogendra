@@ -1,7 +1,7 @@
 /**
  * lib/content.ts — product content resolver. Requirement 2.2-2.3.
- * NEVER calls a model on the request path: returns cached generated_content if
- * present, else a deterministic template. The page is never blank, never hangs.
+ * NEVER calls a model on the request path: cached generated_content else a rich
+ * deterministic template. SEO-strong by default (tags, keywords, occasion terms).
  */
 export type GeneratedContent = {
   title: string;
@@ -20,36 +20,67 @@ export type ProductLike = {
   generated_content?: GeneratedContent | null;
 };
 
-const LOCATION_KEYWORDS = ["Sadar Bazar", "Rui Mandi", "Delhi", "artificial jewellery wholesale"];
+const LOCATION = ["Sadar Bazar", "Rui Mandi", "Delhi", "artificial jewellery wholesale Delhi", "imitation jewellery online India"];
+const OCCASIONS = ["wedding", "festive", "party wear", "daily wear", "gifting"];
 
-/** Deterministic fallback content — pure, instant, location-aware (Req 2.3, 2.5, 16.3). */
+function styleHints(name: string): string[] {
+  const n = name.toLowerCase(); const t: string[] = [];
+  if (n.includes("kundan")) t.push("Kundan");
+  if (n.includes("meena") || n.includes("meenakari")) t.push("Meenakari");
+  if (n.includes("temple") || n.includes("lakshmi")) t.push("Temple jewellery");
+  if (n.includes("polki")) t.push("Polki");
+  if (n.includes("pearl")) t.push("Pearl");
+  if (n.includes("oxidis") || n.includes("oxidiz") || n.includes("silver")) t.push("Oxidised silver");
+  if (n.includes("jhumka")) t.push("Jhumka");
+  if (n.includes("choker")) t.push("Choker");
+  return t;
+}
+
 export function templateContent(p: ProductLike): GeneratedContent {
   const cat = p.categoryName ?? "Jewellery";
+  const catL = cat.toLowerCase();
+  const styles = styleHints(p.name);
   const colorPhrase = p.colors && p.colors.length ? ` Available in ${p.colors.join(", ")}.` : "";
-  const kw = Array.from(new Set([...(p.keywords ?? []), ...LOCATION_KEYWORDS]));
+  const styleWord = styles[0] ? `${styles[0]} ` : "";
+  const description =
+    `${p.name} — a ${styleWord}artificial ${catL} handcrafted by Blythe Diva in Sadar Bazar, Delhi.${colorPhrase} ` +
+    `Made on a brass-alloy base with anti-tarnish gold-tone plating, it's lightweight, skin-friendly and finished for a premium look. ` +
+    `Perfect for weddings, festive occasions and party wear, and an easy gift. Shop ${catL} online with COD, free shipping over ₹999, and easy 7-day returns.`;
+
+  const specs: Record<string, string> = {
+    SKU: p.sku,
+    Category: cat,
+    Material: "Brass alloy",
+    Plating: "Anti-tarnish gold-tone",
+    Work: styles.length ? styles.join(", ") : "Handcrafted",
+    Occasion: "Wedding, festive, party & daily wear",
+    Care: "Keep away from water & perfume; store dry",
+    ...(p.colors && p.colors.length ? { Colours: p.colors.join(", ") } : {}),
+  };
+
+  const tags = Array.from(new Set([
+    cat, "artificial jewellery", "imitation jewellery", "fashion jewellery",
+    ...styles, ...OCCASIONS.slice(0, 3), ...(p.colors ?? []),
+  ])).slice(0, 14);
+
+  const keywords = Array.from(new Set([
+    p.name, `${catL} for wedding`, `${catL} for festive wear`, `${styleWord}${catL}`.trim(),
+    "artificial jewellery", ...(p.keywords ?? []), ...LOCATION,
+  ])).filter(Boolean).slice(0, 12);
+
   return {
     title: p.name,
-    description:
-      `${p.name} — handcrafted artificial ${cat.toLowerCase()} from Blythe Diva, ` +
-      `Sadar Bazar, Delhi.${colorPhrase} Premium finish, lightweight, and trend-ready for daily and festive wear. ` +
-      `Ideal for retail and wholesale buyers sourcing ${cat.toLowerCase()} in bulk.`,
-    specs: {
-      SKU: p.sku,
-      Category: cat,
-      Material: "Brass alloy with anti-tarnish plating",
-      Care: "Keep away from water and perfume",
-      ...(p.colors && p.colors.length ? { Colors: p.colors.join(", ") } : {}),
-    },
-    tags: Array.from(new Set([cat, "artificial jewellery", "fashion", ...(p.colors ?? [])])),
+    description,
+    specs,
+    tags,
     seo: {
-      metaTitle: `${p.name} | ${cat} | Blythe Diva Sadar Bazar Delhi`,
-      metaDescription: `Buy ${p.name} (${p.sku}) — ${cat.toLowerCase()} at wholesale & retail from Blythe Diva, Sadar Bazar Delhi.`,
-      keywords: kw,
+      metaTitle: `${p.name} | ${cat} | Blythe Diva Delhi`.slice(0, 60),
+      metaDescription: `Buy ${p.name} (${p.sku}) — ${styleWord}${catL} at retail & wholesale from Blythe Diva, Sadar Bazar Delhi. COD, free shipping over ₹999.`.slice(0, 158),
+      keywords,
     },
   };
 }
 
-/** Resolve content: cached first, deterministic template otherwise. No model calls. */
 export function resolveProductContent(p: ProductLike): GeneratedContent {
   if (p.generated_content && p.generated_content.title) return p.generated_content;
   return templateContent(p);

@@ -10,10 +10,10 @@ import { templateContent, type GeneratedContent, type ProductLike } from "../con
 
 const schema = z.object({
   title: z.string().min(2),
-  description: z.string().min(40),
+  description: z.string().min(60),
   specs: z.record(z.string()),
-  tags: z.array(z.string()).min(1),
-  seo: z.object({ metaTitle: z.string(), metaDescription: z.string(), keywords: z.array(z.string()) }),
+  tags: z.array(z.string()).min(4),
+  seo: z.object({ metaTitle: z.string(), metaDescription: z.string(), keywords: z.array(z.string()).min(5) }),
 });
 
 function prompt(p: ProductLike) {
@@ -22,7 +22,11 @@ function prompt(p: ProductLike) {
     `You are a senior e-commerce copywriter for "Blythe Diva", a premium artificial-jewellery brand in Sadar Bazar, Rui Mandi, Delhi (retail + wholesale).`,
     `Write a high-converting product page as STRICT JSON with keys: title, description, specs (object of label->value), tags (array), seo (object: metaTitle, metaDescription, keywords array).`,
     `Product name: ${p.name}. SKU: ${p.sku}. Category: ${p.categoryName ?? "Jewellery"}.${colors ? ` Available colours: ${colors}.` : ""}`,
-    `Rules: description 60-90 words, warm and aspirational, mention craftsmanship, anti-tarnish finish, and occasions; weave in location SEO ("Sadar Bazar", "Delhi", "artificial jewellery wholesale"). specs must include SKU, Category, Material, Care. seo.keywords 6-10 items. Return ONLY the JSON object, no markdown.`,
+    `Rules: description 70-110 words, warm and aspirational; naturally weave in Google-friendly search terms (the category, the style e.g. Kundan/Meenakari/Temple/Polki/Pearl/Oxidised if applicable, occasions like wedding/festive/party/daily wear, and location terms "Sadar Bazar", "Delhi", "artificial jewellery online India"). Mention craftsmanship, brass alloy + anti-tarnish plating, lightweight comfort, COD and easy returns.`,
+    `specs (object) MUST include: SKU, Category, Material, Plating, Work/Style, Occasion, Care (and Colours if provided).`,
+    `tags: 8-12 short search tags mixing category, style, occasion, material.`,
+    `seo.metaTitle <= 60 chars; seo.metaDescription <= 155 chars and compelling; seo.keywords 8-12 long-tail phrases such as "<category> for wedding", "<style> <category>", "artificial jewellery online", "imitation jewellery Delhi".`,
+    `Return ONLY the JSON object, no markdown.`,
   ].join("\n");
 }
 
