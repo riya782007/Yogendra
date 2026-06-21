@@ -1,16 +1,18 @@
 "use client";
 import { useState } from "react";
 import { useCart } from "@/components/cart/CartContext";
+import { useToast } from "@/components/ui/Toast";
 
 export function BuyBox({ colors, waHref, item }: {
   colors: string[]; waText: string; waHref: string;
   item: { sku: string; name: string; price: number; category: string };
 }) {
   const { add } = useCart();
+  const { toast } = useToast();
   const [color, setColor] = useState(colors[0] ?? "");
   const [qty, setQty] = useState(1);
   const [added, setAdded] = useState(false);
-  const onAdd = () => { add({ ...item, color: color || undefined }, qty); setAdded(true); setTimeout(() => setAdded(false), 1500); };
+  const onAdd = () => { add({ ...item, color: color || undefined }, qty); toast(`${item.name} added to bag`); setAdded(true); setTimeout(() => setAdded(false), 1500); };
   return (
     <div className="mt-6">
       {colors.length > 0 && (
