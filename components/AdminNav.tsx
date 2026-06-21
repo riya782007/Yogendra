@@ -5,6 +5,7 @@ const LINKS = [
   { href: "/admin/upload", label: "Add Inventory", icon: "↑" },
   { href: "/admin/catalogue", label: "Catalogue", icon: "✦" },
   { href: "/admin/categories", label: "Categories", icon: "▦" },
+  { href: "/admin/billing", label: "Billing (POS)", icon: "₹" },
   { href: "/admin/inventory", label: "Inventory", icon: "▤" },
   { href: "/admin/approvals", label: "Approvals", icon: "✓" },
 ];
@@ -15,7 +16,7 @@ const EXTERNAL = [
 
 export function AdminNav() {
   return (
-    <aside className="w-60 shrink-0 min-h-screen bg-ink text-cream/90 px-4 py-6 flex flex-col">
+    <aside className="no-print w-60 shrink-0 min-h-screen bg-ink text-cream/90 px-4 py-6 flex flex-col">
       <div className="px-2 mb-8">
         <p className="font-display text-2xl text-ivory leading-none">Blythe Diva</p>
         <p className="text-[10px] tracking-[0.25em] uppercase text-gold-light mt-1">Owner Console</p>
