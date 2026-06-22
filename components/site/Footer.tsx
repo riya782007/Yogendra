@@ -7,10 +7,19 @@ export function Footer({ categories }: { categories: { name: string; slug: strin
         <div>
           <p className="font-display text-3xl text-ivory">Blythe Diva</p>
           <p className="text-sm mt-3 text-cream/60 leading-relaxed">Where elegance meets empowerment. Handcrafted artificial jewellery from Sadar Bazar, Delhi — for retail &amp; wholesale.</p>
-          <div className="flex gap-3 mt-5 text-lg">
-            <span className="hover:text-gold transition-colors cursor-pointer">⌾</span>
-            <span className="hover:text-gold transition-colors cursor-pointer">▶</span>
-            <span className="hover:text-gold transition-colors cursor-pointer">✦</span>
+          <div className="flex gap-3 mt-5">
+            <a href="https://wa.me/919873151767" target="_blank" rel="noopener" aria-label="WhatsApp" title="WhatsApp"
+              className="w-9 h-9 grid place-items-center rounded-full bg-white/10 hover:bg-gold hover:text-ink transition-colors">
+              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.6 15l-1.3 4.7 4.8-1.3A10 10 0 1 0 12 2zm5.8 14.2c-.2.7-1.4 1.3-2 1.4-.5.1-1.2.1-1.9-.1-.4-.1-1-.3-1.7-.6-3-1.3-4.9-4.3-5-4.5-.2-.2-1.2-1.6-1.2-3s.7-2.1 1-2.4c.2-.3.5-.3.7-.3h.5c.2 0 .4 0 .6.5l.8 2c.1.2.1.3 0 .5l-.4.5-.3.3c-.2.2-.3.4-.2.6.2.4.8 1.3 1.6 2 1 .9 1.9 1.2 2.2 1.3.2.1.4.1.6-.1l.7-.9c.2-.2.4-.2.6-.1l1.9.9c.3.1.5.2.5.4.1.2.1.7-.1 1.4z"/></svg>
+            </a>
+            <a href="#" aria-label="Instagram" title="Instagram"
+              className="w-9 h-9 grid place-items-center rounded-full bg-white/10 hover:bg-gold hover:text-ink transition-colors">
+              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg>
+            </a>
+            <a href="#" aria-label="Facebook" title="Facebook"
+              className="w-9 h-9 grid place-items-center rounded-full bg-white/10 hover:bg-gold hover:text-ink transition-colors">
+              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor"><path d="M14 9h2.5l.5-3H14V4.5c0-.9.3-1.5 1.6-1.5H17V.3C16.7.2 15.8.1 14.8.1 12.5.1 11 1.5 11 4.1V6H8.5v3H11v8h3V9z"/></svg>
+            </a>
           </div>
         </div>
         <div>

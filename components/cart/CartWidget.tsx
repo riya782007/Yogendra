@@ -3,13 +3,15 @@ import Link from "next/link";
 import { useCart } from "./CartContext";
 import { formatPaise } from "@/lib/pricing";
 import { ProductImage } from "@/components/Placeholder";
+import { IconBag } from "@/components/site/Icons";
 
 export function CartWidget() {
   const { items, count, total, open, setOpen, remove, setQty } = useCart();
   return (
     <>
-      <button aria-label="Cart" onClick={() => setOpen(true)} className="relative text-lg text-ink hover:text-emerald transition-colors hover:scale-110">
-        ⛬<span className="absolute -top-2 -right-2 bg-gold text-ink text-[10px] h-4 min-w-4 px-1 rounded-full grid place-items-center">{count}</span>
+      <button aria-label="Shopping bag" title="Bag" onClick={() => setOpen(true)} className="relative p-2 rounded-full text-ink hover:bg-cream hover:text-emerald transition-colors">
+        <IconBag />
+        {count > 0 && <span className="absolute -top-0.5 -right-0.5 bg-gold text-ink text-[10px] h-4 min-w-4 px-1 rounded-full grid place-items-center">{count}</span>}
       </button>
       {open && (
         <div className="fixed inset-0 z-50">

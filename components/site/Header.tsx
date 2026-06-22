@@ -4,6 +4,7 @@ import { MobileMenu } from "./MobileMenu";
 import { CartWidget } from "@/components/cart/CartWidget";
 import { SearchBox } from "./SearchBox";
 import { WishlistWidget } from "@/components/wishlist/WishlistWidget";
+import { IconUser } from "./Icons";
 
 type Cat = { name: string; slug: string };
 
@@ -42,9 +43,10 @@ export function Header({ categories }: { categories: Cat[] }) {
             <Link href="/wholesale" className="nav-link py-2">Wholesale</Link>
           </nav>
 
-          <div className="flex items-center gap-4 text-ink">
+          <div className="flex items-center gap-2 sm:gap-3 text-ink">
             <SearchBox />
-            <Link href="/account" aria-label="Account" className="hidden sm:inline text-lg hover:text-emerald transition-colors hover:scale-110">♢</Link>
+            <Link href="/account" aria-label="Track order / Account" title="Track order"
+              className="hidden sm:grid place-items-center p-2 rounded-full hover:bg-cream hover:text-emerald transition-colors"><IconUser /></Link>
             <WishlistWidget />
             <CartWidget />
           </div>
