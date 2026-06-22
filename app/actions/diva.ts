@@ -15,15 +15,19 @@ import {
 import { formatPaise } from "@/lib/pricing";
 import { liveOffer } from "@/lib/offers";
 import { DIVA_TOOLS, PAGE_MAP, toolByName } from "@/lib/diva/tools";
-import { ALL_PERMISSIONS, hasPermission } from "@/lib/permissions";
+import { getSession } from "@/lib/auth";
 import { generateContentAction } from "@/app/actions/aiContent";
 import { revalidatePath } from "next/cache";
 
 export type DivaStep = { tool: string; args: Record<string, any>; label: string; kind: string; needsConfirm: boolean };
 export type DivaPlan = { ok: boolean; reply: string; steps: DivaStep[] };
 
-/** Owner permissions — everything. (Hook for future per-staff scoping.) */
-function ownerPerms(): string[] { return ALL_PERMISSIONS; }
+/** True if the current session may run a tool needing `perm`. Owner = all. */
+function sessionCan(perm?: string): boolean {
+  if (!perm) return true;
+  const s = getSession();
+  return s.permissions === "*" || s.permissions.includes(perm);
+}
 
 function isoDaysAgo(d: number) { return new Date(Date.now() - d * 86400000).toISOString(); }
 
@@ -87,7 +91,7 @@ export type DivaResult = { ok: boolean; message: string; navigate?: string; data
 export async function divaRun(toolName: string, args: Record<string, any>): Promise<DivaResult> {
   const tool = toolByName(toolName);
   if (!tool) return { ok: false, message: "Unknown action." };
-  if (tool.permission && !hasPermission(ownerPerms(), tool.permission)) return { ok: false, denied: true, message: `You don't have permission for ${tool.name}.` };
+  if (!sessionCan(tool.permission)) return { ok: false, denied: true, message: `Your role doesn't have permission for ${tool.name}.` };
 
   try {
     switch (toolName) {

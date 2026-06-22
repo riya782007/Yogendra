@@ -33,7 +33,7 @@ function Tile({ label, children, sub, accent, icon, bar }: { label: string; chil
   );
 }
 
-export default async function Dashboard({ searchParams }: { searchParams: { preset?: string; from?: string; to?: string } }) {
+export default async function Dashboard({ searchParams }: { searchParams: { preset?: string; from?: string; to?: string; denied?: string } }) {
   const custom = !!(searchParams.from && searchParams.to);
   const preset = PRESETS.find((p) => p.key === searchParams.preset)?.key ?? (custom ? "custom" : "month");
   const r = custom
@@ -52,6 +52,9 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
 
   return (
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
+      {searchParams.denied && (
+        <div className="mb-4 rounded-xl bg-rose/10 text-rose px-4 py-2.5 text-sm">Your role doesn't have access to <b>{searchParams.denied}</b>. Ask the owner if you need it.</div>
+      )}
       {/* Hero */}
       <div className="relative rounded-3xl overflow-hidden mb-6 bg-gradient-to-br from-ink via-[#2c2238] to-emerald-dark text-cream p-6 sm:p-8 shadow-luxe">
         <div className="absolute -right-10 -top-10 w-48 h-48 rounded-full bg-gold/20 blur-2xl" />

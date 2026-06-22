@@ -9,7 +9,7 @@ type Step = { tool: string; args: Record<string, any>; label: string; kind: stri
 
 const STATUS_ICON: Record<string, string> = { pending: "○", running: "◔", done: "✓", error: "✕", skipped: "—" };
 
-export function Diva() {
+export function Diva({ roleName = "Owner" }: { roleName?: string }) {
   const router = useRouter();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
@@ -87,7 +87,7 @@ export function Diva() {
             <DivaAvatar className="w-10 h-10" />
             <div className="flex-1">
               <p className="font-display text-xl leading-none text-ivory">DIVA</p>
-              <p className="text-[10px] tracking-widest uppercase text-gold-light">Console Operator</p>
+              <p className="text-[10px] tracking-widest uppercase text-gold-light">Operator · {roleName}</p>
             </div>
             <button onClick={() => setOpen(false)} className="text-cream/70 hover:text-white text-lg px-1">✕</button>
           </div>

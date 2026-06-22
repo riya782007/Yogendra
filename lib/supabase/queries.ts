@@ -345,7 +345,7 @@ export async function searchProducts(q: string) {
 // ---------- RBAC ----------
 export async function getRoles() {
   const sb = supabaseServer();
-  const { data } = await sb.from("roles").select("id,name,permissions").order("name");
+  const { data } = await sb.from("roles").select("id,name,permissions,passcode").order("name");
   return (data as any[]) ?? [];
 }
 // ---------- notifications / assignments ----------

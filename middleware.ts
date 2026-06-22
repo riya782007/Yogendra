@@ -1,14 +1,54 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const SESSION = process.env.ADMIN_SESSION_TOKEN ?? "bd-owner-session-v1";
+const OWNER = process.env.ADMIN_SESSION_TOKEN ?? "bd-owner-session-v1";
+const STAFF = OWNER + "-staff";
+
+/** Longest-prefix → required permission. Paths not listed are open to any signed-in user. */
+const ROUTE_PERM: [string, string][] = [
+  ["/admin/upload", "catalog.create"],
+  ["/admin/catalogue", "catalog.view"],
+  ["/admin/media", "catalog.ai"],
+  ["/admin/categories", "catalog.edit"],
+  ["/admin/inventory", "inventory.view"],
+  ["/admin/barcodes", "inventory.barcode"],
+  ["/admin/reorder", "inventory.view"],
+  ["/admin/billing", "billing.sell"],
+  ["/admin/sales", "sales.view"],
+  ["/admin/estimates", "estimates.create"],
+  ["/admin/returns", "billing.refund"],
+  ["/admin/purchases", "purchases.view"],
+  ["/admin/customers", "customers.view"],
+  ["/admin/suppliers", "suppliers.manage"],
+  ["/admin/reviews", "reviews.respond"],
+  ["/admin/abandoned", "marketing.manage"],
+  ["/admin/reels", "reels.manage"],
+  ["/admin/approvals", "approvals.approve"],
+  ["/admin/analytics", "analytics.view"],
+  ["/admin/roles", "roles.manage"],
+];
 
 export function middleware(req: NextRequest) {
-  const authed = req.cookies.get("bd_session")?.value === SESSION;
+  const session = req.cookies.get("bd_session")?.value;
+  const authed = session === OWNER || session === STAFF;
   if (!authed) {
     const url = req.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("next", req.nextUrl.pathname);
+    return NextResponse.redirect(url);
+  }
+
+  // Owner → unrestricted.
+  if (session === OWNER) return NextResponse.next();
+
+  // Staff → enforce route permission.
+  const perms = (req.cookies.get("bd_perms")?.value ?? "").split(",").filter(Boolean);
+  const path = req.nextUrl.pathname;
+  const match = ROUTE_PERM.filter(([p]) => path === p || path.startsWith(p + "/")).sort((a, b) => b[0].length - a[0].length)[0];
+  if (match && !perms.includes(match[1])) {
+    const url = req.nextUrl.clone();
+    url.pathname = "/admin/dashboard";
+    url.searchParams.set("denied", match[0].replace("/admin/", ""));
     return NextResponse.redirect(url);
   }
   return NextResponse.next();

@@ -4,41 +4,42 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { logoutAction } from "@/app/actions/auth";
 
-type L = { href: string; label: string; icon: string };
+type L = { href: string; label: string; icon: string; perm?: string };
+type Perms = string[] | "*";
 const GROUPS: { title: string; links: L[] }[] = [
   { title: "Overview", links: [
     { href: "/admin/dashboard", label: "Dashboard", icon: "▦" },
-    { href: "/admin/analytics", label: "Analytics & SEO", icon: "◷" },
+    { href: "/admin/analytics", label: "Analytics & SEO", icon: "◷", perm: "analytics.view" },
   ]},
   { title: "Catalog", links: [
-    { href: "/admin/upload", label: "Add Inventory", icon: "↑" },
-    { href: "/admin/catalogue", label: "Catalogue", icon: "✦" },
-    { href: "/admin/media", label: "Product Photos", icon: "▣" },
-    { href: "/admin/categories", label: "Categories", icon: "▦" },
-    { href: "/admin/inventory", label: "Inventory", icon: "▤" },
-    { href: "/admin/barcodes", label: "Barcodes", icon: "▥" },
-    { href: "/admin/reorder", label: "AI Reorder", icon: "✨" },
+    { href: "/admin/upload", label: "Add Inventory", icon: "↑", perm: "catalog.create" },
+    { href: "/admin/catalogue", label: "Catalogue", icon: "✦", perm: "catalog.view" },
+    { href: "/admin/media", label: "Product Photos", icon: "▣", perm: "catalog.ai" },
+    { href: "/admin/categories", label: "Categories", icon: "▦", perm: "catalog.edit" },
+    { href: "/admin/inventory", label: "Inventory", icon: "▤", perm: "inventory.view" },
+    { href: "/admin/barcodes", label: "Barcodes", icon: "▥", perm: "inventory.barcode" },
+    { href: "/admin/reorder", label: "AI Reorder", icon: "✨", perm: "inventory.view" },
   ]},
   { title: "Sales & Billing", links: [
-    { href: "/admin/billing", label: "Billing (POS)", icon: "₹" },
-    { href: "/admin/sales", label: "Sales Records", icon: "❑" },
-    { href: "/admin/estimates", label: "Estimates", icon: "≈" },
-    { href: "/admin/returns", label: "Returns", icon: "⤺" },
-    { href: "/admin/purchases", label: "Purchases", icon: "⇪" },
+    { href: "/admin/billing", label: "Billing (POS)", icon: "₹", perm: "billing.sell" },
+    { href: "/admin/sales", label: "Sales Records", icon: "❑", perm: "sales.view" },
+    { href: "/admin/estimates", label: "Estimates", icon: "≈", perm: "estimates.create" },
+    { href: "/admin/returns", label: "Returns", icon: "⤺", perm: "billing.refund" },
+    { href: "/admin/purchases", label: "Purchases", icon: "⇪", perm: "purchases.view" },
   ]},
   { title: "People", links: [
-    { href: "/admin/customers", label: "Customers", icon: "♚" },
-    { href: "/admin/suppliers", label: "Suppliers", icon: "⚒" },
-    { href: "/admin/reviews", label: "Reviews", icon: "★" },
-    { href: "/admin/abandoned", label: "Abandoned carts", icon: "⊘" },
+    { href: "/admin/customers", label: "Customers", icon: "♚", perm: "customers.view" },
+    { href: "/admin/suppliers", label: "Suppliers", icon: "⚒", perm: "suppliers.manage" },
+    { href: "/admin/reviews", label: "Reviews", icon: "★", perm: "reviews.respond" },
+    { href: "/admin/abandoned", label: "Abandoned carts", icon: "⊘", perm: "marketing.manage" },
   ]},
   { title: "Growth", links: [
-    { href: "/admin/reels", label: "Reels", icon: "▷" },
+    { href: "/admin/reels", label: "Reels", icon: "▷", perm: "reels.manage" },
   ]},
   { title: "Control", links: [
-    { href: "/admin/approvals", label: "Approvals", icon: "✓" },
+    { href: "/admin/approvals", label: "Approvals", icon: "✓", perm: "approvals.approve" },
     { href: "/admin/inbox", label: "Notifications", icon: "✉" },
-    { href: "/admin/roles", label: "Roles", icon: "⚿" },
+    { href: "/admin/roles", label: "Roles", icon: "⚿", perm: "roles.manage" },
   ]},
 ];
 const EXTERNAL: L[] = [
@@ -46,13 +47,16 @@ const EXTERNAL: L[] = [
   { href: "/wholesale", label: "Wholesale", icon: "📦" },
 ];
 
-function NavInner({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
+const allow = (perms: Perms, perm?: string) => !perm || perms === "*" || perms.includes(perm);
+
+function NavInner({ collapsed, onNavigate, perms }: { collapsed: boolean; onNavigate?: () => void; perms: Perms }) {
   const path = usePathname();
   const isActive = (href: string) => path === href || path.startsWith(href + "/");
+  const groups = GROUPS.map((g) => ({ ...g, links: g.links.filter((l) => allow(perms, l.perm)) })).filter((g) => g.links.length > 0);
   return (
     <>
       <nav className="space-y-4">
-        {GROUPS.map((g) => (
+        {groups.map((g) => (
           <div key={g.title}>
             {!collapsed && <p className="px-3 mb-1 text-[10px] uppercase tracking-widest text-cream/35">{g.title}</p>}
             <div className="space-y-0.5">
@@ -86,7 +90,7 @@ function NavInner({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: 
   );
 }
 
-export function AdminNav() {
+export function AdminNav({ perms = "*", roleName = "Owner" }: { perms?: Perms; roleName?: string }) {
   const [open, setOpen] = useState(false);       // mobile drawer
   const [collapsed, setCollapsed] = useState(false); // desktop rail
   const path = usePathname();
@@ -103,7 +107,7 @@ export function AdminNav() {
           <span className="block h-0.5 w-6 bg-cream rounded" /><span className="block h-0.5 w-6 bg-cream rounded" /><span className="block h-0.5 w-6 bg-cream rounded" />
         </button>
         <p className="font-display text-xl text-ivory leading-none">Blythe Diva</p>
-        <span className="ml-auto text-[10px] tracking-widest uppercase text-gold-light">Console</span>
+        <span className="ml-auto text-[10px] tracking-widest uppercase text-gold-light">{roleName}</span>
       </header>
 
       {/* Mobile drawer + overlay */}
@@ -116,7 +120,7 @@ export function AdminNav() {
           </div>
           <button onClick={() => setOpen(false)} aria-label="Close menu" className="text-cream/70 text-xl px-2">✕</button>
         </div>
-        <NavInner collapsed={false} onNavigate={() => setOpen(false)} />
+        <NavInner collapsed={false} onNavigate={() => setOpen(false)} perms={perms} />
       </aside>
 
       {/* Desktop sidebar — sticky & self-scrolling, independent of the page scroll */}
@@ -124,12 +128,12 @@ export function AdminNav() {
         <div className={`mb-6 flex items-center ${collapsed ? "justify-center" : "justify-between px-2"}`}>
           {!collapsed && <div>
             <p className="font-display text-2xl text-ivory leading-none">Blythe Diva</p>
-            <p className="text-[10px] tracking-[0.25em] uppercase text-gold-light mt-1">Owner Console</p>
+            <p className="text-[10px] tracking-[0.25em] uppercase text-gold-light mt-1">{roleName === "Owner" ? "Owner Console" : roleName}</p>
           </div>}
           <button onClick={toggleCollapsed} aria-label="Collapse menu" className="text-cream/60 hover:text-white text-lg px-1">{collapsed ? "»" : "«"}</button>
         </div>
         <div className="flex-1 overflow-y-auto">
-          <NavInner collapsed={collapsed} />
+          <NavInner collapsed={collapsed} perms={perms} />
         </div>
         {!collapsed && (
           <div className="px-3 pt-4">
