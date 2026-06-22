@@ -46,6 +46,29 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
   return { rows: (data as any[]) ?? [], total: count ?? 0, page, pageSize };
 }
 
+// ---------- shareable catalog ----------
+export async function getCatalogProducts(opts: { category?: string }) {
+  const sb = supabaseServer();
+  const formula = await getPricingFormula();
+  let query = sb.from("products")
+    .select("sku,name,qty,base_wholesale,generated_content,category:categories(name,slug), images:product_images(path,kind,sort)")
+    .eq("status", "published").order("sku");
+  if (opts.category && opts.category !== "all") {
+    const { data: cat } = await sb.from("categories").select("id").eq("slug", opts.category).maybeSingle();
+    if (cat) query = query.eq("category_id", (cat as any).id);
+  }
+  const { data } = await query;
+  return ((data as any[]) ?? []).map((p) => {
+    const o = _liveOffer(p.base_wholesale, formula);
+    const imgs = (p.images ?? []).filter((i: any) => typeof i.path === "string" && i.path.startsWith("http")).sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0));
+    return {
+      sku: p.sku, name: p.name, category: p.category?.name ?? "", categorySlug: p.category?.slug ?? "all",
+      qty: p.qty, price: o.price, mrp: o.mrp, offerPct: o.offerPct, hasOffer: o.hasOffer,
+      image: imgs[0]?.path ?? null, tags: ((p.generated_content as any)?.tags ?? []).slice(0, 4),
+    };
+  });
+}
+
 // ---------- customer directory (real customers table) ----------
 export async function getCustomersDb(opts: { q?: string; type?: string }) {
   const sb = supabaseServer();

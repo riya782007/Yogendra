@@ -45,6 +45,7 @@ const GROUPS: { title: string; links: L[] }[] = [
 const EXTERNAL: L[] = [
   { href: "/shop", label: "Retail store", icon: "🛍" },
   { href: "/wholesale", label: "Wholesale", icon: "📦" },
+  { href: "/catalog", label: "Share Catalogue", icon: "📤" },
 ];
 
 const allow = (perms: Perms, perm?: string) => !perm || perms === "*" || perms.includes(perm);

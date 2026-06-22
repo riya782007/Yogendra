@@ -49,12 +49,13 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
           <h1 className="font-display text-4xl text-ink">Catalogue</h1>
           <p className="text-sm text-muted">{total} products · AI-drafted pages, one-tap approve</p>
         </div>
-        {canAi && (
-          <div className="flex gap-2">
+        <div className="flex gap-2">
+          <Link href="/catalog" target="_blank" className="px-4 py-2.5 text-sm font-medium rounded-full bg-gold text-ink hover:opacity-90 transition-opacity">📤 Share Catalogue ↗</Link>
+          {canAi && <>
             <form action={genAllContent}><button className="btn-primary px-4 py-2.5 text-sm font-medium">✨ Generate all AI pages</button></form>
             <form action={genEmbeddings}><button className="px-4 py-2.5 text-sm font-medium rounded-full border border-emerald text-emerald hover:bg-emerald-mist transition-colors">⌖ Build recommendations</button></form>
-          </div>
-        )}
+          </>}
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2 mb-4 items-center">

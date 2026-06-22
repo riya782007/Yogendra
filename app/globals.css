@@ -87,6 +87,10 @@ body {
     height: 33mm;
     display: flex; flex-direction: column; justify-content: center;
   }
+  /* Catalogue PDF: make dark header/footer readable without background graphics */
+  .catalog-dark, .catalog-dark * { background: transparent !important; color: #241B2E !important; }
+  .catalog-dark a { color: #A07E2E !important; }
+
   .barcode-label .bc-name { font-size: 6pt; line-height: 1.1; }
   .barcode-label .bc-sku { font-size: 6pt; margin-top: 0.5mm; }
   .barcode-label .bc-price { font-size: 7pt; }
