@@ -5,6 +5,7 @@ import { getCustomerById } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { getSession, can } from "@/lib/auth";
 import { upsertCustomerAction, deleteCustomerAction } from "@/app/actions/customers";
+import { approveWholesaleAction, regenWholesaleCodeAction } from "@/app/actions/wholesale";
 
 export const metadata = { title: "Owner Console · Customer" };
 
@@ -29,6 +30,31 @@ export default async function CustomerDetail({ params }: { params: { id: string 
         <div className="bg-white rounded-2xl p-4 shadow-card"><p className="text-xs uppercase tracking-wide text-muted">Outstanding</p><p className={`text-xl font-semibold mt-1 ${c.credit_balance ? "text-rose" : "text-ink"}`}>{formatPaise(c.credit_balance ?? 0)}</p></div>
         <div className="bg-white rounded-2xl p-4 shadow-card"><p className="text-xs uppercase tracking-wide text-muted">GSTIN</p><p className="text-sm font-medium mt-1 break-all">{c.gstin || "—"}</p></div>
       </div>
+
+      {/* Wholesale access */}
+      {c.type === "wholesale" && canManage && (
+        <div className="bg-white rounded-2xl p-5 shadow-card mb-4 border border-gold/30">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-medium text-ink">Wholesale portal access</h2>
+              <p className="text-xs text-muted">{c.wholesale_approved ? "Approved — this retailer can sign in at /wholesale and see trade prices." : "Not approved yet — approve to issue an access code."}</p>
+              {c.wholesale_approved && (
+                <p className="text-sm mt-2">Login: <b>{c.phone || "set a phone first"}</b> · Access code: <span className="font-mono tracking-widest bg-ink/5 px-2 py-0.5 rounded">{c.login_code ?? "—"}</span></p>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {c.wholesale_approved && (
+                <form action={regenWholesaleCodeAction}><input type="hidden" name="id" value={c.id} /><button className="px-3 py-1.5 rounded-full bg-ink/5 text-ink text-xs hover:bg-ink/10">↻ New code</button></form>
+              )}
+              <form action={approveWholesaleAction}>
+                <input type="hidden" name="id" value={c.id} />
+                <input type="hidden" name="approve" value={c.wholesale_approved ? "0" : "1"} />
+                <button className={`px-4 py-1.5 rounded-full text-xs font-medium ${c.wholesale_approved ? "bg-rose/10 text-rose hover:bg-rose/20" : "bg-emerald text-white hover:bg-emerald-dark"}`}>{c.wholesale_approved ? "Revoke access" : "Approve wholesale"}</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid lg:grid-cols-2 gap-4">
         {/* Profile / edit */}
