@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { supabaseServer } from "@/lib/supabase/server";
-import { createCategoryAction } from "@/app/actions/catalog";
+import { createCategoryAction, deleteCategoryAction } from "@/app/actions/catalog";
+import { getSession, can } from "@/lib/auth";
 
 export const metadata = { title: "Owner Console · Categories" };
 
@@ -10,6 +11,7 @@ export default async function Categories() {
   const { data: prods } = await sb.from("products").select("category_id");
   const counts = new Map<string, number>();
   for (const p of (prods as any[]) ?? []) counts.set(p.category_id, (counts.get(p.category_id) ?? 0) + 1);
+  const canEdit = can(getSession(), "catalog.edit");
 
   return (
     <main className="p-8 bg-cream/40 min-h-screen max-w-3xl">
@@ -23,9 +25,14 @@ export default async function Categories() {
 
       <div className="grid sm:grid-cols-2 gap-3">
         {((cats as any[]) ?? []).map((c) => (
-          <div key={c.id} className="bg-white rounded-2xl p-5 shadow-card flex items-center justify-between hover:shadow-luxe transition-shadow">
-            <div><p className="font-medium text-ink">{c.name}</p><p className="text-xs text-muted">/shop/c/{c.slug}</p></div>
-            <span className="text-sm text-emerald font-medium">{counts.get(c.id) ?? 0} designs</span>
+          <div key={c.id} className="bg-white rounded-2xl p-5 shadow-card flex items-center justify-between gap-3 hover:shadow-luxe transition-shadow">
+            <div className="min-w-0"><p className="font-medium text-ink truncate">{c.name}</p><p className="text-xs text-muted">/shop/c/{c.slug}</p></div>
+            <div className="flex items-center gap-3 shrink-0">
+              <span className="text-sm text-emerald font-medium">{counts.get(c.id) ?? 0} designs</span>
+              {canEdit && (counts.get(c.id) ?? 0) === 0 && (
+                <form action={deleteCategoryAction}><input type="hidden" name="id" value={c.id} /><button title="Delete empty category" className="text-muted hover:text-rose text-sm">🗑</button></form>
+              )}
+            </div>
           </div>
         ))}
       </div>

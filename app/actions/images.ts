@@ -10,12 +10,14 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { getProductBySku, getPublishedProducts } from "@/lib/supabase/queries";
 import { buildImagePrompt } from "@/lib/ai/imagePrompt";
 import { generateImage, geminiConfigured } from "@/lib/ai/gemini";
+import { requirePerm } from "@/lib/auth";
 
 const BUCKET = "product-media";
 
 export type GenResult = { ok: boolean; sku: string; reason?: string; error?: string; url?: string; prompt?: string };
 
 export async function generateOneAction(sku: string): Promise<GenResult> {
+  if (!(await requirePerm("catalog.ai"))) return { ok: false, sku, reason: "not_permitted" };
   const p = await getProductBySku(sku);
   if (!p) return { ok: false, sku, reason: "not_found" };
   const index = parseInt(sku.replace(/\D/g, ""), 10) || 0;

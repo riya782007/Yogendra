@@ -8,12 +8,25 @@ import { requirePerm } from "@/lib/auth";
 const slugify = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
 export async function createCategoryAction(formData: FormData) {
+  if (!(await requirePerm("catalog.edit"))) return;
   const name = String(formData.get("name") ?? "").trim();
   if (!name) return;
   const sb = supabaseServer();
   await sb.from("categories").insert({ name, slug: slugify(name) });
   revalidatePath("/admin/categories");
   revalidatePath("/shop");
+}
+
+/** Delete a category — only when it has no products (to avoid orphaning the catalogue). */
+export async function deleteCategoryAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("catalog.edit"))) return;
+  const id = String(formData.get("id") ?? "").trim();
+  if (!id) return;
+  const sb = supabaseServer();
+  const { count } = await sb.from("products").select("id", { count: "exact", head: true }).eq("category_id", id);
+  if ((count ?? 0) > 0) return; // refuse to delete a non-empty category
+  await sb.from("categories").delete().eq("id", id);
+  revalidatePath("/admin/categories"); revalidatePath("/shop");
 }
 
 async function nextSku(sb: ReturnType<typeof supabaseServer>): Promise<number> {

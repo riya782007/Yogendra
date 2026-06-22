@@ -11,6 +11,7 @@ import { GeneratePhotoButton } from "@/components/admin/GeneratePhotoButton";
 import { generateEmbeddingsAction } from "@/app/actions/embeddings";
 import { Pager } from "@/components/admin/Pager";
 import { getSession, can } from "@/lib/auth";
+import { DeleteProductButton } from "@/components/admin/DeleteProductButton";
 
 export const metadata = { title: "Owner Console · Catalogue" };
 const PAGE_SIZE = 25;
@@ -29,6 +30,8 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
   const imageReady = geminiConfigured();
   const session = getSession();
   const canEdit = can(session, "catalog.edit");
+  const canAi = can(session, "catalog.ai");
+  const canDelete = can(session, "catalog.delete");
 
   async function genContent(fd: FormData) { "use server"; await generateContentAction(String(fd.get("sku"))); }
   async function genAllContent() { "use server"; await generateAllContentAction(); }
@@ -46,10 +49,12 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
           <h1 className="font-display text-4xl text-ink">Catalogue</h1>
           <p className="text-sm text-muted">{total} products · AI-drafted pages, one-tap approve</p>
         </div>
-        <div className="flex gap-2">
-          <form action={genAllContent}><button className="btn-primary px-4 py-2.5 text-sm font-medium">✨ Generate all AI pages</button></form>
-          <form action={genEmbeddings}><button className="px-4 py-2.5 text-sm font-medium rounded-full border border-emerald text-emerald hover:bg-emerald-mist transition-colors">⌖ Build recommendations</button></form>
-        </div>
+        {canAi && (
+          <div className="flex gap-2">
+            <form action={genAllContent}><button className="btn-primary px-4 py-2.5 text-sm font-medium">✨ Generate all AI pages</button></form>
+            <form action={genEmbeddings}><button className="px-4 py-2.5 text-sm font-medium rounded-full border border-emerald text-emerald hover:bg-emerald-mist transition-colors">⌖ Build recommendations</button></form>
+          </div>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-2 mb-4 items-center">
@@ -76,11 +81,11 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
           <thead className="bg-cream text-muted text-left">
             <tr>
               <th className="p-3">Photo</th><th className="p-3">Product</th><th className="p-3">Category · No.</th>
-              <th className="p-3">Stock</th><th className="p-3">Price (live)</th><th className="p-3">Edit</th><th className="p-3">Page</th><th className="p-3">AI page</th><th className="p-3">AI photo</th>
+              <th className="p-3">Stock</th><th className="p-3">Price (live)</th><th className="p-3">Edit</th><th className="p-3">View</th><th className="p-3">AI page</th><th className="p-3">AI photo</th><th className="p-3"></th>
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan={9} className="p-4 text-muted">No products match.</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={10} className="p-4 text-muted">No products match.</td></tr>}
             {rows.map((p: any) => {
               const o = liveOffer(p.base_wholesale, formula);
               const hasAi = !!(p.generated_content && p.generated_content.title);
@@ -92,14 +97,17 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
                   <td className="p-3"><span className={p.qty <= 2 ? "text-rose font-medium" : "text-ink"}>{p.qty}</span></td>
                   <td className="p-3"><span className="font-semibold">{formatPaise(o.price)}</span>{o.hasOffer && <span className="text-xs text-rose ml-1">{o.offerPct}% off</span>}</td>
                   <td className="p-3">{canEdit ? <Link className="px-3 py-1.5 rounded-full bg-ink/5 text-ink text-xs font-medium hover:bg-ink/10 transition-colors" href={`/admin/catalogue/${p.sku}`}>✎ Edit</Link> : <span className="text-xs text-muted">—</span>}</td>
-                  <td className="p-3"><Link className="text-emerald nav-link" href={`/shop/${p.category?.slug}/${p.sku}`}>view ↗</Link></td>
+                  <td className="p-3 whitespace-nowrap"><Link className="text-ink/70 hover:text-ink text-xs mr-2" href={`/admin/product/${p.sku}`}>360°</Link><Link className="text-emerald nav-link" href={`/shop/${p.category?.slug}/${p.sku}`}>view ↗</Link></td>
                   <td className="p-3">
-                    <form action={genContent} className="flex items-center gap-2">
-                      <input type="hidden" name="sku" value={p.sku} />
-                      <button className="px-3 py-1.5 rounded-full bg-emerald/10 text-emerald text-xs font-medium hover:bg-emerald/20 transition-colors">{hasAi ? "Regenerate" : "Generate"}</button>
-                    </form>
+                    {canAi ? (
+                      <form action={genContent} className="flex items-center gap-2">
+                        <input type="hidden" name="sku" value={p.sku} />
+                        <button className="px-3 py-1.5 rounded-full bg-emerald/10 text-emerald text-xs font-medium hover:bg-emerald/20 transition-colors">{hasAi ? "Regenerate" : "Generate"}</button>
+                      </form>
+                    ) : <span className="text-xs text-muted">{hasAi ? "✓" : "—"}</span>}
                   </td>
-                  <td className="p-3"><GeneratePhotoButton sku={p.sku} /></td>
+                  <td className="p-3">{canAi ? <GeneratePhotoButton sku={p.sku} /> : <span className="text-xs text-muted">—</span>}</td>
+                  <td className="p-3">{canDelete && <DeleteProductButton sku={p.sku} className="text-muted hover:text-rose text-sm" label="🗑" />}</td>
                 </tr>
               );
             })}
