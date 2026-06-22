@@ -403,6 +403,16 @@ export async function getRecentPurchases() {
   return (data as any[]) ?? [];
 }
 
+export async function getPurchaseById(id: string) {
+  const sb = supabaseServer();
+  const { data: p } = await sb.from("purchases").select("*, supplier:suppliers(id,name,city)").eq("id", id).maybeSingle();
+  if (!p) return null;
+  const { data: items } = await sb.from("purchase_items").select("supplier_sku,qty,unit_cost, product:products(sku,name)").eq("purchase_id", id);
+  const { data: pending } = await sb.from("approvals").select("id").eq("action", "delete_purchase").eq("status", "pending").contains("payload", { purchase_id: id }).maybeSingle();
+  const { data: suppliers } = await sb.from("suppliers").select("id,name,city").order("name");
+  return { purchase: p, items: (items as any[]) ?? [], deletionPending: !!pending, suppliers: (suppliers as any[]) ?? [] };
+}
+
 export async function searchProducts(q: string) {
   const { products, formula } = await getStorefront();
   const s = q.trim().toLowerCase();

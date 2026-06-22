@@ -24,9 +24,17 @@ export async function decideApprovalAction(formData: FormData) {
   await sb.from("approvals").update({ status, decided_at: new Date().toISOString() }).eq("id", id);
   await sb.from("audit_log").insert({ actor: "owner", action: status, ref: id, detail: "OTP verified" });
 
-  // Apply the change on approval (demo: log the applied edit).
+  // Apply the change on approval.
   if (approve && a.action === "edit_price") {
     await sb.from("audit_log").insert({ actor: "system", action: "applied", ref: id, detail: `price change applied: ${JSON.stringify(a.payload)}` });
+  }
+  if (approve && a.action === "delete_purchase") {
+    const pid = (a.payload as any)?.purchase_id;
+    if (pid) {
+      await sb.rpc("delete_purchase", { p_id: pid });
+      await sb.from("audit_log").insert({ actor: "system", action: "applied", ref: id, detail: `purchase ${pid} deleted & stock reversed` });
+      revalidatePath("/admin/purchases");
+    }
   }
   revalidatePath("/admin/approvals");
   revalidatePath("/admin/dashboard");
