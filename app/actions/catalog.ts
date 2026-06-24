@@ -183,6 +183,16 @@ export async function setProductVisibilityAction(formData: FormData): Promise<vo
   revalidatePath("/admin/inventory"); revalidatePath("/admin/catalogue"); revalidatePath("/shop");
 }
 
+/** #1: mark a product as wholesale-only (hidden from the D2C storefront, shown to retailers). */
+export async function setWholesaleOnlyAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("catalog.edit"))) return;
+  const sku = String(formData.get("sku") ?? "").trim();
+  const on = String(formData.get("wholesale_only") ?? "") === "1";
+  if (!sku) return;
+  await supabaseServer().from("products").update({ wholesale_only: on }).eq("sku", sku);
+  revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidatePath("/wholesale");
+}
+
 /** Delete a product (or hide it if it has past orders, to keep the books intact). */
 export async function deleteProductAction(formData: FormData): Promise<{ ok: boolean; message: string }> {
   if (!(await requirePerm("catalog.delete"))) return { ok: false, message: "Your role can't delete products." };

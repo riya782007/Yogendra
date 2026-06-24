@@ -11,7 +11,7 @@ import { ProductStockAdjust } from "@/components/admin/ProductStockAdjust";
 import { MediaCard } from "@/components/admin/MediaCard";
 import { requirePerm, getSession, can } from "@/lib/auth";
 import { addVariantAction, updateVariantAction, deleteVariantAction, addVariantImageAction, deleteVariantImageAction } from "@/app/actions/variants";
-import { setProductVisibilityAction, moveProductToSubcategoryAction, savePricingAction } from "@/app/actions/catalog";
+import { setProductVisibilityAction, moveProductToSubcategoryAction, savePricingAction, setWholesaleOnlyAction } from "@/app/actions/catalog";
 import { formatPaise, computePrices, resolvePrices, overridesOf } from "@/lib/pricing";
 import { geminiConfigured } from "@/lib/ai/gemini";
 
@@ -258,6 +258,15 @@ export default async function ProductPage({ params, searchParams }: { params: { 
               <button className="px-4 py-2 rounded-full bg-gold/15 text-gold-dark text-sm hover:bg-gold/25">{published ? "Hide from store" : "Show on store"}</button>
             </form>
           )}
+        </div>
+        {/* #1 wholesale-only */}
+        <div className="flex items-center justify-between gap-3 mt-3 pt-3 border-t border-sand/60">
+          <p className="text-sm text-muted">{(p as any).wholesale_only ? "Wholesale only — hidden from the D2C storefront, shown to approved retailers." : "Sold to everyone (retail + wholesale)."}</p>
+          <form action={setWholesaleOnlyAction}>
+            <input type="hidden" name="sku" value={p.sku} />
+            <input type="hidden" name="wholesale_only" value={(p as any).wholesale_only ? "0" : "1"} />
+            <button className="px-4 py-2 rounded-full bg-wine/10 text-wine text-sm hover:bg-wine/20 whitespace-nowrap">{(p as any).wholesale_only ? "Make available to all" : "Wholesale only"}</button>
+          </form>
         </div>
       </div>
 

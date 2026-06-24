@@ -6,7 +6,8 @@ import { resolvePrices, overridesOf } from "@/lib/pricing";
 export const metadata = { title: "Owner Console · Billing (POS)" };
 
 export default async function Billing() {
-  const { products, formula } = await getStorefront();
+  // POS can bill anything in the catalogue — including unpublished drafts (#23) and wholesale-only lines.
+  const { products, formula } = await getStorefront({ includeDrafts: true, includeWholesaleOnly: true });
   const list = products.map((p) => {
     const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));
     // Both price lists, override-aware, so the counter can ring up at retail or wholesale (#16).

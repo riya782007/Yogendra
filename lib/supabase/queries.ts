@@ -106,7 +106,7 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
   const formula = await getPricingFormula();
   let query = sb.from("products")
     .select("id,sku,name,qty,base_wholesale,wholesale_override,retail_override,mrp_override,generated_content,category:categories(name,slug),subcategory:subcategories(name,slug),images:product_images(path,kind,sort)")
-    .eq("status", "published").order("sku");
+    .eq("status", "published").eq("wholesale_only", false).order("sku");
 
   if (opts.category && opts.category !== "all") {
     const { data: cat } = await sb.from("categories").select("id").eq("slug", opts.category).maybeSingle();
@@ -337,10 +337,15 @@ export type StoreProduct = DbProduct & {
   category: DbCategory; rating: number; reviews: number; isNew: boolean;
 };
 
-export async function getStorefront(): Promise<{ products: StoreProduct[]; formula: PF }> {
+export async function getStorefront(
+  opts: { includeDrafts?: boolean; includeWholesaleOnly?: boolean } = {},
+): Promise<{ products: StoreProduct[]; formula: PF }> {
   const sb = supabaseServer();
+  // D2C-safe defaults: only published, and never wholesale-only items (#1, #23).
+  let pq = sb.from("products").select("*, category:categories(id,name,slug)").order("sku");
+  if (!opts.includeDrafts) pq = pq.eq("status", "published");
   const [{ data: prods }, { data: revs }, formula] = await Promise.all([
-    sb.from("products").select("*, category:categories(id,name,slug)").eq("status", "published").order("sku"),
+    pq,
     sb.from("reviews").select("product_id, rating"),
     getPricingFormula(),
   ]);
@@ -349,13 +354,14 @@ export async function getStorefront(): Promise<{ products: StoreProduct[]; formu
     const a = agg.get(r.product_id) ?? { sum: 0, n: 0 }; a.sum += r.rating; a.n++; agg.set(r.product_id, a);
   }
   const now = Date.now();
-  const products = ((prods as any[]) ?? []).map((p) => {
+  let products = ((prods as any[]) ?? []).map((p) => {
     const a = agg.get(p.id);
     const rating = a && a.n ? a.sum / a.n : 4.6;
     const reviews = a?.n ?? 0;
     const isNew = p.created_at ? now - new Date(p.created_at).getTime() < 1000 * 60 * 60 * 24 * 21 : false;
     return { ...p, rating: Math.round(rating * 10) / 10, reviews, isNew };
   });
+  if (!opts.includeWholesaleOnly) products = products.filter((p: any) => !p.wholesale_only);
   return { products, formula };
 }
 

@@ -6,7 +6,7 @@ import { BarcodeSheet } from "@/components/admin/BarcodeSheet";
 export const metadata = { title: "Owner Console · Barcodes" };
 
 export default async function Barcodes() {
-  const { products, formula } = await getStorefront();
+  const { products, formula } = await getStorefront({ includeDrafts: true, includeWholesaleOnly: true });
   const list = products.map((p) => ({ sku: p.sku, name: p.name, price: liveOffer(p.base_wholesale, formula).price }));
   return (
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
