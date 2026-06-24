@@ -129,6 +129,54 @@ export async function divaPlan(command: string, contextJson?: string): Promise<D
   return { ok: true, reply: String(parsed?.reply ?? "On it.").slice(0, 200), steps, context: nluPlan.context };
 }
 
+// ---------------------------------------------------------------- SUGGESTIONS
+export type DivaSuggestion = { id: string; icon: string; text: string; command: string };
+
+/**
+ * Proactive, context-aware suggestions DIVA offers when idle (Phase 7).
+ * Each suggestion carries a natural-language `command` that flows back through
+ * divaPlan → divaRun, so clicking one is the same as typing it. Best-effort &
+ * non-throwing — a data hiccup just yields fewer chips.
+ */
+export async function getDivaSuggestions(): Promise<DivaSuggestion[]> {
+  const out: DivaSuggestion[] = [];
+  try {
+    const sb = supabaseServer();
+    const [classified, draftsRes, pendingRes] = await Promise.all([
+      getInventoryClassified().catch(() => [] as any[]),
+      getProductsPage({ status: "draft", pageSize: 3 }).catch(() => ({ rows: [] as any[] })),
+      sb.from("orders").select("id", { count: "exact", head: true }).not("status", "in", "(completed,delivered,cancelled,refunded)"),
+    ]);
+
+    const rows = (classified as any[]) ?? [];
+    const oos = rows.filter((r) => (r.qty ?? 0) <= 0);
+    const low = rows.filter((r) => r.cls === "low" && (r.qty ?? 0) > 0);
+    const dead = rows.filter((r) => r.cls === "dead" && (r.qty ?? 0) > 0);
+
+    if (oos.length) {
+      const r = oos[0];
+      out.push({ id: "oos", icon: "🚨", text: `${r.name} (${r.sku}) is out of stock${oos.length > 1 ? ` — and ${oos.length - 1} more` : ""}. Restock it?`, command: `add 10 to ${r.sku}` });
+    }
+    if (low.length) {
+      const r = low[0];
+      out.push({ id: "low", icon: "📉", text: `${r.name} (${r.sku}) is low — only ${r.qty} left. Add stock?`, command: `add 20 to ${r.sku}` });
+    }
+    const pending = (pendingRes as any)?.count ?? 0;
+    if (pending > 0) out.push({ id: "pending", icon: "📦", text: `${pending} pending order${pending > 1 ? "s" : ""} to review.`, command: "pending orders dikhao" });
+
+    const drafts = ((draftsRes as any)?.rows ?? []) as any[];
+    if (drafts.length) {
+      const r = drafts[0];
+      out.push({ id: "draft", icon: "✏️", text: `${r.name} (${r.sku}) is still a draft — open it to finish & publish?`, command: `show ${r.sku}` });
+    }
+    if (dead.length) {
+      const r = dead[0];
+      out.push({ id: "dead", icon: "💤", text: `${r.name} hasn't sold lately — share its catalogue to push it?`, command: `${r.name} ka catalog whatsapp pe bhejo` });
+    }
+  } catch { /* suggestions are best-effort */ }
+  return out.slice(0, 4);
+}
+
 // ---------------------------------------------------------------- RUN
 export type DivaResult = { ok: boolean; message: string; navigate?: string; data?: any; denied?: boolean };
 
