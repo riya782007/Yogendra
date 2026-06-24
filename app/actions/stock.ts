@@ -26,4 +26,6 @@ export async function adjustStockAction(formData: FormData): Promise<void> {
 
   revalidatePath("/admin/inventory");
   revalidatePath("/admin/dashboard");
+  revalidatePath(`/admin/catalogue/${sku}`);
+  revalidatePath(`/admin/product/${sku}`);
 }

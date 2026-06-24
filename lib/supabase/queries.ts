@@ -212,6 +212,19 @@ export async function getProductSkus(): Promise<{ sku: string; slug: string }[]>
   return (data ?? []).map((r: any) => ({ sku: r.sku, slug: r.category?.slug ?? "all" }));
 }
 
+/** Recent stock movements for one product — powers the Product workspace History tab. */
+export async function getStockHistory(productId: string, limit = 25): Promise<{ delta: number; source: string | null; reason: string | null; created_at: string }[]> {
+  if (!productId) return [];
+  const sb = supabaseServer();
+  const { data } = await sb
+    .from("stock_adjustments")
+    .select("delta,source,reason,created_at")
+    .eq("product_id", productId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  return (data as any[]) ?? [];
+}
+
 // ---------- dashboard + inventory intelligence (Req 6, 7; yogendra.pdf §8) ----------
 import { classify, type InventoryRule, DEFAULT_RULE } from "../inventory";
 import { computePrices, type PricingFormula as PF } from "../pricing";
