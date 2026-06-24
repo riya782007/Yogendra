@@ -165,6 +165,7 @@ const COMMAND_STOPWORDS = new Set([
   "pieces", "piece", "pcs", "units", "unit", "nos", "rupees", "rs", "inr", "price", "rate",
   "daam", "wholesale", "retail", "mrp", "photo", "image", "pic", "catalog", "catalogue",
   "whatsapp", "wala", "wali", "badhao", "ghata", "hata", "hatao", "nikaal", "product",
+  "category", "categories", "subcategory", "subcategories",
 ]);
 
 /** Pull the product/category subject phrase out of a command (best-effort). */
@@ -351,7 +352,7 @@ export function interpret(commandRaw: string, ctx: DivaContext = {}): NluPlan {
   }
 
   // ---- 10) Create product (multi-turn) ----------------------------------------
-  if (hasAny(lower, CREATE_WORDS) && (/(product|item)/.test(lower) || subject)) {
+  if (hasAny(lower, CREATE_WORDS) && !/categor/.test(lower) && (/(product|item)/.test(lower) || subject)) {
     const slots: Record<string, any> = {};
     if (subject) slots.name = subject;
     if (price) slots.price = price;
