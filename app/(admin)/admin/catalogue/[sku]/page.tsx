@@ -154,9 +154,23 @@ export default async function ProductPage({ params, searchParams }: { params: { 
         <div className={card}><p className="text-xs uppercase tracking-wide text-muted">Status</p><p className={`text-lg font-semibold mt-1 ${published ? "text-emerald-dark" : "text-gold-dark"}`}>{published ? "Visible" : "Hidden"}</p></div>
       </div>
       {can(session, "inventory.add") || can(session, "inventory.remove")
-        ? <ProductStockAdjust sku={p.sku} qty={p.qty ?? 0} />
+        ? <ProductStockAdjust sku={p.sku} qty={p.qty ?? 0} variants={variants.map((v: any) => ({ id: v.id, sku: v.sku, color: v.color, qty: v.qty ?? 0 }))} />
         : <p className="text-sm text-muted">Your role can't adjust stock.</p>}
-      <p className="text-xs text-muted">Every adjustment is logged with a reason and appears in the <b>History</b> tab.</p>
+      {variants.length > 0 && (
+        <div className={card}>
+          <h3 className="font-medium text-ink mb-3">Stock by variant</h3>
+          <ul className="divide-y divide-sand/60">
+            {variants.map((v: any) => (
+              <li key={v.id} className="py-2 flex items-center justify-between text-sm">
+                <span className="text-ink">{v.color ?? "—"} <span className="text-muted font-mono text-xs">{v.sku}</span></span>
+                <span className={`font-medium ${(v.qty ?? 0) <= 2 ? "text-rose" : "text-ink"}`}>{v.qty ?? 0} pcs</span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-[11px] text-muted mt-2">The product total ({variantStock}) is the sum of its variants.</p>
+        </div>
+      )}
+      <p className="text-xs text-muted">Every adjustment is logged with a reason and type, and appears in the <b>History</b> tab.</p>
     </div>
   );
 
@@ -258,7 +272,10 @@ export default async function ProductPage({ params, searchParams }: { params: { 
             {history.map((h, i) => (
               <li key={i} className="py-2.5 flex items-center justify-between gap-3 text-sm">
                 <span className={`font-medium tabular-nums ${h.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{h.delta > 0 ? "+" : ""}{h.delta}</span>
-                <span className="flex-1 text-ink truncate">{h.source ?? "Adjustment"}{h.reason ? <span className="text-muted"> — {h.reason}</span> : null}</span>
+                <span className="flex-1 text-ink truncate">
+                  {h.kind && <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded mr-1.5 ${h.kind === "damage" ? "bg-rose/10 text-rose" : h.kind === "purchase" ? "bg-emerald-mist text-emerald-dark" : "bg-cream text-muted"}`}>{h.kind}</span>}
+                  {h.source ?? "Adjustment"}{h.reason ? <span className="text-muted"> — {h.reason}</span> : null}
+                </span>
                 <span className="text-muted whitespace-nowrap">{timeAgo(h.created_at)}</span>
               </li>
             ))}

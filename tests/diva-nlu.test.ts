@@ -88,6 +88,11 @@ describe("intent → tool mapping (the client's example commands)", () => {
     expect(p.steps[0].tool).toBe("set_price");
     expect(p.steps[0].args).toMatchObject({ sku: "BD1010", tier: "wholesale" });
   });
+  it("record damaged stock", () => {
+    const p = interpret("BD1004 ka 2 piece damage ho gaya");
+    expect(p.steps[0].tool).toBe("record_damage");
+    expect(p.steps[0].args).toMatchObject({ sku: "BD1004", qty: 2 });
+  });
   it("navigation", () => {
     expect(firstTool("open inventory")).toBe("open_page");
     expect(firstTool("billing kholo")).toBe("open_page");

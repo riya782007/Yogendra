@@ -241,12 +241,12 @@ export async function getProductSkus(): Promise<{ sku: string; slug: string }[]>
 }
 
 /** Recent stock movements for one product — powers the Product workspace History tab. */
-export async function getStockHistory(productId: string, limit = 25): Promise<{ delta: number; source: string | null; reason: string | null; created_at: string }[]> {
+export async function getStockHistory(productId: string, limit = 25): Promise<{ delta: number; source: string | null; reason: string | null; kind: string | null; created_at: string }[]> {
   if (!productId) return [];
   const sb = supabaseServer();
   const { data } = await sb
     .from("stock_adjustments")
-    .select("delta,source,reason,created_at")
+    .select("delta,source,reason,kind,created_at")
     .eq("product_id", productId)
     .order("created_at", { ascending: false })
     .limit(limit);
