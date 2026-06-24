@@ -4,7 +4,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 
 /** Map a human "source" label to a typed movement kind (for reports & the audit trail). */
-export function inferKind(source: string): string {
+function inferKind(source: string): string {
   const s = source.toLowerCase();
   if (/(damage|broken|lost|defect)/.test(s)) return "damage";
   if (/(purchase|restock|received|supplier)/.test(s)) return "purchase";
