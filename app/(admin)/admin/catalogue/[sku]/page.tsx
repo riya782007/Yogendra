@@ -1,15 +1,35 @@
 export const dynamic = "force-dynamic";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
-import { getProductBySku, getCategories, getPricingFormula } from "@/lib/supabase/queries";
+import {
+  getProductBySku, getCategories, getPricingFormula, getSubcategories,
+  getProductSalesStats, getStockHistory,
+} from "@/lib/supabase/queries";
 import { ProductEditor, type EditorProduct } from "@/components/admin/ProductEditor";
-import { requirePerm } from "@/lib/auth";
+import { ProductWorkspace, type WorkspaceTab, type TabKey } from "@/components/admin/ProductWorkspace";
+import { ProductStockAdjust } from "@/components/admin/ProductStockAdjust";
+import { MediaCard } from "@/components/admin/MediaCard";
+import { requirePerm, getSession, can } from "@/lib/auth";
 import { addVariantAction, updateVariantAction, deleteVariantAction } from "@/app/actions/variants";
+import { setProductVisibilityAction, moveProductToSubcategoryAction } from "@/app/actions/catalog";
+import { liveOffer } from "@/lib/offers";
+import { formatPaise } from "@/lib/pricing";
+import { geminiConfigured } from "@/lib/ai/gemini";
 
-export const metadata = { title: "Owner Console · Edit product" };
+export const metadata = { title: "Owner Console · Product" };
 
-export default async function EditProduct({ params }: { params: { sku: string } }) {
+const card = "bg-white rounded-2xl border border-sand p-5 shadow-card";
+
+function timeAgo(iso: string) {
+  const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  if (d <= 0) return "today";
+  if (d === 1) return "yesterday";
+  return `${d}d ago`;
+}
+
+export default async function ProductPage({ params, searchParams }: { params: { sku: string }; searchParams: { tab?: string } }) {
   if (!(await requirePerm("catalog.edit"))) redirect("/admin/dashboard?denied=editing+products");
+
   const [p, categories, formula] = await Promise.all([
     getProductBySku(params.sku),
     getCategories(),
@@ -17,10 +37,28 @@ export default async function EditProduct({ params }: { params: { sku: string } 
   ]);
   if (!p) notFound();
 
+  const [subcategories, stats, history] = await Promise.all([
+    getSubcategories({ categoryId: p.category?.id }),
+    getProductSalesStats(p.sku).catch(() => null),
+    getStockHistory(p.id).catch(() => []),
+  ]);
+
+  const session = getSession();
   const gc = (p.generated_content as any) ?? {};
   const seo = gc.seo ?? {};
   const specs = gc.specs ?? {};
   const specsText = Object.entries(specs).map(([k, v]) => `${k}: ${v}`).join("\n");
+  const tags: string[] = gc.tags ?? [];
+  const keywords: string[] = seo.keywords ?? [];
+
+  const variants = p.variants ?? [];
+  const variantStock = variants.reduce((s: number, v: any) => s + (v.qty ?? 0), 0);
+  const offer = liveOffer(p.base_wholesale ?? 0, formula);
+  const published = p.status === "published";
+  const siteBase = (process.env.NEXT_PUBLIC_SITE_URL ?? "").replace(/\/$/, "");
+  const shareUrl = `${siteBase}/shop/${p.category?.slug ?? "all"}/${p.sku}`;
+  const photoCount = (p.images ?? []).length;
+  const st: any = stats ?? {};
 
   const product: EditorProduct = {
     sku: p.sku,
@@ -33,59 +71,182 @@ export default async function EditProduct({ params }: { params: { sku: string } 
     qty: p.qty ?? 0,
     title: gc.title ?? p.name,
     description: gc.description ?? "",
-    tags: (gc.tags ?? []).join("\n"),
+    tags: tags.join("\n"),
     metaTitle: seo.metaTitle ?? "",
     metaDescription: seo.metaDescription ?? "",
-    keywords: (seo.keywords ?? []).join("\n"),
+    keywords: keywords.join("\n"),
     specs: specsText,
   };
 
-  return (
-    <main className="p-8 bg-cream/40 min-h-screen">
-      <div className="mb-5">
-        <Link href="/admin/catalogue" className="text-sm text-muted hover:text-ink">← Catalogue</Link>
-        <h1 className="font-display text-4xl text-ink mt-1">Edit · {p.name}</h1>
-        <p className="text-sm text-muted">{p.category?.name} · {p.sku} — edit every detail, content and SEO field below.</p>
-      </div>
-      <ProductEditor
-        product={product}
-        categories={categories.map((c) => ({ id: c.id, name: c.name, slug: c.slug }))}
-        formula={{
-          retailMultiplier: formula.retailMultiplier,
-          mrpMultiplier: formula.mrpMultiplier,
-          wholesaleMarkupPct: formula.wholesaleMarkupPct,
-        }}
-      />
+  // ----- Tab panels (server-rendered, handed to the client tab shell) -----
 
-      {/* Variants — colours/sizes with their own SKU & stock */}
-      <section className="max-w-3xl mt-6 bg-white rounded-2xl border border-sand p-5 shadow-card">
-        <h2 className="font-display text-xl text-ink mb-1">Variants</h2>
-        <p className="text-xs text-muted mb-4">Add colour/size options — each gets its own SKU and stock count. Variant stock totals: <b className="text-ink">{(p.variants ?? []).reduce((s: number, v: any) => s + (v.qty ?? 0), 0)}</b> pcs.</p>
+  const basic = (
+    <ProductEditor
+      product={product}
+      categories={categories.map((c) => ({ id: c.id, name: c.name, slug: c.slug }))}
+      formula={{ retailMultiplier: formula.retailMultiplier, mrpMultiplier: formula.mrpMultiplier, wholesaleMarkupPct: formula.wholesaleMarkupPct }}
+    />
+  );
 
-        <div className="space-y-2 mb-4">
-          {(p.variants ?? []).length === 0 && <p className="text-sm text-muted">No variants yet — this is a simple product.</p>}
-          {(p.variants ?? []).map((v: any) => (
-            <form key={v.id} action={updateVariantAction} className="flex flex-wrap items-center gap-2">
-              <input type="hidden" name="id" value={v.id} />
-              <input type="hidden" name="product_sku" value={p.sku} />
-              <input name="color" defaultValue={v.color ?? ""} placeholder="Colour / size" className="rounded-xl border border-sand px-3 py-2 text-sm w-36 outline-none focus:border-emerald" />
-              <input name="sku" defaultValue={v.sku ?? ""} placeholder="Variant SKU" className="rounded-xl border border-sand px-3 py-2 text-sm w-40 outline-none focus:border-emerald font-mono" />
-              <label className="text-xs text-muted flex items-center gap-1">Stock <input name="qty" type="number" min={0} defaultValue={v.qty ?? 0} className="rounded-xl border border-sand px-2 py-2 text-sm w-20 text-center outline-none focus:border-emerald" /></label>
-              <button className="px-3 py-2 rounded-xl bg-ink/5 text-ink text-xs hover:bg-ink/10">Save</button>
-              <span />
-              <button formAction={deleteVariantAction} className="text-muted hover:text-rose text-xs">Delete</button>
-            </form>
-          ))}
+  const pricing = (
+    <div className="space-y-4">
+      <div className={card}>
+        <h3 className="font-medium text-ink mb-3">Live prices</h3>
+        <div className="grid sm:grid-cols-3 gap-3">
+          <div className="rounded-xl bg-cream/60 p-4"><p className="text-xs uppercase tracking-wide text-muted">Wholesale</p><p className="text-2xl font-semibold text-ink mt-1">{formatPaise(p.base_wholesale ?? 0)}</p><p className="text-[11px] text-muted">what retailers pay</p></div>
+          <div className="rounded-xl bg-emerald-mist/50 p-4"><p className="text-xs uppercase tracking-wide text-muted">Retail</p><p className="text-2xl font-semibold text-emerald-dark mt-1">{formatPaise(offer.price)}</p><p className="text-[11px] text-muted">shop selling price</p></div>
+          <div className="rounded-xl bg-gold/10 p-4"><p className="text-xs uppercase tracking-wide text-muted">MRP</p><p className="text-2xl font-semibold text-gold-dark mt-1">{formatPaise(offer.mrp)}</p><p className="text-[11px] text-muted">{offer.hasOffer ? `${offer.offerPct}% off shown` : "printed price"}</p></div>
         </div>
+        <p className="text-xs text-muted mt-4">Prices are derived from the base wholesale cost via your pricing formula. Edit the base cost on the <b>Basic</b> tab. Per-variant and explicit per-tier overrides arrive in Phase 4.</p>
+      </div>
+    </div>
+  );
 
-        <form action={addVariantAction} className="flex flex-wrap items-center gap-2 border-t border-sand/60 pt-4">
-          <input type="hidden" name="product_sku" value={p.sku} />
-          <input name="color" placeholder="New colour / size *" className="rounded-xl border border-sand px-3 py-2 text-sm w-44 outline-none focus:border-emerald" required />
-          <input name="sku" placeholder="SKU (blank = auto)" className="rounded-xl border border-sand px-3 py-2 text-sm w-44 outline-none focus:border-emerald font-mono" />
-          <label className="text-xs text-muted flex items-center gap-1">Stock <input name="qty" type="number" min={0} defaultValue={0} className="rounded-xl border border-sand px-2 py-2 text-sm w-20 text-center outline-none focus:border-emerald" /></label>
-          <button className="btn-primary px-4 py-2 text-sm font-medium">+ Add variant</button>
+  const inventory = (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <div className={card}><p className="text-xs uppercase tracking-wide text-muted">In stock</p><p className={`text-2xl font-semibold mt-1 ${p.qty <= 2 ? "text-rose" : "text-ink"}`}>{p.qty}</p></div>
+        <div className={card}><p className="text-xs uppercase tracking-wide text-muted">Variant stock</p><p className="text-2xl font-semibold text-ink mt-1">{variantStock}</p></div>
+        <div className={card}><p className="text-xs uppercase tracking-wide text-muted">Status</p><p className={`text-lg font-semibold mt-1 ${published ? "text-emerald-dark" : "text-gold-dark"}`}>{published ? "Visible" : "Hidden"}</p></div>
+      </div>
+      {can(session, "inventory.add") || can(session, "inventory.remove")
+        ? <ProductStockAdjust sku={p.sku} qty={p.qty ?? 0} />
+        : <p className="text-sm text-muted">Your role can't adjust stock.</p>}
+      <p className="text-xs text-muted">Every adjustment is logged with a reason and appears in the <b>History</b> tab.</p>
+    </div>
+  );
+
+  const photos = (
+    <div className="space-y-3">
+      <MediaCard p={{ id: p.id, sku: p.sku, name: p.name, category: p.category?.name ?? "", images: (p.images ?? []) as any }} geminiReady={geminiConfigured()} />
+      {!geminiConfigured() && <p className="text-xs text-gold-dark">Add GEMINI_API_KEY (or OPENAI_API_KEY) to turn raw shots into professional model photos.</p>}
+    </div>
+  );
+
+  const variantsPanel = (
+    <div className={card}>
+      <h3 className="font-medium text-ink mb-1">Variants</h3>
+      <p className="text-xs text-muted mb-4">Colour/size options — each gets its own SKU and stock. Variant stock total: <b className="text-ink">{variantStock}</b> pcs.</p>
+      <div className="space-y-2 mb-4">
+        {variants.length === 0 && <p className="text-sm text-muted">No variants yet — this is a simple product.</p>}
+        {variants.map((v: any) => (
+          <form key={v.id} action={updateVariantAction} className="flex flex-wrap items-center gap-2">
+            <input type="hidden" name="id" value={v.id} />
+            <input type="hidden" name="product_sku" value={p.sku} />
+            <input name="color" defaultValue={v.color ?? ""} placeholder="Colour / size" className="rounded-xl border border-sand px-3 py-2 text-sm w-36 outline-none focus:border-emerald" />
+            <input name="sku" defaultValue={v.sku ?? ""} placeholder="Variant SKU" className="rounded-xl border border-sand px-3 py-2 text-sm w-40 outline-none focus:border-emerald font-mono" />
+            <label className="text-xs text-muted flex items-center gap-1">Stock <input name="qty" type="number" min={0} defaultValue={v.qty ?? 0} className="rounded-xl border border-sand px-2 py-2 text-sm w-20 text-center outline-none focus:border-emerald" /></label>
+            <button className="px-3 py-2 rounded-xl bg-ink/5 text-ink text-xs hover:bg-ink/10">Save</button>
+            <button formAction={deleteVariantAction} className="text-muted hover:text-rose text-xs">Delete</button>
+          </form>
+        ))}
+      </div>
+      <form action={addVariantAction} className="flex flex-wrap items-center gap-2 border-t border-sand/60 pt-4">
+        <input type="hidden" name="product_sku" value={p.sku} />
+        <input name="color" placeholder="New colour / size *" className="rounded-xl border border-sand px-3 py-2 text-sm w-44 outline-none focus:border-emerald" required />
+        <input name="sku" placeholder="SKU (blank = auto)" className="rounded-xl border border-sand px-3 py-2 text-sm w-44 outline-none focus:border-emerald font-mono" />
+        <label className="text-xs text-muted flex items-center gap-1">Stock <input name="qty" type="number" min={0} defaultValue={0} className="rounded-xl border border-sand px-2 py-2 text-sm w-20 text-center outline-none focus:border-emerald" /></label>
+        <button className="btn-primary px-4 py-2 text-sm font-medium">+ Add variant</button>
+      </form>
+    </div>
+  );
+
+  const catalog = (
+    <div className="space-y-4">
+      <div className={card}>
+        <h3 className="font-medium text-ink mb-3">Storefront visibility</h3>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm text-muted">{published ? "This product is live on the shop." : "Hidden — customers can't see it yet."}</p>
+          {can(session, "catalog.publish") && (
+            <form action={setProductVisibilityAction}>
+              <input type="hidden" name="sku" value={p.sku} />
+              <input type="hidden" name="status" value={published ? "draft" : "published"} />
+              <button className="px-4 py-2 rounded-full bg-gold/15 text-gold-dark text-sm hover:bg-gold/25">{published ? "Hide from store" : "Show on store"}</button>
+            </form>
+          )}
+        </div>
+      </div>
+
+      <div className={card}>
+        <h3 className="font-medium text-ink mb-1">Category &amp; subcategory</h3>
+        <p className="text-xs text-muted mb-3">Parent: <b className="text-ink">{p.category?.name ?? "—"}</b>. Assign a subcategory so it shows in nested filters and subcategory catalogues.</p>
+        <form action={moveProductToSubcategoryAction} className="flex flex-wrap items-center gap-2">
+          <input type="hidden" name="sku" value={p.sku} />
+          <select name="subcategory_id" defaultValue={(p as any).subcategory_id ?? ""} className="rounded-xl border border-sand px-3 py-2 text-sm bg-white outline-none focus:border-emerald">
+            <option value="">— None (parent only) —</option>
+            {subcategories.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <button className="px-4 py-2 rounded-xl bg-ink/5 text-ink text-sm hover:bg-ink/10">Save</button>
+          {subcategories.length === 0 && <span className="text-xs text-muted">No subcategories under {p.category?.name ?? "this category"} yet — add some in Categories.</span>}
         </form>
-      </section>
+      </div>
+
+      <div className={card}>
+        <h3 className="font-medium text-ink mb-2">Keywords &amp; tags</h3>
+        {tags.length + keywords.length === 0
+          ? <p className="text-sm text-muted">No tags yet — add them on the Basic tab to help search &amp; filtering.</p>
+          : <div className="flex flex-wrap gap-1.5">{[...new Set([...tags, ...keywords])].slice(0, 24).map((t) => <span key={t} className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-mist text-emerald-dark">{t}</span>)}</div>}
+      </div>
+
+      <div className={card}>
+        <h3 className="font-medium text-ink mb-2">Share</h3>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link href={shareUrl} target="_blank" className="px-4 py-2 rounded-full bg-ink/5 text-ink text-sm hover:bg-ink/10">View live page ↗</Link>
+          <a href={`https://wa.me/?text=${encodeURIComponent(`${p.name} — Blythe Diva: ${shareUrl}`)}`} target="_blank" rel="noreferrer" className="px-4 py-2 rounded-full bg-emerald-mist text-emerald-dark text-sm hover:bg-emerald-mist/70">Share on WhatsApp</a>
+        </div>
+        <p className="text-[11px] text-muted mt-2 break-all">{shareUrl}</p>
+      </div>
+    </div>
+  );
+
+  const historyPanel = (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className={card}><p className="text-xs uppercase tracking-wide text-muted">Units sold</p><p className="text-xl font-semibold text-ink mt-1">{st.units ?? 0}</p></div>
+        <div className={card}><p className="text-xs uppercase tracking-wide text-muted">Revenue</p><p className="text-xl font-semibold text-emerald mt-1">{formatPaise(st.revenue ?? 0)}</p></div>
+        <div className={card}><p className="text-xs uppercase tracking-wide text-muted">Orders</p><p className="text-xl font-semibold text-ink mt-1">{st.orders ?? 0}</p></div>
+        <div className={card}><p className="text-xs uppercase tracking-wide text-muted">Photos</p><p className="text-xl font-semibold text-ink mt-1">{photoCount}</p></div>
+      </div>
+      <div className={card}>
+        <h3 className="font-medium text-ink mb-3">Stock movements</h3>
+        {history.length === 0 ? <p className="text-sm text-muted">No stock adjustments recorded yet.</p> : (
+          <ul className="divide-y divide-sand/60">
+            {history.map((h, i) => (
+              <li key={i} className="py-2.5 flex items-center justify-between gap-3 text-sm">
+                <span className={`font-medium tabular-nums ${h.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{h.delta > 0 ? "+" : ""}{h.delta}</span>
+                <span className="flex-1 text-ink truncate">{h.source ?? "Adjustment"}{h.reason ? <span className="text-muted"> — {h.reason}</span> : null}</span>
+                <span className="text-muted whitespace-nowrap">{timeAgo(h.created_at)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+
+  const tabs: WorkspaceTab[] = [
+    { key: "basic", label: "Basic", icon: "📝", node: basic },
+    { key: "pricing", label: "Pricing", icon: "₹", node: pricing },
+    { key: "inventory", label: "Inventory", icon: "📦", badge: String(p.qty ?? 0), node: inventory },
+    { key: "photos", label: "Photos", icon: "📷", badge: String(photoCount), node: photos },
+    { key: "variants", label: "Variants", icon: "🎨", badge: String(variants.length), node: variantsPanel },
+    { key: "catalog", label: "Catalog", icon: "🏷️", node: catalog },
+    { key: "history", label: "History", icon: "🕑", node: historyPanel },
+  ];
+  const initial = (["basic", "pricing", "inventory", "photos", "variants", "catalog", "history"].includes(searchParams.tab ?? "")
+    ? searchParams.tab : "basic") as TabKey;
+
+  return (
+    <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
+      <div className="mb-5 max-w-4xl">
+        <Link href="/admin/catalogue" className="text-sm text-muted hover:text-ink">← Catalogue</Link>
+        <div className="flex items-center gap-3 mt-1 flex-wrap">
+          <h1 className="font-display text-4xl text-ink">{p.name}</h1>
+          <span className={`text-xs px-2 py-0.5 rounded-full ${published ? "bg-emerald-mist text-emerald-dark" : "bg-gold/15 text-gold-dark"}`}>{published ? "Visible" : "Hidden"}</span>
+        </div>
+        <p className="text-sm text-muted">{p.category?.name} · {p.sku} — everything for this product in one place.</p>
+      </div>
+      <ProductWorkspace tabs={tabs} initial={initial} />
     </main>
   );
 }
