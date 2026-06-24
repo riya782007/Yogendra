@@ -74,8 +74,8 @@ export function ProductEditor({
             <input name="name" defaultValue={product.name} className={field} required />
           </div>
           <div>
-            <label className={label}>SKU (fixed)</label>
-            <input value={product.sku} className={`${field} bg-cream/60 text-muted`} disabled />
+            <label className={label}>SKU <span className="text-muted/70">(editable — must be unique &amp; is scannable)</span></label>
+            <input name="new_sku" defaultValue={product.sku} className={`${field} uppercase`} pattern="[A-Za-z0-9\-]+" title="Letters, numbers and hyphens only" />
           </div>
           <div>
             <label className={label}>Category</label>

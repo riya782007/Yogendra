@@ -16,13 +16,14 @@ export function Diva({ roleName = "Owner" }: { roleName?: string }) {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
-  const [msgs, setMsgs] = useState<Msg[]>([{ who: "diva", text: "Hi Yogendra, I'm DIVA. I can analyse, navigate, and act — e.g. “how is BD1004 selling?”, “hide the polki choker”, “add 20 to BD1010”, “generate a photo for BD1002”, “open inventory”, “delete BD1099”. Speak or type. You can Stop me or type a new instruction anytime." }]);
+  const [msgs, setMsgs] = useState<Msg[]>([{ who: "diva", text: "Hi Yogendra, I'm DIVA. Talk to me in English, Hindi or Hinglish — e.g. “BD1010 me 20 add kar do”, “Blue kundan necklace ka stock kitna hai?”, “BD1004 ka wholesale price?”, “oxidised necklace ka catalog whatsapp pe bhejo”, “new product create karo”, “customer Ravi ko wholesale bana do”, “pending orders dikhao”. Speak or type — you can Stop me anytime." }]);
   const [steps, setSteps] = useState<Step[]>([]);
   const [awaiting, setAwaiting] = useState<number | null>(null);
   const recRef = useRef<any>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const stepsRef = useRef<Step[]>([]);
   const runIdRef = useRef(0);
+  const ctxRef = useRef<string | undefined>(undefined);
   const sync = (s: Step[]) => { stepsRef.current = s; setSteps([...s]); };
 
   useEffect(() => { logRef.current?.scrollTo({ top: 1e9, behavior: "smooth" }); }, [msgs, steps]);
@@ -45,8 +46,9 @@ export function Diva({ roleName = "Owner" }: { roleName?: string }) {
     if (!cmd) return;
     const myRun = ++runIdRef.current; // supersedes any in-flight run
     setInput(""); setMsgs((m) => [...m, { who: "owner", text: cmd }]); setBusy(true); setAwaiting(null); sync([]);
-    const plan = await divaPlan(cmd);
+    const plan = await divaPlan(cmd, ctxRef.current);
     if (myRun !== runIdRef.current) return;
+    ctxRef.current = plan.context; // carry conversational memory into the next turn
     setMsgs((m) => [...m, { who: "diva", text: plan.reply }]);
     if (plan.steps.length === 0) { setBusy(false); return; }
     sync(plan.steps.map((s) => ({ ...s, status: "pending" })));
