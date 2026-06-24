@@ -193,6 +193,41 @@ export async function setWholesaleOnlyAction(formData: FormData): Promise<void> 
   revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidatePath("/wholesale");
 }
 
+const LABEL_COLORS = ["emerald", "gold", "wine", "rose", "blue", "ink"];
+
+/** #9/#31: create an owner-defined label. */
+export async function createLabelAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("catalog.edit"))) return;
+  const name = String(formData.get("name") ?? "").trim();
+  const color = String(formData.get("color") ?? "emerald").trim();
+  if (!name) return;
+  await supabaseServer().from("labels").upsert({ name, color: LABEL_COLORS.includes(color) ? color : "emerald" }, { onConflict: "name", ignoreDuplicates: true });
+  revalidatePath("/admin/categories");
+}
+
+export async function deleteLabelAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("catalog.edit"))) return;
+  const id = String(formData.get("id") ?? "");
+  if (!id) return;
+  await supabaseServer().from("labels").delete().eq("id", id);
+  revalidatePath("/admin/categories");
+}
+
+/** #9/#31: attach/detach a label on a product (from the SKU's Catalog tab). */
+export async function toggleProductLabelAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("catalog.edit"))) return;
+  const sku = String(formData.get("sku") ?? "").trim();
+  const labelId = String(formData.get("label_id") ?? "");
+  const on = String(formData.get("on") ?? "") === "1";
+  if (!sku || !labelId) return;
+  const sb = supabaseServer();
+  const { data: p } = await sb.from("products").select("id").ilike("sku", sku).maybeSingle();
+  if (!p) return;
+  if (on) await sb.from("product_labels").upsert({ product_id: (p as any).id, label_id: labelId }, { onConflict: "product_id,label_id", ignoreDuplicates: true });
+  else await sb.from("product_labels").delete().eq("product_id", (p as any).id).eq("label_id", labelId);
+  revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/admin/catalogue"); revalidatePath("/admin/inventory");
+}
+
 /** Delete a product (or hide it if it has past orders, to keep the books intact). */
 export async function deleteProductAction(formData: FormData): Promise<{ ok: boolean; message: string }> {
   if (!(await requirePerm("catalog.delete"))) return { ok: false, message: "Your role can't delete products." };

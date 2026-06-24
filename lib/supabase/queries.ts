@@ -221,6 +221,13 @@ export async function getPublishedProducts(): Promise<(DbProduct & { category: D
   return (data as any) ?? [];
 }
 
+/** Owner-defined labels (#9/#31). */
+export async function getLabels() {
+  const sb = supabaseServer();
+  const { data } = await sb.from("labels").select("id,name,color,sort").order("sort").order("name");
+  return (data as any[]) ?? [];
+}
+
 /** Last purchase cost per product & per variant (#11/#30) — paise. */
 export async function getLastPurchaseCosts(): Promise<{ byProduct: Record<string, number>; byVariant: Record<string, number> }> {
   const sb = supabaseServer();
@@ -281,7 +288,7 @@ export async function getProductBySku(sku: string): Promise<
   const sb = supabaseServer();
   const { data } = await sb
     .from("products")
-    .select("*, category:categories(id,name,slug), variants(*), images:product_images(*)")
+    .select("*, category:categories(id,name,slug), variants(*), images:product_images(*), product_labels(label_id)")
     .eq("sku", sku)
     .maybeSingle();
   return (data as any) ?? null;

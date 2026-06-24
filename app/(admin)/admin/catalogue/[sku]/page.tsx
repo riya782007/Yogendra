@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import {
   getProductBySku, getCategories, getPricingFormula, getSubcategories,
-  getProductSalesStats, getStockHistory, getVariantOptions,
+  getProductSalesStats, getStockHistory, getVariantOptions, getLabels,
 } from "@/lib/supabase/queries";
 import { ProductEditor, type EditorProduct } from "@/components/admin/ProductEditor";
 import { ProductWorkspace, type WorkspaceTab, type TabKey } from "@/components/admin/ProductWorkspace";
@@ -11,7 +11,13 @@ import { ProductStockAdjust } from "@/components/admin/ProductStockAdjust";
 import { MediaCard } from "@/components/admin/MediaCard";
 import { requirePerm, getSession, can } from "@/lib/auth";
 import { addVariantAction, updateVariantAction, deleteVariantAction, addVariantImageAction, deleteVariantImageAction } from "@/app/actions/variants";
-import { setProductVisibilityAction, moveProductToSubcategoryAction, savePricingAction, setWholesaleOnlyAction } from "@/app/actions/catalog";
+import { setProductVisibilityAction, moveProductToSubcategoryAction, savePricingAction, setWholesaleOnlyAction, toggleProductLabelAction } from "@/app/actions/catalog";
+
+const LABEL_CHIP: Record<string, string> = {
+  emerald: "bg-emerald-mist text-emerald-dark", gold: "bg-gold/15 text-gold-dark",
+  wine: "bg-wine/10 text-wine", rose: "bg-rose/10 text-rose",
+  blue: "bg-blue-50 text-blue-700", ink: "bg-ink/10 text-ink",
+};
 import { formatPaise, computePrices, resolvePrices, overridesOf } from "@/lib/pricing";
 import { geminiConfigured } from "@/lib/ai/gemini";
 
@@ -36,12 +42,14 @@ export default async function ProductPage({ params, searchParams }: { params: { 
   ]);
   if (!p) notFound();
 
-  const [subcategories, stats, history, vopts] = await Promise.all([
+  const [subcategories, stats, history, vopts, allLabels] = await Promise.all([
     getSubcategories({ categoryId: p.category?.id }),
     getProductSalesStats(p.sku).catch(() => null),
     getStockHistory(p.id).catch(() => []),
     getVariantOptions().catch(() => ({ color: [], size: [], polish: [] })),
+    getLabels().catch(() => []),
   ]);
+  const labelIds = new Set((((p as any).product_labels as any[]) ?? []).map((x) => x.label_id));
 
   const session = getSession();
   const gc = (p.generated_content as any) ?? {};
@@ -282,6 +290,30 @@ export default async function ProductPage({ params, searchParams }: { params: { 
           <button className="px-4 py-2 rounded-xl bg-ink/5 text-ink text-sm hover:bg-ink/10">Save</button>
           {subcategories.length === 0 && <span className="text-xs text-muted">No subcategories under {p.category?.name ?? "this category"} yet — add some in Categories.</span>}
         </form>
+      </div>
+
+      <div className={card}>
+        <h3 className="font-medium text-ink mb-1">Labels</h3>
+        <p className="text-xs text-muted mb-3">Stick your own labels on this product. Create new ones in <Link href="/admin/categories" className="text-emerald nav-link">Categories</Link>.</p>
+        {allLabels.length === 0 ? (
+          <p className="text-sm text-muted">No labels yet — add some in Categories.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {allLabels.map((l: any) => {
+              const on = labelIds.has(l.id);
+              return (
+                <form key={l.id} action={toggleProductLabelAction}>
+                  <input type="hidden" name="sku" value={p.sku} />
+                  <input type="hidden" name="label_id" value={l.id} />
+                  <input type="hidden" name="on" value={on ? "0" : "1"} />
+                  <button className={`inline-flex items-center gap-1 rounded-full text-xs px-3 py-1.5 border transition-all ${on ? `${LABEL_CHIP[l.color] ?? LABEL_CHIP.emerald} border-transparent` : "bg-white text-muted border-sand hover:border-gold"}`}>
+                    {on ? "✓ " : "+ "}{l.name}
+                  </button>
+                </form>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className={card}>
