@@ -221,6 +221,18 @@ export async function getPublishedProducts(): Promise<(DbProduct & { category: D
   return (data as any) ?? [];
 }
 
+/** Self-growing master lists for variant attributes (colour / size / polish). */
+export async function getVariantOptions(): Promise<{ color: string[]; size: string[]; polish: string[] }> {
+  const sb = supabaseServer();
+  const { data } = await sb.from("variant_options").select("kind,value,sort").order("sort").order("value");
+  const out = { color: [] as string[], size: [] as string[], polish: [] as string[] };
+  for (const r of (data as any[]) ?? []) {
+    const k = (r as any).kind as "color" | "size" | "polish";
+    if (out[k]) out[k].push((r as any).value);
+  }
+  return out;
+}
+
 export async function getProductBySku(sku: string): Promise<
   | (DbProduct & { category: DbCategory; variants: DbVariant[]; images: DbImage[] })
   | null

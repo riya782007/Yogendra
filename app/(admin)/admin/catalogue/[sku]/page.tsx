@@ -3,14 +3,14 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import {
   getProductBySku, getCategories, getPricingFormula, getSubcategories,
-  getProductSalesStats, getStockHistory,
+  getProductSalesStats, getStockHistory, getVariantOptions,
 } from "@/lib/supabase/queries";
 import { ProductEditor, type EditorProduct } from "@/components/admin/ProductEditor";
 import { ProductWorkspace, type WorkspaceTab, type TabKey } from "@/components/admin/ProductWorkspace";
 import { ProductStockAdjust } from "@/components/admin/ProductStockAdjust";
 import { MediaCard } from "@/components/admin/MediaCard";
 import { requirePerm, getSession, can } from "@/lib/auth";
-import { addVariantAction, updateVariantAction, deleteVariantAction } from "@/app/actions/variants";
+import { addVariantAction, updateVariantAction, deleteVariantAction, addVariantImageAction, deleteVariantImageAction } from "@/app/actions/variants";
 import { setProductVisibilityAction, moveProductToSubcategoryAction, savePricingAction } from "@/app/actions/catalog";
 import { formatPaise, computePrices, resolvePrices, overridesOf } from "@/lib/pricing";
 import { geminiConfigured } from "@/lib/ai/gemini";
@@ -36,10 +36,11 @@ export default async function ProductPage({ params, searchParams }: { params: { 
   ]);
   if (!p) notFound();
 
-  const [subcategories, stats, history] = await Promise.all([
+  const [subcategories, stats, history, vopts] = await Promise.all([
     getSubcategories({ categoryId: p.category?.id }),
     getProductSalesStats(p.sku).catch(() => null),
     getStockHistory(p.id).catch(() => []),
+    getVariantOptions().catch(() => ({ color: [], size: [], polish: [] })),
   ]);
 
   const session = getSession();
@@ -181,31 +182,66 @@ export default async function ProductPage({ params, searchParams }: { params: { 
     </div>
   );
 
+  const vInput = "rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald";
   const variantsPanel = (
     <div className={card}>
+      {/* Datalists power as-you-type suggestions; typing a brand-new value grows the master list. */}
+      <datalist id="opt-color">{vopts.color.map((o) => <option key={o} value={o} />)}</datalist>
+      <datalist id="opt-size">{vopts.size.map((o) => <option key={o} value={o} />)}</datalist>
+      <datalist id="opt-polish">{vopts.polish.map((o) => <option key={o} value={o} />)}</datalist>
+
       <h3 className="font-medium text-ink mb-1">Variants</h3>
-      <p className="text-xs text-muted mb-4">Colour/size options — each gets its own SKU and stock. Variant stock total: <b className="text-ink">{variantStock}</b> pcs.</p>
-      <div className="space-y-2 mb-4">
+      <p className="text-xs text-muted mb-4">Each variant has its own <b>colour, size &amp; polish</b>, SKU, stock and photos. Variant stock total: <b className="text-ink">{variantStock}</b> pcs. Pick from the suggestions or type a new value — it’s remembered for next time.</p>
+
+      <div className="space-y-4 mb-4">
         {variants.length === 0 && <p className="text-sm text-muted">No variants yet — this is a simple product.</p>}
-        {variants.map((v: any) => (
-          <form key={v.id} action={updateVariantAction} className="flex flex-wrap items-center gap-2">
-            <input type="hidden" name="id" value={v.id} />
-            <input type="hidden" name="product_sku" value={p.sku} />
-            <input name="color" defaultValue={v.color ?? ""} placeholder="Colour / size" className="rounded-xl border border-sand px-3 py-2 text-sm w-36 outline-none focus:border-emerald" />
-            <input name="sku" defaultValue={v.sku ?? ""} placeholder="Variant SKU" className="rounded-xl border border-sand px-3 py-2 text-sm w-40 outline-none focus:border-emerald font-mono" />
-            <label className="text-xs text-muted flex items-center gap-1">Stock <input name="qty" type="number" min={0} defaultValue={v.qty ?? 0} className="rounded-xl border border-sand px-2 py-2 text-sm w-20 text-center outline-none focus:border-emerald" /></label>
-            <button className="px-3 py-2 rounded-xl bg-ink/5 text-ink text-xs hover:bg-ink/10">Save</button>
-            <button formAction={deleteVariantAction} className="text-muted hover:text-rose text-xs">Delete</button>
-          </form>
-        ))}
+        {variants.map((v: any) => {
+          const imgs: string[] = v.image_paths ?? [];
+          return (
+            <div key={v.id} className="rounded-xl border border-sand/70 p-3">
+              <form action={updateVariantAction} className="flex flex-wrap items-end gap-2">
+                <input type="hidden" name="id" value={v.id} />
+                <input type="hidden" name="product_sku" value={p.sku} />
+                <label className="text-[11px] text-muted">Colour<input name="color" list="opt-color" defaultValue={v.color ?? ""} placeholder="Colour" className={`${vInput} w-28 block mt-0.5`} /></label>
+                <label className="text-[11px] text-muted">Size<input name="size" list="opt-size" defaultValue={v.size ?? ""} placeholder="Size" className={`${vInput} w-24 block mt-0.5`} /></label>
+                <label className="text-[11px] text-muted">Polish<input name="polish" list="opt-polish" defaultValue={v.polish ?? ""} placeholder="Polish" className={`${vInput} w-28 block mt-0.5`} /></label>
+                <label className="text-[11px] text-muted">SKU<input name="sku" defaultValue={v.sku ?? ""} placeholder="auto" className={`${vInput} w-36 block mt-0.5 font-mono`} /></label>
+                <label className="text-[11px] text-muted">Stock<input name="qty" type="number" min={0} defaultValue={v.qty ?? 0} className={`${vInput} w-16 text-center block mt-0.5`} /></label>
+                <button className="px-3 py-2 rounded-xl bg-ink/5 text-ink text-xs hover:bg-ink/10">Save</button>
+                <button formAction={deleteVariantAction} className="text-muted hover:text-rose text-xs px-1">Delete</button>
+              </form>
+              {/* Per-variant photos (#12) */}
+              <div className="flex flex-wrap items-center gap-2 mt-2.5">
+                {imgs.map((u) => (
+                  <div key={u} className="relative h-14 w-14 rounded-lg overflow-hidden border border-sand group">
+                    <img src={u} alt={v.color ?? v.sku} className="h-full w-full object-cover" />
+                    <form action={deleteVariantImageAction} className="absolute top-0 right-0">
+                      <input type="hidden" name="id" value={v.id} /><input type="hidden" name="product_sku" value={p.sku} /><input type="hidden" name="url" value={u} />
+                      <button className="bg-ink/70 text-white text-[10px] leading-none px-1 py-0.5 rounded-bl" title="Remove photo">✕</button>
+                    </form>
+                  </div>
+                ))}
+                <form action={addVariantImageAction} className="flex items-center gap-1.5">
+                  <input type="hidden" name="id" value={v.id} /><input type="hidden" name="product_sku" value={p.sku} />
+                  <input type="file" name="images" accept="image/*" multiple className="text-[11px] w-36 file:mr-1.5 file:rounded file:border-0 file:bg-emerald-mist file:text-emerald-dark file:px-2 file:py-1 file:text-[11px] file:cursor-pointer" />
+                  <button className="px-2.5 py-1.5 rounded-lg bg-emerald text-white text-xs">Add photo</button>
+                </form>
+              </div>
+            </div>
+          );
+        })}
       </div>
-      <form action={addVariantAction} className="flex flex-wrap items-center gap-2 border-t border-sand/60 pt-4">
+
+      <form action={addVariantAction} className="flex flex-wrap items-end gap-2 border-t border-sand/60 pt-4">
         <input type="hidden" name="product_sku" value={p.sku} />
-        <input name="color" placeholder="New colour / size *" className="rounded-xl border border-sand px-3 py-2 text-sm w-44 outline-none focus:border-emerald" required />
-        <input name="sku" placeholder="SKU (blank = auto)" className="rounded-xl border border-sand px-3 py-2 text-sm w-44 outline-none focus:border-emerald font-mono" />
-        <label className="text-xs text-muted flex items-center gap-1">Stock <input name="qty" type="number" min={0} defaultValue={0} className="rounded-xl border border-sand px-2 py-2 text-sm w-20 text-center outline-none focus:border-emerald" /></label>
+        <label className="text-[11px] text-muted">Colour<input name="color" list="opt-color" placeholder="e.g. Green" className={`${vInput} w-28 block mt-0.5`} /></label>
+        <label className="text-[11px] text-muted">Size<input name="size" list="opt-size" placeholder="e.g. 2.6" className={`${vInput} w-24 block mt-0.5`} /></label>
+        <label className="text-[11px] text-muted">Polish<input name="polish" list="opt-polish" placeholder="e.g. Oxidised" className={`${vInput} w-28 block mt-0.5`} /></label>
+        <label className="text-[11px] text-muted">SKU<input name="sku" placeholder="blank = auto" className={`${vInput} w-36 block mt-0.5 font-mono`} /></label>
+        <label className="text-[11px] text-muted">Stock<input name="qty" type="number" min={0} defaultValue={0} className={`${vInput} w-16 text-center block mt-0.5`} /></label>
         <button className="btn-primary px-4 py-2 text-sm font-medium">+ Add variant</button>
       </form>
+      <p className="text-[11px] text-muted mt-2">At least one of colour / size / polish is required. Add photos to each variant so the storefront shows the right piece per option.</p>
     </div>
   );
 
