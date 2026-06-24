@@ -6,14 +6,16 @@ import { formatPaise } from "@/lib/pricing";
 import { PrintButton } from "@/components/admin/PrintButton";
 import { BUSINESS, HSN_JEWELLERY, GST_RATE, gstSplit, gstSplitExclusive, stateCodeFromGstin, amountInWords } from "@/lib/business";
 import { getSession, can } from "@/lib/auth";
-import { recordPaymentAction, setDocTypeAction } from "@/app/actions/payments";
+import { recordPaymentAction, setDocTypeAction, saveOrderNoteAction } from "@/app/actions/payments";
 
 export const metadata = { title: "Invoice" };
 
 export default async function Invoice({ params }: { params: { id: string } }) {
   const data = await getOrder(params.id);
   if (!data) notFound();
-  const { order, items } = data;
+  const { order } = data;
+  // #4/#35: list bill lines in A–Z SKU order so picking/checking is predictable.
+  const items = [...data.items].sort((a: any, b: any) => String(a.product?.sku ?? "").localeCompare(String(b.product?.sku ?? "")));
 
   const isCash = order.bill_type === "cash";
   const isProforma = order.doc_type === "proforma";
@@ -106,7 +108,7 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                 return (
                   <tr key={i} className="border-b border-sand/60">
                     <td className={`${td} text-muted`}>{i + 1}</td>
-                    <td className={`${td} text-ink`}>{it.product?.name}<span className="text-muted text-xs"> · {it.product?.sku}</span></td>
+                    <td className={`${td} text-ink`}>{it.product?.name} <span className="font-mono font-semibold text-ink bg-cream border border-sand rounded px-1.5 py-0.5 text-[11px] whitespace-nowrap">{it.product?.sku}</span></td>
                     {!isCash && <td className={`${td} text-center text-muted`}>{HSN_JEWELLERY}</td>}
                     <td className={`${td} text-right`}>{it.qty}</td>
                     <td className={`${td} text-right`}>{formatPaise(unit)}</td>
@@ -170,6 +172,16 @@ export default async function Invoice({ params }: { params: { id: string } }) {
         {/* Admin controls (never printed) */}
         {(can(session, "billing.sell") || can(session, "billing.gst")) && (
           <div className="no-print grid sm:grid-cols-2 gap-4 mt-5">
+            {can(session, "billing.sell") && (
+              <div className="bg-white rounded-2xl p-5 shadow-card sm:col-span-2">
+                <h2 className="font-medium text-ink mb-1">Internal note <span className="text-xs text-muted font-normal">· staff only, never printed</span></h2>
+                <form action={saveOrderNoteAction} className="flex flex-col sm:flex-row gap-2 mt-2">
+                  <input type="hidden" name="order_id" value={order.id} />
+                  <textarea name="admin_note" rows={2} defaultValue={order.admin_note ?? ""} placeholder="e.g. balance to be collected on delivery; discount given verbally; replacement piece pending…" className="flex-1 rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald" />
+                  <button className="btn-primary px-4 py-2 text-sm font-medium self-start">Save note</button>
+                </form>
+              </div>
+            )}
             {can(session, "billing.sell") && balanceDue > 0 && (
               <div className="bg-white rounded-2xl p-5 shadow-card">
                 <h2 className="font-medium text-ink mb-1">Record a payment</h2>

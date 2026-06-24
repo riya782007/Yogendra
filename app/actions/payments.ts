@@ -13,6 +13,16 @@ export async function recordPaymentAction(formData: FormData): Promise<void> {
   revalidatePath(`/admin/invoice/${orderId}`); revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard");
 }
 
+/** Save an internal note on an order (#5/#34) — admin reference only, never printed. */
+export async function saveOrderNoteAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("billing.sell"))) return;
+  const orderId = String(formData.get("order_id") ?? "");
+  const note = String(formData.get("admin_note") ?? "").trim() || null;
+  if (!orderId) return;
+  await supabaseServer().from("orders").update({ admin_note: note }).eq("id", orderId);
+  revalidatePath(`/admin/invoice/${orderId}`);
+}
+
 /** Switch a bill between Proforma and final Tax Invoice. */
 export async function setDocTypeAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("billing.gst"))) return;
