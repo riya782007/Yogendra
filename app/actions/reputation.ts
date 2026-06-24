@@ -1,9 +1,11 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
+import { requirePerm } from "@/lib/auth";
 import { groqChat, openaiChat, groqConfigured, openaiConfigured } from "@/lib/ai/providers";
 
 export async function draftReviewReplyAction(reviewId: string): Promise<{ ok: boolean; reply: string }> {
+  if (!(await requirePerm("reviews.respond"))) return { ok: false, reply: "" };
   const sb = supabaseServer();
   const { data: r } = await sb.from("reviews").select("author_name,rating,body,product:products(name)").eq("id", reviewId).maybeSingle();
   if (!r) return { ok: false, reply: "" };
@@ -22,6 +24,7 @@ export async function draftReviewReplyAction(reviewId: string): Promise<{ ok: bo
 }
 
 export async function saveReviewReplyAction(reviewId: string, text: string): Promise<{ ok: boolean }> {
+  if (!(await requirePerm("reviews.respond"))) return { ok: false };
   await supabaseServer().from("reviews").update({ response: text, responded_at: new Date().toISOString() }).eq("id", reviewId);
   revalidatePath("/admin/reviews");
   return { ok: true };

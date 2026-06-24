@@ -5,6 +5,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 
 export async function createEstimateAction(input: { items: { sku: string; qty: number }[]; customer: { name?: string; phone?: string } }): Promise<{ ok: boolean; estimateId?: string; total?: number; error?: string }> {
+  if (!(await requirePerm("estimates.create"))) return { ok: false, error: "Your role can't create estimates." };
   if (!input.items?.length) return { ok: false, error: "Add at least one item" };
   const sb = supabaseServer();
   const { data, error } = await sb.rpc("create_estimate", { p_items: input.items, p_customer: input.customer ?? {} });
@@ -17,6 +18,7 @@ export async function createEstimateAction(input: { items: { sku: string; qty: n
 }
 
 export async function convertEstimateAction(formData: FormData) {
+  if (!(await requirePerm("estimates.bill"))) return;
   const id = String(formData.get("id"));
   await supabaseServer().rpc("convert_estimate", { p_estimate_id: id });
   revalidatePath("/admin/estimates"); revalidatePath("/admin/dashboard");
@@ -50,12 +52,14 @@ export async function denyEstimateAction(formData: FormData) {
 
 /** Re-open a held/denied estimate. */
 export async function reopenEstimateAction(formData: FormData) {
+  if (!(await requirePerm("estimates.create"))) return;
   const id = String(formData.get("id"));
   await supabaseServer().from("estimates").update({ status: "open" }).eq("id", id);
   revalidatePath("/admin/estimates");
 }
 
 export async function recordReturnAction(input: { orderId: string; reason: string; items: { product_id: string; qty: number }[] }): Promise<{ ok: boolean; qty?: number; error?: string }> {
+  if (!(await requirePerm("billing.refund"))) return { ok: false, error: "Your role can't process returns/refunds." };
   if (!input.items?.length) return { ok: false, error: "Select items to return" };
   if (!input.reason?.trim()) return { ok: false, error: "Capture a return reason" };
   const { data, error } = await supabaseServer().rpc("record_sales_return", { p_order_id: input.orderId, p_reason: input.reason, p_items: input.items });
