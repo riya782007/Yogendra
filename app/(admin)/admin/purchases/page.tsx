@@ -1,5 +1,5 @@
 export const dynamic = "force-dynamic";
-import { getSuppliers, getProductsLite, getRecentPurchases } from "@/lib/supabase/queries";
+import { getSuppliers, getProductsForPurchase, getRecentPurchases } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { PurchaseClient } from "@/components/admin/PurchaseClient";
 import { createSupplierAction } from "@/app/actions/purchases";
@@ -7,7 +7,7 @@ import { createSupplierAction } from "@/app/actions/purchases";
 export const metadata = { title: "Owner Console · Purchases" };
 
 export default async function Purchases() {
-  const [suppliers, products, purchases] = await Promise.all([getSuppliers(), getProductsLite(), getRecentPurchases()]);
+  const [suppliers, products, purchases] = await Promise.all([getSuppliers(), getProductsForPurchase(), getRecentPurchases()]);
   return (
     <main className="p-8 bg-cream/40 min-h-screen max-w-4xl">
       <h1 className="font-display text-4xl text-ink mb-1">Purchases</h1>

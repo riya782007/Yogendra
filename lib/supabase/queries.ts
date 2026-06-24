@@ -504,6 +504,19 @@ export async function getProductsLite() {
   const { data } = await sb.from("products").select("id,name,sku").order("sku");
   return (data as any[]) ?? [];
 }
+
+/** Products plus their variants — for purchase entry where stock can land on a specific variant. */
+export async function getProductsForPurchase() {
+  const sb = supabaseServer();
+  const { data } = await sb.from("products").select("id,name,sku, variants(id,sku,color,size,polish)").order("sku");
+  return ((data as any[]) ?? []).map((p) => ({
+    id: p.id, name: p.name, sku: p.sku,
+    variants: ((p.variants as any[]) ?? []).map((v) => ({
+      id: v.id, sku: v.sku,
+      label: [v.color, v.size, v.polish].filter(Boolean).join(" · ") || v.sku,
+    })),
+  }));
+}
 export async function getRecentPurchases() {
   const sb = supabaseServer();
   const { data } = await sb.from("purchases")

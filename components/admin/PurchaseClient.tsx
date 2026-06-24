@@ -4,13 +4,14 @@ import { formatPaise } from "@/lib/pricing";
 import { recordPurchaseAction } from "@/app/actions/purchases";
 
 type Sup = { id: string; name: string; city: string | null };
-type Prod = { id: string; name: string; sku: string };
-type Line = { supplierSku: string; mappedProductId: string; mappedName: string; qty: string; cost: string };
+type Variant = { id: string; sku: string; label: string };
+type Prod = { id: string; name: string; sku: string; variants?: Variant[] };
+type Line = { supplierSku: string; mappedProductId: string; mappedName: string; variantId: string; qty: string; cost: string };
 
 export function PurchaseClient({ suppliers, products }: { suppliers: Sup[]; products: Prod[] }) {
   const [supplierId, setSupplierId] = useState("");
   const [billNo, setBillNo] = useState("");
-  const [lines, setLines] = useState<Line[]>([{ supplierSku: "", mappedProductId: "", mappedName: "", qty: "", cost: "" }]);
+  const [lines, setLines] = useState<Line[]>([{ supplierSku: "", mappedProductId: "", mappedName: "", variantId: "", qty: "", cost: "" }]);
   const [openIdx, setOpenIdx] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -24,10 +25,10 @@ export function PurchaseClient({ suppliers, products }: { suppliers: Sup[]; prod
     setBusy(true); setMsg("");
     const res = await recordPurchaseAction({
       supplierId, billNo,
-      items: lines.map((l) => ({ supplierSku: l.supplierSku, mappedProductId: l.mappedProductId, qty: Number(l.qty) || 0, unitCostRupees: Number(l.cost) || 0 })),
+      items: lines.map((l) => ({ supplierSku: l.supplierSku, mappedProductId: l.mappedProductId, variantId: l.variantId, qty: Number(l.qty) || 0, unitCostRupees: Number(l.cost) || 0 })),
     });
     setBusy(false);
-    if (res.ok) { setMsg(`✓ Purchase recorded (${formatPaise(res.total ?? 0)}) — mapped items added to stock.`); setLines([{ supplierSku: "", mappedProductId: "", mappedName: "", qty: "", cost: "" }]); setBillNo(""); }
+    if (res.ok) { setMsg(`✓ Purchase recorded (${formatPaise(res.total ?? 0)}) — mapped items added to stock.`); setLines([{ supplierSku: "", mappedProductId: "", mappedName: "", variantId: "", qty: "", cost: "" }]); setBillNo(""); }
     else setMsg(`✕ ${res.error}`);
   }
 
@@ -49,11 +50,23 @@ export function PurchaseClient({ suppliers, products }: { suppliers: Sup[]; prod
               <input className={input + " w-full"} placeholder="Supplier item / code" value={l.supplierSku}
                 onChange={(e) => { set(i, { supplierSku: e.target.value }); setOpenIdx(i); }} onFocus={() => setOpenIdx(i)} />
               {l.mappedName ? (
-                <p className="text-[11px] text-emerald-dark mt-0.5">→ {l.mappedName} <button onClick={() => set(i, { mappedProductId: "", mappedName: "" })} className="text-muted underline ml-1">change</button></p>
+                <>
+                  <p className="text-[11px] text-emerald-dark mt-0.5">→ {l.mappedName} <button onClick={() => set(i, { mappedProductId: "", mappedName: "", variantId: "" })} className="text-muted underline ml-1">change</button></p>
+                  {(() => {
+                    const vs = products.find((p) => p.id === l.mappedProductId)?.variants ?? [];
+                    if (!vs.length) return null;
+                    return (
+                      <select className={input + " w-full mt-1 text-xs"} value={l.variantId} onChange={(e) => set(i, { variantId: e.target.value })}>
+                        <option value="">Whole product (no specific variant)</option>
+                        {vs.map((v) => <option key={v.id} value={v.id}>{v.label} · {v.sku}</option>)}
+                      </select>
+                    );
+                  })()}
+                </>
               ) : openIdx === i && suggest(l.supplierSku).length > 0 && (
                 <div className="absolute z-10 left-0 right-0 mt-1 bg-white rounded-xl shadow-luxe border border-sand overflow-hidden">
                   {suggest(l.supplierSku).map((p) => (
-                    <button key={p.id} onClick={() => { set(i, { mappedProductId: p.id, mappedName: `${p.name} (${p.sku})` }); setOpenIdx(null); }}
+                    <button key={p.id} onClick={() => { set(i, { mappedProductId: p.id, mappedName: `${p.name} (${p.sku})`, variantId: "" }); setOpenIdx(null); }}
                       className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-mist">{p.name} <span className="text-muted">· {p.sku}</span></button>
                   ))}
                 </div>
@@ -65,7 +78,7 @@ export function PurchaseClient({ suppliers, products }: { suppliers: Sup[]; prod
           </div>
         ))}
       </div>
-      <button onClick={() => setLines((p) => [...p, { supplierSku: "", mappedProductId: "", mappedName: "", qty: "", cost: "" }])} className="text-sm text-emerald nav-link mt-3">+ Add line</button>
+      <button onClick={() => setLines((p) => [...p, { supplierSku: "", mappedProductId: "", mappedName: "", variantId: "", qty: "", cost: "" }])} className="text-sm text-emerald nav-link mt-3">+ Add line</button>
 
       <div className="flex items-center justify-between mt-5 border-t border-sand pt-4">
         <span className="text-lg font-semibold text-ink">Total: {formatPaise(total * 100)}</span>
