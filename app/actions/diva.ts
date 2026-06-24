@@ -314,6 +314,19 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         revalidatePath("/admin/inventory");
         return { ok: true, message: `${delta > 0 ? "Added" : "Removed"} ${qty} — ${p.name} (${p.sku}) is now ${newQty} in stock.` };
       }
+      case "record_damage": {
+        const sku = String(args.sku ?? "").trim().toUpperCase();
+        const qty = Math.abs(Math.trunc(Number(args.qty) || 0));
+        if (!qty) return { ok: false, message: "How many pieces are damaged?" };
+        const prod = sku ? await getProductBySku(sku) : await resolveProductByName(String(args.query ?? ""));
+        if (!prod) return { ok: false, message: `I couldn't find ${sku || `"${args.query}"`}.` };
+        const sb = supabaseServer();
+        const newQty = Math.max(0, (prod.qty ?? 0) - qty);
+        await sb.from("products").update({ qty: newQty, last_movement_at: new Date().toISOString() }).eq("id", prod.id);
+        await sb.from("stock_adjustments").insert({ product_id: prod.id, sku: prod.sku, delta: -qty, source: "Damaged — removed", reason: String(args.reason ?? "").trim() || null, kind: "damage" });
+        revalidatePath("/admin/inventory"); revalidatePath(`/admin/catalogue/${prod.sku}`);
+        return { ok: true, message: `Marked ${qty} ${prod.name} (${prod.sku}) as damaged — stock is now ${newQty}.` };
+      }
       case "create_product": {
         const name = String(args.name ?? "").trim();
         const categoryName = String(args.category ?? "").trim();

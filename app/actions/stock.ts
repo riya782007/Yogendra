@@ -3,16 +3,31 @@ import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 
+/** Map a human "source" label to a typed movement kind (for reports & the audit trail). */
+export function inferKind(source: string): string {
+  const s = source.toLowerCase();
+  if (/(damage|broken|lost|defect)/.test(s)) return "damage";
+  if (/(purchase|restock|received|supplier)/.test(s)) return "purchase";
+  if (/(return|cancel|sample)/.test(s)) return "return";
+  if (/(found|recount|count)/.test(s)) return "recount";
+  if (/(correct)/.test(s)) return "correction";
+  if (/(sold|sale|pos)/.test(s)) return "sale";
+  return "manual";
+}
+
 /**
- * Adjust a product's stock by a signed delta, tagged with a SOURCE so re-added
- * inventory is always traceable (e.g. items a walk-in removed from the cart in-store).
- * Logged to stock_adjustments for the audit trail.
+ * Adjust stock by a signed delta, tagged with a SOURCE + typed KIND so every movement
+ * is traceable. Works at PRODUCT level, or at VARIANT level when `variant_id` is given
+ * (in which case the product's qty is rolled up from the sum of its variants).
+ * Logged to stock_adjustments.
  */
 export async function adjustStockAction(formData: FormData): Promise<void> {
   const sku = String(formData.get("sku") ?? "").trim();
+  const variantId = String(formData.get("variant_id") ?? "").trim() || null;
   const delta = Math.trunc(Number(formData.get("delta") ?? 0));
   const source = String(formData.get("source") ?? "").trim() || "Manual adjustment";
   const reason = String(formData.get("reason") ?? "").trim() || null;
+  const kind = String(formData.get("kind") ?? "").trim() || inferKind(source);
   if (!sku || !delta) return;
   // Strict: adding needs inventory.add, removing needs inventory.remove.
   if (!(await requirePerm(delta > 0 ? "inventory.add" : "inventory.remove"))) return;
@@ -20,9 +35,24 @@ export async function adjustStockAction(formData: FormData): Promise<void> {
   const sb = supabaseServer();
   const { data: p } = await sb.from("products").select("id,qty").eq("sku", sku).maybeSingle();
   if (!p) return;
-  const newQty = Math.max(0, ((p as any).qty ?? 0) + delta);
-  await sb.from("products").update({ qty: newQty, last_movement_at: new Date().toISOString() }).eq("id", (p as any).id);
-  await sb.from("stock_adjustments").insert({ product_id: (p as any).id, sku, delta, source, reason });
+  const pid = (p as any).id;
+  const now = new Date().toISOString();
+
+  if (variantId) {
+    // Variant-level: adjust the variant, then roll the product qty up to the variant sum.
+    const { data: v } = await sb.from("variants").select("id,qty,sku").eq("id", variantId).eq("product_id", pid).maybeSingle();
+    if (!v) return;
+    const vNew = Math.max(0, ((v as any).qty ?? 0) + delta);
+    await sb.from("variants").update({ qty: vNew }).eq("id", variantId);
+    const { data: siblings } = await sb.from("variants").select("qty").eq("product_id", pid);
+    const total = ((siblings as any[]) ?? []).reduce((s, x) => s + (x.qty ?? 0), 0);
+    await sb.from("products").update({ qty: total, last_movement_at: now }).eq("id", pid);
+    await sb.from("stock_adjustments").insert({ product_id: pid, variant_id: variantId, sku: (v as any).sku ?? sku, delta, source, reason, kind });
+  } else {
+    const newQty = Math.max(0, ((p as any).qty ?? 0) + delta);
+    await sb.from("products").update({ qty: newQty, last_movement_at: now }).eq("id", pid);
+    await sb.from("stock_adjustments").insert({ product_id: pid, sku, delta, source, reason, kind });
+  }
 
   revalidatePath("/admin/inventory");
   revalidatePath("/admin/dashboard");

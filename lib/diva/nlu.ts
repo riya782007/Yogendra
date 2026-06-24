@@ -322,6 +322,15 @@ export function interpret(commandRaw: string, ctx: DivaContext = {}): NluPlan {
       ack(lang, `Checking the ${tier === "all" ? "" : tier + " "}price for "${subject}".`, `"${subject}" ka price dekh rahi hun.`), 0.65, remember({ lastSubject: subject }));
   }
 
+  // ---- 7c) Damage: "BD1004 ka 2 piece damage ho gaya" ------------------------
+  if (hasAny(lower, ["damage", "damaged", "kharab", "toot", "tut", "tutt", "broken", "defective", "fut"]) && (sku || subject || qty)) {
+    if (!qty) return askFor(base, "qty", "record_damage", { sku, subject }, ack(lang, "How many pieces are damaged?", "Kitne pieces damage hue?"), ctx);
+    if (sku) return mk(base, [step("record_damage", { sku, qty }, `Damage ${qty} → ${sku}`)],
+      ack(lang, `Logging ${qty} damaged for ${sku}.`, `${sku} ke ${qty} piece damaged mark kar rahi hun.`), 0.82, remember({ lastSku: sku }));
+    if (subject) return mk(base, [step("record_damage", { query: subject, qty }, `Damage ${qty} → "${subject}"`)],
+      ack(lang, `Logging ${qty} damaged for "${subject}".`, `"${subject}" ke ${qty} damaged mark kar rahi hun.`), 0.6, remember({ lastSubject: subject }));
+  }
+
   // ---- 8) Stock add / remove --------------------------------------------------
   if (hasAny(lower, ADD_WORDS) && (/(stock|inventory|maal|qty|quantity|pieces|piece|pcs|units?)/.test(lower) || qty)) {
     return stockPlan(base, ctx, lang, "add_stock", sku, subject, qty);
@@ -498,6 +507,13 @@ function continuePending(command: string, lang: NluLang, ctx: DivaContext): NluP
 
   if (p.intent === "add_stock" || p.intent === "remove_stock") {
     return stockPlan(base, ctx, lang, p.intent as any, slots.sku, slots.subject, slots.qty);
+  }
+  if (p.intent === "record_damage") {
+    if (!slots.qty) return askFor(base, "qty", "record_damage", slots, ack(lang, "How many pieces are damaged?", "Kitne pieces damage hue?"), ctx);
+    if (slots.sku) return mk(base, [step("record_damage", { sku: slots.sku, qty: slots.qty }, `Damage ${slots.qty} → ${slots.sku}`)],
+      ack(lang, `Logging ${slots.qty} damaged for ${slots.sku}.`, `${slots.sku} ke ${slots.qty} damaged mark kar rahi hun.`), 0.8, { ...ctx, pending: undefined, lastSku: slots.sku });
+    if (slots.subject) return mk(base, [step("record_damage", { query: slots.subject, qty: slots.qty }, `Damage ${slots.qty} → "${slots.subject}"`)],
+      ack(lang, `Logging ${slots.qty} damaged for "${slots.subject}".`, `"${slots.subject}" ke ${slots.qty} damaged mark kar rahi hun.`), 0.6, { ...ctx, pending: undefined, lastSubject: slots.subject });
   }
   if (p.intent === "create_customer" && slots.name) {
     return mk(base, [step("set_customer_type", { name: slots.name, type: "wholesale" }, `Set ${slots.name} → wholesale`)],
