@@ -7,8 +7,9 @@ import { QtyField } from "@/components/admin/QtyField";
 
 type P = { sku: string; name: string; price: number; wholesale: number; category: string; qty: number };
 type Line = { sku: string; name: string; price: number; wholesale: number; qty: number; stock: number };
+type Cust = { id: string; name: string; phone: string; type: string; gstin: string };
 
-export function POSClient({ products }: { products: P[] }) {
+export function POSClient({ products, customers = [] }: { products: P[]; customers?: Cust[] }) {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [scan, setScan] = useState("");
@@ -26,6 +27,19 @@ export function POSClient({ products }: { products: P[] }) {
   const [allowBackorder, setAllowBackorder] = useState(false);
   const [tier, setTier] = useState<"retail" | "wholesale">("retail");
   const unitOf = (l: Line | P) => (tier === "wholesale" ? l.wholesale : l.price);
+  const [custQ, setCustQ] = useState("");
+  const [custOpen, setCustOpen] = useState(false);
+  const custMatches = useMemo(() => {
+    const s = custQ.trim().toLowerCase();
+    if (!s) return [];
+    return customers.filter((c) => c.name.toLowerCase().includes(s) || (c.phone ?? "").includes(s)).slice(0, 6);
+  }, [custQ, customers]);
+  function pickCustomer(c: Cust) {
+    setCust({ name: c.name, phone: c.phone });
+    if (c.gstin) setGstin(c.gstin);
+    if (c.type === "wholesale") setTier("wholesale");
+    setCustQ(""); setCustOpen(false);
+  }
 
   const matches = useMemo(() => {
     if (!q.trim()) return [];
@@ -130,6 +144,23 @@ export function POSClient({ products }: { products: P[] }) {
               ))}
             </div>
           </div>
+          {/* Existing-customer picker (#3) */}
+          {customers.length > 0 && (
+            <div className="relative">
+              <input className={input} placeholder="🔎 Find existing customer by name / phone…" value={custQ}
+                onChange={(e) => { setCustQ(e.target.value); setCustOpen(true); }} onFocus={() => setCustOpen(true)} />
+              {custOpen && custMatches.length > 0 && (
+                <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl shadow-luxe border border-sand overflow-hidden">
+                  {custMatches.map((c) => (
+                    <button key={c.id} onClick={() => pickCustomer(c)} className="w-full text-left px-4 py-2.5 text-sm hover:bg-emerald-mist flex justify-between">
+                      <span>{c.name} <span className="text-muted">· {c.phone || "no phone"}</span></span>
+                      <span className={`text-xs ${c.type === "wholesale" ? "text-wine" : "text-muted"}`}>{c.type}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           {/* Price list — retailers get wholesale rates (#16) */}
           <div>
             <p className="text-xs text-muted mb-1">Price list</p>
