@@ -23,6 +23,7 @@ export function POSClient({ products }: { products: P[] }) {
   const [received, setReceived] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [allowBackorder, setAllowBackorder] = useState(false);
 
   const matches = useMemo(() => {
     if (!q.trim()) return [];
@@ -57,6 +58,7 @@ export function POSClient({ products }: { products: P[] }) {
       customer: cust, payment: pay,
       billType, buyerGstin: billType === "gst" ? gstin : "", buyerAddress: addr,
       amountPaidRupees: received.trim() ? Number(received) : undefined,
+      allowOversell: allowBackorder,
     });
     setBusy(false);
     if (!res.ok) { setErr(res.error ?? "Failed"); return; }
@@ -154,6 +156,12 @@ export function POSClient({ products }: { products: P[] }) {
         </div>
         {received.trim() && Number(received) * 100 < total && (
           <p className="text-xs text-rose mt-1 text-right">Partial — balance due {formatPaise(total - Number(received) * 100)}</p>
+        )}
+        {lines.some((l) => l.qty > l.stock) && (
+          <label className="mt-3 flex items-start gap-2 rounded-xl border border-gold/60 bg-gold/10 px-3 py-2 text-xs text-ink cursor-pointer">
+            <input type="checkbox" checked={allowBackorder} onChange={(e) => setAllowBackorder(e.target.checked)} className="mt-0.5" />
+            <span>Some lines exceed available stock. Tick to <b>bill anyway as a backorder</b> — otherwise the sale is blocked to prevent overselling.</span>
+          </label>
         )}
         {err && <p className="text-sm text-rose mt-2">{err}</p>}
         <button onClick={complete} disabled={busy || lines.length === 0} className="btn-primary w-full mt-4 py-3.5 text-sm font-medium disabled:opacity-50">
