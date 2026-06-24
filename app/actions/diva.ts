@@ -11,18 +11,42 @@ import { groqChat, openaiChat, groqConfigured, openaiConfigured } from "@/lib/ai
 import { supabaseServer } from "@/lib/supabase/server";
 import {
   getChannelReport, getInventoryClassified, getProductsPage, getDashboardData, getStorefront,
-  getProductBySku, getProductSalesStats,
+  getProductBySku, getProductSalesStats, getCustomersDb, getPricingFormula,
 } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { liveOffer } from "@/lib/offers";
 import { DIVA_TOOLS, PAGE_MAP, toolByName } from "@/lib/diva/tools";
+import { interpret, type DivaContext } from "@/lib/diva/nlu";
 import { requirePerm } from "@/lib/auth";
 import { generateContentAction } from "@/app/actions/aiContent";
 import { generateOneAction } from "@/app/actions/images";
+import { computePrices, isValidPriceSet } from "@/lib/pricing";
+import { createProductAction, createCategoryJsonAction } from "@/app/actions/catalog";
 import { revalidatePath } from "next/cache";
 
 export type DivaStep = { tool: string; args: Record<string, any>; label: string; kind: string; needsConfirm: boolean };
-export type DivaPlan = { ok: boolean; reply: string; steps: DivaStep[] };
+export type DivaPlan = {
+  ok: boolean;
+  reply: string;
+  steps: DivaStep[];
+  /** A clarifying question DIVA needs answered before it can act (multi-turn). */
+  ask?: { slot: string; prompt: string };
+  /** Conversational memory to echo back on the next turn (serialised). */
+  context?: string;
+};
+
+const slugify = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+/** Wrap NLU steps into executable DivaSteps (attaching tool kind + confirm flag). */
+function toDivaSteps(steps: { tool: string; args: Record<string, any>; label: string }[]): DivaStep[] {
+  const out: DivaStep[] = [];
+  for (const s of steps) {
+    const tool = toolByName(s.tool);
+    if (!tool) continue;
+    out.push({ tool: tool.name, args: s.args ?? {}, label: s.label.slice(0, 80), kind: tool.kind, needsConfirm: !!tool.confirm });
+  }
+  return out;
+}
 
 /** Authoritative (DB-backed) check that the current session may run a tool needing `perm`. */
 async function sessionCan(perm?: string): Promise<boolean> {
@@ -33,10 +57,40 @@ async function sessionCan(perm?: string): Promise<boolean> {
 function isoDaysAgo(d: number) { return new Date(Date.now() - d * 86400000).toISOString(); }
 
 // ---------------------------------------------------------------- PLAN
-export async function divaPlan(command: string): Promise<DivaPlan> {
+/**
+ * Turn a (possibly Hindi/Hinglish) command into an ordered, executable plan.
+ *
+ * Strategy:
+ *   1. Run the deterministic multilingual NLU engine (lib/diva/nlu) — fast, free, offline,
+ *      and the only path that works when no AI key is configured or the network is blocked.
+ *   2. If NLU is confident (or it needs a follow-up answer, or no LLM is configured) → use it.
+ *   3. Otherwise escalate the same command to the LLM for a best-effort plan, falling back
+ *      to whatever the NLU produced.
+ *
+ * `contextJson` carries conversational memory from the previous turn (multi-turn slot fill,
+ * "ye product" references). It is produced by this function and echoed back by the widget.
+ */
+export async function divaPlan(command: string, contextJson?: string): Promise<DivaPlan> {
   const cmd = (command ?? "").trim().slice(0, 600);
   if (!cmd) return { ok: false, reply: "Tell me what you'd like done — e.g. “show me this week's sales” or “add 20 pieces to BD1004”.", steps: [] };
 
+  let prevCtx: DivaContext = {};
+  if (contextJson) { try { prevCtx = JSON.parse(contextJson); } catch { /* ignore bad context */ } }
+
+  // 1) Deterministic multilingual engine.
+  const nlu = interpret(cmd, prevCtx);
+  const nluPlan: DivaPlan = {
+    ok: true, reply: nlu.reply, steps: toDivaSteps(nlu.steps),
+    ask: nlu.ask, context: JSON.stringify(nlu.context),
+  };
+
+  // 2) Use NLU when confident, when it asked a question, when it has steps, or when no LLM.
+  const llmAvailable = groqConfigured() || openaiConfigured();
+  if (nlu.ask || nlu.confidence >= 0.45 || nluPlan.steps.length > 0 || !llmAvailable) {
+    return nluPlan;
+  }
+
+  // 3) Low confidence + LLM available → ask the model, keep NLU context as memory.
   const catalog = DIVA_TOOLS.map((t) => `- ${t.name}(${t.params.map((p) => p.name + (p.required ? "*" : "")).join(", ")}) [${t.kind}] — ${t.desc}`).join("\n");
   const system =
     `You are DIVA, the operations agent inside the Blythe Diva artificial-jewellery admin console (Yogendra Industries, Sadar Bazar, Delhi). ` +
@@ -59,10 +113,10 @@ export async function divaPlan(command: string): Promise<DivaPlan> {
     let raw: string;
     if (groqConfigured()) raw = await groqChat({ system, user: cmd, json: true });
     else if (openaiConfigured()) raw = await openaiChat({ system, user: cmd, json: true });
-    else return heuristicPlan(cmd);
+    else return nluPlan;
     parsed = JSON.parse(raw);
   } catch {
-    return heuristicPlan(cmd);
+    return nluPlan;
   }
 
   const steps: DivaStep[] = [];
@@ -71,26 +125,8 @@ export async function divaPlan(command: string): Promise<DivaPlan> {
     if (!tool) continue;
     steps.push({ tool: tool.name, args: s?.args ?? {}, label: String(s?.label ?? tool.desc).slice(0, 80), kind: tool.kind, needsConfirm: !!tool.confirm });
   }
-  if (steps.length === 0) return heuristicPlan(cmd, String(parsed?.reply ?? ""));
-  return { ok: true, reply: String(parsed?.reply ?? "On it.").slice(0, 200), steps };
-}
-
-/** Deterministic fallback when no LLM / parse fails. */
-function heuristicPlan(cmd: string, reply?: string): DivaPlan {
-  const c = cmd.toLowerCase();
-  const steps: DivaStep[] = [];
-  const push = (tool: string, args: any, label: string) => { const t = toolByName(tool)!; steps.push({ tool, args, label, kind: t.kind, needsConfirm: !!t.confirm }); };
-
-  for (const [name, path] of Object.entries(PAGE_MAP)) {
-    if ((c.includes("open") || c.includes("go to") || c.includes("show me the") || c.includes("take me")) && c.includes(name)) { push("open_page", { page: name }, `Open ${name}`); break; }
-  }
-  if (steps.length === 0) {
-    if (/(sales|revenue|sold|earn)/.test(c)) push("analyze_sales", { days: /week/.test(c) ? 7 : 30 }, "Analyse sales");
-    else if (/(dead|low|out of stock|inventory|stock level)/.test(c)) push("inventory_status", {}, "Check inventory");
-    else if (/(summary|overview|how.*doing|pulse|brief)/.test(c)) push("business_summary", { days: 30 }, "Business summary");
-    else push("business_summary", { days: 30 }, "Business summary");
-  }
-  return { ok: true, reply: reply || "Here's what I found.", steps };
+  if (steps.length === 0) return { ...nluPlan, reply: String(parsed?.reply ?? nluPlan.reply).slice(0, 200) };
+  return { ok: true, reply: String(parsed?.reply ?? "On it.").slice(0, 200), steps, context: nluPlan.context };
 }
 
 // ---------------------------------------------------------------- RUN
@@ -226,10 +262,197 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         revalidatePath("/admin/roles");
         return { ok: true, message: `Deleted the "${(role as any).name}" role.` };
       }
+
+      // -------- intelligence-layer executors (multilingual DIVA) --------
+      case "get_price": {
+        const sku = String(args.sku ?? "").trim().toUpperCase();
+        const p = sku ? await getProductBySku(sku) : await resolveProductByName(String(args.query ?? ""));
+        if (!p) return { ok: false, message: `I couldn't find ${sku || `"${args.query}"`}.` };
+        const { formula } = await getStorefront();
+        const o = liveOffer(p.base_wholesale, formula);
+        const tier = String(args.tier ?? "all");
+        const wholesale = formatPaise(p.base_wholesale);
+        if (tier === "wholesale") return { ok: true, data: p, message: `${p.name} (${p.sku}) wholesale price is ${wholesale}.` };
+        if (tier === "retail") return { ok: true, data: p, message: `${p.name} (${p.sku}) retail price is ${formatPaise(o.price)}.` };
+        if (tier === "mrp") return { ok: true, data: p, message: `${p.name} (${p.sku}) MRP is ${formatPaise(o.mrp)}.` };
+        return { ok: true, data: p, message: `${p.name} (${p.sku}) — Wholesale ${wholesale} · Retail ${formatPaise(o.price)} · MRP ${formatPaise(o.mrp)}.` };
+      }
+      case "inventory_of": {
+        const p = await resolveProductByName(String(args.query ?? ""));
+        if (!p) return { ok: false, message: `I couldn't match "${args.query}" to a product. Try the SKU.` };
+        const cls = p.qty === 0 ? "out of stock" : p.qty <= 2 ? "low" : "healthy";
+        return { ok: true, data: p, message: `${p.name} (${p.sku}) has ${p.qty} in stock (${cls}).` };
+      }
+      case "pending_orders": {
+        const sb = supabaseServer();
+        const { data } = await sb.from("orders")
+          .select("invoice_no,customer_name,total,status,created_at")
+          .not("status", "in", "(completed,delivered,cancelled,refunded)")
+          .order("created_at", { ascending: false }).limit(15);
+        const rows = (data as any[]) ?? [];
+        if (rows.length === 0) return { ok: true, data: [], message: "No pending orders — you're all caught up 🎉" };
+        const list = rows.slice(0, 8).map((o) => `${o.invoice_no ?? o.customer_name ?? "order"} (${formatPaise(o.total ?? 0)}, ${o.status})`).join("; ");
+        return { ok: true, data: rows, message: `${rows.length} pending: ${list}.` };
+      }
+      case "find_customer": {
+        const rows = await getCustomersDb({ q: String(args.query ?? "") });
+        if (rows.length === 0) return { ok: true, message: `No customer matched "${args.query}".` };
+        const c = rows[0];
+        return { ok: true, data: rows, message: `${c.name}${c.phone ? ` · ${c.phone}` : ""} — ${c.type}${c.city ? ` · ${c.city}` : ""}${c.gstin ? ` · GST ${c.gstin}` : ""}.` };
+      }
+      case "add_stock_by_name":
+      case "remove_stock_by_name": {
+        const p = await resolveProductByName(String(args.query ?? ""));
+        if (!p) return { ok: false, message: `I couldn't match "${args.query}" to a product. Try the SKU.` };
+        const qty = Math.abs(Math.trunc(Number(args.qty) || 0));
+        if (!qty) return { ok: false, message: "How many units?" };
+        const delta = toolName === "add_stock_by_name" ? qty : -qty;
+        const sb = supabaseServer();
+        const newQty = Math.max(0, (p.qty ?? 0) + delta);
+        await sb.from("products").update({ qty: newQty, last_movement_at: new Date().toISOString() }).eq("id", p.id);
+        await sb.from("stock_adjustments").insert({ product_id: p.id, sku: p.sku, delta, source: String(args.source ?? "DIVA command"), reason: "Adjusted by DIVA (by name)" });
+        revalidatePath("/admin/inventory");
+        return { ok: true, message: `${delta > 0 ? "Added" : "Removed"} ${qty} — ${p.name} (${p.sku}) is now ${newQty} in stock.` };
+      }
+      case "create_product": {
+        const name = String(args.name ?? "").trim();
+        const categoryName = String(args.category ?? "").trim();
+        const price = Number(args.price) || 0;
+        const qty = Math.max(0, Math.trunc(Number(args.qty) || 0));
+        if (!name || !categoryName || !(price > 0)) return { ok: false, message: "I need a name, category and a price above 0." };
+        const sb = supabaseServer();
+        let { data: cat } = await sb.from("categories").select("id,name").ilike("name", categoryName).maybeSingle();
+        if (!cat) cat = await createCategoryJsonAction(categoryName) as any;
+        if (!cat) return { ok: false, message: `Couldn't find or create the "${categoryName}" category.` };
+        const res = await createProductAction({ categoryId: (cat as any).id, name, basePriceRupees: price, qty, type: "simple", colors: [] });
+        if (!res.ok) return { ok: false, message: res.error ?? "Couldn't create the product." };
+        revalidatePath("/admin/catalogue"); revalidatePath("/shop");
+        return { ok: true, message: `Created ${name} (${res.sku}) in ${(cat as any).name} — wholesale ₹${price}, ${qty} pcs. It's saved as a draft; add a photo to publish.` };
+      }
+      case "set_price": {
+        const sku = String(args.sku ?? "").trim().toUpperCase();
+        const price = Number(args.price) || 0;
+        if (!sku || !(price > 0)) return { ok: false, message: "I need a SKU and a price above 0." };
+        const formula = await getPricingFormula();
+        const prices = computePrices(Math.round(price * 100), formula);
+        if (!isValidPriceSet(prices)) return { ok: false, message: "That base price produces an invalid price set." };
+        const sb = supabaseServer();
+        const { data: p } = await sb.from("products").select("id,name").eq("sku", sku).maybeSingle();
+        if (!p) return { ok: false, message: `No product with SKU ${sku}.` };
+        await sb.from("products").update({ base_wholesale: Math.round(price * 100) }).eq("id", (p as any).id);
+        revalidatePath("/admin/catalogue"); revalidatePath("/shop");
+        return { ok: true, message: `Set ${(p as any).name} (${sku}) base/wholesale to ${formatPaise(Math.round(price * 100))}. Retail ${formatPaise(prices.retail)} · MRP ${formatPaise(prices.mrp)}.` };
+      }
+      case "rename_sku": {
+        const sku = String(args.sku ?? "").trim().toUpperCase();
+        const newSku = String(args.newSku ?? "").trim().toUpperCase().replace(/\s+/g, "");
+        if (!sku || !newSku) return { ok: false, message: "I need the current SKU and the new SKU." };
+        if (sku === newSku) return { ok: false, message: "Those SKUs are the same." };
+        const sb = supabaseServer();
+        const { data: dup } = await sb.from("products").select("id").eq("sku", newSku).maybeSingle();
+        if (dup) return { ok: false, message: `SKU ${newSku} already exists — pick another.` };
+        const { data: p } = await sb.from("products").select("id,name").eq("sku", sku).maybeSingle();
+        if (!p) return { ok: false, message: `No product with SKU ${sku}.` };
+        const { error } = await sb.from("products").update({ sku: newSku }).eq("id", (p as any).id);
+        if (error) return { ok: false, message: error.message };
+        revalidatePath("/admin/catalogue"); revalidatePath("/shop");
+        return { ok: true, message: `Renamed ${sku} → ${newSku} for ${(p as any).name}.` };
+      }
+      case "create_customer":
+      case "set_customer_type": {
+        const name = String(args.name ?? "").trim();
+        if (!name) return { ok: false, message: "Which customer?" };
+        const type = String(args.type ?? "retail") === "wholesale" ? "wholesale" : "retail";
+        const sb = supabaseServer();
+        const { data: existing } = await sb.from("customers").select("id,name,type").ilike("name", name).maybeSingle();
+        if (existing) {
+          await sb.from("customers").update({ type }).eq("id", (existing as any).id);
+          revalidatePath("/admin/customers");
+          return { ok: true, message: `${(existing as any).name} is now a ${type} customer${type === "wholesale" ? " — they'll see wholesale prices." : "."}` };
+        }
+        const phone = String(args.phone ?? "").trim() || null;
+        const { error } = await sb.from("customers").insert({ name, type, phone });
+        if (error) return { ok: false, message: error.message };
+        revalidatePath("/admin/customers");
+        return { ok: true, message: `Added ${name} as a ${type} customer.` };
+      }
+      case "create_category": {
+        const name = String(args.name ?? "").trim();
+        if (!name) return { ok: false, message: "What should the category be called?" };
+        const cat = await createCategoryJsonAction(name);
+        if (!cat) return { ok: false, message: `Couldn't create "${name}" (it may already exist).` };
+        return { ok: true, message: `Created the "${cat.name}" category.` };
+      }
+      case "create_subcategory": {
+        const name = String(args.name ?? "").trim();
+        if (!name) return { ok: false, message: "What should the subcategory be called?" };
+        const parent = String(args.parent ?? "").trim();
+        const sb = supabaseServer();
+        let parentId: string | null = null;
+        if (parent) {
+          const { data: pc } = await sb.from("categories").select("id").ilike("name", parent).maybeSingle();
+          parentId = (pc as any)?.id ?? null;
+        }
+        const slug = slugify(name);
+        const { error } = await sb.from("subcategories").insert({ name, slug, category_id: parentId });
+        if (error) return { ok: false, message: `Couldn't create the subcategory (${error.message}). The subcategory table may need migration 0002 applied.` };
+        revalidatePath("/admin/categories");
+        return { ok: true, message: `Created subcategory "${name}"${parent ? ` under ${parent}` : ""}.` };
+      }
+      case "share_catalog": {
+        const facet = String(args.facet ?? "").trim();
+        const sb = supabaseServer();
+        const siteBase = (process.env.NEXT_PUBLIC_SITE_URL ?? "").replace(/\/$/, "");
+        let link = `${siteBase}/shop`;
+        let scope = "the full catalogue";
+        if (facet) {
+          // Try a category match first, then a subcategory.
+          const slug = slugify(facet);
+          const { data: cat } = await sb.from("categories").select("slug,name").or(`slug.eq.${slug},name.ilike.%${facet}%`).maybeSingle();
+          if (cat) { link = `${siteBase}/shop/c/${(cat as any).slug}`; scope = `the ${(cat as any).name} catalogue`; }
+          else { link = `${siteBase}/shop?q=${encodeURIComponent(facet)}`; scope = `"${facet}"`; }
+        }
+        const wa = Number(args.whatsapp) ? ` Send on WhatsApp: https://wa.me/?text=${encodeURIComponent(`Check out ${scope} from Blythe Diva: ${link}`)}` : "";
+        return { ok: true, data: { link }, message: `Here's a shareable link for ${scope}: ${link}${wa}` };
+      }
+      case "convert_invoice": {
+        const invoice = String(args.invoice ?? "").trim();
+        if (!invoice) return { ok: true, message: "Open billing and pick the cash memo you want to upgrade to GST.", navigate: PAGE_MAP["billing"] };
+        const sb = supabaseServer();
+        const { data: o } = await sb.from("orders").select("id,invoice_no,bill_type,customer_phone").eq("invoice_no", invoice).maybeSingle();
+        if (!o) return { ok: false, message: `I couldn't find invoice ${invoice}.` };
+        if ((o as any).bill_type === "gst") return { ok: true, message: `Invoice ${invoice} is already a GST invoice.` };
+        // Validation: a GST invoice should carry the buyer's GSTIN.
+        let warn = "";
+        const phone = (o as any).customer_phone;
+        if (phone) {
+          const { data: cust } = await sb.from("customers").select("gstin").eq("phone", phone).maybeSingle();
+          if (!cust || !(cust as any).gstin) warn = " Note: this customer has no GSTIN on file — add one for a compliant tax invoice.";
+        }
+        const { error } = await sb.from("orders").update({ bill_type: "gst" }).eq("id", (o as any).id);
+        if (error) return { ok: false, message: error.message };
+        revalidatePath("/admin/sales"); revalidatePath(`/admin/invoice/${(o as any).id}`);
+        return { ok: true, message: `Converted cash memo ${invoice} into a GST invoice.${warn}` };
+      }
+
       default:
         return { ok: false, message: "That action isn't wired yet." };
     }
   } catch (e) {
     return { ok: false, message: `Something went wrong: ${e instanceof Error ? e.message : "unknown error"}.` };
   }
+}
+
+/** Best-effort: match a product by SKU embedded in the text, else by name/keyword search. */
+async function resolveProductByName(query: string): Promise<{ id: string; sku: string; name: string; qty: number; base_wholesale: number } | null> {
+  const q = (query ?? "").trim();
+  if (!q) return null;
+  const { rows } = await getProductsPage({ q, pageSize: 5 });
+  if (!rows.length) return null;
+  // Prefer an exact-ish name match, else the first result.
+  const lower = q.toLowerCase();
+  const best = rows.find((r: any) => String(r.name).toLowerCase() === lower)
+    || rows.find((r: any) => String(r.name).toLowerCase().includes(lower))
+    || rows[0];
+  return { id: best.id, sku: best.sku, name: best.name, qty: best.qty, base_wholesale: best.base_wholesale };
 }

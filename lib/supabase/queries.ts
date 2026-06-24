@@ -38,6 +38,41 @@ export async function getCategories(): Promise<DbCategory[]> {
   return data ?? [];
 }
 
+// ---------- category hierarchy (subcategories) ----------
+export type DbSubcategory = { id: string; category_id: string | null; name: string; slug: string; sort: number };
+export type CategoryNode = DbCategory & { sort?: number; subcategories: DbSubcategory[]; productCount?: number };
+
+/** Parent categories, each with their ordered subcategories — for the management UI + filters. */
+export async function getCategoryTree(): Promise<CategoryNode[]> {
+  const sb = supabaseServer();
+  const [{ data: cats }, { data: subs }] = await Promise.all([
+    sb.from("categories").select("id,name,slug,sort,parent_id").order("sort").order("name"),
+    sb.from("subcategories").select("id,category_id,name,slug,sort").order("sort").order("name"),
+  ]);
+  const subList = (subs as DbSubcategory[]) ?? [];
+  // Only top-level categories (parent_id null) are roots; nested categories are ignored here.
+  return ((cats as any[]) ?? [])
+    .filter((c) => !c.parent_id)
+    .map((c) => ({
+      id: c.id, name: c.name, slug: c.slug, sort: c.sort ?? 0,
+      subcategories: subList.filter((s) => s.category_id === c.id),
+    }));
+}
+
+/** Flat list of subcategories, optionally scoped to one parent category slug or id. */
+export async function getSubcategories(opts: { categoryId?: string; categorySlug?: string } = {}): Promise<DbSubcategory[]> {
+  const sb = supabaseServer();
+  let categoryId = opts.categoryId;
+  if (!categoryId && opts.categorySlug && opts.categorySlug !== "all") {
+    const { data: cat } = await sb.from("categories").select("id").eq("slug", opts.categorySlug).maybeSingle();
+    categoryId = (cat as any)?.id;
+  }
+  let q = sb.from("subcategories").select("id,category_id,name,slug,sort").order("sort").order("name");
+  if (categoryId) q = q.eq("category_id", categoryId);
+  const { data } = await q;
+  return (data as DbSubcategory[]) ?? [];
+}
+
 // ---------- efficient, paginated lists (for 10k+ SKUs) ----------
 export async function getProductsPage(opts: { page?: number; pageSize?: number; q?: string; category?: string; status?: string }) {
   const sb = supabaseServer();
@@ -56,7 +91,7 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
 }
 
 // ---------- shareable catalog ----------
-export async function getCatalogProducts(opts: { category?: string }) {
+export async function getCatalogProducts(opts: { category?: string; subcategory?: string }) {
   const sb = supabaseServer();
   const formula = await getPricingFormula();
   let query = sb.from("products")
@@ -65,6 +100,15 @@ export async function getCatalogProducts(opts: { category?: string }) {
   if (opts.category && opts.category !== "all") {
     const { data: cat } = await sb.from("categories").select("id").eq("slug", opts.category).maybeSingle();
     if (cat) query = query.eq("category_id", (cat as any).id);
+  }
+  // Filter to a specific subcategory via the many-to-many map (covers primary + extra subcats).
+  if (opts.subcategory && opts.subcategory !== "all") {
+    const { data: sub } = await sb.from("subcategories").select("id").eq("slug", opts.subcategory).maybeSingle();
+    if (sub) {
+      const { data: maps } = await sb.from("product_subcategory_map").select("product_id").eq("subcategory_id", (sub as any).id);
+      const ids = ((maps as any[]) ?? []).map((m) => m.product_id);
+      query = query.in("id", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"]);
+    }
   }
   const { data } = await query;
   return ((data as any[]) ?? []).map((p) => {

@@ -211,6 +211,65 @@ export async function createCategoryJsonAction(name: string): Promise<{ id: stri
   return data ? { id: (data as any).id, name: (data as any).name } : null;
 }
 
+// ---------------------------------------------------------------------------
+// Subcategories (category hierarchy) — backs the management UI + DIVA.
+// Requires migration 0002 (subcategories, product_subcategory_map).
+// ---------------------------------------------------------------------------
+
+/** Create a subcategory under a parent category (by id or name). */
+export async function createSubcategoryAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("catalog.edit"))) return;
+  const name = String(formData.get("name") ?? "").trim();
+  if (!name) return;
+  const sb = supabaseServer();
+  let categoryId = String(formData.get("category_id") ?? "").trim() || null;
+  const parentName = String(formData.get("parent") ?? "").trim();
+  if (!categoryId && parentName) {
+    const { data: pc } = await sb.from("categories").select("id").ilike("name", parentName).maybeSingle();
+    categoryId = (pc as any)?.id ?? null;
+  }
+  await sb.from("subcategories").insert({ name, slug: slugify(name), category_id: categoryId });
+  revalidatePath("/admin/categories"); revalidatePath("/shop");
+}
+
+/** Rename a subcategory. */
+export async function renameSubcategoryAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("catalog.edit"))) return;
+  const id = String(formData.get("id") ?? "").trim();
+  const name = String(formData.get("name") ?? "").trim();
+  if (!id || !name) return;
+  await supabaseServer().from("subcategories").update({ name, slug: slugify(name) }).eq("id", id);
+  revalidatePath("/admin/categories"); revalidatePath("/shop");
+}
+
+/** Delete a subcategory (products fall back to their parent category; map rows cascade). */
+export async function deleteSubcategoryAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("catalog.edit"))) return;
+  const id = String(formData.get("id") ?? "").trim();
+  if (!id) return;
+  await supabaseServer().from("subcategories").delete().eq("id", id);
+  revalidatePath("/admin/categories"); revalidatePath("/shop");
+}
+
+/** Reorder subcategories: pass an ordered list of ids; sets their `sort` to match. */
+export async function reorderSubcategoriesAction(ids: string[]): Promise<void> {
+  if (!(await requirePerm("catalog.edit"))) return;
+  const sb = supabaseServer();
+  await Promise.all(ids.map((id, i) => sb.from("subcategories").update({ sort: i }).eq("id", id)));
+  revalidatePath("/admin/categories"); revalidatePath("/shop");
+}
+
+/** Move a product into a subcategory (sets the primary; trigger keeps the M2M map in sync). */
+export async function moveProductToSubcategoryAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("catalog.edit"))) return;
+  const sku = String(formData.get("sku") ?? "").trim();
+  const subcategoryId = String(formData.get("subcategory_id") ?? "").trim() || null;
+  if (!sku) return;
+  const sb = supabaseServer();
+  await sb.from("products").update({ subcategory_id: subcategoryId }).eq("sku", sku);
+  revalidatePath("/admin/categories"); revalidatePath("/admin/catalogue"); revalidatePath("/shop");
+}
+
 import { groqChat, openaiChat, groqConfigured, openaiConfigured } from "@/lib/ai/providers";
 
 /** AI-processed bulk import: reads a messy CSV/spreadsheet/freeform list, maps columns

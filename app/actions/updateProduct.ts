@@ -94,9 +94,22 @@ export async function updateProductAction(formData: FormData): Promise<UpdateRes
     .eq("id", existing.id);
   if (error) return { ok: false, error: error.message };
 
+  // Optional: rename the SKU (the client asked for editable SKUs). Validate uniqueness
+  // first so we never create a duplicate. FK references use product_id, so this is safe.
+  let finalSku = sku;
+  const newSku = String(formData.get("new_sku") ?? "").trim().toUpperCase().replace(/\s+/g, "-");
+  if (newSku && newSku !== sku.toUpperCase()) {
+    const { data: dup } = await sb.from("products").select("id").eq("sku", newSku).maybeSingle();
+    if (dup) return { ok: false, error: `SKU ${newSku} already exists — choose a different one.` };
+    const { error: skuErr } = await sb.from("products").update({ sku: newSku }).eq("id", existing.id);
+    if (skuErr) return { ok: false, error: skuErr.message };
+    finalSku = newSku;
+  }
+
   // Revalidate everywhere this product appears.
   const { data: cat } = await sb.from("categories").select("slug").eq("id", categoryId).maybeSingle();
   const slug = (cat as any)?.slug ?? "all";
+  revalidatePath(`/shop/${slug}/${finalSku}`);
   revalidatePath(`/shop/${slug}/${sku}`);
   revalidatePath(`/shop/c/${slug}`);
   revalidatePath("/shop");

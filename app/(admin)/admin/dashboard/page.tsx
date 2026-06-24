@@ -36,8 +36,11 @@ function Tile({ label, children, sub, accent, icon, bar }: { label: string; chil
 export default async function Dashboard({ searchParams }: { searchParams: { preset?: string; from?: string; to?: string; denied?: string } }) {
   const custom = !!(searchParams.from && searchParams.to);
   const preset = PRESETS.find((p) => p.key === searchParams.preset)?.key ?? (custom ? "custom" : "month");
+  // Interpret the picked dates as IST (the business runs in India). Without a fixed offset
+  // the server's own timezone shifted the day boundaries, so a selected range could miss a
+  // day's orders or appear empty. +05:30 pins the range to the Indian business day.
   const r = custom
-    ? { from: new Date(searchParams.from + "T00:00:00").toISOString(), to: new Date(searchParams.to + "T23:59:59").toISOString() }
+    ? { from: new Date(searchParams.from + "T00:00:00+05:30").toISOString(), to: new Date(searchParams.to + "T23:59:59+05:30").toISOString() }
     : presetRange(preset);
   const { from, to } = r;
   const fromDate = searchParams.from ?? "";
