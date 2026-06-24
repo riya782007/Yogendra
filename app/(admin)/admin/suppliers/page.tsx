@@ -58,7 +58,7 @@ export default async function Suppliers({ searchParams }: { searchParams: { q?: 
             {rows.length === 0 && <tr><td colSpan={6} className="p-4 text-muted">No suppliers match.</td></tr>}
             {rows.map((s: any) => (
               <tr key={s.id} className="border-t border-sand/60 align-top">
-                <td className="p-3 text-ink font-medium">{s.name}{s.notes && <span className="block text-xs text-muted font-normal">{s.notes}</span>}</td>
+                <td className="p-3 font-medium"><Link href={`/admin/supplier/${s.id}`} className="text-emerald nav-link">{s.name} ↗</Link>{s.notes && <span className="block text-xs text-muted font-normal">{s.notes}</span>}</td>
                 <td className="p-3"><span className={`px-2 py-0.5 rounded-full text-xs capitalize ${KIND_STYLE[s.kind] ?? "bg-cream text-muted"}`}>{s.kind}</span></td>
                 <td className="p-3 text-muted">{[s.city, s.state].filter(Boolean).join(", ") || "—"}</td>
                 <td className="p-3 text-muted">{s.phone || "—"}</td>

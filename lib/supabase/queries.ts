@@ -221,6 +221,29 @@ export async function getPublishedProducts(): Promise<(DbProduct & { category: D
   return (data as any) ?? [];
 }
 
+/** Supplier ledger (#36): a vendor's purchase history with running totals. */
+export async function getSupplierLedger(id: string) {
+  const sb = supabaseServer();
+  const { data: supplier } = await sb.from("suppliers").select("*").eq("id", id).maybeSingle();
+  if (!supplier) return null;
+  const { data: purchases } = await sb
+    .from("purchases")
+    .select("id,bill_no,total,created_at, items:purchase_items(qty)")
+    .eq("supplier_id", id)
+    .order("created_at", { ascending: false });
+  const list = ((purchases as any[]) ?? []).map((p) => ({
+    id: p.id, bill_no: p.bill_no, total: p.total ?? 0, created_at: p.created_at,
+    qty: ((p.items as any[]) ?? []).reduce((s, x) => s + (x.qty ?? 0), 0),
+    lines: ((p.items as any[]) ?? []).length,
+  }));
+  return {
+    supplier,
+    purchases: list,
+    totalPurchased: list.reduce((s, p) => s + p.total, 0),
+    totalQty: list.reduce((s, p) => s + p.qty, 0),
+  };
+}
+
 /** Self-growing master lists for variant attributes (colour / size / polish). */
 export async function getVariantOptions(): Promise<{ color: string[]; size: string[]; polish: string[] }> {
   const sb = supabaseServer();
