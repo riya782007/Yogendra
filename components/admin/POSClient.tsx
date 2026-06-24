@@ -5,8 +5,8 @@ import { formatPaise } from "@/lib/pricing";
 import { posSaleAction } from "@/app/actions/orders";
 import { QtyField } from "@/components/admin/QtyField";
 
-type P = { sku: string; name: string; price: number; category: string; qty: number };
-type Line = { sku: string; name: string; price: number; qty: number; stock: number };
+type P = { sku: string; name: string; price: number; wholesale: number; category: string; qty: number };
+type Line = { sku: string; name: string; price: number; wholesale: number; qty: number; stock: number };
 
 export function POSClient({ products }: { products: P[] }) {
   const router = useRouter();
@@ -24,6 +24,8 @@ export function POSClient({ products }: { products: P[] }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [allowBackorder, setAllowBackorder] = useState(false);
+  const [tier, setTier] = useState<"retail" | "wholesale">("retail");
+  const unitOf = (l: Line | P) => (tier === "wholesale" ? l.wholesale : l.price);
 
   const matches = useMemo(() => {
     if (!q.trim()) return [];
@@ -31,8 +33,8 @@ export function POSClient({ products }: { products: P[] }) {
     return products.filter((p) => p.name.toLowerCase().includes(s) || p.sku.toLowerCase().includes(s)).slice(0, 6);
   }, [q, products]);
 
-  const total = lines.reduce((s, l) => s + l.price * l.qty, 0);
-  function addLine(p: P) { setLines((prev) => { const ex = prev.find((l) => l.sku === p.sku); if (ex) return prev.map((l) => l.sku === p.sku ? { ...l, qty: l.qty + 1 } : l); return [...prev, { sku: p.sku, name: p.name, price: p.price, qty: 1, stock: p.qty }]; }); setQ(""); }
+  const total = lines.reduce((s, l) => s + unitOf(l) * l.qty, 0);
+  function addLine(p: P) { setLines((prev) => { const ex = prev.find((l) => l.sku === p.sku); if (ex) return prev.map((l) => l.sku === p.sku ? { ...l, qty: l.qty + 1 } : l); return [...prev, { sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, qty: 1, stock: p.qty }]; }); setQ(""); }
   function setQty(sku: string, qty: number) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, qty: Math.max(1, Math.floor(qty || 1)) } : l)); }
   function rm(sku: string) { setLines((p) => p.filter((l) => l.sku !== sku)); }
 
@@ -58,7 +60,7 @@ export function POSClient({ products }: { products: P[] }) {
       customer: cust, payment: pay,
       billType, buyerGstin: billType === "gst" ? gstin : "", buyerAddress: addr,
       amountPaidRupees: received.trim() ? Number(received) : undefined,
-      allowOversell: allowBackorder,
+      allowOversell: allowBackorder, tier,
     });
     setBusy(false);
     if (!res.ok) { setErr(res.error ?? "Failed"); return; }
@@ -90,7 +92,7 @@ export function POSClient({ products }: { products: P[] }) {
             <div className="absolute z-10 left-0 right-0 mt-1 bg-white rounded-xl shadow-luxe border border-sand overflow-hidden">
               {matches.map((p) => (
                 <button key={p.sku} onClick={() => addLine(p)} className="w-full text-left px-4 py-2.5 text-sm hover:bg-emerald-mist flex justify-between">
-                  <span>{p.name} <span className="text-muted">· {p.sku}</span></span><span className="text-ink">{formatPaise(p.price)}</span>
+                  <span>{p.name} <span className="text-muted">· {p.sku}</span></span><span className="text-ink">{formatPaise(unitOf(p))}</span>
                 </button>
               ))}
             </div>
@@ -102,14 +104,14 @@ export function POSClient({ products }: { products: P[] }) {
             <div key={l.sku} className="flex items-center gap-3 border-b border-sand/60 pb-2">
               <div className="flex-1">
                 <p className="text-sm text-ink">{l.name}</p>
-                <p className="text-xs text-muted">{l.sku} · {formatPaise(l.price)} · <span className={l.qty > l.stock ? "text-rose font-medium" : "text-emerald"}>{l.stock} in stock</span>{l.qty > l.stock && <span className="text-rose"> — only {l.stock} available!</span>}</p>
+                <p className="text-xs text-muted">{l.sku} · {formatPaise(unitOf(l))} · <span className={l.qty > l.stock ? "text-rose font-medium" : "text-emerald"}>{l.stock} in stock</span>{l.qty > l.stock && <span className="text-rose"> — only {l.stock} available!</span>}</p>
               </div>
               <div className="inline-flex items-center rounded-full border border-sand text-sm overflow-hidden">
                 <button onClick={() => setQty(l.sku, l.qty - 1)} className="px-2.5 py-1 hover:bg-cream" aria-label="decrease">−</button>
                 <QtyField value={l.qty} onChange={(n) => setQty(l.sku, n)} className="w-14 text-center border-x border-sand py-1 outline-none focus:bg-emerald-mist" />
                 <button onClick={() => setQty(l.sku, l.qty + 1)} className="px-2.5 py-1 hover:bg-cream" aria-label="increase">+</button>
               </div>
-              <span className="text-sm font-medium w-20 text-right">{formatPaise(l.price * l.qty)}</span>
+              <span className="text-sm font-medium w-20 text-right">{formatPaise(unitOf(l) * l.qty)}</span>
               <button onClick={() => rm(l.sku)} className="text-muted hover:text-rose text-xs">✕</button>
             </div>
           ))}
@@ -127,6 +129,16 @@ export function POSClient({ products }: { products: P[] }) {
                 <button key={v} onClick={() => setBillType(v)} className={`rounded-xl border px-3 py-2 text-sm transition-all ${billType === v ? "border-emerald bg-emerald-mist text-emerald" : "border-sand text-muted hover:border-gold"}`}>{label}</button>
               ))}
             </div>
+          </div>
+          {/* Price list — retailers get wholesale rates (#16) */}
+          <div>
+            <p className="text-xs text-muted mb-1">Price list</p>
+            <div className="grid grid-cols-2 gap-2">
+              {([["retail", "Retail (D2C)"], ["wholesale", "Wholesale"]] as const).map(([v, label]) => (
+                <button key={v} onClick={() => setTier(v)} className={`rounded-xl border px-3 py-2 text-sm transition-all ${tier === v ? "border-emerald bg-emerald-mist text-emerald" : "border-sand text-muted hover:border-gold"}`}>{label}</button>
+              ))}
+            </div>
+            {tier === "wholesale" && <p className="text-[11px] text-gold-dark mt-1">Billing at wholesale rates — use for approved retailers.</p>}
           </div>
           <input className={input} placeholder="Customer / firm name (optional)" value={cust.name} onChange={(e) => setCust({ ...cust, name: e.target.value })} />
           <input className={input} placeholder="Phone (optional)" value={cust.phone} onChange={(e) => setCust({ ...cust, phone: e.target.value })} />

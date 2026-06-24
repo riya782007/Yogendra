@@ -1,13 +1,17 @@
 export const dynamic = "force-dynamic";
 import { getStorefront } from "@/lib/supabase/queries";
-import { liveOffer } from "@/lib/offers";
 import { POSClient } from "@/components/admin/POSClient";
+import { resolvePrices, overridesOf } from "@/lib/pricing";
 
 export const metadata = { title: "Owner Console · Billing (POS)" };
 
 export default async function Billing() {
   const { products, formula } = await getStorefront();
-  const list = products.map((p) => ({ sku: p.sku, name: p.name, price: liveOffer(p.base_wholesale, formula).price, category: p.category.name, qty: p.qty }));
+  const list = products.map((p) => {
+    const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));
+    // Both price lists, override-aware, so the counter can ring up at retail or wholesale (#16).
+    return { sku: p.sku, name: p.name, price: ps.retailPrice, wholesale: ps.wholesaleRate, category: p.category.name, qty: p.qty };
+  });
   return (
     <main className="p-8 bg-cream/40 min-h-screen">
       <h1 className="font-display text-4xl text-ink mb-1">Billing · Point of Sale</h1>

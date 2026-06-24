@@ -34,6 +34,7 @@ export async function posSaleAction(input: {
   buyerAddress?: string;
   amountPaidRupees?: number; // partial/advance; defaults to full
   allowOversell?: boolean; // owner opt-in to bill beyond stock (backorder)
+  tier?: "retail" | "wholesale"; // price list to bill at (#16)
 }): Promise<{ ok: boolean; orderId?: string; total?: number; error?: string }> {
   if (!(await requirePerm("billing.sell"))) return { ok: false, error: "Your role can't ring up POS sales." };
   if (!input.items?.length) return { ok: false, error: "Add at least one item" };
@@ -41,7 +42,7 @@ export async function posSaleAction(input: {
   const sb = supabaseServer();
   const { data, error } = await sb.rpc("place_order", {
     p_items: input.items, p_customer: input.customer ?? {}, p_channel: "pos", p_payment: input.payment || "cash",
-    p_allow_oversell: !!input.allowOversell,
+    p_allow_oversell: !!input.allowOversell, p_tier: input.tier === "wholesale" ? "wholesale" : "retail",
   });
   if (error) return { ok: false, error: error.message };
   const orderId = (data as any)?.order_id, total = (data as any)?.total;

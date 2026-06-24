@@ -1,0 +1,10 @@
+-- Phase 4 (#16 + pricing correctness): billing RPCs now honour per-product price
+-- overrides, and place_order accepts a p_tier ('retail'|'wholesale') so the counter
+-- can bill approved retailers at wholesale rates. Retail storefront (default tier)
+-- gets override-aware retail automatically, fixing the display-vs-billed mismatch.
+--
+-- Functions re-applied (authoritative bodies in Supabase migration 0009):
+--   place_order(p_items, p_customer, p_channel, p_payment, p_allow_oversell, p_tier)
+--   place_wholesale_order(...)  -- coalesce(wholesale_override, formula)
+--   create_estimate(...)        -- coalesce(retail_override, formula)
+-- Re-running the CREATE OR REPLACE statements is idempotent.
