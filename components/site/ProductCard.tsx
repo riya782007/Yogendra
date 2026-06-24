@@ -5,16 +5,18 @@ import { AddToCart } from "@/components/cart/AddToCart";
 import { WishlistButton } from "@/components/wishlist/WishlistButton";
 import { formatPaise } from "@/lib/pricing";
 import { liveOffer } from "@/lib/offers";
+import { overridesOf } from "@/lib/pricing";
 import type { PricingFormula } from "@/lib/pricing";
 
 export type CardProduct = {
   sku: string; name: string; base_wholesale: number; qty: number;
   category: { name: string; slug: string };
   rating: number; reviews: number; isNew?: boolean;
+  wholesale_override?: number | null; retail_override?: number | null; mrp_override?: number | null;
 };
 
 export function ProductCard({ p, formula, index = 0 }: { p: CardProduct; formula: PricingFormula; index?: number }) {
-  const o = liveOffer(p.base_wholesale, formula);
+  const o = liveOffer(p.base_wholesale, formula, overridesOf(p));
   const low = p.qty > 0 && p.qty <= 3;
   return (
     <Link href={`/shop/${p.category.slug}/${p.sku}`}

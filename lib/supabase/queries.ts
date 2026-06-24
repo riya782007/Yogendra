@@ -13,12 +13,14 @@ function escLike(s: string): string {
 }
 
 export type DbCategory = { id: string; name: string; slug: string };
-export type DbVariant = { id: string; color: string | null; sku: string; qty: number; image_paths: string[] };
+export type DbVariant = { id: string; color: string | null; sku: string; qty: number; image_paths: string[]; wholesale_override?: number | null; retail_override?: number | null; mrp_override?: number | null };
 export type DbImage = { id: string; path: string; kind: string | null; sort: number };
 export type DbProduct = {
   id: string; category_id: string; sku: string; name: string;
   type: "simple" | "configurable"; base_wholesale: number; qty: number;
   status: string; generated_content: any; last_movement_at: string | null;
+  subcategory_id?: string | null;
+  wholesale_override?: number | null; retail_override?: number | null; mrp_override?: number | null;
 };
 
 export async function getPricingFormula(): Promise<PricingFormula> {

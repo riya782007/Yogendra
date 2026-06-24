@@ -304,7 +304,16 @@ export function interpret(commandRaw: string, ctx: DivaContext = {}): NluPlan {
       ack(lang, `Let me find "${subject}" first.`, `Pehle "${subject}" dhoondhti hun.`), 0.6, remember({ lastSubject: subject }));
   }
 
-  // ---- 7) Price query: "ye product wholesale me kitne ka hai?" ----------------
+  // ---- 7) Set price: "BD1004 ka retail price 1500 kar do" --------------------
+  if (sku && price && hasAny(lower, ["set", "kardo", "karo", "update", "change", "badlo", "badal", "lagao", "rakho", "kar"]) &&
+      hasAny(lower, ["price", "rate", "daam", "keemat", "mrp", "wholesale", "retail", "thok"])) {
+    const tier = /(wholesale|thok)/.test(lower) ? "wholesale" : /retail/.test(lower) ? "retail" : /mrp/.test(lower) ? "mrp" : "base";
+    return mk(base, [step("set_price", { sku, price, tier }, `Set ${sku} ${tier} ₹${price}`)],
+      ack(lang, `I'll set ${sku}'s ${tier === "base" ? "base/wholesale" : tier} price to ₹${price}.`,
+        `${sku} ka ${tier === "base" ? "base" : tier} price ₹${price} kar deti hun.`), 0.82, remember({ lastSku: sku }));
+  }
+
+  // ---- 7b) Price query: "ye product wholesale me kitne ka hai?" ----------------
   if (hasAny(lower, ["price", "rate", "daam", "keemat", "mrp", "cost"]) || (/(kitne|kitna|how much)/.test(lower) && /(ka|ki|me|mein)/.test(lower) && !/(stock|inventory|maal)/.test(lower))) {
     const tier = /(wholesale|thok)/.test(lower) ? "wholesale" : /retail/.test(lower) ? "retail" : /mrp/.test(lower) ? "mrp" : "all";
     if (sku) return mk(base, [step("get_price", { sku, tier }, `${sku} ${tier} price`)],

@@ -11,9 +11,8 @@ import { ProductStockAdjust } from "@/components/admin/ProductStockAdjust";
 import { MediaCard } from "@/components/admin/MediaCard";
 import { requirePerm, getSession, can } from "@/lib/auth";
 import { addVariantAction, updateVariantAction, deleteVariantAction } from "@/app/actions/variants";
-import { setProductVisibilityAction, moveProductToSubcategoryAction } from "@/app/actions/catalog";
-import { liveOffer } from "@/lib/offers";
-import { formatPaise } from "@/lib/pricing";
+import { setProductVisibilityAction, moveProductToSubcategoryAction, savePricingAction } from "@/app/actions/catalog";
+import { formatPaise, computePrices, resolvePrices, overridesOf } from "@/lib/pricing";
 import { geminiConfigured } from "@/lib/ai/gemini";
 
 export const metadata = { title: "Owner Console · Product" };
@@ -53,7 +52,6 @@ export default async function ProductPage({ params, searchParams }: { params: { 
 
   const variants = p.variants ?? [];
   const variantStock = variants.reduce((s: number, v: any) => s + (v.qty ?? 0), 0);
-  const offer = liveOffer(p.base_wholesale ?? 0, formula);
   const published = p.status === "published";
   const siteBase = (process.env.NEXT_PUBLIC_SITE_URL ?? "").replace(/\/$/, "");
   const shareUrl = `${siteBase}/shop/${p.category?.slug ?? "all"}/${p.sku}`;
@@ -88,17 +86,63 @@ export default async function ProductPage({ params, searchParams }: { params: { 
     />
   );
 
+  const canPrice = can(session, "catalog.price_edit");
+  const fSet = computePrices(p.base_wholesale ?? 0, formula);           // formula defaults (paise)
+  const prodOv = overridesOf(p);
+  const effective = resolvePrices(p.base_wholesale ?? 0, formula, prodOv); // current product-level effective
+  const rs = (paise: number) => Math.round(paise / 100);
+  const ovVal = (paise: number | null | undefined) => (paise && paise > 0 ? String(rs(paise)) : "");
+  const priceInput = "w-full rounded-xl border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-emerald";
+
   const pricing = (
     <div className="space-y-4">
       <div className={card}>
-        <h3 className="font-medium text-ink mb-3">Live prices</h3>
+        <h3 className="font-medium text-ink mb-3">Effective prices</h3>
         <div className="grid sm:grid-cols-3 gap-3">
-          <div className="rounded-xl bg-cream/60 p-4"><p className="text-xs uppercase tracking-wide text-muted">Wholesale</p><p className="text-2xl font-semibold text-ink mt-1">{formatPaise(p.base_wholesale ?? 0)}</p><p className="text-[11px] text-muted">what retailers pay</p></div>
-          <div className="rounded-xl bg-emerald-mist/50 p-4"><p className="text-xs uppercase tracking-wide text-muted">Retail</p><p className="text-2xl font-semibold text-emerald-dark mt-1">{formatPaise(offer.price)}</p><p className="text-[11px] text-muted">shop selling price</p></div>
-          <div className="rounded-xl bg-gold/10 p-4"><p className="text-xs uppercase tracking-wide text-muted">MRP</p><p className="text-2xl font-semibold text-gold-dark mt-1">{formatPaise(offer.mrp)}</p><p className="text-[11px] text-muted">{offer.hasOffer ? `${offer.offerPct}% off shown` : "printed price"}</p></div>
+          <div className="rounded-xl bg-cream/60 p-4"><p className="text-xs uppercase tracking-wide text-muted">Wholesale {prodOv.wholesale ? "· custom" : ""}</p><p className="text-2xl font-semibold text-ink mt-1">{formatPaise(effective.wholesaleRate)}</p><p className="text-[11px] text-muted">what retailers pay</p></div>
+          <div className="rounded-xl bg-emerald-mist/50 p-4"><p className="text-xs uppercase tracking-wide text-muted">Retail {prodOv.retail ? "· custom" : ""}</p><p className="text-2xl font-semibold text-emerald-dark mt-1">{formatPaise(effective.retailPrice)}</p><p className="text-[11px] text-muted">shop selling price</p></div>
+          <div className="rounded-xl bg-gold/10 p-4"><p className="text-xs uppercase tracking-wide text-muted">MRP {prodOv.mrp ? "· custom" : ""}</p><p className="text-2xl font-semibold text-gold-dark mt-1">{formatPaise(effective.mrp)}</p><p className="text-[11px] text-muted">printed price</p></div>
         </div>
-        <p className="text-xs text-muted mt-4">Prices are derived from the base wholesale cost via your pricing formula. Edit the base cost on the <b>Basic</b> tab. Per-variant and explicit per-tier overrides arrive in Phase 4.</p>
       </div>
+
+      {canPrice ? (
+        <form action={savePricingAction} className={card}>
+          <input type="hidden" name="sku" value={p.sku} />
+          <h3 className="font-medium text-ink mb-1">Set prices</h3>
+          <p className="text-xs text-muted mb-4">Leave a box blank to use the formula automatically. Enter a ₹ value to pin an exact price. Hierarchy: <b>variant → product → formula</b>.</p>
+
+          <p className="text-xs font-medium text-muted mb-2">Product-level (all ₹)</p>
+          <div className="grid sm:grid-cols-3 gap-3 mb-5">
+            <label className="text-xs text-muted">Wholesale<input name="p_wholesale" type="number" min={0} step="1" defaultValue={ovVal(prodOv.wholesale)} placeholder={`auto ${rs(fSet.wholesaleRate)}`} className={`${priceInput} mt-1`} /></label>
+            <label className="text-xs text-muted">Retail<input name="p_retail" type="number" min={0} step="1" defaultValue={ovVal(prodOv.retail)} placeholder={`auto ${rs(fSet.retailPrice)}`} className={`${priceInput} mt-1`} /></label>
+            <label className="text-xs text-muted">MRP<input name="p_mrp" type="number" min={0} step="1" defaultValue={ovVal(prodOv.mrp)} placeholder={`auto ${rs(fSet.mrp)}`} className={`${priceInput} mt-1`} /></label>
+          </div>
+
+          {variants.length > 0 && (
+            <>
+              <p className="text-xs font-medium text-muted mb-2">Per-variant overrides <span className="text-muted/70">(blank = inherit product)</span></p>
+              <div className="space-y-2 mb-5">
+                {variants.map((v: any) => {
+                  const vOv = overridesOf(v);
+                  return (
+                    <div key={v.id} className="grid grid-cols-[1.2fr_1fr_1fr_1fr] gap-2 items-center">
+                      <span className="text-sm text-ink truncate">{v.color ?? v.sku} <span className="text-muted text-xs font-mono">{v.sku}</span></span>
+                      <input name={`v_${v.id}_w`} type="number" min={0} step="1" defaultValue={ovVal(vOv.wholesale)} placeholder="W" className={priceInput} aria-label={`${v.sku} wholesale`} />
+                      <input name={`v_${v.id}_r`} type="number" min={0} step="1" defaultValue={ovVal(vOv.retail)} placeholder="R" className={priceInput} aria-label={`${v.sku} retail`} />
+                      <input name={`v_${v.id}_m`} type="number" min={0} step="1" defaultValue={ovVal(vOv.mrp)} placeholder="MRP" className={priceInput} aria-label={`${v.sku} mrp`} />
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          <button className="btn-primary px-6 py-2.5 text-sm font-medium">Save prices</button>
+        </form>
+      ) : (
+        <p className="text-sm text-muted">Your role can't edit prices. The base wholesale cost is set on the Basic tab.</p>
+      )}
+      <p className="text-xs text-muted">Retail &amp; MRP are derived from the base wholesale cost via your pricing formula unless you pin a custom value here.</p>
     </div>
   );
 
