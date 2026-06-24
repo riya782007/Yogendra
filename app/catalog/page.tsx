@@ -16,7 +16,7 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
 
   const [tree, products] = await Promise.all([
     getCategoryTree(),
-    getCatalogProducts({ category, subcategory, q, skus: skus.length ? skus : undefined }),
+    getCatalogProducts({ category, subcategory, q, skus: skus.length ? skus : undefined, includeWholesaleOnly: view === "wholesale" }),
   ]);
 
   const activeCat = tree.find((c) => c.slug === category);

@@ -10,7 +10,7 @@ export const metadata = { title: "Wholesale — Trade Pricing for Retailers" };
 
 export default async function Wholesale({ searchParams }: { searchParams: { error?: string } }) {
   const session = await getWholesaleSession();
-  const { products, formula } = await getStorefront();
+  const { products, formula } = await getStorefront({ includeWholesaleOnly: true });
 
   // Logged in & approved → real wholesale catalog with ordering.
   if (session) {

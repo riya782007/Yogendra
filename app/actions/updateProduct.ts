@@ -86,6 +86,8 @@ export async function updateProductAction(formData: FormData): Promise<UpdateRes
       category_id: categoryId,
       type,
       status,
+      visibility: String(formData.get("visibility") ?? "all") === "wholesale" ? "wholesale" : "all",
+      labels: parseList(String(formData.get("labels") ?? "")),
       base_wholesale: Math.round(basePriceRupees * 100),
       qty,
       generated_content,
@@ -113,6 +115,8 @@ export async function updateProductAction(formData: FormData): Promise<UpdateRes
   revalidatePath(`/shop/${slug}/${sku}`);
   revalidatePath(`/shop/c/${slug}`);
   revalidatePath("/shop");
+  revalidatePath("/catalog");
+  revalidatePath("/wholesale");
   revalidatePath("/admin/catalogue");
   revalidatePath("/admin/media");
   return { ok: true };

@@ -13,13 +13,14 @@ function escLike(s: string): string {
 }
 
 export type DbCategory = { id: string; name: string; slug: string };
-export type DbVariant = { id: string; color: string | null; sku: string; qty: number; image_paths: string[]; wholesale_override?: number | null; retail_override?: number | null; mrp_override?: number | null };
+export type DbVariant = { id: string; color: string | null; sku: string; qty: number; image_paths: string[]; size?: string | null; polish?: string | null; wholesale_override?: number | null; retail_override?: number | null; mrp_override?: number | null };
 export type DbImage = { id: string; path: string; kind: string | null; sort: number };
 export type DbProduct = {
   id: string; category_id: string; sku: string; name: string;
   type: "simple" | "configurable"; base_wholesale: number; qty: number;
   status: string; generated_content: any; last_movement_at: string | null;
   subcategory_id?: string | null;
+  visibility?: string; labels?: string[];
   wholesale_override?: number | null; retail_override?: number | null; mrp_override?: number | null;
 };
 
@@ -98,15 +99,17 @@ export type CatalogCard = {
   category: string; categorySlug: string;
   subcategory: string | null; subcategorySlug: string | null;
   qty: number; wholesale: number; price: number; mrp: number; offerPct: number; hasOffer: boolean;
-  image: string | null; tags: string[]; keywords: string[];
+  image: string | null; tags: string[]; keywords: string[]; labels: string[]; wholesaleOnly: boolean;
 };
 
-export async function getCatalogProducts(opts: { category?: string; subcategory?: string; q?: string; skus?: string[] }): Promise<CatalogCard[]> {
+export async function getCatalogProducts(opts: { category?: string; subcategory?: string; q?: string; skus?: string[]; includeWholesaleOnly?: boolean }): Promise<CatalogCard[]> {
   const sb = supabaseServer();
   const formula = await getPricingFormula();
   let query = sb.from("products")
-    .select("id,sku,name,qty,base_wholesale,wholesale_override,retail_override,mrp_override,generated_content,category:categories(name,slug),subcategory:subcategories(name,slug),images:product_images(path,kind,sort)")
+    .select("id,sku,name,qty,base_wholesale,visibility,labels,wholesale_override,retail_override,mrp_override,generated_content,category:categories(name,slug),subcategory:subcategories(name,slug),images:product_images(path,kind,sort)")
     .eq("status", "published").order("sku");
+  // Retail catalogue hides wholesale-only items; the wholesale view passes includeWholesaleOnly.
+  if (!opts.includeWholesaleOnly) query = query.neq("visibility", "wholesale");
 
   if (opts.category && opts.category !== "all") {
     const { data: cat } = await sb.from("categories").select("id").eq("slug", opts.category).maybeSingle();
@@ -146,6 +149,8 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       image: imgs[0]?.path ?? null,
       tags: ((p.generated_content as any)?.tags ?? []).slice(0, 6),
       keywords: (seo.keywords ?? []).slice(0, 6),
+      labels: Array.isArray(p.labels) ? p.labels.slice(0, 6) : [],
+      wholesaleOnly: p.visibility === "wholesale",
     };
   });
 }
@@ -325,10 +330,13 @@ export type StoreProduct = DbProduct & {
   category: DbCategory; rating: number; reviews: number; isNew: boolean;
 };
 
-export async function getStorefront(): Promise<{ products: StoreProduct[]; formula: PF }> {
+export async function getStorefront(opts: { includeWholesaleOnly?: boolean } = {}): Promise<{ products: StoreProduct[]; formula: PF }> {
   const sb = supabaseServer();
+  let prodQ = sb.from("products").select("*, category:categories(id,name,slug)").eq("status", "published");
+  // Retail/public surfaces hide wholesale-only products; POS & wholesale pass includeWholesaleOnly.
+  if (!opts.includeWholesaleOnly) prodQ = prodQ.neq("visibility", "wholesale");
   const [{ data: prods }, { data: revs }, formula] = await Promise.all([
-    sb.from("products").select("*, category:categories(id,name,slug)").eq("status", "published").order("sku"),
+    prodQ.order("sku"),
     sb.from("reviews").select("product_id, rating"),
     getPricingFormula(),
   ]);

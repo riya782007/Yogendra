@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
 import { updateProductAction } from "@/app/actions/updateProduct";
+import { suggestProductTitleAction } from "@/app/actions/aiContent";
 
 type Cat = { id: string; name: string; slug: string };
 export type EditorProduct = {
@@ -13,6 +14,8 @@ export type EditorProduct = {
   categorySlug: string;
   type: string;
   status: string;
+  visibility: string;   // "all" | "wholesale"
+  labels: string;       // newline/comma-joined
   basePriceRupees: number;
   qty: number;
   title: string;
@@ -41,6 +44,18 @@ export function ProductEditor({
   const { toast } = useToast();
   const [base, setBase] = useState(product.basePriceRupees);
   const [saving, setSaving] = useState(false);
+  const [title, setTitle] = useState(product.title);
+  const [name, setName] = useState(product.name);
+  const [suggesting, setSuggesting] = useState(false);
+
+  async function suggestTitle() {
+    setSuggesting(true);
+    const catName = categories.find((c) => c.id === product.categoryId)?.name;
+    const res = await suggestProductTitleAction({ name, category: catName });
+    setSuggesting(false);
+    if (res.ok && res.title) { setTitle(res.title); toast("Title suggested ✨"); }
+    else toast(res.error ?? "Couldn't suggest a title", "error");
+  }
 
   const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
   const retail = base * formula.retailMultiplier;
@@ -71,7 +86,7 @@ export function ProductEditor({
         <div className="grid sm:grid-cols-2 gap-4">
           <div className="sm:col-span-2">
             <label className={label}>Product name</label>
-            <input name="name" defaultValue={product.name} className={field} required />
+            <input name="name" value={name} onChange={(e) => setName(e.target.value)} className={field} required />
           </div>
           <div>
             <label className={label}>SKU <span className="text-muted/70">(editable — must be unique &amp; is scannable)</span></label>
@@ -99,6 +114,17 @@ export function ProductEditor({
               <option value="draft">Draft (hidden)</option>
               <option value="flagged">Flagged</option>
             </select>
+          </div>
+          <div>
+            <label className={label}>Visibility</label>
+            <select name="visibility" defaultValue={product.visibility} className={field}>
+              <option value="all">All customers (retail + wholesale)</option>
+              <option value="wholesale">Wholesale only (hidden from retail shop)</option>
+            </select>
+          </div>
+          <div className="sm:col-span-2">
+            <label className={label}>Labels <span className="text-muted/70">(comma or newline — e.g. Bridal, Bestseller, New)</span></label>
+            <input name="labels" defaultValue={product.labels} className={field} placeholder="Bridal, Bestseller" />
           </div>
           <div>
             <label className={label}>Base wholesale cost (₹)</label>
@@ -134,8 +160,14 @@ export function ProductEditor({
         <p className="text-xs text-muted mb-4">What the customer reads on the product page.</p>
         <div className="space-y-4">
           <div>
-            <label className={label}>Display title</label>
-            <input name="title" defaultValue={product.title} className={field} />
+            <div className="flex items-center justify-between mb-1.5">
+              <label className={`${label} mb-0`}>Display title</label>
+              <button type="button" onClick={suggestTitle} disabled={suggesting}
+                className="text-xs px-2.5 py-1 rounded-full bg-emerald-mist text-emerald-dark hover:bg-emerald-mist/70 disabled:opacity-50">
+                {suggesting ? "Thinking…" : "✨ Suggest title"}
+              </button>
+            </div>
+            <input name="title" value={title} onChange={(e) => setTitle(e.target.value)} className={field} />
           </div>
           <div>
             <label className={label}>Description</label>

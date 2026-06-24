@@ -65,6 +65,8 @@ export default async function ProductPage({ params, searchParams }: { params: { 
     categorySlug: p.category?.slug ?? "all",
     type: p.type,
     status: p.status,
+    visibility: (p as any).visibility ?? "all",
+    labels: ((p as any).labels ?? []).join(", "),
     basePriceRupees: Math.round((p.base_wholesale ?? 0) / 100),
     qty: p.qty ?? 0,
     title: gc.title ?? p.name,
@@ -162,7 +164,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
           <ul className="divide-y divide-sand/60">
             {variants.map((v: any) => (
               <li key={v.id} className="py-2 flex items-center justify-between text-sm">
-                <span className="text-ink">{v.color ?? "—"} <span className="text-muted font-mono text-xs">{v.sku}</span></span>
+                <span className="text-ink">{[v.color, v.size, v.polish].filter(Boolean).join(" / ") || "—"} <span className="text-muted font-mono text-xs">{v.sku}</span></span>
                 <span className={`font-medium ${(v.qty ?? 0) <= 2 ? "text-rose" : "text-ink"}`}>{v.qty ?? 0} pcs</span>
               </li>
             ))}
@@ -191,8 +193,10 @@ export default async function ProductPage({ params, searchParams }: { params: { 
           <form key={v.id} action={updateVariantAction} className="flex flex-wrap items-center gap-2">
             <input type="hidden" name="id" value={v.id} />
             <input type="hidden" name="product_sku" value={p.sku} />
-            <input name="color" defaultValue={v.color ?? ""} placeholder="Colour / size" className="rounded-xl border border-sand px-3 py-2 text-sm w-36 outline-none focus:border-emerald" />
-            <input name="sku" defaultValue={v.sku ?? ""} placeholder="Variant SKU" className="rounded-xl border border-sand px-3 py-2 text-sm w-40 outline-none focus:border-emerald font-mono" />
+            <input name="color" defaultValue={v.color ?? ""} placeholder="Colour" className="rounded-xl border border-sand px-3 py-2 text-sm w-28 outline-none focus:border-emerald" />
+            <input name="size" defaultValue={v.size ?? ""} placeholder="Size" className="rounded-xl border border-sand px-3 py-2 text-sm w-24 outline-none focus:border-emerald" />
+            <input name="polish" defaultValue={v.polish ?? ""} placeholder="Polish" className="rounded-xl border border-sand px-3 py-2 text-sm w-28 outline-none focus:border-emerald" />
+            <input name="sku" defaultValue={v.sku ?? ""} placeholder="Variant SKU" className="rounded-xl border border-sand px-3 py-2 text-sm w-36 outline-none focus:border-emerald font-mono" />
             <label className="text-xs text-muted flex items-center gap-1">Stock <input name="qty" type="number" min={0} defaultValue={v.qty ?? 0} className="rounded-xl border border-sand px-2 py-2 text-sm w-20 text-center outline-none focus:border-emerald" /></label>
             <button className="px-3 py-2 rounded-xl bg-ink/5 text-ink text-xs hover:bg-ink/10">Save</button>
             <button formAction={deleteVariantAction} className="text-muted hover:text-rose text-xs">Delete</button>
@@ -201,11 +205,14 @@ export default async function ProductPage({ params, searchParams }: { params: { 
       </div>
       <form action={addVariantAction} className="flex flex-wrap items-center gap-2 border-t border-sand/60 pt-4">
         <input type="hidden" name="product_sku" value={p.sku} />
-        <input name="color" placeholder="New colour / size *" className="rounded-xl border border-sand px-3 py-2 text-sm w-44 outline-none focus:border-emerald" required />
-        <input name="sku" placeholder="SKU (blank = auto)" className="rounded-xl border border-sand px-3 py-2 text-sm w-44 outline-none focus:border-emerald font-mono" />
+        <input name="color" placeholder="Colour" className="rounded-xl border border-sand px-3 py-2 text-sm w-28 outline-none focus:border-emerald" />
+        <input name="size" placeholder="Size" className="rounded-xl border border-sand px-3 py-2 text-sm w-24 outline-none focus:border-emerald" />
+        <input name="polish" placeholder="Polish" className="rounded-xl border border-sand px-3 py-2 text-sm w-28 outline-none focus:border-emerald" />
+        <input name="sku" placeholder="SKU (blank = auto)" className="rounded-xl border border-sand px-3 py-2 text-sm w-40 outline-none focus:border-emerald font-mono" />
         <label className="text-xs text-muted flex items-center gap-1">Stock <input name="qty" type="number" min={0} defaultValue={0} className="rounded-xl border border-sand px-2 py-2 text-sm w-20 text-center outline-none focus:border-emerald" /></label>
         <button className="btn-primary px-4 py-2 text-sm font-medium">+ Add variant</button>
       </form>
+      <p className="text-[11px] text-muted mt-2">Each variant can combine colour + size + polish, with its own SKU &amp; stock.</p>
     </div>
   );
 
@@ -214,7 +221,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
       <div className={card}>
         <h3 className="font-medium text-ink mb-3">Storefront visibility</h3>
         <div className="flex items-center justify-between gap-3">
-          <p className="text-sm text-muted">{published ? "This product is live on the shop." : "Hidden — customers can't see it yet."}</p>
+          <p className="text-sm text-muted">{published ? "This product is live on the shop." : "Hidden — customers can't see it yet."}{(p as any).visibility === "wholesale" ? " It's wholesale-only — hidden from retail shoppers." : ""}</p>
           {can(session, "catalog.publish") && (
             <form action={setProductVisibilityAction}>
               <input type="hidden" name="sku" value={p.sku} />
