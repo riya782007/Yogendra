@@ -93,12 +93,21 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
 }
 
 // ---------- shareable catalog ----------
-export async function getCatalogProducts(opts: { category?: string; subcategory?: string }) {
+export type CatalogCard = {
+  sku: string; name: string;
+  category: string; categorySlug: string;
+  subcategory: string | null; subcategorySlug: string | null;
+  qty: number; wholesale: number; price: number; mrp: number; offerPct: number; hasOffer: boolean;
+  image: string | null; tags: string[]; keywords: string[];
+};
+
+export async function getCatalogProducts(opts: { category?: string; subcategory?: string; q?: string; skus?: string[] }): Promise<CatalogCard[]> {
   const sb = supabaseServer();
   const formula = await getPricingFormula();
   let query = sb.from("products")
-    .select("sku,name,qty,base_wholesale,generated_content,category:categories(name,slug), images:product_images(path,kind,sort)")
+    .select("id,sku,name,qty,base_wholesale,wholesale_override,retail_override,mrp_override,generated_content,category:categories(name,slug),subcategory:subcategories(name,slug),images:product_images(path,kind,sort)")
     .eq("status", "published").order("sku");
+
   if (opts.category && opts.category !== "all") {
     const { data: cat } = await sb.from("categories").select("id").eq("slug", opts.category).maybeSingle();
     if (cat) query = query.eq("category_id", (cat as any).id);
@@ -112,14 +121,31 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       query = query.in("id", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"]);
     }
   }
+  // Explicit selected products → exact catalogue.
+  if (opts.skus && opts.skus.length) {
+    query = query.in("sku", opts.skus.map((s) => s.trim().toUpperCase()).filter(Boolean));
+  }
+  // Keyword search across name / SKU.
+  if (opts.q && opts.q.trim()) {
+    const esc = opts.q.trim().replace(/[%,()]/g, " ");
+    query = query.or(`name.ilike.%${esc}%,sku.ilike.%${esc}%`);
+  }
+
   const { data } = await query;
-  return ((data as any[]) ?? []).map((p) => {
-    const o = _liveOffer(p.base_wholesale, formula);
+  return ((data as any[]) ?? []).map((p): CatalogCard => {
+    const ov = overridesOf(p);
+    const o = _liveOffer(p.base_wholesale, formula, ov);
+    const set = _resolvePrices(p.base_wholesale, formula, ov);
     const imgs = (p.images ?? []).filter((i: any) => typeof i.path === "string" && i.path.startsWith("http")).sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0));
+    const seo = (p.generated_content as any)?.seo ?? {};
     return {
-      sku: p.sku, name: p.name, category: p.category?.name ?? "", categorySlug: p.category?.slug ?? "all",
-      qty: p.qty, price: o.price, mrp: o.mrp, offerPct: o.offerPct, hasOffer: o.hasOffer,
-      image: imgs[0]?.path ?? null, tags: ((p.generated_content as any)?.tags ?? []).slice(0, 4),
+      sku: p.sku, name: p.name,
+      category: p.category?.name ?? "", categorySlug: p.category?.slug ?? "all",
+      subcategory: p.subcategory?.name ?? null, subcategorySlug: p.subcategory?.slug ?? null,
+      qty: p.qty, wholesale: set.wholesaleRate, price: o.price, mrp: o.mrp, offerPct: o.offerPct, hasOffer: o.hasOffer,
+      image: imgs[0]?.path ?? null,
+      tags: ((p.generated_content as any)?.tags ?? []).slice(0, 6),
+      keywords: (seo.keywords ?? []).slice(0, 6),
     };
   });
 }
@@ -586,6 +612,7 @@ export async function getReviewsForResponse() {
 
 // ---------- shoppable reels ----------
 import { liveOffer as _liveOffer } from "../offers";
+import { resolvePrices as _resolvePrices, overridesOf } from "../pricing";
 export type ReelProduct = { sku: string; name: string; price: number; categorySlug: string; category: string };
 export type ShopReel = { id: string; caption: string; video_url: string | null; products: ReelProduct[] };
 
