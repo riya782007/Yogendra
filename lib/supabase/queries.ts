@@ -271,6 +271,7 @@ import { computePrices, type PricingFormula as PF } from "../pricing";
 
 export type DashboardData = {
   revenue: number; orders: number; cod: number; pos: number;
+  cashCollected: number; bankCollected: number;
   retailers: number; pendingApprovals: number;
   totalProducts: number; newProducts: number; categories: number;
   dead: number; low: number; inactive: number; healthy: number;
@@ -282,7 +283,7 @@ export async function getDashboardData(fromISO: string, toISO: string, rule: Inv
   const sb = supabaseServer();
   const now = new Date();
   const [ordersRes, prodRes, catRes, retRes, apprRes] = await Promise.all([
-    sb.from("orders").select("total,channel,payment_mode,created_at").gte("created_at", fromISO).lte("created_at", toISO),
+    sb.from("orders").select("total,channel,payment_mode,pay_cash,pay_bank,created_at").gte("created_at", fromISO).lte("created_at", toISO),
     sb.from("products").select("sku,name,qty,last_movement_at,created_at,category:categories(name)"),
     sb.from("categories").select("id"),
     sb.from("retailers").select("id,approved"),
@@ -294,6 +295,8 @@ export async function getDashboardData(fromISO: string, toISO: string, rule: Inv
   const revenue = orders.reduce((s, o: any) => s + (o.total ?? 0), 0);
   const cod = orders.filter((o: any) => o.payment_mode === "cod").length;
   const pos = orders.filter((o: any) => o.channel === "pos").length;
+  const cashCollected = orders.reduce((s, o: any) => s + (o.pay_cash ?? 0), 0);
+  const bankCollected = orders.reduce((s, o: any) => s + (o.pay_bank ?? 0), 0);
 
   const classed = products.map((p: any) => ({ ...p, cls: classify({ qty: p.qty, lastMovementAt: p.last_movement_at }, rule, now) }));
   const dead = classed.filter((p) => p.cls === "dead");
@@ -303,7 +306,7 @@ export async function getDashboardData(fromISO: string, toISO: string, rule: Inv
   const newProducts = products.filter((p: any) => p.created_at >= fromISO && p.created_at <= toISO).length;
 
   return {
-    revenue, orders: orders.length, cod, pos,
+    revenue, orders: orders.length, cod, pos, cashCollected, bankCollected,
     retailers: (retRes.data ?? []).filter((r: any) => r.approved).length,
     pendingApprovals: (apprRes.data ?? []).filter((a: any) => a.status === "pending").length,
     totalProducts: products.length, newProducts, categories: (catRes.data ?? []).length,

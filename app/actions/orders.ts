@@ -35,6 +35,8 @@ export async function posSaleAction(input: {
   amountPaidRupees?: number; // partial/advance; defaults to full
   allowOversell?: boolean; // owner opt-in to bill beyond stock (backorder)
   tier?: "retail" | "wholesale"; // price list to bill at (#16)
+  payCashRupees?: number; // split tender — cash portion (#14/#37)
+  payBankRupees?: number; // split tender — UPI/card/bank portion (#14/#37)
 }): Promise<{ ok: boolean; orderId?: string; total?: number; error?: string }> {
   if (!(await requirePerm("billing.sell"))) return { ok: false, error: "Your role can't ring up POS sales." };
   if (!input.items?.length) return { ok: false, error: "Add at least one item" };
@@ -68,10 +70,23 @@ export async function posSaleAction(input: {
     }
   }
 
-  // Amount received now (defaults to full payment at the counter).
-  const amountPaid = input.amountPaidRupees != null
-    ? Math.min(total as number, Math.max(0, Math.round(input.amountPaidRupees * 100)))
-    : (total as number);
+  // Split tender (#14/#37): cash vs bank (UPI/card). If a split is supplied it drives
+  // the amount paid; otherwise fall back to a single "amount received" at one mode.
+  const splitGiven = input.payCashRupees != null || input.payBankRupees != null;
+  let payCash = Math.max(0, Math.round((input.payCashRupees ?? 0) * 100));
+  let payBank = Math.max(0, Math.round((input.payBankRupees ?? 0) * 100));
+  const amountPaid = splitGiven
+    ? Math.min(total as number, payCash + payBank)
+    : (input.amountPaidRupees != null
+        ? Math.min(total as number, Math.max(0, Math.round(input.amountPaidRupees * 100)))
+        : (total as number));
+  // For a single-mode sale, attribute the whole receipt to the right bucket.
+  if (!splitGiven) {
+    if ((input.payment || "cash") === "cash") payCash = amountPaid; else payBank = amountPaid;
+  }
+  const payMode = splitGiven
+    ? (payCash > 0 && payBank > 0 ? "split" : payBank > 0 ? "upi" : "cash")
+    : (input.payment || "cash");
 
   await sb.from("orders").update({
     bill_type: billType,
@@ -80,6 +95,9 @@ export async function posSaleAction(input: {
     buyer_state: buyerState,
     customer_id: customerId,
     amount_paid: amountPaid,
+    payment_mode: payMode,
+    pay_cash: payCash,
+    pay_bank: payBank,
   }).eq("id", orderId);
   await sb.rpc("assign_invoice_no", { p_order: orderId });
 

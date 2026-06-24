@@ -147,6 +147,9 @@ export default async function Invoice({ params }: { params: { id: string } }) {
               {roundOff !== 0 && <div className="flex justify-between text-muted"><span>Round off</span><span>{formatPaise(roundOff)}</span></div>}
               <div className="flex justify-between font-semibold text-ink border-t border-sand pt-2 text-base"><span>Grand Total</span><span>{formatPaise(roundedTotal)}</span></div>
               <div className="flex justify-between text-emerald-dark"><span>Amount paid</span><span>{formatPaise(paid)}</span></div>
+              {(order.pay_cash > 0 || order.pay_bank > 0) && (order.pay_cash > 0 && order.pay_bank > 0) && (
+                <div className="flex justify-between text-[11px] text-muted"><span>— Cash {formatPaise(order.pay_cash)} · UPI/Bank {formatPaise(order.pay_bank)}</span><span /></div>
+              )}
               {balanceDue > 0 && <div className="flex justify-between font-semibold text-rose"><span>Balance due</span><span>{formatPaise(balanceDue)}</span></div>}
             </div>
           </div>

@@ -95,6 +95,12 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
         <Tile label="Pending Approvals" icon="✓" accent={d.pendingApprovals ? "text-gold-dark" : undefined} bar={d.pendingApprovals ? "bg-gold-dark" : "bg-sand"} sub="needs owner OTP"><AnimatedNumber value={d.pendingApprovals} /></Tile>
       </div>
 
+      {/* Collections split — cash in hand vs bank/UPI (#14/#37) */}
+      <div className="grid grid-cols-2 gap-4 mb-5">
+        <Tile label="Cash collected" icon="₹" accent="text-emerald" bar="bg-emerald" sub="counter cash">{formatPaise(d.cashCollected)}</Tile>
+        <Tile label="UPI / Bank collected" icon="🏦" bar="bg-wine" sub="online & card">{formatPaise(d.bankCollected)}</Tile>
+      </div>
+
       {/* Expandable channel reports — headline number, click to see the full report for the range */}
       <div className="mb-5">
         <p className="text-sm text-muted mb-2">Sales by channel — <span className="text-ink">tap any card to expand the full report for {label.toLowerCase()}</span></p>

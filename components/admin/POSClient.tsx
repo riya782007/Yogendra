@@ -17,11 +17,11 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
   const scanRef = useRef<HTMLInputElement>(null);
   const [lines, setLines] = useState<Line[]>([]);
   const [cust, setCust] = useState({ name: "", phone: "" });
-  const [pay, setPay] = useState("cash");
   const [billType, setBillType] = useState<"gst" | "cash">("gst");
   const [gstin, setGstin] = useState("");
   const [addr, setAddr] = useState("");
-  const [received, setReceived] = useState("");
+  const [payCash, setPayCash] = useState("");
+  const [payBank, setPayBank] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [allowBackorder, setAllowBackorder] = useState(false);
@@ -69,11 +69,16 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
 
   async function complete() {
     setBusy(true); setErr("");
+    const cTxt = payCash.trim(), bTxt = payBank.trim();
+    const anySplit = cTxt !== "" || bTxt !== "";
+    const c = Number(cTxt) || 0, b = Number(bTxt) || 0;
+    const mode = anySplit ? (c > 0 && b > 0 ? "split" : b > 0 ? "upi" : "cash") : "cash";
     const res = await posSaleAction({
       items: lines.map((l) => ({ sku: l.sku, qty: l.qty })),
-      customer: cust, payment: pay,
+      customer: cust, payment: mode,
       billType, buyerGstin: billType === "gst" ? gstin : "", buyerAddress: addr,
-      amountPaidRupees: received.trim() ? Number(received) : undefined,
+      // Blank split → treat as paid in full (cash). Any entry → record the cash/bank split.
+      ...(anySplit ? { payCashRupees: c, payBankRupees: b } : {}),
       allowOversell: allowBackorder, tier,
     });
     setBusy(false);
@@ -179,27 +184,32 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
               <textarea className={input} rows={2} placeholder="Buyer billing address (optional)" value={addr} onChange={(e) => setAddr(e.target.value)} />
             </>
           )}
+          {/* Split tender — record how much came via cash vs UPI/bank (#14/#37) */}
           <div>
-            <p className="text-xs text-muted mb-1">Payment</p>
-            <div className="grid grid-cols-3 gap-2">
-              {["cash", "upi", "card"].map((p) => (
-                <button key={p} onClick={() => setPay(p)} className={`rounded-xl border px-3 py-2 text-sm capitalize transition-all ${pay === p ? "border-emerald bg-emerald-mist text-emerald" : "border-sand text-muted hover:border-gold"}`}>{p}</button>
-              ))}
+            <p className="text-xs text-muted mb-1">Payment received <span className="text-muted/70">— leave blank for paid-in-full (cash)</span></p>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-[11px] text-muted">Cash ₹<input value={payCash} onChange={(e) => setPayCash(e.target.value)} inputMode="numeric" placeholder="0" className={`${input} mt-0.5`} /></label>
+              <label className="text-[11px] text-muted">UPI / Card ₹<input value={payBank} onChange={(e) => setPayBank(e.target.value)} inputMode="numeric" placeholder="0" className={`${input} mt-0.5`} /></label>
+            </div>
+            <div className="flex gap-2 mt-1.5">
+              <button onClick={() => { setPayCash(String(Math.round(total / 100))); setPayBank(""); }} className="text-[11px] px-2 py-1 rounded-full border border-sand text-muted hover:border-emerald">All cash</button>
+              <button onClick={() => { setPayBank(String(Math.round(total / 100))); setPayCash(""); }} className="text-[11px] px-2 py-1 rounded-full border border-sand text-muted hover:border-emerald">All UPI</button>
             </div>
           </div>
         </div>
         <div className="mt-5 border-t border-sand pt-4 flex justify-between items-baseline">
           <span className="text-muted">Total</span><span className="text-3xl font-semibold text-ink">{formatPaise(total)}</span>
         </div>
-        <div className="mt-3 flex items-center justify-between gap-2">
-          <span className="text-sm text-muted">Amount received</span>
-          <input value={received} onChange={(e) => setReceived(e.target.value)} inputMode="numeric"
-            placeholder={`${Math.round(total / 100)} (full)`}
-            className="rounded-xl border border-sand px-3 py-1.5 text-sm w-36 text-right outline-none focus:border-emerald" />
-        </div>
-        {received.trim() && Number(received) * 100 < total && (
-          <p className="text-xs text-rose mt-1 text-right">Partial — balance due {formatPaise(total - Number(received) * 100)}</p>
-        )}
+        {(() => {
+          const recv = (Number(payCash) || 0) * 100 + (Number(payBank) || 0) * 100;
+          if (recv === 0) return null;
+          const bal = total - recv;
+          return (
+            <p className={`text-xs mt-1 text-right ${bal > 0 ? "text-rose" : "text-emerald-dark"}`}>
+              Received {formatPaise(recv)}{bal > 0 ? ` · balance due ${formatPaise(bal)}` : bal < 0 ? ` · change ${formatPaise(-bal)}` : " · settled"}
+            </p>
+          );
+        })()}
         {lines.some((l) => l.qty > l.stock) && (
           <label className="mt-3 flex items-start gap-2 rounded-xl border border-gold/60 bg-gold/10 px-3 py-2 text-xs text-ink cursor-pointer">
             <input type="checkbox" checked={allowBackorder} onChange={(e) => setAllowBackorder(e.target.checked)} className="mt-0.5" />
