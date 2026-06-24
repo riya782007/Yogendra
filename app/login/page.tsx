@@ -1,4 +1,5 @@
 import { loginAction } from "@/app/actions/auth";
+import { PasscodeInput } from "@/components/PasscodeInput";
 
 export const metadata = { title: "Owner Login", robots: { index: false } };
 
@@ -14,7 +15,7 @@ export default function Login({ searchParams }: { searchParams: { error?: string
           <h1 className="font-medium text-ink mb-1">Sign in</h1>
           <p className="text-xs text-muted mb-5">Enter your passcode. The owner passcode unlocks everything; a staff passcode opens only that role's permitted sections.</p>
           <input type="hidden" name="next" value={searchParams.next ?? "/admin/dashboard"} />
-          <input name="passcode" type="password" autoFocus placeholder="Owner or staff passcode"
+          <PasscodeInput autoFocus placeholder="Owner or staff passcode"
             className="w-full rounded-xl border border-sand px-4 py-2.5 text-sm bg-white outline-none focus:border-emerald transition-colors" />
           {searchParams.error && <p className="text-sm text-rose mt-2">Incorrect passcode. Try again.</p>}
           <button className="btn-primary w-full mt-4 py-3 text-sm font-medium">Sign in</button>
