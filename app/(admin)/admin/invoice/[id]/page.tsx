@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { getOrder } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { PrintButton } from "@/components/admin/PrintButton";
-import { BUSINESS, HSN_JEWELLERY, GST_RATE, gstSplit, stateCodeFromGstin, amountInWords } from "@/lib/business";
+import { BUSINESS, HSN_JEWELLERY, GST_RATE, gstSplit, gstSplitExclusive, stateCodeFromGstin, amountInWords } from "@/lib/business";
 import { getSession, can } from "@/lib/auth";
 import { recordPaymentAction, setDocTypeAction } from "@/app/actions/payments";
 
@@ -19,12 +19,18 @@ export default async function Invoice({ params }: { params: { id: string } }) {
   const isProforma = order.doc_type === "proforma";
   const total = order.total as number;
   const paid = order.amount_paid ?? 0;
-  const balanceDue = Math.max(0, total - paid);
-  const payStatus = paid <= 0 ? "Unpaid" : paid >= total ? "Paid" : "Partial";
   const buyerStateCode = order.buyer_state || stateCodeFromGstin(order.buyer_gstin);
-  const g = gstSplit(total, buyerStateCode);
-  const roundedTotal = Math.round(total / 100) * 100;
-  const roundOff = roundedTotal - total;
+  // #13: wholesale (B2B) tax invoices are GST-EXCLUSIVE — the stored total is the
+  // pre-tax wholesale value and GST is added on top. Retail/POS GST invoices stay
+  // GST-INCLUSIVE (the shelf price already includes tax).
+  const gstExclusive = !isCash && order.channel === "wholesale";
+  const g = gstExclusive ? gstSplitExclusive(total, buyerStateCode) : gstSplit(total, buyerStateCode);
+  // What the customer actually owes: inclusive total (or pre-tax + GST when exclusive).
+  const payable = isCash ? total : gstExclusive ? total + g.tax : total;
+  const balanceDue = Math.max(0, payable - paid);
+  const payStatus = paid <= 0 ? "Unpaid" : paid >= payable ? "Paid" : "Partial";
+  const roundedTotal = Math.round(payable / 100) * 100;
+  const roundOff = roundedTotal - payable;
 
   const docTitle = isCash ? "CASH MEMO" : isProforma ? "PROFORMA INVOICE" : "TAX INVOICE";
   const invNo = order.invoice_no || ((isCash ? "CM-" : "INV-") + String(order.id).slice(0, 8).toUpperCase());
@@ -95,8 +101,8 @@ export default async function Invoice({ params }: { params: { id: string } }) {
             </thead>
             <tbody>
               {items.map((it: any, i: number) => {
-                const lineTaxable = isCash ? it.line_total : Math.round(it.line_total / (1 + GST_RATE / 100));
-                const unit = isCash ? it.unit_price : Math.round(it.unit_price / (1 + GST_RATE / 100));
+                const lineTaxable = (isCash || gstExclusive) ? it.line_total : Math.round(it.line_total / (1 + GST_RATE / 100));
+                const unit = (isCash || gstExclusive) ? it.unit_price : Math.round(it.unit_price / (1 + GST_RATE / 100));
                 return (
                   <tr key={i} className="border-b border-sand/60">
                     <td className={`${td} text-muted`}>{i + 1}</td>

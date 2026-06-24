@@ -52,6 +52,21 @@ export function gstSplit(totalPaise: number, buyerStateCode?: string | null) {
   return { taxable, interState, igst: 0, cgst, sgst, tax };
 }
 
+/**
+ * GST-EXCLUSIVE split (#13): the input is the taxable value and GST is added ON TOP.
+ * Used for wholesale (B2B) tax invoices, where the wholesale rate is pre-tax.
+ * Returns the same shape as gstSplit; grand total = taxable + tax.
+ */
+export function gstSplitExclusive(taxablePaise: number, buyerStateCode?: string | null) {
+  const taxable = Math.round(taxablePaise);
+  const tax = Math.round((taxable * GST_RATE) / 100);
+  const interState = !!buyerStateCode && buyerStateCode !== BUSINESS.stateCode;
+  if (interState) return { taxable, interState, igst: tax, cgst: 0, sgst: 0, tax };
+  const cgst = Math.round(tax / 2);
+  const sgst = tax - cgst;
+  return { taxable, interState, igst: 0, cgst, sgst, tax };
+}
+
 /** First two digits of a GSTIN = state code. */
 export function stateCodeFromGstin(gstin?: string | null): string | null {
   if (!gstin) return null;
