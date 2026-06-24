@@ -2,18 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
-
-/** Map a human "source" label to a typed movement kind (for reports & the audit trail). */
-function inferKind(source: string): string {
-  const s = source.toLowerCase();
-  if (/(damage|broken|lost|defect)/.test(s)) return "damage";
-  if (/(purchase|restock|received|supplier)/.test(s)) return "purchase";
-  if (/(return|cancel|sample)/.test(s)) return "return";
-  if (/(found|recount|count)/.test(s)) return "recount";
-  if (/(correct)/.test(s)) return "correction";
-  if (/(sold|sale|pos)/.test(s)) return "sale";
-  return "manual";
-}
+import { inferStockKind } from "@/lib/stockKind";
 
 /**
  * Adjust stock by a signed delta, tagged with a SOURCE + typed KIND so every movement
@@ -27,7 +16,7 @@ export async function adjustStockAction(formData: FormData): Promise<void> {
   const delta = Math.trunc(Number(formData.get("delta") ?? 0));
   const source = String(formData.get("source") ?? "").trim() || "Manual adjustment";
   const reason = String(formData.get("reason") ?? "").trim() || null;
-  const kind = String(formData.get("kind") ?? "").trim() || inferKind(source);
+  const kind = String(formData.get("kind") ?? "").trim() || inferStockKind(source);
   if (!sku || !delta) return;
   // Strict: adding needs inventory.add, removing needs inventory.remove.
   if (!(await requirePerm(delta > 0 ? "inventory.add" : "inventory.remove"))) return;

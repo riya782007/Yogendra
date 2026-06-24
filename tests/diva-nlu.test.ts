@@ -93,6 +93,32 @@ describe("intent → tool mapping (the client's example commands)", () => {
     expect(p.steps[0].tool).toBe("record_damage");
     expect(p.steps[0].args).toMatchObject({ sku: "BD1004", qty: 2 });
   });
+});
+
+describe("intent edge cases", () => {
+  it("create category is not mistaken for create product", () => {
+    const p = interpret("create category Anklets");
+    expect(p.steps[0]?.tool).toBe("create_category");
+  });
+  it("create subcategory", () => {
+    expect(firstTool("create subcategory Oxidised under Necklaces")).toBe("create_subcategory");
+  });
+  it("find a customer by name", () => {
+    const p = interpret("customer Ravi ka detail");
+    expect(p.steps[0].tool).toBe("find_customer");
+    expect(p.steps[0].args.query).toBe("Ravi");
+  });
+  it("hide a product", () => {
+    expect(firstTool("hide BD1099")).toBe("hide_product");
+  });
+  it("this week's sales", () => {
+    const p = interpret("show me this week's sales");
+    expect(p.steps[0].tool).toBe("analyze_sales");
+    expect(p.steps[0].args.days).toBe(7);
+  });
+  it("business summary", () => {
+    expect(firstTool("how is business doing")).toBe("business_summary");
+  });
   it("navigation", () => {
     expect(firstTool("open inventory")).toBe("open_page");
     expect(firstTool("billing kholo")).toBe("open_page");
