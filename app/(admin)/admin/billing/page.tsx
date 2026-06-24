@@ -6,7 +6,7 @@ import { POSClient } from "@/components/admin/POSClient";
 export const metadata = { title: "Owner Console · Billing (POS)" };
 
 export default async function Billing() {
-  const { products, formula } = await getStorefront();
+  const { products, formula } = await getStorefront({ includeUnpublished: true });
   const list = products.map((p) => ({ sku: p.sku, name: p.name, price: liveOffer(p.base_wholesale, formula).price, category: p.category.name, qty: p.qty }));
   return (
     <main className="p-8 bg-cream/40 min-h-screen">

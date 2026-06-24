@@ -325,10 +325,14 @@ export type StoreProduct = DbProduct & {
   category: DbCategory; rating: number; reviews: number; isNew: boolean;
 };
 
-export async function getStorefront(): Promise<{ products: StoreProduct[]; formula: PF }> {
+export async function getStorefront(opts: { includeUnpublished?: boolean } = {}): Promise<{ products: StoreProduct[]; formula: PF }> {
   const sb = supabaseServer();
+  // POS billing sells any in-stock product, including drafts not yet photographed/published;
+  // public retail surfaces only list published products.
+  let prodQ = sb.from("products").select("*, category:categories(id,name,slug)");
+  prodQ = opts.includeUnpublished ? prodQ.in("status", ["published", "draft"]) : prodQ.eq("status", "published");
   const [{ data: prods }, { data: revs }, formula] = await Promise.all([
-    sb.from("products").select("*, category:categories(id,name,slug)").eq("status", "published").order("sku"),
+    prodQ.order("sku"),
     sb.from("reviews").select("product_id, rating"),
     getPricingFormula(),
   ]);
