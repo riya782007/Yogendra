@@ -29,8 +29,17 @@ export default async function ProductPage({ params }: Params) {
 
   const colors = (p.variants ?? []).map((v) => v.color ?? "").filter(Boolean);
   const content = resolveProductContent({ name: p.name, sku: p.sku, categoryName: p.category?.name, colors, generated_content: p.generated_content });
-  const o = liveOffer(p.base_wholesale, formula, overridesOf(p));
-  const w = resolvePrices(p.base_wholesale, formula, overridesOf(p));
+  const pOv = overridesOf(p);
+  const o = liveOffer(p.base_wholesale, formula, pOv);
+  const w = resolvePrices(p.base_wholesale, formula, pOv);
+  // Per-variant: its own photo, stock and price (variant override → product override → formula).
+  const variantsForBuy = (p.variants ?? []).map((v: any) => {
+    const vOv = overridesOf(v);
+    const merged = { wholesale: vOv.wholesale ?? pOv.wholesale, retail: vOv.retail ?? pOv.retail, mrp: vOv.mrp ?? pOv.mrp };
+    const vo = liveOffer(p.base_wholesale, formula, merged);
+    const label = [v.color, v.size, v.polish].filter(Boolean).join(" · ") || v.sku;
+    return { sku: v.sku, label, image: (v.image_paths?.[0] ?? null) as string | null, price: vo.price, qty: v.qty ?? 0 };
+  });
   const waText = `Please place an order for ${p.name} (SKU:${p.sku})`;
   const waHref = `https://wa.me/919873151767?text=${encodeURIComponent(waText)}`;
   
@@ -71,7 +80,7 @@ export default async function ProductPage({ params }: Params) {
           </div>
           <p className="text-xs text-muted mt-1">Inclusive of all taxes · You save {formatPaise(o.savings)}</p>
 
-          <BuyBox colors={colors} waText={waText} waHref={waHref} item={{ sku: p.sku, name: p.name, price: o.price, category: p.category.slug }} />
+          <BuyBox variants={variantsForBuy} waText={waText} waHref={waHref} item={{ sku: p.sku, name: p.name, price: o.price, category: p.category.slug }} />
 
           <div className="mt-7 border-t border-sand pt-5">
             <p className="text-ink/80 leading-relaxed">{content.description}</p>
