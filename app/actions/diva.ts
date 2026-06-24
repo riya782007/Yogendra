@@ -341,7 +341,7 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         if (!p) return { ok: false, message: `No product with SKU ${sku}.` };
         await sb.from("products").update({ base_wholesale: Math.round(price * 100) }).eq("id", (p as any).id);
         revalidatePath("/admin/catalogue"); revalidatePath("/shop");
-        return { ok: true, message: `Set ${(p as any).name} (${sku}) base/wholesale to ${formatPaise(Math.round(price * 100))}. Retail ${formatPaise(prices.retail)} · MRP ${formatPaise(prices.mrp)}.` };
+        return { ok: true, message: `Set ${(p as any).name} (${sku}) base/wholesale to ${formatPaise(Math.round(price * 100))}. Retail ${formatPaise(prices.retailPrice)} · MRP ${formatPaise(prices.mrp)}.` };
       }
       case "rename_sku": {
         const sku = String(args.sku ?? "").trim().toUpperCase();
