@@ -4,6 +4,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { computePrices, isValidPriceSet } from "@/lib/pricing";
 import { getPricingFormula } from "@/lib/supabase/queries";
 import { requirePerm } from "@/lib/auth";
+import { generateContentAction } from "@/app/actions/aiContent";
 
 const slugify = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
@@ -71,6 +72,9 @@ export async function createProductAction(p: NewProduct): Promise<RowResult> {
   const sb = supabaseServer();
   const [formula, sku] = await Promise.all([getPricingFormula(), nextSku(sb)]);
   const res = await insertOne(sb, formula, p, sku);
+  // #6: every newly created product gets AI-written SEO (title/description/keywords).
+  // Best-effort — falls back to a strong heuristic when no AI key is set, and never blocks creation.
+  if (res.ok && res.sku) { try { await generateContentAction(res.sku); } catch { /* SEO is non-blocking */ } }
   revalidatePath("/admin/catalogue"); revalidatePath("/shop");
   return res;
 }
