@@ -414,15 +414,27 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         const facet = String(args.facet ?? "").trim();
         const sb = supabaseServer();
         const siteBase = (process.env.NEXT_PUBLIC_SITE_URL ?? "").replace(/\/$/, "");
-        let link = `${siteBase}/shop`;
+        let path = "/catalog";
         let scope = "the full catalogue";
         if (facet) {
-          // Try a category match first, then a subcategory.
           const slug = slugify(facet);
+          // Try a parent category first, then a subcategory, then a keyword search.
           const { data: cat } = await sb.from("categories").select("slug,name").or(`slug.eq.${slug},name.ilike.%${facet}%`).maybeSingle();
-          if (cat) { link = `${siteBase}/shop/c/${(cat as any).slug}`; scope = `the ${(cat as any).name} catalogue`; }
-          else { link = `${siteBase}/shop?q=${encodeURIComponent(facet)}`; scope = `"${facet}"`; }
+          if (cat) {
+            path = `/catalog?category=${(cat as any).slug}`;
+            scope = `the ${(cat as any).name} catalogue`;
+          } else {
+            const { data: sub } = await sb.from("subcategories").select("slug,name,category:categories(slug)").or(`slug.eq.${slug},name.ilike.%${facet}%`).maybeSingle();
+            if (sub) {
+              path = `/catalog?category=${(sub as any).category?.slug ?? "all"}&subcategory=${(sub as any).slug}`;
+              scope = `the ${(sub as any).name} catalogue`;
+            } else {
+              path = `/catalog?q=${encodeURIComponent(facet)}`;
+              scope = `"${facet}"`;
+            }
+          }
         }
+        const link = `${siteBase}${path}`;
         const wa = Number(args.whatsapp) ? ` Send on WhatsApp: https://wa.me/?text=${encodeURIComponent(`Check out ${scope} from Blythe Diva: ${link}`)}` : "";
         return { ok: true, data: { link }, message: `Here's a shareable link for ${scope}: ${link}${wa}` };
       }
