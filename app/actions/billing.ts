@@ -3,6 +3,70 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
+import { getPricingFormula } from "@/lib/supabase/queries";
+import { resolvePrices, overridesOf } from "@/lib/pricing";
+
+/** Recompute an estimate's total from its current line items. */
+async function recomputeEstimateTotal(sb: ReturnType<typeof supabaseServer>, estimateId: string) {
+  const { data } = await sb.from("estimate_items").select("line_total").eq("estimate_id", estimateId);
+  const total = ((data as any[]) ?? []).reduce((s, r) => s + (r.line_total ?? 0), 0);
+  await sb.from("estimates").update({ total }).eq("id", estimateId);
+}
+
+/** #18: edit an open estimate — customer details. */
+export async function updateEstimateCustomerAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("estimates.create"))) return;
+  const id = String(formData.get("id") ?? "");
+  if (!id) return;
+  const name = String(formData.get("customer_name") ?? "").trim() || null;
+  const phone = String(formData.get("customer_phone") ?? "").trim() || null;
+  await supabaseServer().from("estimates").update({ customer_name: name, customer_phone: phone }).eq("id", id);
+  revalidatePath(`/admin/estimate/${id}`);
+}
+
+/** #18: change a line's quantity on an open estimate. */
+export async function updateEstimateLineAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("estimates.create"))) return;
+  const itemId = String(formData.get("item_id") ?? "");
+  const estimateId = String(formData.get("estimate_id") ?? "");
+  const qty = Math.max(1, Math.floor(Number(formData.get("qty") ?? 1)));
+  if (!itemId || !estimateId) return;
+  const sb = supabaseServer();
+  const { data: it } = await sb.from("estimate_items").select("unit_price").eq("id", itemId).maybeSingle();
+  if (!it) return;
+  await sb.from("estimate_items").update({ qty, line_total: (it as any).unit_price * qty }).eq("id", itemId);
+  await recomputeEstimateTotal(sb, estimateId);
+  revalidatePath(`/admin/estimate/${estimateId}`);
+}
+
+/** #18: remove a line from an open estimate. */
+export async function removeEstimateLineAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("estimates.create"))) return;
+  const itemId = String(formData.get("item_id") ?? "");
+  const estimateId = String(formData.get("estimate_id") ?? "");
+  if (!itemId || !estimateId) return;
+  const sb = supabaseServer();
+  await sb.from("estimate_items").delete().eq("id", itemId);
+  await recomputeEstimateTotal(sb, estimateId);
+  revalidatePath(`/admin/estimate/${estimateId}`);
+}
+
+/** #18: add a line (by SKU, at the current retail price) to an open estimate. */
+export async function addEstimateLineAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("estimates.create"))) return;
+  const estimateId = String(formData.get("estimate_id") ?? "");
+  const sku = String(formData.get("sku") ?? "").trim().toUpperCase();
+  const qty = Math.max(1, Math.floor(Number(formData.get("qty") ?? 1)));
+  if (!estimateId || !sku) return;
+  const sb = supabaseServer();
+  const { data: p } = await sb.from("products").select("id,base_wholesale,wholesale_override,retail_override,mrp_override").ilike("sku", sku).maybeSingle();
+  if (!p) return;
+  const formula = await getPricingFormula();
+  const unit = resolvePrices((p as any).base_wholesale, formula, overridesOf(p)).retailPrice;
+  await sb.from("estimate_items").insert({ estimate_id: estimateId, product_id: (p as any).id, qty, unit_price: unit, line_total: unit * qty });
+  await recomputeEstimateTotal(sb, estimateId);
+  revalidatePath(`/admin/estimate/${estimateId}`);
+}
 
 export async function createEstimateAction(input: { items: { sku: string; qty: number }[]; customer: { name?: string; phone?: string } }): Promise<{ ok: boolean; estimateId?: string; total?: number; error?: string }> {
   if (!(await requirePerm("estimates.create"))) return { ok: false, error: "Your role can't create estimates." };

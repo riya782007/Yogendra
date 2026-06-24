@@ -50,7 +50,9 @@ export default async function SalesRecords({ searchParams }: { searchParams: { p
             {rows.length === 0 && <tr><td colSpan={7} className="p-4 text-muted">No sales match these filters.</td></tr>}
             {rows.map((r: any) => (
               <tr key={r.id} className="border-t border-sand/60 hover:bg-cream/40">
-                <td className="p-3"><Link href={`/admin/invoice/${r.id}`} className="text-emerald nav-link font-medium">{r.invoice_no || String(r.id).slice(0, 8).toUpperCase()} ↗</Link>{r.source_tag && <span className="block text-[10px] text-muted">via {r.source_tag}</span>}</td>
+                <td className="p-3"><Link href={`/admin/invoice/${r.id}`} className="text-emerald nav-link font-medium">{r.invoice_no || String(r.id).slice(0, 8).toUpperCase()} ↗</Link>{r.source_tag === "estimate"
+                  ? <span className="inline-block mt-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-gold/15 text-gold-dark">from estimate</span>
+                  : r.source_tag && <span className="block text-[10px] text-muted">via {r.source_tag}</span>}</td>
                 <td className="p-3 text-muted whitespace-nowrap">{new Date(r.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" })}</td>
                 <td className="p-3 text-ink">{r.customer_name || "Walk-in"}{r.customer_phone && <span className="block text-xs text-muted">{r.customer_phone}</span>}</td>
                 <td className="p-3"><span className={`px-2 py-0.5 rounded-full text-xs capitalize ${CH_STYLE[r.channel] ?? "bg-cream text-muted"}`}>{r.channel}</span></td>

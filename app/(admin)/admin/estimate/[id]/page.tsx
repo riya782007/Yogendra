@@ -1,10 +1,12 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getEstimate } from "@/lib/supabase/queries";
+import { getEstimate, getProductsLite } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { PrintButton } from "@/components/admin/PrintButton";
 import { BUSINESS, amountInWords } from "@/lib/business";
+import { requirePerm } from "@/lib/auth";
+import { updateEstimateCustomerAction, updateEstimateLineAction, removeEstimateLineAction, addEstimateLineAction } from "@/app/actions/billing";
 
 export const metadata = { title: "Estimate / Quotation" };
 
@@ -12,12 +14,16 @@ export default async function EstimatePrint({ params }: { params: { id: string }
   const data = await getEstimate(params.id);
   if (!data) notFound();
   const { estimate, items } = data;
+  const isOpen = estimate.status === "open";
+  const canEdit = isOpen && (await requirePerm("estimates.create"));
+  const products = canEdit ? await getProductsLite() : [];
   const total = estimate.total as number;
   const ref = "EST-" + String(estimate.id).slice(0, 8).toUpperCase();
   const date = new Date(estimate.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
   const qtyTotal = items.reduce((s: number, it: any) => s + it.qty, 0);
   const th = "py-2 px-2 text-xs font-semibold text-ink/70";
   const td = "py-2 px-2 align-top";
+  const inp = "rounded-xl border border-sand px-3 py-2 text-sm bg-white outline-none focus:border-emerald";
 
   return (
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
@@ -87,6 +93,43 @@ export default async function EstimatePrint({ params }: { params: { id: string }
             Estimate only — stock is reserved on confirmation. {BUSINESS.brand} · {BUSINESS.phone}
           </p>
         </div>
+
+        {/* #18: edit panel — only for OPEN estimates (locks once billed) */}
+        {canEdit && (
+          <div className="no-print mt-5 bg-white rounded-2xl shadow-card p-5">
+            <h2 className="font-medium text-ink mb-1">Edit estimate</h2>
+            <p className="text-xs text-muted mb-4">This estimate is open — change items, quantities or the customer. It locks once billed.</p>
+            <datalist id="est-skus">{products.map((p: any) => <option key={p.id} value={p.sku}>{p.name}</option>)}</datalist>
+
+            <form action={updateEstimateCustomerAction} className="flex flex-wrap items-end gap-2 mb-4">
+              <input type="hidden" name="id" value={estimate.id} />
+              <label className="text-[11px] text-muted">Customer<input name="customer_name" defaultValue={estimate.customer_name ?? ""} className={`${inp} w-44 block mt-0.5`} /></label>
+              <label className="text-[11px] text-muted">Phone<input name="customer_phone" defaultValue={estimate.customer_phone ?? ""} className={`${inp} w-36 block mt-0.5`} /></label>
+              <button className="px-3 py-2 rounded-xl bg-ink/5 text-ink text-xs hover:bg-ink/10">Save customer</button>
+            </form>
+
+            <div className="space-y-2 mb-3">
+              {items.map((it: any) => (
+                <form key={it.id} action={updateEstimateLineAction} className="flex items-center gap-2">
+                  <input type="hidden" name="item_id" value={it.id} />
+                  <input type="hidden" name="estimate_id" value={estimate.id} />
+                  <span className="flex-1 text-sm text-ink truncate">{it.product?.name} <span className="text-muted font-mono text-xs">{it.product?.sku}</span> · {formatPaise(it.unit_price)}</span>
+                  <input name="qty" type="number" min={1} defaultValue={it.qty} className={`${inp} w-16 text-center`} />
+                  <button className="px-3 py-2 rounded-xl bg-ink/5 text-ink text-xs hover:bg-ink/10">Save</button>
+                  <button formAction={removeEstimateLineAction} className="text-muted hover:text-rose text-xs px-1">Remove</button>
+                </form>
+              ))}
+              {items.length === 0 && <p className="text-sm text-muted">No items — add one below.</p>}
+            </div>
+
+            <form action={addEstimateLineAction} className="flex items-end gap-2 border-t border-sand/60 pt-3">
+              <input type="hidden" name="estimate_id" value={estimate.id} />
+              <label className="text-[11px] text-muted">Add SKU<input name="sku" list="est-skus" placeholder="BD1001" className={`${inp} w-40 block mt-0.5 font-mono`} /></label>
+              <label className="text-[11px] text-muted">Qty<input name="qty" type="number" min={1} defaultValue={1} className={`${inp} w-16 text-center block mt-0.5`} /></label>
+              <button className="btn-primary px-4 py-2 text-sm font-medium">+ Add item</button>
+            </form>
+          </div>
+        )}
       </div>
     </main>
   );

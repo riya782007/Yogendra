@@ -486,7 +486,7 @@ export async function getEstimate(id: string) {
   const sb = supabaseServer();
   const { data: estimate } = await sb.from("estimates").select("*").eq("id", id).maybeSingle();
   if (!estimate) return null;
-  const { data: items } = await sb.from("estimate_items").select("qty,unit_price,line_total,product:products(name,sku)").eq("estimate_id", id);
+  const { data: items } = await sb.from("estimate_items").select("id,qty,unit_price,line_total,product:products(name,sku)").eq("estimate_id", id);
   return { estimate, items: (items as any[]) ?? [] };
 }
 export async function getRecentOrders(limit = 12) {
