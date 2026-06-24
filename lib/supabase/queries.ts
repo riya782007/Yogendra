@@ -221,6 +221,24 @@ export async function getPublishedProducts(): Promise<(DbProduct & { category: D
   return (data as any) ?? [];
 }
 
+/** Last purchase cost per product & per variant (#11/#30) — paise. */
+export async function getLastPurchaseCosts(): Promise<{ byProduct: Record<string, number>; byVariant: Record<string, number> }> {
+  const sb = supabaseServer();
+  const { data } = await sb
+    .from("purchase_items")
+    .select("mapped_product_id,variant_id,unit_cost, purchase:purchases(created_at)");
+  const rows = ((data as any[]) ?? [])
+    .map((r) => ({ pid: r.mapped_product_id, vid: r.variant_id, cost: r.unit_cost, at: r.purchase?.created_at ?? "" }))
+    .sort((a, b) => (a.at < b.at ? 1 : -1)); // newest first
+  const byProduct: Record<string, number> = {};
+  const byVariant: Record<string, number> = {};
+  for (const r of rows) {
+    if (r.pid && byProduct[r.pid] === undefined) byProduct[r.pid] = r.cost;
+    if (r.vid && byVariant[r.vid] === undefined) byVariant[r.vid] = r.cost;
+  }
+  return { byProduct, byVariant };
+}
+
 /** Supplier ledger (#36): a vendor's purchase history with running totals. */
 export async function getSupplierLedger(id: string) {
   const sb = supabaseServer();

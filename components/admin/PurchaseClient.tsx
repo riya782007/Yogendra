@@ -8,7 +8,9 @@ type Variant = { id: string; sku: string; label: string };
 type Prod = { id: string; name: string; sku: string; variants?: Variant[] };
 type Line = { supplierSku: string; mappedProductId: string; mappedName: string; variantId: string; qty: string; cost: string };
 
-export function PurchaseClient({ suppliers, products }: { suppliers: Sup[]; products: Prod[] }) {
+type LastCosts = { byProduct: Record<string, number>; byVariant: Record<string, number> };
+
+export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: Sup[]; products: Prod[]; lastCosts?: LastCosts }) {
   const [supplierId, setSupplierId] = useState("");
   const [billNo, setBillNo] = useState("");
   const [lines, setLines] = useState<Line[]>([{ supplierSku: "", mappedProductId: "", mappedName: "", variantId: "", qty: "", cost: "" }]);
@@ -73,7 +75,15 @@ export function PurchaseClient({ suppliers, products }: { suppliers: Sup[]; prod
               )}
             </div>
             <input className={input + " col-span-2"} placeholder="Qty" inputMode="numeric" value={l.qty} onChange={(e) => set(i, { qty: e.target.value })} />
-            <input className={input + " col-span-3"} placeholder="Unit cost ₹" inputMode="numeric" value={l.cost} onChange={(e) => set(i, { cost: e.target.value })} />
+            <div className="col-span-3">
+              <input className={input + " w-full"} placeholder="Unit cost ₹" inputMode="numeric" value={l.cost} onChange={(e) => set(i, { cost: e.target.value })} />
+              {(() => {
+                const last = l.variantId ? lastCosts?.byVariant?.[l.variantId] : (l.mappedProductId ? lastCosts?.byProduct?.[l.mappedProductId] : undefined);
+                if (!last) return null;
+                const r = Math.round(last / 100);
+                return <button type="button" onClick={() => set(i, { cost: String(r) })} className="block text-[10px] text-emerald-dark mt-0.5 hover:underline" title="Use last purchase price">last ₹{r} · use</button>;
+              })()}
+            </div>
             <div className="col-span-2 text-sm text-right pt-2">{formatPaise((Number(l.qty) || 0) * (Number(l.cost) || 0) * 100)}</div>
           </div>
         ))}
