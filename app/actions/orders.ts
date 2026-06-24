@@ -1,5 +1,6 @@
 "use server";
 import { supabaseServer } from "@/lib/supabase/server";
+import { requirePerm } from "@/lib/auth";
 import { sendPurchase } from "@/lib/ga4";
 
 export type PlaceOrderInput = {
@@ -33,6 +34,7 @@ export async function posSaleAction(input: {
   buyerAddress?: string;
   amountPaidRupees?: number; // partial/advance; defaults to full
 }): Promise<{ ok: boolean; orderId?: string; total?: number; error?: string }> {
+  if (!(await requirePerm("billing.sell"))) return { ok: false, error: "Your role can't ring up POS sales." };
   if (!input.items?.length) return { ok: false, error: "Add at least one item" };
   for (const it of input.items) if (!Number.isFinite(it.qty) || it.qty < 1) return { ok: false, error: "Every line needs a quantity of 1 or more" };
   const sb = supabaseServer();

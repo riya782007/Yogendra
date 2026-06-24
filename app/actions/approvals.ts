@@ -2,10 +2,12 @@
 /** OTP approval decision (Req 8.3-8.4). Wrong/empty OTP keeps it pending; correct OTP applies. */
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
+import { requirePerm } from "@/lib/auth";
 
 const hashOtp = (otp: string) => `h:${otp}`; // demo hashing; swap for bcrypt/argon in prod
 
 export async function decideApprovalAction(formData: FormData) {
+  if (!(await requirePerm("approvals.approve"))) return; // only an OTP-approver may decide
   const id = String(formData.get("id"));
   const otp = String(formData.get("otp") ?? "");
   const approve = String(formData.get("approve")) === "1";

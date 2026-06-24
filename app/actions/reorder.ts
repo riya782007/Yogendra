@@ -1,6 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
+import { requirePerm } from "@/lib/auth";
 import { getReorderCandidates } from "@/lib/supabase/queries";
 import { groqChat, openaiChat, groqConfigured, openaiConfigured } from "@/lib/ai/providers";
 
@@ -12,6 +13,7 @@ function heuristic(c: any): Rec {
 }
 
 export async function generateReorderPlanAction(): Promise<{ ok: boolean; provider: string; recs: Rec[] }> {
+  if (!(await requirePerm("inventory.view"))) return { ok: false, provider: "denied", recs: [] };
   const cands = await getReorderCandidates();
   if (cands.length === 0) return { ok: true, provider: "none", recs: [] };
 
@@ -38,6 +40,7 @@ export async function generateReorderPlanAction(): Promise<{ ok: boolean; provid
 }
 
 export async function approveReorderAction(input: { sku: string; name: string; action: string; qty: number }): Promise<{ ok: boolean }> {
+  if (!(await requirePerm("purchases.create"))) return { ok: false };
   const sb = supabaseServer();
   await sb.from("agent_runs").insert({ agent: "inventory", trigger: "reorder_approved", input, output: input, confidence: 0.9, needs_human: false });
   const { data: asg } = await sb.from("assignments").select("id,assigned_contact_id,channel").eq("responsibility", input.action === "clear" ? "dead_stock" : "low_stock").maybeSingle();
