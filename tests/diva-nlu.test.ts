@@ -78,6 +78,16 @@ describe("intent → tool mapping (the client's example commands)", () => {
   it("convert cash memo to GST", () => {
     expect(firstTool("Is bill ko cash memo se GST invoice me convert karo")).toBe("convert_invoice");
   });
+  it("set an explicit retail price", () => {
+    const p = interpret("BD1004 ka retail price 1500 kar do");
+    expect(p.steps[0].tool).toBe("set_price");
+    expect(p.steps[0].args).toMatchObject({ sku: "BD1004", price: 1500, tier: "retail" });
+  });
+  it("set an explicit wholesale price", () => {
+    const p = interpret("set wholesale price 800 for BD1010");
+    expect(p.steps[0].tool).toBe("set_price");
+    expect(p.steps[0].args).toMatchObject({ sku: "BD1010", tier: "wholesale" });
+  });
   it("navigation", () => {
     expect(firstTool("open inventory")).toBe("open_page");
     expect(firstTool("billing kholo")).toBe("open_page");

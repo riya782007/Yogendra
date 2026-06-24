@@ -74,6 +74,69 @@ export function priceProduct(baseWholesalePaise: number, formula: PricingFormula
   return { prices, valid: isValidPriceSet(prices) };
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4 — explicit per-product / per-variant overrides.
+//
+// The formula stays the default; these let the owner pin an exact tier price.
+// All values are paise. `null`/`undefined` for a tier means "inherit".
+// ---------------------------------------------------------------------------
+
+export type PriceTier = "wholesale" | "retail" | "mrp";
+
+export type PriceOverrides = {
+  wholesale?: number | null; // paise
+  retail?: number | null;    // paise
+  mrp?: number | null;       // paise
+};
+
+/** Pull a PriceOverrides out of a DB row (products/variants) with *_override columns. */
+export function overridesOf(
+  row: { wholesale_override?: number | null; retail_override?: number | null; mrp_override?: number | null } | null | undefined,
+): PriceOverrides {
+  return {
+    wholesale: row?.wholesale_override ?? null,
+    retail: row?.retail_override ?? null,
+    mrp: row?.mrp_override ?? null,
+  };
+}
+
+function firstPositive(...vals: (number | null | undefined)[]): number | undefined {
+  for (const v of vals) if (typeof v === "number" && Number.isFinite(v) && v > 0) return v;
+  return undefined;
+}
+
+/**
+ * Resolve the effective price set, applying override layers in priority order
+ * (highest priority first), falling back to the formula-computed value per tier.
+ *
+ *   resolvePrices(base, formula, variantOverrides, productOverrides)
+ *
+ * Each layer may set any subset of tiers; a tier with no override anywhere uses
+ * the formula. Pure & deterministic.
+ */
+export function resolvePrices(
+  baseWholesalePaise: number,
+  formula: PricingFormula,
+  ...layers: (PriceOverrides | null | undefined)[]
+): PriceSet {
+  const computed = computePrices(baseWholesalePaise, formula);
+  return {
+    wholesaleRate: firstPositive(...layers.map((l) => l?.wholesale)) ?? computed.wholesaleRate,
+    retailPrice: firstPositive(...layers.map((l) => l?.retail)) ?? computed.retailPrice,
+    mrp: firstPositive(...layers.map((l) => l?.mrp)) ?? computed.mrp,
+  };
+}
+
+/** Read one tier out of a resolved price set. */
+export function priceForTier(p: PriceSet, tier: PriceTier): number {
+  return tier === "wholesale" ? p.wholesaleRate : tier === "retail" ? p.retailPrice : p.mrp;
+}
+
+/** Which tier a given customer type pays. Wholesale buyers → wholesale; everyone else → retail. */
+export function tierForCustomer(customerType?: string | null): PriceTier {
+  return customerType === "wholesale" ? "wholesale" : "retail";
+}
+
 /** Format paise as an Indian-rupee display string. Display-only. */
 export function formatPaise(paise: number): string {
   if (!Number.isFinite(paise)) return "—";

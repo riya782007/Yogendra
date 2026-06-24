@@ -332,16 +332,27 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
       case "set_price": {
         const sku = String(args.sku ?? "").trim().toUpperCase();
         const price = Number(args.price) || 0;
+        const tier = String(args.tier ?? "base").toLowerCase();
         if (!sku || !(price > 0)) return { ok: false, message: "I need a SKU and a price above 0." };
-        const formula = await getPricingFormula();
-        const prices = computePrices(Math.round(price * 100), formula);
-        if (!isValidPriceSet(prices)) return { ok: false, message: "That base price produces an invalid price set." };
         const sb = supabaseServer();
         const { data: p } = await sb.from("products").select("id,name").eq("sku", sku).maybeSingle();
         if (!p) return { ok: false, message: `No product with SKU ${sku}.` };
-        await sb.from("products").update({ base_wholesale: Math.round(price * 100) }).eq("id", (p as any).id);
-        revalidatePath("/admin/catalogue"); revalidatePath("/shop");
-        return { ok: true, message: `Set ${(p as any).name} (${sku}) base/wholesale to ${formatPaise(Math.round(price * 100))}. Retail ${formatPaise(prices.retailPrice)} · MRP ${formatPaise(prices.mrp)}.` };
+        const paise = Math.round(price * 100);
+        // Explicit tier → pin that exact price as an override (Phase 4).
+        if (tier === "retail" || tier === "mrp" || tier === "wholesale") {
+          const col = tier === "retail" ? "retail_override" : tier === "mrp" ? "mrp_override" : "wholesale_override";
+          const { error } = await sb.from("products").update({ [col]: paise }).eq("id", (p as any).id);
+          if (error) return { ok: false, message: `${error.message} (the price-override columns need migration 0003 applied).` };
+          revalidatePath("/admin/catalogue"); revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidatePath("/wholesale");
+          return { ok: true, message: `Set ${(p as any).name} (${sku}) ${tier} price to ${formatPaise(paise)}.` };
+        }
+        // No tier → set the base wholesale cost and re-derive retail/MRP from the formula.
+        const formula = await getPricingFormula();
+        const prices = computePrices(paise, formula);
+        if (!isValidPriceSet(prices)) return { ok: false, message: "That base price produces an invalid price set." };
+        await sb.from("products").update({ base_wholesale: paise }).eq("id", (p as any).id);
+        revalidatePath("/admin/catalogue"); revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidatePath("/wholesale");
+        return { ok: true, message: `Set ${(p as any).name} (${sku}) base/wholesale to ${formatPaise(paise)}. Retail ${formatPaise(prices.retailPrice)} · MRP ${formatPaise(prices.mrp)}.` };
       }
       case "rename_sku": {
         const sku = String(args.sku ?? "").trim().toUpperCase();

@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import { getStorefront } from "@/lib/supabase/queries";
-import { computePrices, formatPaise } from "@/lib/pricing";
+import { resolvePrices, overridesOf, formatPaise } from "@/lib/pricing";
 import { Back } from "@/components/site/Back";
 import { getWholesaleSession } from "@/lib/wholesale";
 import { wholesaleLoginAction } from "@/app/actions/wholesale";
@@ -16,7 +16,7 @@ export default async function Wholesale({ searchParams }: { searchParams: { erro
   if (session) {
     const list = products.map((p) => ({
       sku: p.sku, name: p.name, category: p.category.name, qty: p.qty,
-      price: computePrices(p.base_wholesale, formula).wholesaleRate,
+      price: resolvePrices(p.base_wholesale, formula, overridesOf(p)).wholesaleRate,
     }));
     return (
       <div className="max-w-7xl mx-auto px-5 py-8">
@@ -28,7 +28,7 @@ export default async function Wholesale({ searchParams }: { searchParams: { erro
     );
   }
 
-  const totalValue = products.reduce((s, p) => s + computePrices(p.base_wholesale, formula).wholesaleRate * p.qty, 0);
+  const totalValue = products.reduce((s, p) => s + resolvePrices(p.base_wholesale, formula, overridesOf(p)).wholesaleRate * p.qty, 0);
 
   // Not logged in → trade login + value prop.
   return (
