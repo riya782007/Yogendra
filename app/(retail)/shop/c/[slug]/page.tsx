@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getStorefront } from "@/lib/supabase/queries";
+import { getStorefront, getCategories } from "@/lib/supabase/queries";
 import { ProductCard } from "@/components/site/ProductCard";
 import { Reveal } from "@/components/site/Reveal";
 import { Back } from "@/components/site/Back";
@@ -20,10 +20,14 @@ export async function generateMetadata({ params }: { params: { slug: string } })
 type SP = { sort?: string; min?: string; max?: string; stock?: string };
 
 export default async function CategoryPage({ params, searchParams }: { params: { slug: string }; searchParams: SP }) {
-  const { products, formula } = await getStorefront();
+  const [{ products, formula }, allCats] = await Promise.all([getStorefront(), getCategories()]);
+  const cat = allCats.find((c) => c.slug === params.slug);
   let items = products.filter((p) => p.category.slug === params.slug);
-  if (items.length === 0) notFound();
-  const catName = items[0].category.name;
+  // Only 404 on a genuinely unknown slug. A real but empty category still opens
+  // (it just shows an empty state) — so the storefront menu never dead-ends.
+  if (!cat && items.length === 0) notFound();
+  const catName = items[0]?.category.name ?? cat?.name ?? params.slug;
+  const noneAtAll = items.length === 0;
 
   const min = searchParams.min ? Number(searchParams.min) * 100 : 0;
   const max = searchParams.max ? Number(searchParams.max) * 100 : Infinity;
@@ -78,7 +82,14 @@ export default async function CategoryPage({ params, searchParams }: { params: {
       </div>
 
       {items.length === 0 ? (
-        <p className="text-center text-muted py-12">No designs match these filters. <Link href={`/shop/c/${params.slug}`} className="text-emerald nav-link">Clear filters</Link></p>
+        noneAtAll ? (
+          <div className="text-center py-16">
+            <p className="text-ink font-medium">New designs are on their way to this collection.</p>
+            <p className="text-muted text-sm mt-1">Browse the <Link href="/shop" className="text-emerald nav-link">full collection</Link> in the meantime.</p>
+          </div>
+        ) : (
+          <p className="text-center text-muted py-12">No designs match these filters. <Link href={`/shop/c/${params.slug}`} className="text-emerald nav-link">Clear filters</Link></p>
+        )
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
           {items.map((p, i) => (<Reveal key={p.sku} delay={(i % 4) * 70}><ProductCard p={p as any} formula={formula} /></Reveal>))}

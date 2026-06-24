@@ -43,8 +43,10 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
     ? { from: new Date(searchParams.from + "T00:00:00+05:30").toISOString(), to: new Date(searchParams.to + "T23:59:59+05:30").toISOString() }
     : presetRange(preset);
   const { from, to } = r;
-  const fromDate = searchParams.from ?? "";
-  const toDate = searchParams.to ?? "";
+  // Always prefill the pickers with the active window (even for presets) so the
+  // owner can see exactly which dates the figures cover — the earlier blank-box confusion.
+  const fromDate = searchParams.from ?? from.slice(0, 10);
+  const toDate = searchParams.to ?? to.slice(0, 10);
   const [d, a, report] = await Promise.all([getDashboardData(from, to), getDashboardAnalytics(from, to), getChannelReport(from, to)]);
   const label = custom
     ? `${new Date(from).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })} – ${new Date(to).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`
