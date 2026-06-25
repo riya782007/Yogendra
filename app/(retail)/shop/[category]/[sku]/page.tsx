@@ -31,7 +31,6 @@ export default async function ProductPage({ params }: Params) {
   const content = resolveProductContent({ name: p.name, sku: p.sku, categoryName: p.category?.name, colors, generated_content: p.generated_content });
   const pOv = overridesOf(p);
   const o = liveOffer(p.base_wholesale, formula, pOv);
-  const w = resolvePrices(p.base_wholesale, formula, pOv);
   // Per-variant: its own photo, stock and price (variant override → product override → formula).
   const variantsForBuy = (p.variants ?? []).map((v: any) => {
     const vOv = overridesOf(v);
@@ -110,7 +109,7 @@ export default async function ProductPage({ params }: Params) {
               </div>
             </div>
           )}
-          <p className="mt-6 text-xs text-muted">Wholesale rate: {formatPaise(w.wholesaleRate)} · MOQ applies · <Link href="/wholesale" className="text-emerald nav-link">Retailer? See trade pricing</Link></p>
+          <p className="mt-6 text-xs text-muted">Are you a retailer? <Link href="/wholesale" className="text-emerald nav-link">See wholesale / trade pricing →</Link></p>
         </div>
       </div>
 
