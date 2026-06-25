@@ -107,6 +107,9 @@ export async function divaPlan(command: string, contextJson?: string): Promise<D
     `Use open_page to navigate when they say go to / open / show a section. Use read tools to answer questions. ` +
     `Use mutate tools only when they clearly ask to change something. SKUs look like BD1234 — pass them uppercased. ` +
     `"hide"/"take off the store"=hide_product; "show"/"put back"=show_product; "delete/remove a product"=delete_product. ` +
+    `Match a product by SKU (BD####) OR by any detail hint (name, colour, category, keywords) — when no SKU is given, pass the hint as "query" to the *_by_name / *_of / set_stock / product_photos / last_purchase tools. ` +
+    `Tool hints: "stock N kar do"/"set stock to N"=set_stock (exact total); "N add/kam"=add_stock/remove_stock; variants=add_variant/list_variants; product photos=product_photos (or generate_photo to create one); recent bills/invoices=recent_sales; convert a cash memo to GST=convert_invoice; last purchase cost=last_purchase; categories=list_categories; create page/product=create_product. ` +
+    `CLARITY: if you are unsure which product they mean, or multiple could match, or a required value (quantity, price, name, category) is missing, DO NOT guess — return EMPTY steps and ask ONE short clarifying question in "reply". Once it is clear, act. ` +
     `Examples:\n` +
     `"how's BD1004 doing?" -> [{"tool":"product_analytics","args":{"sku":"BD1004"},"label":"Analyse BD1004"}]\n` +
     `"hide the polki choker BD1003 and tell me sales this week" -> [{"tool":"hide_product","args":{"sku":"BD1003"}},{"tool":"analyze_sales","args":{"days":7}}]\n` +
@@ -422,6 +425,85 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         await sb.from("products").update({ category_id: (cat as any).id, subcategory_id: null }).eq("id", (p as any).id);
         revalidatePath("/admin/catalogue"); revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop");
         return { ok: true, message: `Moved ${sku} to ${(cat as any).name}.` };
+      }
+      case "set_stock": {
+        const sku = String(args.sku ?? "").trim().toUpperCase();
+        const target = sku ? await getProductBySku(sku) : await resolveProductByName(String(args.query ?? ""));
+        if (!target) return { ok: false, message: `I couldn't find ${sku || `"${args.query}"`}. Give me the SKU.` };
+        const newQty = Math.max(0, Math.trunc(Number(args.qty)));
+        if (!Number.isFinite(Number(args.qty))) return { ok: false, message: "What number should the stock be?" };
+        const sb = supabaseServer();
+        const delta = newQty - (target.qty ?? 0);
+        await sb.from("products").update({ qty: newQty, last_movement_at: new Date().toISOString() }).eq("id", target.id);
+        await sb.from("stock_adjustments").insert({ product_id: target.id, sku: target.sku, delta, source: "DIVA set stock", reason: "Set to exact count by DIVA" });
+        revalidatePath("/admin/inventory");
+        return { ok: true, message: `${target.name} (${target.sku}) stock set to ${newQty}${delta ? ` (${delta > 0 ? "+" : ""}${delta})` : ""}.` };
+      }
+      case "add_variant": {
+        const sku = String(args.sku ?? "").trim().toUpperCase();
+        const color = String(args.color ?? "").trim(), size = String(args.size ?? "").trim(), polish = String(args.polish ?? "").trim();
+        const qty = Math.max(0, Math.trunc(Number(args.qty) || 0));
+        if (!sku || !(color || size || polish)) return { ok: false, message: "I need the product SKU and at least a colour, size or polish." };
+        const sb = supabaseServer();
+        const { data: p } = await sb.from("products").select("id,type").eq("sku", sku).maybeSingle();
+        if (!p) return { ok: false, message: `No product with SKU ${sku}.` };
+        const label = [color, size, polish].filter(Boolean).join("-");
+        const vsku = `${sku}-${label.replace(/[^a-z0-9]/gi, "").slice(0, 5).toUpperCase() || "VAR"}`;
+        await sb.from("variants").insert({ product_id: (p as any).id, color: color || null, size: size || null, polish: polish || null, sku: vsku, qty });
+        if ((p as any).type !== "configurable") await sb.from("products").update({ type: "configurable" }).eq("id", (p as any).id);
+        revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop");
+        return { ok: true, message: `Added variant ${[color, size, polish].filter(Boolean).join(" · ")} (${vsku}) to ${sku} with ${qty} pcs.` };
+      }
+      case "list_variants": {
+        const sku = String(args.sku ?? "").trim().toUpperCase();
+        const sb = supabaseServer();
+        const { data: p } = await sb.from("products").select("id,name").eq("sku", sku).maybeSingle();
+        if (!p) return { ok: false, message: `No product with SKU ${sku}.` };
+        const { data: vs } = await sb.from("variants").select("color,size,polish,sku,qty").eq("product_id", (p as any).id);
+        const rows = (vs as any[]) ?? [];
+        if (!rows.length) return { ok: true, message: `${(p as any).name} (${sku}) has no variants — it's a simple product.` };
+        const listv = rows.map((v) => `${[v.color, v.size, v.polish].filter(Boolean).join(" · ") || v.sku} — ${v.qty} pcs`).join("; ");
+        return { ok: true, data: rows, message: `${(p as any).name} variants: ${listv}.` };
+      }
+      case "list_categories": {
+        const sb = supabaseServer();
+        const [{ data: cats }, { data: prods }] = await Promise.all([
+          sb.from("categories").select("id,name"),
+          sb.from("products").select("category_id"),
+        ]);
+        const counts = new Map<string, number>();
+        for (const pr of (prods as any[]) ?? []) counts.set(pr.category_id, (counts.get(pr.category_id) ?? 0) + 1);
+        const listc = ((cats as any[]) ?? []).map((c) => `${c.name} (${counts.get(c.id) ?? 0})`).join(", ");
+        return { ok: true, data: cats, message: listc ? `Categories: ${listc}.` : "No categories yet." };
+      }
+      case "product_photos": {
+        const sku = String(args.sku ?? "").trim().toUpperCase();
+        const target = sku ? await getProductBySku(sku) : await resolveProductByName(String(args.query ?? ""));
+        if (!target) return { ok: false, message: `I couldn't find ${sku || `"${args.query}"`}.` };
+        const sb = supabaseServer();
+        const { data: imgs } = await sb.from("product_images").select("path,sort").eq("product_id", target.id).order("sort");
+        const urls = ((imgs as any[]) ?? []).map((i) => i.path).filter((u) => typeof u === "string" && u.startsWith("http"));
+        return { ok: true, data: urls, message: urls.length ? `${target.name} (${target.sku}) has ${urls.length} photo(s): ${urls.slice(0, 3).join(" , ")}${urls.length > 3 ? " …" : ""}` : `${target.name} (${target.sku}) has no photos yet — add one or ask me to generate it.` };
+      }
+      case "recent_sales": {
+        const lim = Math.min(20, Math.max(1, Math.trunc(Number(args.limit) || 8)));
+        const sb = supabaseServer();
+        const { data } = await sb.from("orders").select("invoice_no,customer_name,total,bill_type,channel,created_at").order("created_at", { ascending: false }).limit(lim);
+        const rows = (data as any[]) ?? [];
+        if (!rows.length) return { ok: true, message: "No bills yet." };
+        const lists = rows.map((o) => `${o.invoice_no ?? "—"} ${o.customer_name ?? "Walk-in"} ${formatPaise(o.total ?? 0)} (${o.bill_type ?? o.channel})`).join("; ");
+        return { ok: true, data: rows, message: `Last ${rows.length} bills: ${lists}.` };
+      }
+      case "last_purchase": {
+        const sku = String(args.sku ?? "").trim().toUpperCase();
+        const target = sku ? await getProductBySku(sku) : await resolveProductByName(String(args.query ?? ""));
+        if (!target) return { ok: false, message: `I couldn't find ${sku || `"${args.query}"`}.` };
+        const sb = supabaseServer();
+        const { data } = await sb.from("purchase_items").select("unit_cost,qty, purchase:purchases(created_at,bill_no)").eq("mapped_product_id", target.id);
+        const rows = ((data as any[]) ?? []).map((r) => ({ cost: r.unit_cost, qty: r.qty, at: r.purchase?.created_at ?? "", bill: r.purchase?.bill_no })).sort((a, b) => (a.at < b.at ? 1 : -1));
+        if (!rows.length) return { ok: true, message: `No purchase recorded yet for ${target.name} (${target.sku}).` };
+        const r0 = rows[0];
+        return { ok: true, data: rows, message: `Last purchase of ${target.name} (${target.sku}): ${formatPaise(r0.cost)} each, ${r0.qty} pcs${r0.bill ? ` on bill ${r0.bill}` : ""} (${r0.at ? new Date(r0.at).toLocaleDateString("en-IN") : "—"}).` };
       }
       case "set_price": {
         const sku = String(args.sku ?? "").trim().toUpperCase();

@@ -87,6 +87,15 @@ export const DIVA_TOOLS: DivaTool[] = [
   { name: "create_subcategory", kind: "mutate", permission: "catalog.edit", confirm: true, desc: "Create a subcategory under a parent category.", params: [{ name: "name", type: "string", required: true, desc: "subcategory name" }, { name: "parent", type: "string", desc: "parent category name" }] },
   { name: "share_catalog", kind: "read", permission: "catalog.view", desc: "Build a shareable catalogue link, optionally filtered to a category/subcategory, ready for WhatsApp.", params: [{ name: "facet", type: "string", desc: "category/subcategory/keywords" }, { name: "whatsapp", type: "number", desc: "1 to format for WhatsApp" }] },
   { name: "convert_invoice", kind: "mutate", permission: "billing.gst", confirm: true, desc: "Convert a cash memo into a GST invoice (or open billing if no invoice given).", params: [{ name: "invoice", type: "string", desc: "invoice number" }, { name: "to", type: "string", desc: "target bill type (gst)" }] },
+
+  // ---- Fuller admin coverage (inventory / variants / catalogue / billing / purchases) ----
+  { name: "set_stock", kind: "mutate", permission: "inventory.add", confirm: true, desc: "Set a product's stock to an EXACT number (absolute), not add/subtract. e.g. 'BD1001 ka stock 50 kar do'.", params: [{ name: "sku", type: "string", desc: "product SKU" }, { name: "query", type: "string", desc: "name/keywords if no SKU" }, { name: "qty", type: "number", required: true, desc: "the new total stock" }] },
+  { name: "add_variant", kind: "mutate", permission: "catalog.edit", confirm: true, desc: "Add a colour/size/polish variant (with its own stock) to a product.", params: [{ name: "sku", type: "string", required: true, desc: "parent product SKU" }, { name: "color", type: "string", desc: "colour" }, { name: "size", type: "string", desc: "size" }, { name: "polish", type: "string", desc: "polish / finish" }, { name: "qty", type: "number", desc: "opening stock for this variant" }] },
+  { name: "list_variants", kind: "read", permission: "catalog.view", desc: "List a product's variants (colour/size/polish) with their stock.", params: [{ name: "sku", type: "string", required: true, desc: "product SKU" }] },
+  { name: "list_categories", kind: "read", permission: "catalog.view", desc: "List all categories with how many products each holds.", params: [] },
+  { name: "product_photos", kind: "read", permission: "catalog.view", desc: "Show how many photos a product has and their links.", params: [{ name: "sku", type: "string", desc: "product SKU" }, { name: "query", type: "string", desc: "name if no SKU" }] },
+  { name: "recent_sales", kind: "read", permission: "sales.view", desc: "List the most recent bills/invoices (amount, customer, type, date).", params: [{ name: "limit", type: "number", desc: "how many (default 8)" }] },
+  { name: "last_purchase", kind: "read", permission: "purchases.view", desc: "Show the most recent purchase cost & date recorded for a product.", params: [{ name: "sku", type: "string", desc: "product SKU" }, { name: "query", type: "string", desc: "name if no SKU" }] },
 ];
 
 export function toolByName(name: string): DivaTool | undefined {
