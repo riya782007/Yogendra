@@ -390,6 +390,31 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         revalidatePath("/admin/catalogue"); revalidatePath("/shop");
         return { ok: true, message: `Created ${name} (${res.sku}) in ${(cat as any).name} — wholesale ₹${price}, ${qty} pcs. It's saved as a draft; add a photo to publish.` };
       }
+      case "rename_product": {
+        const sku = String(args.sku ?? "").trim().toUpperCase();
+        const name = String(args.name ?? "").trim();
+        if (!sku || !name) return { ok: false, message: "I need the SKU and the new name." };
+        const sb = supabaseServer();
+        const { data: p } = await sb.from("products").select("id,name").eq("sku", sku).maybeSingle();
+        if (!p) return { ok: false, message: `No product with SKU ${sku}.` };
+        await sb.from("products").update({ name }).eq("id", (p as any).id);
+        revalidatePath("/admin/catalogue"); revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop");
+        return { ok: true, message: `Renamed ${sku} from "${(p as any).name}" to "${name}".` };
+      }
+      case "set_category": {
+        const sku = String(args.sku ?? "").trim().toUpperCase();
+        const categoryName = String(args.category ?? "").trim();
+        if (!sku || !categoryName) return { ok: false, message: "I need the SKU and a category." };
+        const sb = supabaseServer();
+        const { data: p } = await sb.from("products").select("id").eq("sku", sku).maybeSingle();
+        if (!p) return { ok: false, message: `No product with SKU ${sku}.` };
+        let { data: cat } = await sb.from("categories").select("id,name").ilike("name", categoryName).maybeSingle();
+        if (!cat) cat = await createCategoryJsonAction(categoryName) as any;
+        if (!cat) return { ok: false, message: `Couldn't find or create the "${categoryName}" category.` };
+        await sb.from("products").update({ category_id: (cat as any).id, subcategory_id: null }).eq("id", (p as any).id);
+        revalidatePath("/admin/catalogue"); revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop");
+        return { ok: true, message: `Moved ${sku} to ${(cat as any).name}.` };
+      }
       case "set_price": {
         const sku = String(args.sku ?? "").trim().toUpperCase();
         const price = Number(args.price) || 0;
