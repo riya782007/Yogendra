@@ -16,6 +16,14 @@ export type PricingFormula = {
   mrpMultiplier: number;
   /** rounding granularity in paise applied to displayed prices (e.g. 100 => nearest rupee) */
   roundToPaise: number;
+  /** Module 4 — when true, derive prices via the %-build-up chain instead of the multipliers. */
+  useBuildup?: boolean;
+  shippingPct?: number;
+  packingPct?: number;
+  promotionPct?: number;
+  resellerPct?: number;
+  customerDiscountPct?: number;
+  mrpPct?: number;
 };
 
 export type PriceSet = {
@@ -47,11 +55,43 @@ function roundToNearest(valuePaise: number, stepPaise: number): number {
 export function computePrices(baseWholesalePaise: number, formula: PricingFormula): PriceSet {
   const base = Number.isFinite(baseWholesalePaise) ? baseWholesalePaise : NaN;
 
+  // Module 4 — %-build-up chain (mirrors the DB `bd_price()` exactly):
+  // cost → +shipping% → +packing% → +promotion% (landed) → +reseller% (wholesale)
+  //      → +customer_discount% (retail) → +mrp% (MRP).
+  if (formula.useBuildup) {
+    const p = (n?: number) => 1 + (Number(n) || 0) / 100;
+    const landed = base * p(formula.shippingPct) * p(formula.packingPct) * p(formula.promotionPct);
+    const wholesale = landed * p(formula.resellerPct);
+    const retail = wholesale * p(formula.customerDiscountPct);
+    const printedMrp = retail * p(formula.mrpPct);
+    return {
+      wholesaleRate: roundToNearest(wholesale, formula.roundToPaise),
+      retailPrice: roundToNearest(retail, formula.roundToPaise),
+      mrp: roundToNearest(printedMrp, formula.roundToPaise),
+    };
+  }
+
   const wholesaleRate = roundToNearest(base * (1 + formula.wholesaleMarkupPct / 100), formula.roundToPaise);
   const retailPrice = roundToNearest(base * formula.retailMultiplier, formula.roundToPaise);
   const mrp = roundToNearest(base * formula.mrpMultiplier, formula.roundToPaise);
 
   return { wholesaleRate, retailPrice, mrp };
+}
+
+/**
+ * Step-by-step build-up breakdown for the pricing settings preview (display-only).
+ * Returns each stage's running value in paise so the owner can see his sheet reproduced.
+ */
+export function buildupBreakdown(baseWholesalePaise: number, formula: PricingFormula) {
+  const base = Number.isFinite(baseWholesalePaise) ? baseWholesalePaise : 0;
+  const p = (n?: number) => 1 + (Number(n) || 0) / 100;
+  const afterShipping = base * p(formula.shippingPct);
+  const afterPacking = afterShipping * p(formula.packingPct);
+  const afterPromotion = afterPacking * p(formula.promotionPct);
+  const wholesale = afterPromotion * p(formula.resellerPct);
+  const retail = wholesale * p(formula.customerDiscountPct);
+  const mrp = retail * p(formula.mrpPct);
+  return { base, afterShipping, afterPacking, afterPromotion, wholesale, retail, mrp };
 }
 
 /**
@@ -95,51 +135,4 @@ export function overridesOf(
 ): PriceOverrides {
   return {
     wholesale: row?.wholesale_override ?? null,
-    retail: row?.retail_override ?? null,
-    mrp: row?.mrp_override ?? null,
-  };
-}
-
-function firstPositive(...vals: (number | null | undefined)[]): number | undefined {
-  for (const v of vals) if (typeof v === "number" && Number.isFinite(v) && v > 0) return v;
-  return undefined;
-}
-
-/**
- * Resolve the effective price set, applying override layers in priority order
- * (highest priority first), falling back to the formula-computed value per tier.
- *
- *   resolvePrices(base, formula, variantOverrides, productOverrides)
- *
- * Each layer may set any subset of tiers; a tier with no override anywhere uses
- * the formula. Pure & deterministic.
- */
-export function resolvePrices(
-  baseWholesalePaise: number,
-  formula: PricingFormula,
-  ...layers: (PriceOverrides | null | undefined)[]
-): PriceSet {
-  const computed = computePrices(baseWholesalePaise, formula);
-  return {
-    wholesaleRate: firstPositive(...layers.map((l) => l?.wholesale)) ?? computed.wholesaleRate,
-    retailPrice: firstPositive(...layers.map((l) => l?.retail)) ?? computed.retailPrice,
-    mrp: firstPositive(...layers.map((l) => l?.mrp)) ?? computed.mrp,
-  };
-}
-
-/** Read one tier out of a resolved price set. */
-export function priceForTier(p: PriceSet, tier: PriceTier): number {
-  return tier === "wholesale" ? p.wholesaleRate : tier === "retail" ? p.retailPrice : p.mrp;
-}
-
-/** Which tier a given customer type pays. Wholesale buyers → wholesale; everyone else → retail. */
-export function tierForCustomer(customerType?: string | null): PriceTier {
-  return customerType === "wholesale" ? "wholesale" : "retail";
-}
-
-/** Format paise as an Indian-rupee display string. Display-only. */
-export function formatPaise(paise: number): string {
-  if (!Number.isFinite(paise)) return "—";
-  const rupees = paise / 100;
-  return "₹" + rupees.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-}
+ 

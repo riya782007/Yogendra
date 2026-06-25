@@ -368,6 +368,39 @@ export async function savePricingAction(formData: FormData): Promise<void> {
   revalidatePath("/wholesale");
 }
 
+/** Module 4 — save the GLOBAL pricing formula (pricing_settings): the %-build-up
+ *  (cost → +shipping% → +packing% → +promotion% → +reseller% (wholesale) →
+ *  +customer_discount% (retail) → +mrp% (MRP)) plus the legacy multipliers and rounding.
+ *  Re-prices the whole catalogue, so it's permission-gated and revalidates the storefront. */
+export async function savePricingFormulaAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("catalog.price_edit"))) return;
+  const num = (k: string, d: number) => {
+    const v = Number(formData.get(k));
+    return Number.isFinite(v) ? v : d;
+  };
+  const patch = {
+    use_buildup: String(formData.get("use_buildup") ?? "") === "on",
+    shipping_pct: num("shipping_pct", 10),
+    packing_pct: num("packing_pct", 11.36),
+    promotion_pct: num("promotion_pct", 10.2),
+    reseller_pct: num("reseller_pct", 15),
+    customer_discount_pct: num("customer_discount_pct", 5),
+    mrp_pct: num("mrp_pct", 25),
+    wholesale_markup_pct: num("wholesale_markup_pct", 10),
+    retail_multiplier: num("retail_multiplier", 2.2),
+    mrp_multiplier: num("mrp_multiplier", 2.75),
+    round_to: Math.max(1, Math.round(num("round_to", 100))),
+  };
+  const sb = supabaseServer();
+  const { data: row } = await sb.from("pricing_settings").select("id").limit(1).maybeSingle();
+  if ((row as any)?.id) await sb.from("pricing_settings").update(patch).eq("id", (row as any).id);
+  else await sb.from("pricing_settings").insert(patch);
+  revalidatePath("/admin/pricing");
+  revalidatePath("/shop");
+  revalidatePath("/wholesale");
+  revalidatePath("/admin/catalogue");
+}
+
 import { groqChat, openaiChat, groqConfigured, openaiConfigured } from "@/lib/ai/providers";
 
 /** AI-processed bulk import: reads a messy CSV/spreadsheet/freeform list, maps columns
@@ -382,35 +415,4 @@ export async function aiBulkUploadAction(categoryId: string, rawText: string): P
 
   const text = (rawText ?? "").trim().slice(0, 8000);
   if (text && (groqConfigured() || openaiConfigured())) {
-    const system = `You convert a messy product list into clean JSON for a jewellery store. Output STRICT JSON: {"rows":[{"name":string,"base_price":number,"qty":number,"type":"simple"|"configurable","colors":string[]}]}. The input may be CSV, tab-separated, or freeform, with columns in any order or with different header names (price/cost/wholesale -> base_price in rupees as a number; quantity/stock/pcs -> qty integer; colours/variants -> colors array; if multiple colours are present set type to "configurable" else "simple"). Ignore header rows and currency symbols. Infer sensibly. Return ONLY JSON.`;
-    try {
-      const out = groqConfigured() ? await groqChat({ system, user: text, json: true }) : await openaiChat({ system, user: text, json: true });
-      const parsed = JSON.parse(out);
-      rows = (parsed.rows ?? []).map((r: any) => ({
-        name: String(r.name ?? "").trim(),
-        basePriceRupees: Number(r.base_price) || 0,
-        qty: parseInt(r.qty, 10) || 0,
-        type: r.type === "configurable" || (Array.isArray(r.colors) && r.colors.length > 1) ? "configurable" : "simple",
-        colors: Array.isArray(r.colors) ? r.colors.map((c: any) => String(c).trim()).filter(Boolean) : [],
-      })).filter((r: any) => r.name);
-      usedAi = rows.length > 0;
-    } catch { /* fall through to naive */ }
-  }
-
-  if (!usedAi) {
-    rows = text.split("\n").map((l) => l.trim()).filter(Boolean).filter((l) => !/^name\s*,/i.test(l)).map((l) => {
-      const [name, price, qty, type, colors] = l.split(",").map((s) => s?.trim() ?? "");
-      return { name, basePriceRupees: Number(price) || 0, qty: Number(qty) || 0, type: (type === "configurable" ? "configurable" : "simple") as "simple" | "configurable", colors: (colors ?? "").split("|").map((s) => s.trim()).filter(Boolean) };
-    });
-  }
-
-  let skuNum = await nextSku(sb);
-  const results: RowResult[] = [];
-  for (let i = 0; i < rows.length; i++) {
-    const res = await insertOne(sb, formula, { ...rows[i], categoryId }, skuNum);
-    results.push({ ...res, row: i + 1 });
-    if (res.ok) skuNum++;
-  }
-  revalidatePath("/admin/catalogue"); revalidatePath("/shop");
-  return { created: results.filter((r) => r.ok).length, results, usedAi };
-}
+    const system = `You convert a messy product list into clean JSON for a jewellery store. Output STRICT JSON: {"rows":[{"name":string,"base_price":number,"qty":number,"type":"simple"|"configurable","colors":string[]}]}. The input may be CSV, tab-separated, or freeform, with columns in any order or with different header names (price/cost/wholesale -> base_price in rupees as a number; quantity/stock/pcs -> qty integer; colours/variants -> colors array; if multiple colours are present set type to "configurable" else "simple"). Ignore header rows and currency symbols. Infer sensibly. Re

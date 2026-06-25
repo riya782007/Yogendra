@@ -31,6 +31,13 @@ export async function getPricingFormula(): Promise<PricingFormula> {
     retailMultiplier: Number(data?.retail_multiplier ?? 2.2),
     mrpMultiplier: Number(data?.mrp_multiplier ?? 2.75),
     roundToPaise: Number(data?.round_to ?? 100),
+    useBuildup: Boolean(data?.use_buildup ?? false),
+    shippingPct: Number(data?.shipping_pct ?? 10),
+    packingPct: Number(data?.packing_pct ?? 11.36),
+    promotionPct: Number(data?.promotion_pct ?? 10.2),
+    resellerPct: Number(data?.reseller_pct ?? 15),
+    customerDiscountPct: Number(data?.customer_discount_pct ?? 5),
+    mrpPct: Number(data?.mrp_pct ?? 25),
   };
 }
 
@@ -753,9 +760,4 @@ export async function getProductsWithMedia() {
   const sb = supabaseServer();
   const { data } = await sb.from("products")
     .select("id,sku,name,category:categories(name,slug), images:product_images(id,path,kind,sort)")
-    .eq("status", "published").order("sku");
-  return ((data as any[]) ?? []).map((p) => ({
-    id: p.id, sku: p.sku, name: p.name, category: p.category?.name ?? "—", categorySlug: p.category?.slug ?? "all",
-    images: (p.images ?? []).filter((i: any) => typeof i.path === "string" && i.path.startsWith("http")).sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0)),
-  }));
-}
+    .eq("s

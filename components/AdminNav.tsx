@@ -16,6 +16,7 @@ const GROUPS: { title: string; links: L[] }[] = [
     { href: "/admin/catalogue", label: "Catalogue", icon: "✦", perm: "catalog.view" },
     { href: "/admin/media", label: "Product Photos", icon: "▣", perm: "catalog.ai" },
     { href: "/admin/categories", label: "Categories", icon: "▦", perm: "catalog.edit" },
+    { href: "/admin/pricing", label: "Pricing formula", icon: "％", perm: "catalog.price_edit" },
     { href: "/admin/inventory", label: "Inventory", icon: "▤", perm: "inventory.view" },
     { href: "/admin/barcodes", label: "Barcodes", icon: "▥", perm: "inventory.barcode" },
     { href: "/admin/reorder", label: "AI Reorder", icon: "✨", perm: "inventory.view" },
@@ -139,11 +140,4 @@ export function AdminNav({ perms = "*", roleName = "Owner" }: { perms?: Perms; r
         {!collapsed && (
           <div className="px-3 pt-4">
             <div className="flex items-center gap-2 text-[11px] text-cream/50">
-              <span className="h-2 w-2 rounded-full bg-emerald-light animate-pulse" /> Live · Sadar Bazar, Delhi
-            </div>
-          </div>
-        )}
-      </aside>
-    </>
-  );
-}
+              <span className="h-2 w-2 rounded-full bg-emerald-light animate-pulse" /> Live 
