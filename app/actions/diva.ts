@@ -7,7 +7,7 @@
  * Owner is logged in via the console passcode → DIVA gets ALL permissions. The granular
  * gate is wired so per-staff roles can scope DIVA later.
  */
-import { groqChat, openaiChat, groqConfigured, openaiConfigured } from "@/lib/ai/providers";
+import { groqChat, openaiChat, geminiChat, groqConfigured, openaiConfigured, geminiTextConfigured } from "@/lib/ai/providers";
 import { supabaseServer } from "@/lib/supabase/server";
 import {
   getChannelReport, getInventoryClassified, getProductsPage, getDashboardData, getStorefront,
@@ -84,11 +84,17 @@ export async function divaPlan(command: string, contextJson?: string): Promise<D
     ask: nlu.ask, context: JSON.stringify(nlu.context),
   };
 
-  // 2) Use NLU when confident, when it asked a question, when it has steps, or when no LLM.
-  const llmAvailable = groqConfigured() || openaiConfigured();
-  if (nlu.ask || nlu.confidence >= 0.45 || nluPlan.steps.length > 0 || !llmAvailable) {
-    return nluPlan;
-  }
+  // 2) Trust the fast deterministic engine ONLY when it's safe:
+  //    - it asked a clarifying question, or
+  //    - no LLM is configured (best effort), or
+  //    - it produced steps that are read/navigate only (harmless), or
+  //    - it produced steps and is highly confident.
+  //    A low/medium-confidence MUTATION is escalated to the LLM so a mis-parse like
+  //    "billvan WH17 gold" never silently runs the wrong change (Yogendra's complaint).
+  const llmAvailable = geminiTextConfigured() || groqConfigured() || openaiConfigured();
+  if (nlu.ask || !llmAvailable) return nluPlan;
+  const mutating = nluPlan.steps.some((s) => s.kind === "mutate");
+  if (nluPlan.steps.length > 0 && (!mutating || nlu.confidence >= 0.72)) return nluPlan;
 
   // 3) Low confidence + LLM available → ask the model, keep NLU context as memory.
   const catalog = DIVA_TOOLS.map((t) => `- ${t.name}(${t.params.map((p) => p.name + (p.required ? "*" : "")).join(", ")}) [${t.kind}] — ${t.desc}`).join("\n");
@@ -111,7 +117,9 @@ export async function divaPlan(command: string, contextJson?: string): Promise<D
   let parsed: any = null;
   try {
     let raw: string;
-    if (groqConfigured()) raw = await groqChat({ system, user: cmd, json: true });
+    // Prefer Gemini (you already use it for images), then Groq, then OpenAI.
+    if (geminiTextConfigured()) raw = await geminiChat({ system, user: cmd, json: true });
+    else if (groqConfigured()) raw = await groqChat({ system, user: cmd, json: true });
     else if (openaiConfigured()) raw = await openaiChat({ system, user: cmd, json: true });
     else return nluPlan;
     parsed = JSON.parse(raw);

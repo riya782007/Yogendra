@@ -11,6 +11,7 @@ function env(...names: string[]): string | undefined {
 }
 export const groqKey = () => env("GROQ_API_KEY", "Groq_api_key", "groq_api_key");
 export const openaiKey = () => env("OPENAI_API_KEY", "openai_api_key", "OpenAI_api_key");
+export const geminiTextKey = () => env("GEMINI_API_KEY", "gemini_api_key", "Gemini_api_key");
 
 type ChatArgs = { system: string; user: string; json?: boolean; timeoutMs?: number };
 
@@ -49,4 +50,30 @@ export async function openaiChat(a: ChatArgs): Promise<string> {
   const key = openaiKey(); if (!key) throw new Error("no openai key");
   const model = env("OPENAI_MODEL") ?? "gpt-4o-mini";
   return chat("https://api.openai.com/v1/chat/completions", key, model, a);
+}
+
+export function geminiTextConfigured() { return !!geminiTextKey(); }
+
+/** Gemini text reasoning (gemini-2.5-flash) — fast, capable, uses the existing GEMINI_API_KEY. */
+export async function geminiChat(a: ChatArgs): Promise<string> {
+  const key = geminiTextKey(); if (!key) throw new Error("no gemini key");
+  const model = env("GEMINI_TEXT_MODEL") ?? "gemini-2.5-flash";
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), a.timeoutMs ?? 18_000);
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: `${a.system}\n\nUser command: ${a.user}` }] }],
+        generationConfig: { temperature: 0.3, ...(a.json ? { responseMimeType: "application/json" } : {}) },
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const j: any = await res.json();
+    const text = (j?.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text ?? "").join("");
+    if (!text) throw new Error("empty completion");
+    return text;
+  } finally { clearTimeout(t); }
 }
