@@ -23,6 +23,22 @@ export async function saveOrderNoteAction(formData: FormData): Promise<void> {
   revalidatePath(`/admin/invoice/${orderId}`);
 }
 
+/** Convert a bill between Cash Memo and GST Tax Invoice (both ways) — customers change
+ *  their mind mid-billing. Assigns an invoice number when becoming a GST invoice. */
+export async function setBillTypeAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("billing.gst"))) return;
+  const orderId = String(formData.get("order_id") ?? "");
+  const billType = String(formData.get("bill_type") ?? "") === "gst" ? "gst" : "cash";
+  if (!orderId) return;
+  const sb = supabaseServer();
+  await sb.from("orders").update({ bill_type: billType }).eq("id", orderId);
+  if (billType === "gst") {
+    const { data: o } = await sb.from("orders").select("invoice_no").eq("id", orderId).maybeSingle();
+    if (!(o as any)?.invoice_no) await sb.rpc("assign_invoice_no", { p_order: orderId });
+  }
+  revalidatePath(`/admin/invoice/${orderId}`); revalidatePath("/admin/sales");
+}
+
 /** Switch a bill between Proforma and final Tax Invoice. */
 export async function setDocTypeAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("billing.gst"))) return;

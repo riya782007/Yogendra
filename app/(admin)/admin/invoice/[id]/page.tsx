@@ -6,7 +6,7 @@ import { formatPaise } from "@/lib/pricing";
 import { PrintButton } from "@/components/admin/PrintButton";
 import { BUSINESS, HSN_JEWELLERY, GST_RATE, gstSplit, gstSplitExclusive, stateCodeFromGstin, amountInWords } from "@/lib/business";
 import { getSession, can } from "@/lib/auth";
-import { recordPaymentAction, setDocTypeAction, saveOrderNoteAction } from "@/app/actions/payments";
+import { recordPaymentAction, setDocTypeAction, saveOrderNoteAction, setBillTypeAction } from "@/app/actions/payments";
 
 export const metadata = { title: "Invoice" };
 
@@ -195,6 +195,18 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                   <input name="amount" type="number" min={1} placeholder={String(Math.round(balanceDue / 100))} className="rounded-xl border border-sand px-3 py-2 text-sm w-32 outline-none focus:border-emerald" />
                   <button className="btn-primary px-4 py-2 text-sm font-medium">Record</button>
                 </form>
+              </div>
+            )}
+            {can(session, "billing.gst") && (
+              <div className="bg-white rounded-2xl p-5 shadow-card">
+                <h2 className="font-medium text-ink mb-1">Bill type</h2>
+                <p className="text-xs text-muted mb-3">Currently a <b>{isCash ? "Cash Memo" : "GST Tax Invoice"}</b>. Customer changed their mind? Switch it.</p>
+                <form action={setBillTypeAction}>
+                  <input type="hidden" name="order_id" value={order.id} />
+                  <input type="hidden" name="bill_type" value={isCash ? "gst" : "cash"} />
+                  <button className="px-4 py-2 rounded-full bg-ink/5 text-ink text-sm hover:bg-ink/10">{isCash ? "Convert to GST Tax Invoice →" : "Convert to Cash Memo →"}</button>
+                </form>
+                {isCash && !order.buyer_gstin && <p className="text-[11px] text-gold-dark mt-2">Tip: add the buyer's GSTIN for a complete B2B tax invoice.</p>}
               </div>
             )}
             {can(session, "billing.gst") && !isCash && (
