@@ -2,6 +2,8 @@
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
+import { generateImage, geminiConfigured } from "@/lib/ai/gemini";
+import { buildVariantImagePrompt } from "@/lib/ai/imagePrompt";
 
 const BUCKET = "product-media";
 
@@ -106,4 +108,82 @@ export async function deleteVariantImageAction(formData: FormData): Promise<void
   const paths = (((v as any)?.image_paths as string[]) ?? []).filter((u) => u !== url);
   await sb.from("variants").update({ image_paths: paths }).eq("id", id);
   reval(productSku);
+}
+
+export type VariantImgResult = { ok: boolean; reason?: string; error?: string; url?: string };
+
+/**
+ * Module 3 — generate a professional per-colour product photo for ONE variant via Gemini
+ * (OpenAI fallback). Uses the parent product's best existing photo as the design reference and
+ * re-renders it in the variant's colour, so customers can view each colour individually.
+ * The new image is appended to the variant's image_paths and shows everywhere the variant does
+ * (product page swatch gallery, wholesale, inventory). Invoked only by an explicit button.
+ */
+export async function generateVariantImageAction(variantId: string): Promise<VariantImgResult> {
+  if (!(await requirePerm("catalog.ai"))) return { ok: false, reason: "not_permitted" };
+  if (!variantId) return { ok: false, reason: "not_found" };
+  const sb = supabaseServer();
+
+  const { data: v } = await sb
+    .from("variants")
+    .select("id, color, sku, image_paths, product_id")
+    .eq("id", variantId)
+    .maybeSingle();
+  if (!v) return { ok: false, reason: "not_found" };
+  const color = String((v as any).color ?? "").trim();
+  if (!color) return { ok: false, reason: "no_color" };
+
+  const { data: prod } = await sb
+    .from("products")
+    .select("id, sku, categories(slug)")
+    .eq("id", (v as any).product_id)
+    .maybeSingle();
+  const productSku = String((prod as any)?.sku ?? "");
+  const categorySlug = String((prod as any)?.categories?.slug ?? "necklace");
+
+  if (!geminiConfigured()) return { ok: false, reason: "no_key" };
+
+  // Pick the design reference: parent product's best photo (model > any http), else the
+  // variant's own first photo.
+  const { data: pimgs } = await sb
+    .from("product_images")
+    .select("path, kind, sort")
+    .eq("product_id", (v as any).product_id)
+    .order("sort", { ascending: true });
+  const productImgs = ((pimgs as any[]) ?? []).filter((i) => String(i.path).startsWith("http"));
+  const refUrl =
+    productImgs.find((i) => i.kind === "model")?.path ??
+    productImgs[0]?.path ??
+    (((v as any).image_paths as string[]) ?? []).find((u) => u.startsWith("http"));
+  if (!refUrl) return { ok: false, reason: "no_source" };
+
+  let referenceBase64: string, referenceMime = "image/jpeg";
+  try {
+    const r = await fetch(refUrl);
+    referenceMime = r.headers.get("content-type") || "image/jpeg";
+    referenceBase64 = Buffer.from(await r.arrayBuffer()).toString("base64");
+  } catch {
+    return { ok: false, reason: "no_source" };
+  }
+
+  const prompt = buildVariantImagePrompt({ category: categorySlug, color, aspect: "1:1" });
+  const result = await generateImage({ prompt, referenceBase64, referenceMime, aspectRatio: "1:1" });
+  if (!result.ok) return { ok: false, reason: result.reason, error: result.error };
+
+  await sb.storage.createBucket(BUCKET, { public: true }).catch(() => {});
+  const ext = result.mime.includes("png") ? "png" : "jpg";
+  const path = `variants/${variantId}/ai-${Date.now()}.${ext}`;
+  const up = await sb.storage
+    .from(BUCKET)
+    .upload(path, Buffer.from(result.base64, "base64"), { contentType: result.mime, upsert: true });
+  if (up.error) return { ok: false, reason: "upload_failed", error: up.error.message };
+
+  const url = sb.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+  const next = [...(((v as any).image_paths as string[]) ?? []), url];
+  await sb.from("variants").update({ image_paths: next }).eq("id", variantId);
+
+  if (productSku) reval(productSku);
+  revalidatePath("/wholesale");
+  revalidatePath("/admin/inventory");
+  return { ok: true, url };
 }

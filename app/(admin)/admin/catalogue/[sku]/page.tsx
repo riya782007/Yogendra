@@ -9,6 +9,7 @@ import { ProductEditor, type EditorProduct } from "@/components/admin/ProductEdi
 import { ProductWorkspace, type WorkspaceTab, type TabKey } from "@/components/admin/ProductWorkspace";
 import { ProductStockAdjust } from "@/components/admin/ProductStockAdjust";
 import { MediaCard } from "@/components/admin/MediaCard";
+import VariantAiPhoto from "@/components/admin/VariantAiPhoto";
 import { requirePerm, getSession, can } from "@/lib/auth";
 import { addVariantAction, updateVariantAction, deleteVariantAction, addVariantImageAction, deleteVariantImageAction } from "@/app/actions/variants";
 import { setProductVisibilityAction, moveProductToSubcategoryAction, savePricingAction, setWholesaleOnlyAction, toggleProductLabelAction } from "@/app/actions/catalog";
@@ -234,6 +235,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
                   <input type="file" name="images" accept="image/*" multiple className="text-[11px] w-36 file:mr-1.5 file:rounded file:border-0 file:bg-emerald-mist file:text-emerald-dark file:px-2 file:py-1 file:text-[11px] file:cursor-pointer" />
                   <button className="px-2.5 py-1.5 rounded-lg bg-emerald text-white text-xs">Add photo</button>
                 </form>
+                {can(session, "catalog.ai") && <VariantAiPhoto variantId={v.id} color={v.color ?? null} />}
               </div>
             </div>
           );

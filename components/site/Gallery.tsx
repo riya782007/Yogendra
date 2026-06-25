@@ -10,6 +10,15 @@ const GRAD = "linear-gradient(135deg,#E7C9D2,#F2EADA,#E2C887)";
  *  - Click the hero to open a full-screen lightbox with click/scroll zoom and prev/next —
  *    so buyers can inspect stone-setting, polish and detail (Shopping-Tree style).
  */
+// Variant images arrive with kind = the colour name; product images use a fixed set of
+// kinds. Return the colour label for variant images, else null (so we badge colours only).
+const PRODUCT_KINDS = new Set(["model", "source", "flatlay", "gallery", "hero", "ai", "image", ""]);
+function colorLabel(kind?: string | null): string | null {
+  const k = (kind ?? "").trim();
+  if (!k || PRODUCT_KINDS.has(k.toLowerCase())) return null;
+  return k;
+}
+
 export function Gallery({ name, images }: { name: string; images: { path: string; kind?: string | null }[] }) {
   const real = images.filter((i) => isRealImage(i.path));
   const [active, setActive] = useState(0);
@@ -26,22 +35,32 @@ export function Gallery({ name, images }: { name: string; images: { path: string
   }
 
   const cur = real[Math.min(active, real.length - 1)];
+  const curColor = colorLabel(cur.kind);
   return (
     <div>
       <button onClick={() => setOpen(true)} aria-label="Zoom image"
         className="relative aspect-[4/5] w-full rounded-3xl overflow-hidden bg-cream shadow-luxe group cursor-zoom-in block">
-        <img src={cur.path} alt={name} className="object-cover w-full h-full transition-transform duration-500 group-hover:scale-105" />
+        <img src={cur.path} alt={curColor ? `${name} — ${curColor}` : name} className="object-cover w-full h-full transition-transform duration-500 group-hover:scale-105" />
+        {curColor && (
+          <span className="absolute top-3 left-3 text-[11px] font-medium text-ink bg-white/90 px-2.5 py-1 rounded-full shadow-sm capitalize">{curColor}</span>
+        )}
         <span className="absolute bottom-3 right-3 h-9 w-9 rounded-full bg-white/85 grid place-items-center text-ink text-sm shadow group-hover:scale-110 transition-transform">⤢</span>
         <span className="absolute bottom-3 left-3 text-[11px] text-white/0 group-hover:text-white/90 bg-ink/0 group-hover:bg-ink/40 px-2 py-1 rounded-full transition-all">Tap to zoom</span>
       </button>
       {real.length > 1 && (
         <div className="grid grid-cols-5 gap-2.5 mt-3">
-          {real.slice(0, 10).map((img, i) => (
-            <button key={i} onClick={() => setActive(i)} aria-label={`View image ${i + 1}`}
-              className={`relative aspect-square rounded-xl overflow-hidden transition-all ${active === i ? "ring-2 ring-emerald" : "ring-1 ring-sand hover:ring-gold"}`}>
-              <img src={img.path} alt={`${name} ${i + 1}`} className="object-cover w-full h-full" />
-            </button>
-          ))}
+          {real.slice(0, 10).map((img, i) => {
+            const col = colorLabel(img.kind);
+            return (
+              <button key={i} onClick={() => setActive(i)} aria-label={col ? `View ${col}` : `View image ${i + 1}`} title={col ?? undefined}
+                className={`relative aspect-square rounded-xl overflow-hidden transition-all ${active === i ? "ring-2 ring-emerald" : "ring-1 ring-sand hover:ring-gold"}`}>
+                <img src={img.path} alt={col ? `${name} ${col}` : `${name} ${i + 1}`} className="object-cover w-full h-full" />
+                {col && (
+                  <span className="absolute bottom-0 inset-x-0 bg-ink/55 text-white text-[9px] leading-tight py-0.5 text-center capitalize truncate px-0.5">{col}</span>
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
       {open && <Lightbox images={real} start={active} name={name} onClose={() => setOpen(false)} />}
