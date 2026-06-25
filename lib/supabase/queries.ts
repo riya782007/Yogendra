@@ -760,4 +760,9 @@ export async function getProductsWithMedia() {
   const sb = supabaseServer();
   const { data } = await sb.from("products")
     .select("id,sku,name,category:categories(name,slug), images:product_images(id,path,kind,sort)")
-    .eq("s
+    .eq("status", "published").order("sku");
+  return ((data as any[]) ?? []).map((p) => ({
+    id: p.id, sku: p.sku, name: p.name, category: p.category?.name ?? "—", categorySlug: p.category?.slug ?? "all",
+    images: (p.images ?? []).filter((i: any) => typeof i.path === "string" && i.path.startsWith("http")).sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0)),
+  }));
+}

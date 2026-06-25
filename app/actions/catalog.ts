@@ -415,4 +415,35 @@ export async function aiBulkUploadAction(categoryId: string, rawText: string): P
 
   const text = (rawText ?? "").trim().slice(0, 8000);
   if (text && (groqConfigured() || openaiConfigured())) {
-    const system = `You convert a messy product list into clean JSON for a jewellery store. Output STRICT JSON: {"rows":[{"name":string,"base_price":number,"qty":number,"type":"simple"|"configurable","colors":string[]}]}. The input may be CSV, tab-separated, or freeform, with columns in any order or with different header names (price/cost/wholesale -> base_price in rupees as a number; quantity/stock/pcs -> qty integer; colours/variants -> colors array; if multiple colours are present set type to "configurable" else "simple"). Ignore header rows and currency symbols. Infer sensibly. Re
+    const system = `You convert a messy product list into clean JSON for a jewellery store. Output STRICT JSON: {"rows":[{"name":string,"base_price":number,"qty":number,"type":"simple"|"configurable","colors":string[]}]}. The input may be CSV, tab-separated, or freeform, with columns in any order or with different header names (price/cost/wholesale -> base_price in rupees as a number; quantity/stock/pcs -> qty integer; colours/variants -> colors array; if multiple colours are present set type to "configurable" else "simple"). Ignore header rows and currency symbols. Infer sensibly. Return ONLY JSON.`;
+    try {
+      const out = groqConfigured() ? await groqChat({ system, user: text, json: true }) : await openaiChat({ system, user: text, json: true });
+      const parsed = JSON.parse(out);
+      rows = (parsed.rows ?? []).map((r: any) => ({
+        name: String(r.name ?? "").trim(),
+        basePriceRupees: Number(r.base_price) || 0,
+        qty: parseInt(r.qty, 10) || 0,
+        type: r.type === "configurable" || (Array.isArray(r.colors) && r.colors.length > 1) ? "configurable" : "simple",
+        colors: Array.isArray(r.colors) ? r.colors.map((c: any) => String(c).trim()).filter(Boolean) : [],
+      })).filter((r: any) => r.name);
+      usedAi = rows.length > 0;
+    } catch { /* fall through to naive */ }
+  }
+
+  if (!usedAi) {
+    rows = text.split("\n").map((l) => l.trim()).filter(Boolean).filter((l) => !/^name\s*,/i.test(l)).map((l) => {
+      const [name, price, qty, type, colors] = l.split(",").map((s) => s?.trim() ?? "");
+      return { name, basePriceRupees: Number(price) || 0, qty: Number(qty) || 0, type: (type === "configurable" ? "configurable" : "simple") as "simple" | "configurable", colors: (colors ?? "").split("|").map((s) => s.trim()).filter(Boolean) };
+    });
+  }
+
+  let skuNum = await nextSku(sb);
+  const results: RowResult[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const res = await insertOne(sb, formula, { ...rows[i], categoryId }, skuNum);
+    results.push({ ...res, row: i + 1 });
+    if (res.ok) skuNum++;
+  }
+  revalidatePath("/admin/catalogue"); revalidatePath("/shop");
+  return { created: results.filter((r) => r.ok).length, results, usedAi };
+}

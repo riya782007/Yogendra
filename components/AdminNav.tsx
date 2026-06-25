@@ -140,4 +140,11 @@ export function AdminNav({ perms = "*", roleName = "Owner" }: { perms?: Perms; r
         {!collapsed && (
           <div className="px-3 pt-4">
             <div className="flex items-center gap-2 text-[11px] text-cream/50">
-              <span className="h-2 w-2 rounded-full bg-emerald-light animate-pulse" /> Live 
+              <span className="h-2 w-2 rounded-full bg-emerald-light animate-pulse" /> Live · Sadar Bazar, Delhi
+            </div>
+          </div>
+        )}
+      </aside>
+    </>
+  );
+}

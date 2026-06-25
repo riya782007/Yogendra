@@ -135,4 +135,51 @@ export function overridesOf(
 ): PriceOverrides {
   return {
     wholesale: row?.wholesale_override ?? null,
- 
+    retail: row?.retail_override ?? null,
+    mrp: row?.mrp_override ?? null,
+  };
+}
+
+function firstPositive(...vals: (number | null | undefined)[]): number | undefined {
+  for (const v of vals) if (typeof v === "number" && Number.isFinite(v) && v > 0) return v;
+  return undefined;
+}
+
+/**
+ * Resolve the effective price set, applying override layers in priority order
+ * (highest priority first), falling back to the formula-computed value per tier.
+ *
+ *   resolvePrices(base, formula, variantOverrides, productOverrides)
+ *
+ * Each layer may set any subset of tiers; a tier with no override anywhere uses
+ * the formula. Pure & deterministic.
+ */
+export function resolvePrices(
+  baseWholesalePaise: number,
+  formula: PricingFormula,
+  ...layers: (PriceOverrides | null | undefined)[]
+): PriceSet {
+  const computed = computePrices(baseWholesalePaise, formula);
+  return {
+    wholesaleRate: firstPositive(...layers.map((l) => l?.wholesale)) ?? computed.wholesaleRate,
+    retailPrice: firstPositive(...layers.map((l) => l?.retail)) ?? computed.retailPrice,
+    mrp: firstPositive(...layers.map((l) => l?.mrp)) ?? computed.mrp,
+  };
+}
+
+/** Read one tier out of a resolved price set. */
+export function priceForTier(p: PriceSet, tier: PriceTier): number {
+  return tier === "wholesale" ? p.wholesaleRate : tier === "retail" ? p.retailPrice : p.mrp;
+}
+
+/** Which tier a given customer type pays. Wholesale buyers → wholesale; everyone else → retail. */
+export function tierForCustomer(customerType?: string | null): PriceTier {
+  return customerType === "wholesale" ? "wholesale" : "retail";
+}
+
+/** Format paise as an Indian-rupee display string. Display-only. */
+export function formatPaise(paise: number): string {
+  if (!Number.isFinite(paise)) return "—";
+  const rupees = paise / 100;
+  return "₹" + rupees.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
