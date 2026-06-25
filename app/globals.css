@@ -13,6 +13,10 @@ body {
 }
 .font-display { font-family: "Cormorant Garamond", Georgia, serif; }
 
+/* Privacy mode (#10/#25): blur sensitive money figures when the toggle is on. */
+.privacy-on .sensitive { filter: blur(10px); user-select: none; pointer-events: none; transition: filter .2s ease; }
+@media print { .privacy-on .sensitive { filter: none; } }
+
 /* gold gradient text */
 .text-gold-gradient {
   background: linear-gradient(90deg, #A07E2E, #E2C887, #A07E2E);

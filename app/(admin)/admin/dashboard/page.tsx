@@ -6,6 +6,7 @@ import { AnimatedNumber } from "@/components/admin/AnimatedNumber";
 import { BarChart } from "@/components/admin/BarChart";
 import { Donut } from "@/components/admin/Donut";
 import { ExpandableReport } from "@/components/admin/ExpandableReport";
+import { PrivacyShield } from "@/components/admin/PrivacyShield";
 
 const CH_LABEL: Record<string, string> = { retail: "Online retail", wholesale: "Wholesale", pos: "Counter (POS)" };
 const PRESETS = [{ key: "today", label: "Today" }, { key: "week", label: "This week" }, { key: "month", label: "This month" }];
@@ -60,6 +61,7 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
       {searchParams.denied && (
         <div className="mb-4 rounded-xl bg-rose/10 text-rose px-4 py-2.5 text-sm">Your role doesn't have access to <b>{searchParams.denied}</b>. Ask the owner if you need it.</div>
       )}
+      <PrivacyShield>
       {/* Hero */}
       <div className="relative rounded-3xl overflow-hidden mb-6 bg-gradient-to-br from-ink via-[#2c2238] to-emerald-dark text-cream p-6 sm:p-8 shadow-luxe">
         <div className="absolute -right-10 -top-10 w-48 h-48 rounded-full bg-gold/20 blur-2xl" />
@@ -69,7 +71,7 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
             <p className="text-[11px] tracking-[0.3em] uppercase text-gold-light">Owner Console</p>
             <h1 className="font-display text-4xl sm:text-5xl text-ivory mt-1">{greet}, Yogendra</h1>
             <p className="text-sm text-cream/70 mt-1">Showing <b className="text-ivory">{label}</b> · live from your catalogue &amp; orders</p>
-            <p className="text-2xl font-semibold text-ivory mt-3">{formatPaise(d.revenue)} <span className="text-sm font-normal text-cream/60">in revenue · {d.orders} orders</span></p>
+            <p className="text-2xl font-semibold text-ivory mt-3"><span className="sensitive">{formatPaise(d.revenue)}</span> <span className="text-sm font-normal text-cream/60">in revenue · {d.orders} orders</span></p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex gap-1 bg-white/10 rounded-full p-1">
@@ -89,14 +91,14 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
-        <Tile label="Revenue" icon="₹" accent="text-emerald" bar="bg-emerald" sub={`${d.orders} orders`}><AnimatedNumber value={d.revenue / 100} prefix="₹" /></Tile>
+        <Tile label="Revenue" icon="₹" accent="text-emerald" bar="bg-emerald" sub={`${d.orders} orders`}><span className="sensitive"><AnimatedNumber value={d.revenue / 100} prefix="₹" /></span></Tile>
         <Tile label="Orders" icon="❑" bar="bg-gold" sub={`${d.pos} POS · ${d.cod} COD`}><AnimatedNumber value={d.orders} /></Tile>
         <Tile label="Approved Retailers" icon="♚" bar="bg-wine" sub={`${d.pendingApprovals} pending`}><AnimatedNumber value={d.retailers} /></Tile>
         <Tile label="Pending Approvals" icon="✓" accent={d.pendingApprovals ? "text-gold-dark" : undefined} bar={d.pendingApprovals ? "bg-gold-dark" : "bg-sand"} sub="needs owner OTP"><AnimatedNumber value={d.pendingApprovals} /></Tile>
       </div>
 
       {/* Collections split — cash in hand vs bank/UPI (#14/#37) */}
-      <div className="grid grid-cols-2 gap-4 mb-5">
+      <div className="grid grid-cols-2 gap-4 mb-5 sensitive">
         <Tile label="Cash collected" icon="₹" accent="text-emerald" bar="bg-emerald" sub="counter cash">{formatPaise(d.cashCollected)}</Tile>
         <Tile label="UPI / Bank collected" icon="🏦" bar="bg-wine" sub="online & card">{formatPaise(d.bankCollected)}</Tile>
       </div>
@@ -104,7 +106,7 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
       {/* Expandable channel reports — headline number, click to see the full report for the range */}
       <div className="mb-5">
         <p className="text-sm text-muted mb-2">Sales by channel — <span className="text-ink">tap any card to expand the full report for {label.toLowerCase()}</span></p>
-        <div className="grid md:grid-cols-3 gap-4">
+        <div className="grid md:grid-cols-3 gap-4 sensitive">
           {report.channels.map((c) => (
             <ExpandableReport key={c.channel} title={CH_LABEL[c.channel] ?? c.channel} channelKey={c.channel}
               revenue={c.revenue} count={c.count} orders={c.orders} from={fromDate} to={toDate}
@@ -113,7 +115,7 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-3 gap-4 mb-5">
+      <div className="grid lg:grid-cols-3 gap-4 mb-5 sensitive">
         <div className="lg:col-span-2 bg-white rounded-2xl p-6 shadow-card">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-medium text-ink">Revenue trend</h2>
@@ -135,7 +137,7 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
       </div>
 
       <div className="grid md:grid-cols-3 gap-4">
-        <div className="bg-white rounded-2xl p-6 shadow-card">
+        <div className="bg-white rounded-2xl p-6 shadow-card sensitive">
           <h2 className="font-medium text-ink mb-4">Revenue by category</h2>
           <div className="space-y-3">
             {a.categories.map((c, i) => {
@@ -157,7 +159,7 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
             ))}
           </ul>
         </div>
-        <div className="bg-white rounded-2xl p-6 shadow-card">
+        <div className="bg-white rounded-2xl p-6 shadow-card sensitive">
           <h2 className="font-medium text-gold-dark mb-4">⭐ Top sellers</h2>
           <ul className="text-sm divide-y divide-sand/60">
             {a.topProducts.map((p) => (
@@ -167,6 +169,7 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
           <Link href="/admin/inventory" className="block mt-4 text-sm text-emerald nav-link">View full inventory →</Link>
         </div>
       </div>
+      </PrivacyShield>
     </main>
   );
 }
