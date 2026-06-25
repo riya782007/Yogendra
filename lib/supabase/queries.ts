@@ -677,17 +677,26 @@ export async function getRecommendations(sku: string, n = 4): Promise<StoreProdu
   for (const r of (embRows as any[]) ?? []) if (Array.isArray(r.embedding)) embBy.set(r.sku, r.embedding);
   const self = products.find((p) => p.sku === sku);
   if (!self) return [];
+  const others = products.filter((p) => p.sku !== sku);
   const selfEmb = embBy.get(sku);
   let ranked: StoreProduct[];
-  if (selfEmb) {
-    ranked = products.filter((p) => p.sku !== sku && embBy.has(p.sku))
+  if (selfEmb && others.some((p) => embBy.has(p.sku))) {
+    // Semantic when embeddings exist.
+    ranked = others.filter((p) => embBy.has(p.sku))
       .map((p) => ({ p, s: _cosine(selfEmb, embBy.get(p.sku)!) }))
       .sort((a, b) => b.s - a.s).map((x) => x.p);
   } else {
-    ranked = products.filter((p) => p.sku !== sku && p.category.slug === self.category.slug);
+    // Inventory-aware fallback (works with zero embeddings): same subcategory → same
+    // category → everything else, preferring in-stock pieces. Never returns empty.
+    const subId = (self as any).subcategory_id;
+    const byStock = (arr: StoreProduct[]) => [...arr].sort((a, b) => (b.qty > 0 ? 1 : 0) - (a.qty > 0 ? 1 : 0));
+    const sameSub = subId ? others.filter((p) => (p as any).subcategory_id === subId) : [];
+    const sameCat = others.filter((p) => p.category.slug === self.category.slug && !sameSub.some((s) => s.sku === p.sku));
+    const rest = others.filter((p) => !sameSub.some((s) => s.sku === p.sku) && !sameCat.some((s) => s.sku === p.sku));
+    ranked = [...byStock(sameSub), ...byStock(sameCat), ...byStock(rest)];
   }
   if (ranked.length < n) {
-    const extra = products.filter((p) => p.sku !== sku && !ranked.some((r) => r.sku === p.sku));
+    const extra = others.filter((p) => !ranked.some((r) => r.sku === p.sku));
     ranked = [...ranked, ...extra];
   }
   return ranked.slice(0, n);
