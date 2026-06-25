@@ -10,7 +10,7 @@ import { getSession, can } from "@/lib/auth";
 
 export const metadata = { title: "Owner Console · Categories" };
 
-export const LABEL_CHIP: Record<string, string> = {
+const LABEL_CHIP: Record<string, string> = {
   emerald: "bg-emerald-mist text-emerald-dark", gold: "bg-gold/15 text-gold-dark",
   wine: "bg-wine/10 text-wine", rose: "bg-rose/10 text-rose",
   blue: "bg-blue-50 text-blue-700", ink: "bg-ink/10 text-ink",

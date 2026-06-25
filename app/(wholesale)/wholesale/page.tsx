@@ -8,7 +8,7 @@ import { wholesaleLoginAction } from "@/app/actions/wholesale";
 import { WholesaleCatalog } from "@/components/site/WholesaleCatalog";
 
 export const metadata = { title: "Wholesale — Trade Pricing for Retailers" };
-export const WHOLESALE_MIN = 300000; // ₹3,000 in paise (#27)
+const WHOLESALE_MIN = 300000; // ₹3,000 in paise (#27)
 
 export default async function Wholesale({ searchParams }: { searchParams: { error?: string } }) {
   const session = await getWholesaleSession();
