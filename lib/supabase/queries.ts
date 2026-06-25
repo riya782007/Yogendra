@@ -221,6 +221,13 @@ export async function getPublishedProducts(): Promise<(DbProduct & { category: D
   return (data as any) ?? [];
 }
 
+/** Customer feedback inbox (#39). */
+export async function getFeedback() {
+  const sb = supabaseServer();
+  const { data } = await sb.from("feedback").select("*").order("created_at", { ascending: false }).limit(100);
+  return (data as any[]) ?? [];
+}
+
 /** Owner-defined labels (#9/#31). */
 export async function getLabels() {
   const sb = supabaseServer();

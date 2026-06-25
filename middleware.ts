@@ -29,6 +29,7 @@ const ROUTE_PERM: [string, string | string[]][] = [
   ["/admin/suppliers", "suppliers.manage"],
   ["/admin/supplier", "suppliers.manage"],
   ["/admin/reviews", "reviews.respond"],
+  ["/admin/feedback", "reviews.respond"],
   ["/admin/abandoned", "marketing.manage"],
   ["/admin/reels", "reels.manage"],
   ["/admin/approvals", "approvals.approve"],

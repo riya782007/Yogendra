@@ -208,6 +208,14 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                 </form>
               </div>
             )}
+            {/* #39: nudge the customer for feedback on WhatsApp */}
+            {can(session, "billing.sell") && order.customer_phone && (
+              <div className="bg-white rounded-2xl p-5 shadow-card">
+                <h2 className="font-medium text-ink mb-1">Ask for feedback</h2>
+                <p className="text-xs text-muted mb-3">Nudge {order.customer_name || "the customer"} on WhatsApp to rate their experience.</p>
+                <a href={`https://wa.me/91${String(order.customer_phone).replace(/\D/g, "").slice(-10)}?text=${encodeURIComponent(`Thank you for shopping with ${BUSINESS.brand}! 💛 We'd love your feedback: ${(process.env.NEXT_PUBLIC_SITE_URL ?? "").replace(/\/$/, "")}/feedback?ref=${invNo}`)}`} target="_blank" rel="noreferrer" className="inline-block px-4 py-2 rounded-full bg-[#25D366] text-white text-sm font-medium">Request on WhatsApp →</a>
+              </div>
+            )}
           </div>
         )}
       </div>
