@@ -561,15 +561,49 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
 }
 
 /** Best-effort: match a product by SKU embedded in the text, else by name/keyword search. */
+// Hindi/Hinglish/English filler words that carry no product meaning.
+const NAME_STOP = new Set([
+  "wala", "wali", "wale", "ka", "ki", "ke", "ko", "me", "mein", "ka", "hai", "kar", "karo", "kardo",
+  "do", "de", "dena", "the", "a", "an", "of", "for", "and", "set", "piece", "pieces", "pcs", "pc",
+  "stock", "add", "kam", "jyada", "zyada", "badha", "ghata", "please", "show", "dikhao", "ka", "wala",
+]);
+
+/**
+ * Resolve a product from a fuzzy name phrase (e.g. "meenakari wala haar" → Meenakari
+ * Peacock Haar). Token-overlap scored against name + category + tags, so word order,
+ * filler words and partial names all still match. Returns null only when nothing shares
+ * a meaningful word, so DIVA honestly asks for the SKU instead of guessing.
+ */
 async function resolveProductByName(query: string): Promise<{ id: string; sku: string; name: string; qty: number; base_wholesale: number } | null> {
   const q = (query ?? "").trim();
   if (!q) return null;
-  const { rows } = await getProductsPage({ q, pageSize: 5 });
+  const tokens = q.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((t) => t.length >= 3 && !NAME_STOP.has(t));
+
+  const sb = supabaseServer();
+  const { data } = await sb.from("products").select("id,sku,name,qty,base_wholesale,generated_content,category:categories(name)").limit(1000);
+  const rows = (data as any[]) ?? [];
   if (!rows.length) return null;
-  // Prefer an exact-ish name match, else the first result.
-  const lower = q.toLowerCase();
-  const best = rows.find((r: any) => String(r.name).toLowerCase() === lower)
-    || rows.find((r: any) => String(r.name).toLowerCase().includes(lower))
-    || rows[0];
-  return { id: best.id, sku: best.sku, name: best.name, qty: best.qty, base_wholesale: best.base_wholesale };
+
+  // Exact SKU typed inside the phrase wins immediately.
+  const skuTok = tokens.find((t) => /^bd\d{3,}$/i.test(t));
+  if (skuTok) { const hit = rows.find((r) => String(r.sku).toLowerCase() === skuTok); if (hit) return pick(hit); }
+
+  if (tokens.length === 0) {
+    const lower = q.toLowerCase();
+    const hit = rows.find((r) => String(r.name).toLowerCase().includes(lower));
+    return hit ? pick(hit) : null;
+  }
+
+  let best: any = null, bestScore = 0;
+  for (const r of rows) {
+    const tags = (((r.generated_content as any)?.tags) ?? []) as string[];
+    const hay = `${r.name} ${r.category?.name ?? ""} ${tags.join(" ")}`.toLowerCase();
+    let score = 0;
+    for (const t of tokens) if (hay.includes(t)) score++;
+    if (score > bestScore) { bestScore = score; best = r; }
+  }
+  // Need at least one meaningful shared word; otherwise honestly return "not found".
+  return bestScore >= 1 ? pick(best) : null;
+
+  function pick(r: any) { return { id: r.id, sku: r.sku, name: r.name, qty: r.qty, base_wholesale: r.base_wholesale }; }
 }
