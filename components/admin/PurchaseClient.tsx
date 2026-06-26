@@ -24,6 +24,13 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
   const total = lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.cost) || 0), 0);
 
   async function submit() {
+    // A mapped product that HAS colours must be bought as a specific colour — never the parent.
+    const missing = lines.find((l) => {
+      if (!l.mappedProductId || !(Number(l.qty) > 0)) return false;
+      const hasVariants = (products.find((p) => p.id === l.mappedProductId)?.variants ?? []).length > 0;
+      return hasVariants && !l.variantId;
+    });
+    if (missing) { setMsg(`✕ Pick a colour for "${missing.mappedName}" — products with colours are bought per colour, not as the whole product.`); return; }
     setBusy(true); setMsg("");
     const res = await recordPurchaseAction({
       supplierId, billNo,
@@ -57,9 +64,11 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
                   {(() => {
                     const vs = products.find((p) => p.id === l.mappedProductId)?.variants ?? [];
                     if (!vs.length) return null;
+                    // Products with colours are only ever bought as a specific colour — the parent
+                    // SKU isn't a real stockable item. So force a colour choice (no "whole product").
                     return (
-                      <select className={input + " w-full mt-1 text-xs"} value={l.variantId} onChange={(e) => set(i, { variantId: e.target.value })}>
-                        <option value="">Whole product (no specific variant)</option>
+                      <select className={`${input} w-full mt-1 text-xs ${l.variantId ? "" : "border-rose text-rose"}`} value={l.variantId} onChange={(e) => set(i, { variantId: e.target.value })}>
+                        <option value="" disabled>Choose colour / variant…</option>
                         {vs.map((v) => <option key={v.id} value={v.id}>{v.label} · {v.sku}</option>)}
                       </select>
                     );
