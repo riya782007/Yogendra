@@ -412,7 +412,7 @@ export async function getApprovals() {
 
 // ---------- storefront with ratings (premium UI) ----------
 export type StoreProduct = DbProduct & {
-  category: DbCategory; rating: number; reviews: number; isNew: boolean;
+  category: DbCategory; rating: number; reviews: number; isNew: boolean; image?: string | null;
 };
 
 export async function getStorefront(
@@ -422,14 +422,28 @@ export async function getStorefront(
   // D2C-safe defaults: only published, and never wholesale-only items (#1, #23).
   let pq = sb.from("products").select("*, category:categories(id,name,slug)").order("sku");
   if (!opts.includeDrafts) pq = pq.eq("status", "published");
-  const [{ data: prods }, { data: revs }, formula] = await Promise.all([
+  const [{ data: prods }, { data: revs }, { data: pimgs }, { data: vimgs }, formula] = await Promise.all([
     pq,
     sb.from("reviews").select("product_id, rating"),
+    sb.from("product_images").select("product_id, path, sort").order("sort", { ascending: true }),
+    sb.from("variants").select("product_id, image_paths"),
     getPricingFormula(),
   ]);
   const agg = new Map<string, { sum: number; n: number }>();
   for (const r of (revs as any[]) ?? []) {
     const a = agg.get(r.product_id) ?? { sum: 0, n: 0 }; a.sum += r.rating; a.n++; agg.set(r.product_id, a);
+  }
+  // Primary thumbnail per product: first product_image (sorted, so AI "model" shot wins),
+  // else the first real variant photo — so cards show the same image as the product page.
+  const imgByProduct = new Map<string, string>();
+  for (const r of (pimgs as any[]) ?? []) {
+    if (!r.path || !String(r.path).startsWith("http")) continue;
+    if (!imgByProduct.has(r.product_id)) imgByProduct.set(r.product_id, r.path);
+  }
+  for (const v of (vimgs as any[]) ?? []) {
+    if (imgByProduct.has(v.product_id)) continue;
+    const u = (((v.image_paths as string[]) ?? []).find((x) => x && x.startsWith("http")));
+    if (u) imgByProduct.set(v.product_id, u);
   }
   const now = Date.now();
   let products = ((prods as any[]) ?? []).map((p) => {
@@ -437,7 +451,7 @@ export async function getStorefront(
     const rating = a && a.n ? a.sum / a.n : 4.6;
     const reviews = a?.n ?? 0;
     const isNew = p.created_at ? now - new Date(p.created_at).getTime() < 1000 * 60 * 60 * 24 * 21 : false;
-    return { ...p, rating: Math.round(rating * 10) / 10, reviews, isNew };
+    return { ...p, image: imgByProduct.get(p.id) ?? null, rating: Math.round(rating * 10) / 10, reviews, isNew };
   });
   if (!opts.includeWholesaleOnly) products = products.filter((p: any) => !p.wholesale_only);
   return { products, formula };
