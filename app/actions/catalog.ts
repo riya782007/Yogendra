@@ -59,11 +59,19 @@ async function insertOne(sb: ReturnType<typeof supabaseServer>, formula: any, n:
     base_wholesale: n.basePriceRupees * 100, qty: Math.max(0, n.qty), status: publish ? "published" : "draft", last_movement_at: new Date().toISOString(),
   }).select("id").single();
   if (error) return { row: skuNum, ok: false, error: error.message };
+  // Log the opening inventory as a stock movement so it shows in the product's history
+  // (the "Opening stock" line), just like purchases/sales/returns do.
+  const opening: any[] = [];
   if (n.type === "configurable" && n.colors.length) {
-    await sb.from("variants").insert(n.colors.map((c, i) => ({
-      product_id: prod!.id, color: c, sku: `${sku}-${c.slice(0, 3).toUpperCase()}`, qty: Math.floor(n.qty / Math.max(1, n.colors.length)),
-    })));
+    const per = Math.floor(n.qty / Math.max(1, n.colors.length));
+    const { data: vs } = await sb.from("variants").insert(n.colors.map((c) => ({
+      product_id: prod!.id, color: c, sku: `${sku}-${c.slice(0, 3).toUpperCase()}`, qty: per,
+    }))).select("id, qty");
+    for (const v of (vs as any[]) ?? []) if (v.qty > 0) opening.push({ product_id: prod!.id, variant_id: v.id, delta: v.qty, kind: "opening", source: "create", reason: "Opening stock" });
+  } else if (n.qty > 0) {
+    opening.push({ product_id: prod!.id, delta: n.qty, kind: "opening", source: "create", reason: "Opening stock" });
   }
+  if (opening.length) await sb.from("stock_adjustments").insert(opening);
   return { row: skuNum, ok: true, sku };
 }
 
