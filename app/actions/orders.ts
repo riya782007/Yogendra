@@ -2,6 +2,7 @@
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 import { sendPurchase } from "@/lib/ga4";
+import { notifyOrderPlaced } from "@/lib/whatsapp";
 
 export type PlaceOrderInput = {
   items: { sku: string; qty: number; color?: string }[];
@@ -22,6 +23,10 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
   if (error) return { ok: false, error: error.message };
   const orderId = (data as any)?.order_id, total = (data as any)?.total;
   await sendPurchase({ orderId, valuePaise: total, channel: "retail", items: input.items.map((i) => ({ sku: i.sku, qty: i.qty })) });
+  await notifyOrderPlaced({
+    orderId, customerName: input.customer.name, customerPhone: input.customer.phone,
+    totalPaise: total, payment: input.payment, itemCount: input.items.reduce((n, i) => n + i.qty, 0),
+  }).catch(() => {});
   return { ok: true, orderId, total };
 }
 

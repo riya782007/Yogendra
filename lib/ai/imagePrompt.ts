@@ -13,16 +13,17 @@ const SHOT_BY_CATEGORY: Record<string, string> = {
   ring: "the hand, fingers gently relaxed",
 };
 
-// A small rotation of tasteful, diverse subjects (deterministic per index).
+// Indian models only — luminous, well-lit complexions (NOT dark/muddy), unmistakably
+// South Asian / Indian features. Deterministic per index.
 const SUBJECTS = [
-  "a 28-year-old woman with warm medium skin tone, natural minimal makeup, soft loose hair, relaxed confident expression",
-  "a 32-year-old woman with deep skin tone, natural minimal makeup, hair pulled back softly, calm aspirational expression",
-  "a 25-year-old woman with light-medium skin tone, dewy natural makeup, loose waves, serene confident expression",
+  "a beautiful young Indian (South Asian) woman in her mid-20s, with a luminous fair-to-wheatish Indian complexion that is bright and evenly lit (not dark, not muddy), expressive dark almond eyes, soft kohl, natural dewy glam makeup, sleek glossy dark hair, a warm confident graceful expression — classic Indian beauty",
+  "an elegant Indian (South Asian) woman around 28, radiant wheatish skin that catches the light beautifully and reads bright and healthy, delicate features, subtle natural makeup, dark hair in a soft elegant style, poised aspirational expression — refined traditional Indian charm",
+  "a graceful young Indian (South Asian) woman in her early 20s, glowing light-wheatish skin, kohl-lined dark eyes, minimal fresh makeup, loose soft dark waves, a serene confident look — youthful Indian elegance",
 ];
 
 const BACKGROUNDS = [
-  "clean off-white seamless studio backdrop, premium minimalist aesthetic",
-  "soft warm-toned interior with shallow depth of field",
+  "clean bright off-white / soft ivory seamless studio backdrop, high-key premium minimalist aesthetic",
+  "softly lit warm-cream interior with gentle shallow depth of field, bright and airy, never dim",
 ];
 
 export function shotTypeFor(category: string): string {
@@ -81,11 +82,15 @@ The jewelry in the output must be IDENTICAL to the reference image — same meta
 NON-NEGOTIABLE — ABSOLUTELY NO TEXT:
 The image must contain ZERO text of any kind. No words, no letters, no numbers, no captions, no labels, no logos, no watermarks, no brand names, no price tags, no signatures, no stamps, no UI elements, no borders with writing. The background, clothing, jewelry, and every surface must be completely free of any written or typographic elements. If any text would normally appear, leave that area clean and blank.
 
-SUBJECT: ${subject}.
+SUBJECT: ${subject}. The model MUST look clearly Indian/South Asian, and her skin must be bright, luminous and well-exposed — never dark, dull, or muddy.
 SHOT TYPE: ${shot} — framed so the jewelry is the clear hero and sharply in focus.
-STYLING & WARDROBE: minimal, neutral clothing (soft beige, white, or muted tone) that does not compete with the jewelry. No other jewelry or accessories in frame unless they match the piece. No printed text, slogans, or graphics on the clothing.
-LIGHTING: soft, diffused studio lighting with gentle directional highlights to make metal catch light and gemstones sparkle, no harsh shadows, no blown-out highlights on the piece. Color-accurate so the metal and stones read true.
-BACKGROUND & MOOD: ${background}. Calm, aspirational, trustworthy — luxury brand feel. The background must be plain and free of any text, signage, or writing.
+
+THE JEWELLERY IS THE HERO (CRITICAL):
+The piece must be the brightest, sharpest, most eye-catching element in the entire frame — prominent, large in the composition, and tack-sharp. Expose and light specifically FOR the jewellery so the metal gleams with crisp specular highlights and every stone/bead sparkles and reads vivid and true. The piece must visibly POP against the skin and clothing with clear contrast and separation — it should be the first thing the eye lands on. Do not let the model, hair, or background draw attention away from the jewellery.
+
+STYLING & WARDROBE: minimal, neutral clothing (soft beige, ivory, blush, or muted tone) with a simple neckline that showcases the piece. No competing jewelry or accessories. No printed text, slogans, or graphics on the clothing.
+LIGHTING: bright, clean, high-key studio beauty lighting — soft and flattering on the skin so the model reads luminous, with crisp directional key light on the jewellery to make metal catch light and gemstones sparkle. No dark, dim, or muddy tones; no heavy shadows on the face; no blown-out highlights on the piece. Colour-accurate so metal and stones read true and rich.
+BACKGROUND & MOOD: ${background}. Calm, aspirational, trustworthy — luxury Indian brand feel. The background must be plain, bright and free of any text, signage, or writing.
 TECHNICAL: photorealistic, shot on a 85mm lens look, shallow depth of field with the jewelry tack-sharp, high resolution, natural skin texture (real pores, no plastic airbrushing), professional color grading.
 OUTPUT FRAMING: Render the final image in ${aspectNote}.
 OUTPUT: A clean photograph with NO text, NO watermark, NO logo, and NO graphic overlays anywhere.`;
