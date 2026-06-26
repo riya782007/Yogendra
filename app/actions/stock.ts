@@ -34,28 +34,37 @@ export async function adjustStockAction(formData: FormData): Promise<void> {
     const { data: v } = await sb.from("variants").select("id,qty,product_id,sku").ilike("sku", sku).maybeSingle();
     if (!v) return;
     const vid = (v as any).id, pid = (v as any).product_id;
-    const vNew = Math.max(0, ((v as any).qty ?? 0) + delta);
+    const oldQ = (v as any).qty ?? 0;
+    const vNew = Math.max(0, oldQ + delta);
+    const applied = vNew - oldQ;
+    if (applied === 0) return; // already at 0 — never log a phantom movement
     await sb.from("variants").update({ qty: vNew }).eq("id", vid);
     const { data: siblings } = await sb.from("variants").select("qty").eq("product_id", pid);
     const total = ((siblings as any[]) ?? []).reduce((s, x) => s + (x.qty ?? 0), 0);
     await sb.from("products").update({ qty: total, last_movement_at: now }).eq("id", pid);
-    await sb.from("stock_adjustments").insert({ product_id: pid, variant_id: vid, sku: (v as any).sku ?? sku, delta, source, reason, kind });
+    await sb.from("stock_adjustments").insert({ product_id: pid, variant_id: vid, sku: (v as any).sku ?? sku, delta: applied, source, reason, kind });
   } else {
     const pid = (p as any).id;
     if (variantId) {
       // Variant-level: adjust the variant, then roll the product qty up to the variant sum.
       const { data: v } = await sb.from("variants").select("id,qty,sku").eq("id", variantId).eq("product_id", pid).maybeSingle();
       if (!v) return;
-      const vNew = Math.max(0, ((v as any).qty ?? 0) + delta);
+      const oldQ = (v as any).qty ?? 0;
+      const vNew = Math.max(0, oldQ + delta);
+      const applied = vNew - oldQ;
+      if (applied === 0) return; // nothing to remove (already 0) — no phantom -10 movements
       await sb.from("variants").update({ qty: vNew }).eq("id", variantId);
       const { data: siblings } = await sb.from("variants").select("qty").eq("product_id", pid);
       const total = ((siblings as any[]) ?? []).reduce((s, x) => s + (x.qty ?? 0), 0);
       await sb.from("products").update({ qty: total, last_movement_at: now }).eq("id", pid);
-      await sb.from("stock_adjustments").insert({ product_id: pid, variant_id: variantId, sku: (v as any).sku ?? sku, delta, source, reason, kind });
+      await sb.from("stock_adjustments").insert({ product_id: pid, variant_id: variantId, sku: (v as any).sku ?? sku, delta: applied, source, reason, kind });
     } else {
-      const newQty = Math.max(0, ((p as any).qty ?? 0) + delta);
+      const oldQ = (p as any).qty ?? 0;
+      const newQty = Math.max(0, oldQ + delta);
+      const applied = newQty - oldQ;
+      if (applied === 0) return; // already at the floor — don't log a phantom movement
       await sb.from("products").update({ qty: newQty, last_movement_at: now }).eq("id", pid);
-      await sb.from("stock_adjustments").insert({ product_id: pid, sku, delta, source, reason, kind });
+      await sb.from("stock_adjustments").insert({ product_id: pid, sku, delta: applied, source, reason, kind });
     }
   }
 

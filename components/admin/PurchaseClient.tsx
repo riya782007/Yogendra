@@ -20,6 +20,15 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
 
   const input = "rounded-xl border border-sand px-3 py-2 text-sm bg-white outline-none focus:border-emerald";
   const set = (i: number, patch: Partial<Line>) => setLines((p) => p.map((l, idx) => idx === i ? { ...l, ...patch } : l));
+  // Expand one mapped parent into one line per colour (same supplier code & cost) so a 15-colour
+  // design can be entered in seconds — just fill the qty for each colour.
+  const expandColours = (i: number) => setLines((prev) => {
+    const line = prev[i];
+    const vs = products.find((p) => p.id === line.mappedProductId)?.variants ?? [];
+    if (!vs.length) return prev;
+    const rows = vs.map((v) => ({ ...line, variantId: v.id, qty: "" }));
+    return [...prev.slice(0, i), ...rows, ...prev.slice(i + 1)];
+  });
   const suggest = (q: string) => q.trim() ? products.filter((p) => (p.name + p.sku).toLowerCase().includes(q.toLowerCase())).slice(0, 6) : [];
   const total = lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.cost) || 0), 0);
 
@@ -67,10 +76,17 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
                     // Products with colours are only ever bought as a specific colour — the parent
                     // SKU isn't a real stockable item. So force a colour choice (no "whole product").
                     return (
-                      <select className={`${input} w-full mt-1 text-xs ${l.variantId ? "" : "border-rose text-rose"}`} value={l.variantId} onChange={(e) => set(i, { variantId: e.target.value })}>
-                        <option value="" disabled>Choose colour / variant…</option>
-                        {vs.map((v) => <option key={v.id} value={v.id}>{v.label} · {v.sku}</option>)}
-                      </select>
+                      <div className="mt-1 flex items-center gap-1.5">
+                        <select className={`${input} flex-1 text-xs ${l.variantId ? "" : "border-rose text-rose"}`} value={l.variantId} onChange={(e) => set(i, { variantId: e.target.value })}>
+                          <option value="" disabled>Choose colour / variant…</option>
+                          {vs.map((v) => <option key={v.id} value={v.id}>{v.label} · {v.sku}</option>)}
+                        </select>
+                        {vs.length > 1 && (
+                          <button type="button" onClick={() => expandColours(i)}
+                            className="shrink-0 text-[11px] px-2 py-1.5 rounded-lg bg-emerald-mist text-emerald-dark hover:bg-emerald/15"
+                            title="Add a line for every colour of this design">+ all {vs.length} colours</button>
+                        )}
+                      </div>
                     );
                   })()}
                 </>
