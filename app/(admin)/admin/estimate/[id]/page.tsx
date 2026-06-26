@@ -6,7 +6,7 @@ import { formatPaise } from "@/lib/pricing";
 import { PrintButton } from "@/components/admin/PrintButton";
 import { BUSINESS, amountInWords } from "@/lib/business";
 import { requirePerm } from "@/lib/auth";
-import { updateEstimateCustomerAction, updateEstimateLineAction, removeEstimateLineAction, addEstimateLineAction } from "@/app/actions/billing";
+import { updateEstimateCustomerAction, updateEstimateLineAction, updateEstimateLinePriceAction, removeEstimateLineAction, addEstimateLineAction } from "@/app/actions/billing";
 
 export const metadata = { title: "Estimate / Quotation" };
 
@@ -110,13 +110,15 @@ export default async function EstimatePrint({ params }: { params: { id: string }
 
             <div className="space-y-2 mb-3">
               {items.map((it: any) => (
-                <form key={it.id} action={updateEstimateLineAction} className="flex items-center gap-2">
+                <form key={it.id} action={updateEstimateLineAction} className="flex items-end gap-2">
                   <input type="hidden" name="item_id" value={it.id} />
                   <input type="hidden" name="estimate_id" value={estimate.id} />
-                  <span className="flex-1 text-sm text-ink truncate">{it.product?.name} <span className="text-muted font-mono text-xs">{it.product?.sku}</span> · {formatPaise(it.unit_price)}</span>
-                  <input name="qty" type="number" min={1} defaultValue={it.qty} className={`${inp} w-16 text-center`} />
-                  <button className="px-3 py-2 rounded-xl bg-ink/5 text-ink text-xs hover:bg-ink/10">Save</button>
-                  <button formAction={removeEstimateLineAction} className="text-muted hover:text-rose text-xs px-1">Remove</button>
+                  <span className="flex-1 text-sm text-ink truncate self-center">{it.product?.name} <span className="text-muted font-mono text-xs">{it.product?.sku}</span></span>
+                  <label className="text-[11px] text-muted">Qty<input name="qty" type="number" min={1} defaultValue={it.qty} className={`${inp} w-16 text-center block mt-0.5`} /></label>
+                  <label className="text-[11px] text-muted">Rate ₹<input name="price" type="number" min={0} step="0.01" defaultValue={(it.unit_price / 100).toFixed(2)} className={`${inp} w-24 text-right block mt-0.5`} /></label>
+                  <button className="px-3 py-2 rounded-xl bg-ink/5 text-ink text-xs hover:bg-ink/10">Save qty</button>
+                  <button formAction={updateEstimateLinePriceAction} className="px-3 py-2 rounded-xl bg-emerald-mist text-emerald-dark text-xs hover:bg-emerald/20">Save rate</button>
+                  <button formAction={removeEstimateLineAction} className="text-muted hover:text-rose text-xs px-1 self-center">Remove</button>
                 </form>
               ))}
               {items.length === 0 && <p className="text-sm text-muted">No items — add one below.</p>}

@@ -39,6 +39,23 @@ export async function updateEstimateLineAction(formData: FormData): Promise<void
   revalidatePath(`/admin/estimate/${estimateId}`);
 }
 
+/** Pillar 4/15: edit a line's UNIT PRICE (₹) on an open estimate — the negotiated rate
+ *  is stored and carries straight through to the final bill on conversion. */
+export async function updateEstimateLinePriceAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("estimates.create"))) return;
+  const itemId = String(formData.get("item_id") ?? "");
+  const estimateId = String(formData.get("estimate_id") ?? "");
+  const rupees = Number(formData.get("price") ?? 0);
+  if (!itemId || !estimateId || !Number.isFinite(rupees) || rupees < 0) return;
+  const unit = Math.round(rupees * 100); // store paise
+  const sb = supabaseServer();
+  const { data: it } = await sb.from("estimate_items").select("qty").eq("id", itemId).maybeSingle();
+  if (!it) return;
+  await sb.from("estimate_items").update({ unit_price: unit, line_total: unit * (it as any).qty }).eq("id", itemId);
+  await recomputeEstimateTotal(sb, estimateId);
+  revalidatePath(`/admin/estimate/${estimateId}`);
+}
+
 /** #18: remove a line from an open estimate. */
 export async function removeEstimateLineAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("estimates.create"))) return;
