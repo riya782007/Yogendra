@@ -349,6 +349,23 @@ export async function getStockHistory(productId: string, limit = 25): Promise<{ 
   return (data as any[]) ?? [];
 }
 
+// Pillar 5 — the single Stock Movement History register: every in/out across all products,
+// each row carrying ref_id so its purchase/sale bill opens straight from here.
+export async function getStockMovements(opts: { page?: number; pageSize?: number; kind?: string; q?: string; from?: string; to?: string }) {
+  const sb = supabaseServer();
+  const pageSize = opts.pageSize ?? 30;
+  const page = Math.max(1, opts.page ?? 1);
+  let query = sb.from("stock_adjustments")
+    .select("id,delta,kind,source,reason,ref_id,sku,created_at, product:products(sku,name), variant:variants(color)", { count: "exact" });
+  if (opts.kind && opts.kind !== "all") query = query.eq("kind", opts.kind);
+  if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.ilike("sku", `%${s}%`); }
+  if (opts.from) query = query.gte("created_at", opts.from);
+  if (opts.to) query = query.lte("created_at", opts.to);
+  const fromIdx = (page - 1) * pageSize;
+  const { data, count } = await query.order("created_at", { ascending: false }).range(fromIdx, fromIdx + pageSize - 1);
+  return { rows: (data as any[]) ?? [], total: count ?? 0, page, pageSize };
+}
+
 // ---------- dashboard + inventory intelligence (Req 6, 7; yogendra.pdf §8) ----------
 import { classify, type InventoryRule, DEFAULT_RULE } from "../inventory";
 import { computePrices, type PricingFormula as PF } from "../pricing";

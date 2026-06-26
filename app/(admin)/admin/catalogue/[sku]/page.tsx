@@ -365,7 +365,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
                   {h.source ?? "Adjustment"}{h.reason ? <span className="text-muted"> — {h.reason}</span> : null}
                 </span>
                 {(h as any).ref_id && (h.kind === "sale" || h.kind === "purchase") ? (
-                  <Link href={h.kind === "sale" ? `/admin/invoice/${(h as any).ref_id}` : "/admin/purchases"} className="text-emerald nav-link whitespace-nowrap text-xs">
+                  <Link href={h.kind === "sale" ? `/admin/invoice/${(h as any).ref_id}` : `/admin/purchase/${(h as any).ref_id}`} className="text-emerald nav-link whitespace-nowrap text-xs">
                     {h.kind === "sale" ? "View bill →" : "View purchase →"}
                   </Link>
                 ) : null}
