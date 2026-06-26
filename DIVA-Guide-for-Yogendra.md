@@ -1,62 +1,91 @@
-# Talking to DIVA — your store assistant
+# DIVA — aapki dukaan ki assistant (kaise use karein)
 
-DIVA lives in your Owner Console (the green avatar, bottom-right). Tap it, then **speak or type** in **English, Hindi, or Hinglish**. She understands your catalogue, stock, bills, purchases, customers and analytics — and she actually does the work, then tells you the real result.
+DIVA aapke **Owner Console** me niche-daayें (green avatar) baithti hai. Tap karke **bol ya type karein**
+— **English, Hindi ya Hinglish** me. Wo aapka poora catalogue, stock, bills, purchases, customers aur
+analytics samajhti hai, aur **kaam khud karti hai**, phir sach-sach result batati hai.
 
-## How it works (3 things to know)
+## 3 baatein jo yaad rakhein
+1. **Aap bolo → DIVA plan banati hai → aap confirm karo.** Jo cheez data *badalti* hai (stock, price,
+   naya product, etc.) uske liye wo step dikhati hai aur **"Run it"** ka wait karti hai (ya **Skip**).
+   Sirf padhne/poochhne wale jawab turant aa jaate hain.
+2. **Wo imaandaar hai.** Kaam hone par sach batati hai (jaise *"5 add kar diye — ab 46 stock hai"*).
+   Agar kuch na ho paaye to **✕** ke saath bata deti hai, jhooth nahi bolti.
+3. **Unclear ho to poochhti hai.** SKU sabse pakka tareeka hai (`KPC64`), par aap description bhi de
+   sakte ho (*"meenakari wala haar"*) — wo dhoondh legi. Kabhi bhi **■ Stop** dabaa sakte ho.
 
-1. **You ask → DIVA plans → you confirm.** For anything that *changes* data (stock, price, creating products, etc.) she shows a step and waits for you to tap **“Run it”** (or **Skip**). Reading/answering questions happens instantly.
-2. **She’s honest.** When she finishes, she tells you exactly what happened — e.g. *“Added 5 — Meenakari Peacock Haar is now 46 in stock.”* If something didn’t work she says so (✕) and won’t pretend it’s done.
-3. **She asks when unsure.** If she can’t tell which product you mean, or a number is missing, she asks one quick question. Just reply and she continues. You can tap **■ Stop** anytime.
+---
 
-**Tip:** the most reliable way is to mention the **SKU** (like `BD1001`). But you can also describe it — *“meenakari wala haar”*, *“blue kundan choker”* — and she’ll find it.
-
-## Things you can say (examples)
-
-**Stock**
-- `BD1001 me 20 add kar do`
-- `meenakari haar ka 5 stock kam kar do`
-- `BD1004 ka stock 50 kar do` (sets the exact number)
-- `BD1003 ke 2 piece damaged ho gaye` (logs damage)
+## Stock / Inventory
+- `KPC64 me 20 add kar do` · `meenakari haar ka 5 stock badhao`
+- `KPC64 ka 3 stock kam kar do`
+- `KPC64 ka stock 50 kar do` (exact number set)
+- `KPC64 ke 2 piece damaged ho gaye` (damage log)
 - `kaunse products low ya out of stock hain?`
+- `inventory ka haal batao` (dead / low / healthy)
+- `oxidised choker ka stock kitna hai?`
 
-**Products & pages**
-- `naya product banao` (she’ll ask name, category, price, qty step by step)
-- `BD1010 ka naam "Rajwadi Kundan Set" kar do`
-- `BD1010 ko Earrings category me daal do`
-- `BD1005 ko store se hata do` / `BD1005 ko store pe dikhao`
-- `BD1007 ki AI description dobara likho`
+## Products
+- `naya product banao` → wo naam, category, price, qty step-by-step poochhegi
+  (ya seedha: `naya product "Rajwadi Haar", category Necklace, price 250, qty 10`)
+- `KPC64 ka naam "Pearl Kanchain" kar do` (rename)
+- `KPC64 ki SKU KPC64A kar do` (SKU change)
+- `KPC64 ko Kanchain category me daal do`
+- `KPC64 ko store se hata do` / `KPC64 ko store pe dikhao`
+- `KPC64 delete kar do`
+- `KPC64 ki poori detail dikhao`
 
-**Variants (colour / size / polish)**
-- `BD1002 me green colour ka variant add karo 12 piece`
-- `BD1002 ke variants dikhao`
+## Variants (colour / size / polish)
+- `KPC64 me green colour ka variant add karo, 12 piece`
+- `KPC64 ke variants dikhao` (saare colour + unka stock)
 
-**Photos**
-- `BD1002 ki photos dikhao`
-- `BD1006 ka professional photo banao` (AI generates it)
+## Prices
+- `KPC64 ka wholesale / retail / MRP price?`
+- `KPC64 ka retail price 250 kar do` (us tier ko exact pin karti hai)
+- `KPC64 ka base cost 100 kar do` (baaki prices formula se dobara ban jaayenge)
 
-**Prices**
-- `BD1004 ka wholesale price?`
-- `BD1004 ka retail price 2500 kar do`
+## Photos & AI
+- `KPC64 ki photos dikhao` (kitni hain + links)
+- `KPC64 ka professional photo banao` (AI raw photo se model shot banati hai)
+- `KPC64 ki AI description / page dobara likho` (title, description, tags, SEO)
 
-**Catalogue & categories**
-- `kitni categories hain?`
-- `oxidised necklace ka catalog whatsapp pe bhejo`
+## Categories
+- `kitni categories hain?` (sab + har ek me kitne products)
+- `nayi category "Borla" banao`
+- `Necklace ke andar "Choker" subcategory banao`
 
-**Bills, invoices & purchases**
-- `pichle 10 bills dikhao`
-- `invoice INV123 ko GST me convert karo`
-- `BD1001 ka last purchase kitne ka hua tha?`
-
-**Customers**
+## Customers
+- `customer 9876500000 ka detail` / `customer Ravi dhoondo`
+- `naya customer "Sharma Ji", wholesale, phone 98765xxxxx`
 - `customer Ravi ko wholesale bana do`
-- `customer 9876500000 ka detail`
 
-**Analytics & navigation**
-- `is hafte ki sales kitni hai?`
-- `BD1004 kaisa perform kar raha hai?`
-- `inventory kholo` / `dashboard dikhao`
+## Bills, Invoices & Purchases
+- `pichle 8 bills dikhao` (recent sales — amount, customer, type, date)
+- `invoice 2026-VYP1 ko GST me convert karo`
+- `KPC64 ka last purchase kitne ka hua tha?`
 
-## If something looks off
-- She’ll mark a failed step with **✕** and explain why (usually “give me the SKU”). Reply with the SKU and she’ll finish.
-- For changes, nothing happens until you tap **Run it** — so you’re always in control.
-- Staff logins only see what their role allows; you (Owner) can do everything.
+## Analytics (poochho, wo nikaal degi)
+- `is mahine ka business summary do` (revenue, orders, top sellers, dead stock)
+- `pichle 7 din ki sales kitni hai?`
+- `KPC64 kaisa perform kar raha hai?` (units bike, revenue, orders)
+- `kaunse orders pending hain?`
+
+## Catalogue bhejna (WhatsApp)
+- `Kanchain ka catalog WhatsApp pe bhejne ke liye link do`
+
+## Console navigation
+- `billing kholo` · `inventory kholo` · `dashboard dikhao` · `purchases kholo`
+  (DIVA koi bhi page khol deti hai: dashboard, catalogue, inventory, billing, sales,
+   estimates, suppliers, roles, barcodes…)
+
+---
+
+## DIVA ye **nahi** karti (taaki expectation clear rahe)
+- **Counter pe sale/bill khud nahi banati.** Wo aapke liye **Billing page khol** degi (`billing kholo`),
+  par actual sale aap khud ring-up karte ho (taaki paisa/quantity galat na ho).
+- **Online payment ya bank ka kaam nahi karti.**
+- Purane site (BrainyBuzz) se data import — wo alag process hai, DIVA ka kaam nahi.
+
+## Agar kuch ulta lage
+- Failed step pe **✕** aur wajah dikhayegi (zyada-tar "SKU batao"). SKU reply karo, wo aage badh jaayegi.
+- Har badlav se pehle **Run it** dabana padta hai — control hamesha aapke haath me hai.
+- Staff logins ko sirf unke role ki cheezein dikhती hैं; aap (Owner) sab kuch kar sakte ho.

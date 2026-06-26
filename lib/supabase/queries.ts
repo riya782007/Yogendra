@@ -204,7 +204,10 @@ export async function getSupplierCities() {
   return Array.from(new Set(((data as any[]) ?? []).map((r) => r.city).filter(Boolean))).sort();
 }
 
-export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?: string; channel?: string; from?: string; to?: string }) {
+// Sortable columns for the sales/invoice register (Pillar 1 — "A–Z order of invoice").
+// Token format is `<field>_<dir>`, e.g. "inv_asc". Default = newest first.
+const ORDERS_SORT: Record<string, string> = { inv: "invoice_no", name: "customer_name", date: "created_at", amount: "total" };
+export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?: string; channel?: string; from?: string; to?: string; sort?: string }) {
   const sb = supabaseServer();
   const pageSize = opts.pageSize ?? 25;
   const page = Math.max(1, opts.page ?? 1);
@@ -213,8 +216,14 @@ export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?
   if (opts.channel && opts.channel !== "all") query = query.eq("channel", opts.channel);
   if (opts.from) query = query.gte("created_at", opts.from);
   if (opts.to) query = query.lte("created_at", opts.to);
+  const [field, dir] = (opts.sort ?? "").split("_");
+  const col = ORDERS_SORT[field] ?? "created_at";
+  const asc = col === "created_at" ? dir === "asc" : dir !== "desc"; // text/amount default A→Z / low→high; date defaults newest
   const fromIdx = (page - 1) * pageSize;
-  const { data, count } = await query.order("created_at", { ascending: false }).range(fromIdx, fromIdx + pageSize - 1);
+  // Stable tiebreaker on created_at so equal keys keep a deterministic order.
+  let q = query.order(col, { ascending: asc, nullsFirst: false });
+  if (col !== "created_at") q = q.order("created_at", { ascending: false });
+  const { data, count } = await q.range(fromIdx, fromIdx + pageSize - 1);
   return { rows: (data as any[]) ?? [], total: count ?? 0, page, pageSize };
 }
 
