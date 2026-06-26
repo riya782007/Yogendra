@@ -384,6 +384,22 @@ export function interpret(commandRaw: string, ctx: DivaContext = {}): NluPlan {
   }
 
   // ---- 13) Categories / subcategories -----------------------------------------
+  // RENAME a category (must come before "create"): "change the category of Bracelet to
+  // Bangles & Bracelets", "rename Bracelet category to X", "Bracelet category ka naam X kar do".
+  if (/categor/.test(lower) && hasAny(lower, ["rename", "change", "naam", "badal", "badlo", "kardo", "kar do", "kr do", "rakho", "rename to"])) {
+    const m =
+      command.match(/categor(?:y|ies)\s+(?:of\s+|named\s+|name\s+)?(.+?)\s+(?:to|into|→|ko)\s+(.+?)\s*$/i) ||
+      command.match(/(?:rename|change)\s+(?:the\s+)?(.+?)\s+categor(?:y|ies)?\s+(?:to|into|→|ko)\s+(.+?)\s*$/i) ||
+      command.match(/(.+?)\s+categor(?:y|ies)?\s+(?:ka\s+naam|naam|name)\s+(.+?)\s+(?:kar\s?do|kardo|karo|rakho)/i);
+    if (m) {
+      const clean = (s: string) => s.trim().replace(/^the\s+/i, "").replace(/[‘’“”"'`]/g, "").replace(/\s+(?:kar\s?do|kardo|karo|rakho|please)\s*$/i, "").trim();
+      const from = clean(m[1]); const to = clean(m[2]);
+      if (from && to && from.toLowerCase() !== to.toLowerCase()) {
+        return mk(base, [step("rename_category", { from, to }, `Rename category "${from}" → "${to}"`)],
+          ack(lang, `I'll rename the "${from}" category to "${to}".`, `"${from}" category ka naam "${to}" kar deti hun.`), 0.84, remember({}));
+      }
+    }
+  }
   if (hasAny(lower, CREATE_WORDS) && /(sub-?category|subcategory)/.test(lower)) {
     return mk(base, [step("create_subcategory", { name: subject ?? "" }, "Create subcategory")],
       ack(lang, "I'll add that subcategory.", "Subcategory add kar rahi hun."), 0.6, remember({}));

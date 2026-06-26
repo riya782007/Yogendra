@@ -570,6 +570,19 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         if (!cat) return { ok: false, message: `Couldn't create "${name}" (it may already exist).` };
         return { ok: true, message: `Created the "${cat.name}" category.` };
       }
+      case "rename_category": {
+        const from = String(args.from ?? args.name ?? "").trim();
+        const to = String(args.to ?? args.newName ?? "").trim();
+        if (!from || !to) return { ok: false, message: "Tell me the category to rename and the new name." };
+        const sb = supabaseServer();
+        const { data: cat } = await sb.from("categories").select("id,name").ilike("name", from).maybeSingle();
+        if (!cat) return { ok: false, message: `No category named "${from}". Check the exact category name (try "kitni categories hain?").` };
+        const { data: clash } = await sb.from("categories").select("id").ilike("name", to).neq("id", (cat as any).id).maybeSingle();
+        if (clash) return { ok: false, message: `A category called "${to}" already exists.` };
+        await sb.from("categories").update({ name: to, slug: slugify(to) }).eq("id", (cat as any).id);
+        revalidatePath("/admin/categories"); revalidatePath("/shop"); revalidatePath("/catalog");
+        return { ok: true, message: `Renamed category "${(cat as any).name}" → "${to}".` };
+      }
       case "create_subcategory": {
         const name = String(args.name ?? "").trim();
         if (!name) return { ok: false, message: "What should the subcategory be called?" };
