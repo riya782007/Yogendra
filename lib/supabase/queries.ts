@@ -366,6 +366,27 @@ export async function getStockMovements(opts: { page?: number; pageSize?: number
   return { rows: (data as any[]) ?? [], total: count ?? 0, page, pageSize };
 }
 
+// Pillar 6 — open estimates "reserve" stock softly (not yet billed). Surface them, highlighted,
+// at the top of the Stock Movement register so the owner sees what's spoken-for by live quotes.
+export async function getOpenEstimateReservations(limit = 50) {
+  const sb = supabaseServer();
+  const { data } = await sb
+    .from("estimates")
+    .select("id, customer_name, created_at, estimate_items(qty, product:products(sku,name))")
+    .eq("status", "open")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  return ((data as any[]) ?? []).map((e) => ({
+    id: e.id as string,
+    customer_name: e.customer_name as string | null,
+    created_at: e.created_at as string,
+    lines: ((e.estimate_items as any[]) ?? []).map((li) => ({
+      qty: li.qty as number, sku: li.product?.sku as string | undefined, name: li.product?.name as string | undefined,
+    })),
+    qty: ((e.estimate_items as any[]) ?? []).reduce((s, li) => s + (li.qty ?? 0), 0),
+  })).filter((e) => e.lines.length > 0);
+}
+
 // ---------- dashboard + inventory intelligence (Req 6, 7; yogendra.pdf §8) ----------
 import { classify, type InventoryRule, DEFAULT_RULE } from "../inventory";
 import { computePrices, type PricingFormula as PF } from "../pricing";

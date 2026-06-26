@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
-import { getStockMovements } from "@/lib/supabase/queries";
+import { getStockMovements, getOpenEstimateReservations } from "@/lib/supabase/queries";
 import { Pager } from "@/components/admin/Pager";
 
 export const metadata = { title: "Owner Console · Stock Movement History" };
@@ -13,6 +13,7 @@ const KINDS = [
   { key: "opening", label: "Opening stock" },
   { key: "adjustment", label: "Adjustments" },
   { key: "damage", label: "Damage / loss" },
+  { key: "estimate", label: "Estimate reservations" },
 ];
 const KIND_STYLE: Record<string, string> = {
   sale: "bg-gold/15 text-gold-dark",
@@ -36,7 +37,11 @@ export default async function StockMovements({ searchParams }: { searchParams: {
   const q = searchParams.q ?? "";
   const from = searchParams.from ?? "";
   const to = searchParams.to ?? "";
-  const { rows, total } = await getStockMovements({ page, pageSize: PAGE_SIZE, kind, q, from: from || undefined, to: to ? to + "T23:59:59" : undefined });
+  const [{ rows, total }, reservations] = await Promise.all([
+    getStockMovements({ page, pageSize: PAGE_SIZE, kind, q, from: from || undefined, to: to ? to + "T23:59:59" : undefined }),
+    page === 1 && (kind === "all" || kind === "estimate") ? getOpenEstimateReservations() : Promise.resolve([] as any[]),
+  ]);
+  const reservedTotal = (reservations as any[]).reduce((s, e) => s + e.qty, 0);
   const sel = "rounded-xl border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-emerald";
 
   return (
@@ -52,6 +57,27 @@ export default async function StockMovements({ searchParams }: { searchParams: {
         <button className="px-4 py-2 rounded-xl bg-ink text-white text-sm">Filter</button>
         {(q || kind !== "all" || from || to) && <Link href="/admin/stock-movements" className="px-3 py-2 text-sm text-muted hover:text-ink">Clear</Link>}
       </form>
+
+      {reservations.length > 0 && (
+        <div className="mb-5 rounded-2xl border border-gold/40 bg-gold/5 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <h2 className="text-sm font-semibold text-gold-dark">🔖 Reserved by open estimates — {reservedTotal} pcs across {reservations.length} quote{reservations.length > 1 ? "s" : ""}</h2>
+            <span className="text-[11px] text-muted">Soft holds — stock only moves when the estimate is billed.</span>
+          </div>
+          <ul className="divide-y divide-gold/20">
+            {(reservations as any[]).map((e) => (
+              <li key={e.id} className="py-2 flex items-start justify-between gap-3 text-sm">
+                <div className="flex-1 min-w-0">
+                  <Link href={`/admin/estimate/${e.id}`} className="text-emerald nav-link font-medium">EST-{String(e.id).slice(0, 8).toUpperCase()} →</Link>
+                  <span className="text-muted"> · {e.customer_name || "Walk-in"} · {new Date(e.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}</span>
+                  <div className="text-xs text-muted mt-0.5 truncate">{e.lines.map((l: any) => `${l.name ?? l.sku} ×${l.qty}`).join(", ")}</div>
+                </div>
+                <span className="text-gold-dark font-semibold whitespace-nowrap">{e.qty} pcs</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="overflow-x-auto rounded-2xl border border-sand bg-white shadow-card">
         <table className="w-full text-sm">
