@@ -361,9 +361,14 @@ export default async function ProductPage({ params, searchParams }: { params: { 
               <li key={i} className="py-2.5 flex items-center justify-between gap-3 text-sm">
                 <span className={`font-medium tabular-nums ${h.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{h.delta > 0 ? "+" : ""}{h.delta}</span>
                 <span className="flex-1 text-ink truncate">
-                  {h.kind && <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded mr-1.5 ${h.kind === "damage" ? "bg-rose/10 text-rose" : h.kind === "purchase" ? "bg-emerald-mist text-emerald-dark" : "bg-cream text-muted"}`}>{h.kind}</span>}
+                  {h.kind && <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded mr-1.5 ${h.kind === "damage" ? "bg-rose/10 text-rose" : h.kind === "purchase" ? "bg-emerald-mist text-emerald-dark" : h.kind === "sale" ? "bg-gold/15 text-gold-dark" : "bg-cream text-muted"}`}>{h.kind}</span>}
                   {h.source ?? "Adjustment"}{h.reason ? <span className="text-muted"> — {h.reason}</span> : null}
                 </span>
+                {(h as any).ref_id && (h.kind === "sale" || h.kind === "purchase") ? (
+                  <Link href={h.kind === "sale" ? `/admin/invoice/${(h as any).ref_id}` : "/admin/purchases"} className="text-emerald nav-link whitespace-nowrap text-xs">
+                    {h.kind === "sale" ? "View bill →" : "View purchase →"}
+                  </Link>
+                ) : null}
                 <span className="text-muted whitespace-nowrap">{timeAgo(h.created_at)}</span>
               </li>
             ))}
