@@ -5,13 +5,38 @@
  */
 export type ImageAspect = "4:5" | "1:1";
 
+// Shot framing per jewellery TYPE — matched against category/subcategory keywords so each
+// piece is shown where it's actually worn (a kanchain on the hair/back, not "a hair accessory").
 const SHOT_BY_CATEGORY: Record<string, string> = {
+  kanchain: "the hair and nape from a graceful three-quarter back angle, the chain draped along the parting/braid",
+  "maang tikka": "the centre forehead and hair parting, slight downward gaze",
+  tikka: "the centre forehead and hair parting, slight downward gaze",
+  borla: "the forehead and hair parting (Rajasthani borla), three-quarter turn",
+  hathphool: "the back of the hand and fingers, fingers gently splayed",
+  bangle: "the wrist and forearm, hand softly posed",
+  nathni: "the nose and cheek, delicate side profile",
+  nath: "the nose and cheek, delicate side profile",
+  payal: "the ankle and foot, seated or mid-step",
+  kamarband: "the waist, three-quarter turn",
   necklace: "close-up on the décolletage and neckline",
   bracelet: "the hand and wrist",
   anklet: "the ankle and foot, seated or mid-step",
   earrings: "the ear and jawline, slight three-quarter turn",
+  earring: "the ear and jawline, slight three-quarter turn",
   ring: "the hand, fingers gently relaxed",
 };
+
+// Western / international styling uses a Western model; everything else uses an Indian model.
+const WESTERN_SUBJECTS = [
+  "a poised young woman with fair Western/European features, soft natural makeup, loose styled hair, an elegant confident expression — clean modern international editorial look",
+  "an elegant woman in her late 20s with light Western features, minimal dewy makeup, sleek hair, a graceful aspirational expression — refined contemporary look",
+];
+
+/** True when the piece is styled "western/fusion/modern" — then use a Western model (per owner's
+ *  rule: western necklace → foreign model, Indian necklace → Indian model). */
+export function isWesternStyle(hint: string): boolean {
+  return /\bwestern\b|fusion|minimalist|minimalistic|modern|contemporary|korean|chic|dainty/i.test(hint || "");
+}
 
 // Indian models only — luminous, well-lit complexions (NOT dark/muddy), unmistakably
 // South Asian / Indian features. Deterministic per index.
@@ -58,16 +83,23 @@ OUTPUT FRAMING: Render the final image in ${aspectNote}, the jewellery centered 
 OUTPUT: A clean product photograph with NO text, NO watermark, NO logo and NO graphic overlays anywhere.`;
 }
 
-/** Build the full prompt. `index` makes subject/background deterministic per product. */
+/** Build the full prompt. `index` makes subject/background deterministic per product.
+ *  `subcategory` (and the category) drive BOTH the shot framing (where the piece is worn)
+ *  and the model: western/fusion styles get a Western model, everything else an Indian model. */
 export function buildImagePrompt(opts: {
   category: string;
+  subcategory?: string;
   index?: number;
   aspect?: ImageAspect;
 }): string {
   const i = opts.index ?? 0;
-  const subject = SUBJECTS[i % SUBJECTS.length];
+  const styleHint = `${opts.category} ${opts.subcategory ?? ""}`;
+  const western = isWesternStyle(styleHint);
+  const pool = western ? WESTERN_SUBJECTS : SUBJECTS;
+  const subject = pool[i % pool.length];
   const background = BACKGROUNDS[i % BACKGROUNDS.length];
-  const shot = shotTypeFor(opts.category);
+  // Prefer the subcategory for framing (more specific: "kanchain", "maang tikka", …).
+  const shot = shotTypeFor(opts.subcategory || opts.category);
   const aspect = opts.aspect ?? "4:5";
   const aspectNote =
     aspect === "1:1"
@@ -82,7 +114,7 @@ The jewelry in the output must be IDENTICAL to the reference image — same meta
 NON-NEGOTIABLE — ABSOLUTELY NO TEXT:
 The image must contain ZERO text of any kind. No words, no letters, no numbers, no captions, no labels, no logos, no watermarks, no brand names, no price tags, no signatures, no stamps, no UI elements, no borders with writing. The background, clothing, jewelry, and every surface must be completely free of any written or typographic elements. If any text would normally appear, leave that area clean and blank.
 
-SUBJECT: ${subject}. The model MUST look clearly Indian/South Asian, and her skin must be bright, luminous and well-exposed — never dark, dull, or muddy.
+SUBJECT: ${subject}.${western ? " A polished international look suits this western/fusion style." : " The model MUST look clearly Indian/South Asian."} Her skin must be bright, luminous and well-exposed — never dark, dull, or muddy.
 SHOT TYPE: ${shot} — framed so the jewelry is the clear hero and sharply in focus.
 
 THE JEWELLERY IS THE HERO (CRITICAL):

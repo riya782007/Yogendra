@@ -32,7 +32,8 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
   const custMatches = useMemo(() => {
     const s = custQ.trim().toLowerCase();
     if (!s) return [];
-    return customers.filter((c) => c.name.toLowerCase().includes(s) || (c.phone ?? "").includes(s)).slice(0, 6);
+    // Null-safe — a customer saved without a name/phone must never break the search.
+    return customers.filter((c) => (c.name ?? "").toLowerCase().includes(s) || (c.phone ?? "").includes(s)).slice(0, 6);
   }, [custQ, customers]);
   function pickCustomer(c: Cust) {
     setCust({ name: c.name, phone: c.phone });
@@ -154,7 +155,7 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
             <div className="relative">
               <input className={input} placeholder="🔎 Find existing customer by name / phone…" value={custQ}
                 onChange={(e) => { setCustQ(e.target.value); setCustOpen(true); }} onFocus={() => setCustOpen(true)} />
-              {custOpen && custMatches.length > 0 && (
+              {custOpen && custQ.trim() && (
                 <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl shadow-luxe border border-sand overflow-hidden">
                   {custMatches.map((c) => (
                     <button key={c.id} onClick={() => pickCustomer(c)} className="w-full text-left px-4 py-2.5 text-sm hover:bg-emerald-mist flex justify-between">
@@ -162,6 +163,13 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
                       <span className={`text-xs ${c.type === "wholesale" ? "text-wine" : "text-muted"}`}>{c.type}</span>
                     </button>
                   ))}
+                  {/* Always allow adding a brand-new customer by the typed name. */}
+                  {!custMatches.some((c) => (c.name ?? "").toLowerCase() === custQ.trim().toLowerCase()) && (
+                    <button onClick={() => { setCust({ name: custQ.trim(), phone: "" }); setCustQ(""); setCustOpen(false); }}
+                      className="w-full text-left px-4 py-2.5 text-sm text-emerald-dark hover:bg-gold/10 border-t border-sand">
+                      + Add “{custQ.trim()}” as a new customer
+                    </button>
+                  )}
                 </div>
               )}
             </div>
