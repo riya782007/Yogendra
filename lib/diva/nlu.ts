@@ -337,10 +337,10 @@ export function interpret(commandRaw: string, ctx: DivaContext = {}): NluPlan {
 
   // ---- 8) Stock add / remove --------------------------------------------------
   if (hasAny(lower, ADD_WORDS) && (/(stock|inventory|maal|qty|quantity|pieces|piece|pcs|units?)/.test(lower) || qty)) {
-    return stockPlan(base, ctx, lang, "add_stock", sku, subject, qty);
+    return stockPlan(base, ctx, lang, "add_stock", sku, subject, qty, color ?? (sku ? subject : undefined));
   }
   if (hasAny(lower, REMOVE_WORDS) && (/(stock|inventory|maal|qty|quantity|pieces|piece|pcs|units?)/.test(lower) || qty)) {
-    return stockPlan(base, ctx, lang, "remove_stock", sku, subject, qty);
+    return stockPlan(base, ctx, lang, "remove_stock", sku, subject, qty, color ?? (sku ? subject : undefined));
   }
 
   // ---- 9) Inventory / stock query: "blue kundan necklace ka inventory kitna hai" -
@@ -466,7 +466,7 @@ function askFor(base: Omit<NluPlan, "steps" | "reply" | "confidence">, slot: str
     context: { ...ctx, pending: { intent, slots, need: [slot] } } };
 }
 
-function stockPlan(base: Omit<NluPlan, "steps" | "reply" | "confidence">, ctx: DivaContext, lang: NluLang, tool: "add_stock" | "remove_stock", sku?: string, subject?: string, qty?: number): NluPlan {
+function stockPlan(base: Omit<NluPlan, "steps" | "reply" | "confidence">, ctx: DivaContext, lang: NluLang, tool: "add_stock" | "remove_stock", sku?: string, subject?: string, qty?: number, colorHint?: string): NluPlan {
   const verb = tool === "add_stock" ? "add" : "remove";
   const verbHin = tool === "add_stock" ? "add" : "kam";
   if (!sku && !subject) {
@@ -476,9 +476,11 @@ function stockPlan(base: Omit<NluPlan, "steps" | "reply" | "confidence">, ctx: D
     return askFor(base, "qty", tool, { sku, subject }, ack(lang, `How many units to ${verb}?`, `Kitne units ${verbHin} karne hain?`), ctx);
   }
   if (sku) {
-    return mk(base, [step(tool, { sku, qty, source: "DIVA command" }, `${verb} ${qty} → ${sku}`)],
-      ack(lang, `I'll ${verb} ${qty} unit${qty > 1 ? "s" : ""} ${tool === "add_stock" ? "to" : "from"} ${sku}.`,
-        `${sku} me ${qty} unit ${tool === "add_stock" ? "add" : "kam"} kar rahi hun.`), 0.85, { ...ctx, pending: undefined, lastSku: sku });
+    // `color` lets the executor target a specific colour variant (e.g. "EE5270 me 5 green add karo").
+    const c = (colorHint ?? "").trim() || undefined;
+    return mk(base, [step(tool, { sku, qty, color: c, source: "DIVA command" }, `${verb} ${qty}${c ? ` ${c}` : ""} → ${sku}`)],
+      ack(lang, `I'll ${verb} ${qty} unit${qty > 1 ? "s" : ""}${c ? ` of ${c}` : ""} ${tool === "add_stock" ? "to" : "from"} ${sku}.`,
+        `${sku} me ${qty}${c ? ` ${c}` : ""} unit ${tool === "add_stock" ? "add" : "kam"} kar rahi hun.`), 0.85, { ...ctx, pending: undefined, lastSku: sku });
   }
   // We have a subject but no SKU → resolve first, then the executor applies the delta by name.
   return mk(base, [step(tool === "add_stock" ? "add_stock_by_name" : "remove_stock_by_name", { query: subject, qty, source: "DIVA command" }, `${verb} ${qty} → "${subject}"`)],

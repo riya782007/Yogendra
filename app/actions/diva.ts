@@ -156,10 +156,11 @@ export async function getDivaSuggestions(): Promise<DivaSuggestion[]> {
   const out: DivaSuggestion[] = [];
   try {
     const sb = supabaseServer();
-    const [classified, draftsRes, pendingRes] = await Promise.all([
+    const [classified, draftsRes, pendingRes, lowVarRes] = await Promise.all([
       getInventoryClassified().catch(() => [] as any[]),
       getProductsPage({ status: "draft", pageSize: 3 }).catch(() => ({ rows: [] as any[] })),
       sb.from("orders").select("id", { count: "exact", head: true }).not("status", "in", "(completed,delivered,cancelled,refunded)"),
+      sb.from("variants").select("color,sku,qty,product:products(name,sku)").lte("qty", 3).order("qty", { ascending: true }).limit(5),
     ]);
 
     const rows = (classified as any[]) ?? [];
@@ -174,6 +175,16 @@ export async function getDivaSuggestions(): Promise<DivaSuggestion[]> {
     if (low.length) {
       const r = low[0];
       out.push({ id: "low", icon: "📉", text: `${r.name} (${r.sku}) is low — only ${r.qty} left. Add stock?`, command: `add 20 to ${r.sku}` });
+    }
+    // Colour-level alert (colour-first model): flag a specific colour running low/out.
+    const lowVars = ((lowVarRes as any)?.data ?? []) as any[];
+    if (lowVars.length) {
+      const v = lowVars[0];
+      const pname = v.product?.name ?? v.product?.sku ?? "A product";
+      const psku = v.product?.sku ?? "";
+      out.push({ id: "lowvar", icon: "🎨",
+        text: `${pname} ${v.color} ${(v.qty ?? 0) <= 0 ? "is out" : `is low (${v.qty} left)`}${lowVars.length > 1 ? ` — +${lowVars.length - 1} more colours` : ""}. Restock?`,
+        command: psku ? `${psku} me 12 ${v.color} add karo` : "low stock dikhao" });
     }
     const pending = (pendingRes as any)?.count ?? 0;
     if (pending > 0) out.push({ id: "pending", icon: "📦", text: `${pending} pending order${pending > 1 ? "s" : ""} to review.`, command: "pending orders dikhao" });
@@ -248,9 +259,24 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         const sb = supabaseServer();
         const { data: p } = await sb.from("products").select("id,qty,name").eq("sku", sku).maybeSingle();
         if (!p) return { ok: false, message: `No product with SKU ${sku}.` };
+        const pid = (p as any).id;
+        const { data: vrows } = await sb.from("variants").select("id,color,sku,qty").eq("product_id", pid);
+        const variants = (vrows as any[]) ?? [];
+        // Colour-first: a product with colours is adjusted per colour, never as a whole.
+        if (variants.length) {
+          const v = matchVariant(variants, String(args.color ?? ""));
+          if (!v) return { ok: false, message: `Which colour? ${(p as any).name} has: ${variants.map((x) => x.color).filter(Boolean).join(", ")}.` };
+          const newV = Math.max(0, (v.qty ?? 0) + delta);
+          await sb.from("variants").update({ qty: newV }).eq("id", v.id);
+          const sum = variants.reduce((n, x) => n + (x.id === v.id ? newV : (x.qty ?? 0)), 0);
+          await sb.from("products").update({ qty: sum, last_movement_at: new Date().toISOString() }).eq("id", pid);
+          await sb.from("stock_adjustments").insert({ product_id: pid, variant_id: v.id, sku: v.sku, delta, kind: "adjust", source: String(args.source ?? "DIVA command"), reason: `${toolName === "add_stock" ? "Added to" : "Removed from"} ${v.color} by DIVA` });
+          revalidatePath("/admin/inventory");
+          return { ok: true, message: `${toolName === "add_stock" ? "Added" : "Removed"} ${qty} ${v.color} — ${(p as any).name} ${v.color} is now ${newV} (total ${sum}).` };
+        }
         const newQty = Math.max(0, ((p as any).qty ?? 0) + delta);
-        await sb.from("products").update({ qty: newQty, last_movement_at: new Date().toISOString() }).eq("id", (p as any).id);
-        await sb.from("stock_adjustments").insert({ product_id: (p as any).id, sku, delta, source: String(args.source ?? "DIVA command"), reason: "Adjusted by DIVA" });
+        await sb.from("products").update({ qty: newQty, last_movement_at: new Date().toISOString() }).eq("id", pid);
+        await sb.from("stock_adjustments").insert({ product_id: pid, sku, delta, source: String(args.source ?? "DIVA command"), reason: "Adjusted by DIVA" });
         revalidatePath("/admin/inventory");
         return { ok: true, message: `${toolName === "add_stock" ? "Added" : "Removed"} ${qty} — ${(p as any).name} is now ${newQty} in stock.` };
       }
@@ -436,6 +462,19 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         const newQty = Math.max(0, Math.trunc(Number(args.qty)));
         if (!Number.isFinite(Number(args.qty))) return { ok: false, message: "What number should the stock be?" };
         const sb = supabaseServer();
+        const { data: vrows } = await sb.from("variants").select("id,color,sku,qty").eq("product_id", target.id);
+        const variants = (vrows as any[]) ?? [];
+        if (variants.length) {
+          const v = matchVariant(variants, String(args.color ?? args.query ?? ""));
+          if (!v) return { ok: false, message: `Which colour? ${target.name} has: ${variants.map((x) => x.color).filter(Boolean).join(", ")}.` };
+          const delta = newQty - (v.qty ?? 0);
+          await sb.from("variants").update({ qty: newQty }).eq("id", v.id);
+          const sum = variants.reduce((n, x) => n + (x.id === v.id ? newQty : (x.qty ?? 0)), 0);
+          await sb.from("products").update({ qty: sum, last_movement_at: new Date().toISOString() }).eq("id", target.id);
+          await sb.from("stock_adjustments").insert({ product_id: target.id, variant_id: v.id, sku: v.sku, delta, kind: "adjust", source: "DIVA set stock", reason: `Set ${v.color} to exact count by DIVA` });
+          revalidatePath("/admin/inventory");
+          return { ok: true, message: `${target.name} ${v.color} set to ${newQty} (total ${sum}).` };
+        }
         const delta = newQty - (target.qty ?? 0);
         await sb.from("products").update({ qty: newQty, last_movement_at: new Date().toISOString() }).eq("id", target.id);
         await sb.from("stock_adjustments").insert({ product_id: target.id, sku: target.sku, delta, source: "DIVA set stock", reason: "Set to exact count by DIVA" });
@@ -665,6 +704,23 @@ const NAME_STOP = new Set([
   "do", "de", "dena", "the", "a", "an", "of", "for", "and", "set", "piece", "pieces", "pcs", "pc",
   "stock", "add", "kam", "jyada", "zyada", "badha", "ghata", "please", "show", "dikhao", "ka", "wala",
 ]);
+
+/** Pick the colour variant a command refers to, by colour name or variant SKU. A single-variant
+ *  product defaults to its only variant. Returns null when there are several and none matched,
+ *  so DIVA asks "which colour?" rather than guessing. */
+function matchVariant(variants: any[], hint: string): any | null {
+  if (!variants?.length) return null;
+  const h = (hint ?? "").trim().toLowerCase();
+  if (!h) return variants.length === 1 ? variants[0] : null;
+  let v = variants.find((x) => String(x.sku ?? "").toLowerCase() === h);
+  if (v) return v;
+  const words = h.split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+  v = variants.find((x) => {
+    const c = String(x.color ?? "").toLowerCase();
+    return !!c && (h.includes(c) || words.some((w) => c.includes(w) || w.includes(c)));
+  });
+  return v ?? (variants.length === 1 ? variants[0] : null);
+}
 
 /**
  * Resolve a product from a fuzzy name phrase (e.g. "meenakari wala haar" → Meenakari
