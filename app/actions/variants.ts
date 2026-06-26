@@ -74,27 +74,33 @@ export async function deleteVariantAction(formData: FormData): Promise<void> {
   reval(productSku);
 }
 
-/** Upload one or more photos for a single variant (so blue shows the blue piece, etc.). */
-export async function addVariantImageAction(formData: FormData): Promise<void> {
-  if (!(await requirePerm("catalog.edit"))) return;
+/** Upload one or more photos for a single variant (so blue shows the blue piece, etc.).
+ *  Returns a result so the client uploader can show success/error feedback (Pillar 16). */
+export async function addVariantImageAction(formData: FormData): Promise<{ ok: boolean; urls?: string[]; error?: string }> {
+  if (!(await requirePerm("catalog.edit"))) return { ok: false, error: "Your role can't edit the catalogue." };
   const id = String(formData.get("id") ?? "");
   const productSku = String(formData.get("product_sku") ?? "");
-  if (!id) return;
+  if (!id) return { ok: false, error: "Missing variant." };
   const sb = supabaseServer();
   const files = formData.getAll("images").filter((f): f is File => f instanceof File && f.size > 0);
-  if (!files.length) return;
+  if (!files.length) return { ok: false, error: "No image selected." };
   await sb.storage.createBucket(BUCKET, { public: true }).catch(() => {});
   const { data: v } = await sb.from("variants").select("image_paths").eq("id", id).maybeSingle();
+  if (!v) return { ok: false, error: "Variant not found." };
   const paths: string[] = [...(((v as any)?.image_paths as string[]) ?? [])];
+  const added: string[] = [];
   for (const file of files) {
     const ext = ((file.type.split("/")[1]) || "jpg").replace("jpeg", "jpg");
     const path = `variants/${id}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
     const bytes = new Uint8Array(await file.arrayBuffer());
     const up = await sb.storage.from(BUCKET).upload(path, bytes, { contentType: file.type || "image/jpeg", upsert: true });
-    if (!up.error) paths.push(sb.storage.from(BUCKET).getPublicUrl(path).data.publicUrl);
+    if (up.error) return { ok: false, error: up.error.message };
+    const url = sb.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+    paths.push(url); added.push(url);
   }
   await sb.from("variants").update({ image_paths: paths }).eq("id", id);
   reval(productSku);
+  return { ok: true, urls: added };
 }
 
 export async function deleteVariantImageAction(formData: FormData): Promise<void> {

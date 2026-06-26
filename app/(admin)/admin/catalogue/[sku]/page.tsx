@@ -11,7 +11,8 @@ import { ProductStockAdjust } from "@/components/admin/ProductStockAdjust";
 import { MediaCard } from "@/components/admin/MediaCard";
 import VariantAiPhoto from "@/components/admin/VariantAiPhoto";
 import { requirePerm, getSession, can } from "@/lib/auth";
-import { addVariantAction, updateVariantAction, deleteVariantAction, addVariantImageAction, deleteVariantImageAction } from "@/app/actions/variants";
+import { addVariantAction, updateVariantAction, deleteVariantAction } from "@/app/actions/variants";
+import { VariantPhotos } from "@/components/admin/VariantPhotos";
 import { setProductVisibilityAction, moveProductToSubcategoryAction, savePricingAction, setWholesaleOnlyAction, toggleProductLabelAction } from "@/app/actions/catalog";
 
 const LABEL_CHIP: Record<string, string> = {
@@ -228,22 +229,9 @@ export default async function ProductPage({ params, searchParams }: { params: { 
                 <button className="px-3 py-2 rounded-xl bg-ink/5 text-ink text-xs hover:bg-ink/10">Save</button>
                 <button formAction={deleteVariantAction} className="text-muted hover:text-rose text-xs px-1">Delete</button>
               </form>
-              {/* Per-variant photos (#12) */}
+              {/* Per-variant photos (#16) — reliable client uploader (compress + feedback, fixes large/HEIC) */}
               <div className="flex flex-wrap items-center gap-2 mt-2.5">
-                {imgs.map((u) => (
-                  <div key={u} className="relative h-14 w-14 rounded-lg overflow-hidden border border-sand group">
-                    <img src={u} alt={v.color ?? v.sku} className="h-full w-full object-cover" />
-                    <form action={deleteVariantImageAction} className="absolute top-0 right-0">
-                      <input type="hidden" name="id" value={v.id} /><input type="hidden" name="product_sku" value={p.sku} /><input type="hidden" name="url" value={u} />
-                      <button className="bg-ink/70 text-white text-[10px] leading-none px-1 py-0.5 rounded-bl" title="Remove photo">✕</button>
-                    </form>
-                  </div>
-                ))}
-                <form action={addVariantImageAction} className="flex items-center gap-1.5">
-                  <input type="hidden" name="id" value={v.id} /><input type="hidden" name="product_sku" value={p.sku} />
-                  <input type="file" name="images" accept="image/*" multiple className="text-[11px] w-36 file:mr-1.5 file:rounded file:border-0 file:bg-emerald-mist file:text-emerald-dark file:px-2 file:py-1 file:text-[11px] file:cursor-pointer" />
-                  <button className="px-2.5 py-1.5 rounded-lg bg-emerald text-white text-xs">Add photo</button>
-                </form>
+                <VariantPhotos variantId={v.id} productSku={p.sku} color={v.color ?? null} images={imgs} />
                 {can(session, "catalog.ai") && <VariantAiPhoto variantId={v.id} color={v.color ?? null} />}
               </div>
             </div>
