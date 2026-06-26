@@ -93,6 +93,15 @@ export default async function ProductPage({ params, searchParams }: { params: { 
       product={product}
       categories={categories.map((c) => ({ id: c.id, name: c.name, slug: c.slug }))}
       formula={{ retailMultiplier: formula.retailMultiplier, mrpMultiplier: formula.mrpMultiplier, wholesaleMarkupPct: formula.wholesaleMarkupPct }}
+      effective={(() => {
+        const eff = resolvePrices(p.base_wholesale ?? 0, formula, overridesOf(p));
+        return {
+          retail: Math.round(eff.retailPrice / 100),
+          mrp: Math.round(eff.mrp / 100),
+          wholesale: Math.round(eff.wholesaleRate / 100),
+          custom: !!((p as any).wholesale_override || (p as any).retail_override || (p as any).mrp_override),
+        };
+      })()}
     />
   );
 
