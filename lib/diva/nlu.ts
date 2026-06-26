@@ -97,11 +97,14 @@ export function detectLanguage(textRaw: string): NluLang {
 
 // --------------------------------------------------------------------------- entities
 
-const SKU_RE = /\b(?:sku\s*)?(bd)\s*-?\s*(\d{3,6})\b/i;
+// A SKU is any short letters-then-digits code, optionally with a -SUFFIX variant part:
+// BD1001, WBR113, KPC64, WBR1024-Silver, KPC64-MEH. (Earlier this only matched "BD####",
+// so real SKUs were invisible to DIVA and got mis-resolved — that was the #1 reliability bug.)
+const SKU_RE = /\b(?:sku\s*)?([a-z]{1,6}-?\d{2,6}(?:-[a-z0-9]+)?)\b/i;
 
 export function extractSku(text: string): string | undefined {
   const m = SKU_RE.exec(text);
-  return m ? `${m[1].toUpperCase()}${m[2]}` : undefined;
+  return m ? m[1].toUpperCase().replace(/\s+/g, "") : undefined;
 }
 
 /** First sensible integer quantity in the text — digits or number-words. */
@@ -399,6 +402,14 @@ export function interpret(commandRaw: string, ctx: DivaContext = {}): NluPlan {
           ack(lang, `I'll rename the "${from}" category to "${to}".`, `"${from}" category ka naam "${to}" kar deti hun.`), 0.84, remember({}));
       }
     }
+  }
+  // Category + a change/rename intent that DIDN'T parse cleanly above → ASK (never fall through
+  // to a product search). This keeps DIVA from "doing the wrong thing" on category commands.
+  if (/categor/.test(lower) && hasAny(lower, ["rename", "change", "naam", "badal", "badlo", "kar do", "kardo", "kr do", "rakho"])) {
+    const prompt = ack(lang,
+      "Which category should I rename, and to what? e.g. \"rename Bracelet to Bangles & Bracelets\".",
+      "Kaunsi category ka naam badalna hai, aur kya naya naam? jaise \"Bracelet ka naam Bangles & Bracelets kar do\".");
+    return { ...base, steps: [], confidence: 0.55, context: remember({}), ask: { slot: "freeform", prompt }, reply: prompt };
   }
   if (hasAny(lower, CREATE_WORDS) && /(sub-?category|subcategory)/.test(lower)) {
     return mk(base, [step("create_subcategory", { name: subject ?? "" }, "Create subcategory")],

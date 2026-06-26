@@ -94,7 +94,10 @@ export async function divaPlan(command: string, contextJson?: string): Promise<D
   const llmAvailable = geminiTextConfigured() || groqConfigured() || openaiConfigured();
   if (nlu.ask || !llmAvailable) return nluPlan;
   const mutating = nluPlan.steps.some((s) => s.kind === "mutate");
-  if (nluPlan.steps.length > 0 && (!mutating || nlu.confidence >= 0.72)) return nluPlan;
+  // Reads need a minimum confidence too — a low-confidence guess (e.g. a vague find_product
+  // fallback) is escalated to the LLM rather than silently shown as a confident answer.
+  const minConf = mutating ? 0.72 : 0.55;
+  if (nluPlan.steps.length > 0 && nlu.confidence >= minConf) return nluPlan;
 
   // 3) Low confidence + LLM available → ask the model, keep NLU context as memory.
   const catalog = DIVA_TOOLS.map((t) => `- ${t.name}(${t.params.map((p) => p.name + (p.required ? "*" : "")).join(", ")}) [${t.kind}] — ${t.desc}`).join("\n");
@@ -675,30 +678,43 @@ async function resolveProductByName(query: string): Promise<{ id: string; sku: s
   const tokens = q.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((t) => t.length >= 3 && !NAME_STOP.has(t));
 
   const sb = supabaseServer();
-  const { data } = await sb.from("products").select("id,sku,name,qty,base_wholesale,generated_content,category:categories(name)").limit(1000);
+  const { data } = await sb.from("products").select("id,sku,name,qty,base_wholesale,generated_content,category:categories(name)").limit(2000);
   const rows = (data as any[]) ?? [];
   if (!rows.length) return null;
 
-  // Exact SKU typed inside the phrase wins immediately.
-  const skuTok = tokens.find((t) => /^bd\d{3,}$/i.test(t));
-  if (skuTok) { const hit = rows.find((r) => String(r.sku).toLowerCase() === skuTok); if (hit) return pick(hit); }
+  // 1) ANY token that LOOKS like a SKU (has a digit) must match a real SKU EXACTLY — product
+  //    or variant. If it looks like a SKU but matches nothing, return null so DIVA says
+  //    "no product with that code" instead of fuzzy-guessing a WRONG product (the WBR113→WBR1002 bug).
+  const skuLike = tokens.filter((t) => /\d/.test(t));
+  if (skuLike.length) {
+    for (const t of skuLike) {
+      const hit = rows.find((r) => String(r.sku).toLowerCase() === t);
+      if (hit) return pick(hit);
+      const { data: v } = await sb.from("variants").select("product_id").ilike("sku", t).maybeSingle();
+      if (v) { const parent = rows.find((r) => r.id === (v as any).product_id); if (parent) return pick(parent); }
+    }
+    return null; // a code was given but no exact match — never substitute a different product
+  }
 
   if (tokens.length === 0) {
     const lower = q.toLowerCase();
-    const hit = rows.find((r) => String(r.name).toLowerCase().includes(lower));
+    const hit = rows.find((r) => String(r.name).toLowerCase() === lower);
     return hit ? pick(hit) : null;
   }
 
-  let best: any = null, bestScore = 0;
+  // 2) Descriptive name match — WHOLE-WORD only (so "wbr" can't match inside "WBR1002").
+  //    Requires a clear winner; ambiguous/weak → null so DIVA asks for the SKU.
+  let best: any = null, bestScore = 0, secondScore = 0;
   for (const r of rows) {
     const tags = (((r.generated_content as any)?.tags) ?? []) as string[];
-    const hay = `${r.name} ${r.category?.name ?? ""} ${tags.join(" ")}`.toLowerCase();
+    const hay = ` ${`${r.name} ${r.category?.name ?? ""} ${tags.join(" ")}`.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
     let score = 0;
-    for (const t of tokens) if (hay.includes(t)) score++;
-    if (score > bestScore) { bestScore = score; best = r; }
+    for (const t of tokens) if (hay.includes(` ${t} `)) score++;
+    if (score > bestScore) { secondScore = bestScore; bestScore = score; best = r; }
+    else if (score > secondScore) { secondScore = score; }
   }
-  // Need at least one meaningful shared word; otherwise honestly return "not found".
-  return bestScore >= 1 ? pick(best) : null;
+  // Need a meaningful, unambiguous match: at least one shared word and a clear lead over runner-up.
+  return bestScore >= 1 && bestScore > secondScore ? pick(best) : null;
 
   function pick(r: any) { return { id: r.id, sku: r.sku, name: r.name, qty: r.qty, base_wholesale: r.base_wholesale }; }
 }
