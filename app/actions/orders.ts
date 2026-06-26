@@ -19,6 +19,8 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
     p_customer: input.customer,
     p_channel: "retail",
     p_payment: input.payment,
+    p_allow_oversell: false, // online retail never oversells
+    p_tier: "retail",
   });
   if (error) return { ok: false, error: error.message };
   const orderId = (data as any)?.order_id, total = (data as any)?.total;

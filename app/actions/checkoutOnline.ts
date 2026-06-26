@@ -91,6 +91,8 @@ export async function confirmRazorpayAction(input: {
     p_customer: input.customer,
     p_channel: "retail",
     p_payment: "online",
+    p_allow_oversell: false, // online checkout never oversells
+    p_tier: "retail",
   });
   if (error) return { ok: false, error: error.message };
   const orderId = (data as any)?.order_id as string;
