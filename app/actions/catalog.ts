@@ -151,7 +151,7 @@ export async function aiParseRowsAction(rawText: string): Promise<{ rows: Parsed
   let rows: ParsedRow[] = [];
   let usedAi = false;
   if (text && (groqConfigured() || openaiConfigured())) {
-    const system = `You convert a messy product list into clean JSON for a jewellery store. Output STRICT JSON: {"rows":[{"name":string,"base_price":number,"qty":number,"type":"simple"|"configurable","colors":string[]}]}. The input may be CSV, tab-separated, or freeform, with columns in any order or with different header names (price/cost/wholesale -> base_price in rupees as a number; quantity/stock/pcs -> qty integer; colours/variants -> colors array; if multiple colours are present set type to "configurable" else "simple"). Ignore header rows and currency symbols. Infer sensibly. Return ONLY JSON.`;
+    const system = `You convert a messy product list into clean JSON for a jewellery store. Output STRICT JSON: {"rows":[{"name":string,"base_price":number,"qty":number,"type":"simple"|"configurable","colors":string[],"sku":string}]}. The input may be CSV, tab-separated, or freeform, with columns in any order or with different header names (price/cost/wholesale -> base_price in rupees as a number; quantity/stock/pcs -> qty integer; colours/variants -> colors array; sku/code/item code -> sku, an optional existing product code — copy it EXACTLY if present, else "" ; if multiple colours are present set type to "configurable" else "simple"). Ignore header rows and currency symbols. Infer sensibly. Return ONLY JSON.`;
     try {
       const out = groqConfigured() ? await groqChat({ system, user: text, json: true }) : await openaiChat({ system, user: text, json: true });
       const parsed = JSON.parse(out);
@@ -161,15 +161,34 @@ export async function aiParseRowsAction(rawText: string): Promise<{ rows: Parsed
         qty: parseInt(r.qty, 10) || 0,
         type: (r.type === "configurable" || (Array.isArray(r.colors) && r.colors.length > 1) ? "configurable" : "simple") as "simple" | "configurable",
         colors: Array.isArray(r.colors) ? r.colors.map((c: any) => String(c).trim()).filter(Boolean) : [],
+        manualSku: r.sku ? String(r.sku).trim() : undefined,
       })).filter((r: any) => r.name);
       usedAi = rows.length > 0;
     } catch { /* fall through */ }
   }
   if (!usedAi) {
-    rows = text.split("\n").map((l) => l.trim()).filter(Boolean).filter((l) => !/^name\s*,/i.test(l)).map((l) => {
-      const [name, price, qty, type, colors] = l.split(",").map((s) => s?.trim() ?? "");
-      return { name, basePriceRupees: Number(price) || 0, qty: Number(qty) || 0, type: (type === "configurable" ? "configurable" : "simple") as "simple" | "configurable", colors: (colors ?? "").split("|").map((s) => s.trim()).filter(Boolean) };
-    }).filter((r) => r.name);
+    const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+    const header = lines[0]?.toLowerCase().split(",").map((s) => s.trim()) ?? [];
+    const hasHeader = header.includes("name");
+    if (hasHeader) {
+      // Header-aware: columns can be in any order; sku & colours optional.
+      const idx = (...names: string[]) => header.findIndex((h) => names.includes(h));
+      const iName = idx("name", "product", "design"), iPrice = idx("base_price", "price", "cost", "wholesale");
+      const iQty = idx("qty", "quantity", "stock", "pcs"), iType = idx("type");
+      const iColors = idx("colours", "colors", "variants"), iSku = idx("sku", "code", "item code");
+      rows = lines.slice(1).map((l) => {
+        const c = l.split(",").map((s) => s?.trim() ?? "");
+        const colors = iColors >= 0 ? (c[iColors] ?? "").split("|").map((s) => s.trim()).filter(Boolean) : [];
+        const type = ((iType >= 0 && c[iType] === "configurable") || colors.length > 1 ? "configurable" : "simple") as "simple" | "configurable";
+        return { name: iName >= 0 ? c[iName] : "", basePriceRupees: iPrice >= 0 ? Number(c[iPrice]) || 0 : 0, qty: iQty >= 0 ? Number(c[iQty]) || 0 : 0, type, colors, manualSku: iSku >= 0 ? (c[iSku] || undefined) : undefined };
+      }).filter((r) => r.name);
+    } else {
+      // Positional fallback: name, base_price, qty, type, colours|pipe, sku
+      rows = lines.map((l) => {
+        const [name, price, qty, type, colors, sku] = l.split(",").map((s) => s?.trim() ?? "");
+        return { name, basePriceRupees: Number(price) || 0, qty: Number(qty) || 0, type: (type === "configurable" ? "configurable" : "simple") as "simple" | "configurable", colors: (colors ?? "").split("|").map((s) => s.trim()).filter(Boolean), manualSku: sku || undefined };
+      }).filter((r) => r.name);
+    }
   }
   return { rows, usedAi };
 }
