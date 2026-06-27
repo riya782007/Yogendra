@@ -14,10 +14,18 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
   const q = (searchParams.q ?? "").trim();
   const skus = (searchParams.skus ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 
-  const [tree, products] = await Promise.all([
+  const [tree, fetched] = await Promise.all([
     getCategoryTree(),
     getCatalogProducts({ category, subcategory, q, skus: skus.length ? skus : undefined, includeWholesaleOnly: view === "wholesale" }),
   ]);
+  // Never dead-end a shared sub-category link: if nothing is tagged there yet,
+  // fall back to the whole parent category so the catalogue always shows stock.
+  let products = fetched;
+  let subFellBack = false;
+  if (products.length === 0 && subcategory !== "all" && skus.length === 0) {
+    products = await getCatalogProducts({ category, q });
+    subFellBack = products.length > 0;
+  }
 
   const activeCat = tree.find((c) => c.slug === category);
   const subs = activeCat?.subcategories ?? [];
@@ -77,6 +85,9 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
 
       {/* Cards + select-to-share */}
       <div className="max-w-6xl mx-auto px-5 py-6">
+        {subFellBack && (
+          <p className="no-print text-xs text-muted mb-3">No designs are tagged under <b>{activeSub?.name}</b> yet — showing all of <b>{activeCat?.name}</b>.</p>
+        )}
         <SelectableCatalog products={products} view={view} brand={BUSINESS.brand} phone={BUSINESS.phone} />
       </div>
 

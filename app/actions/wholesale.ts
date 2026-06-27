@@ -65,7 +65,7 @@ export async function placeWholesaleOrderAction(items: { sku: string; qty: numbe
   const clean = (items ?? []).filter((i) => i.sku && i.qty > 0).map((i) => ({ sku: i.sku, qty: Math.floor(i.qty) }));
   if (!clean.length) return { ok: false, error: "Enter quantities for at least one product." };
   const sb = supabaseServer();
-  const { data, error } = await sb.rpc("place_wholesale_order", { p_customer: sess.id, p_items: clean });
+  const { data, error } = await sb.rpc("place_wholesale_order", { p_customer: sess.id, p_items: clean, p_allow_oversell: false });
   if (error) return { ok: false, error: error.message };
   const orderId = (data as any)?.order_id;
   if (orderId) await sb.rpc("assign_invoice_no", { p_order: orderId });

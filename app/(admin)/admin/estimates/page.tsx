@@ -28,7 +28,7 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 export default async function Estimates({ searchParams }: { searchParams: { tab?: string; q?: string } }) {
-  const [{ products, formula }, estimates] = await Promise.all([getStorefront(), getEstimates()]);
+  const [{ products, formula }, estimates] = await Promise.all([getStorefront({ includeDrafts: true, includeWholesaleOnly: true }), getEstimates()]);
   const list = products.map((p) => ({ sku: p.sku, name: p.name, price: liveOffer(p.base_wholesale, formula).price }));
 
   const tab = TABS.find((t) => t.key === (searchParams.tab ?? "all")) ?? TABS[0];

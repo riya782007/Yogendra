@@ -9,22 +9,23 @@
  */
 export const BUSINESS = {
   brand: "Blythe Diva",
-  legalName: "Yogendra Industries",
-  address: "Sadar Bazar, Rui Mandi, Delhi 110006",
+  legalName: "Yogendra Industries (India)",
+  address: "5150-B, Rui Mandi, Sadar Bazar, Delhi-110006",
   stateName: "Delhi",
   stateCode: "07", // GST state code for Delhi
-  gstin: "07ABCDE1234F1Z5", // ← replace with the real GSTIN
-  pan: "ABCDE1234F",        // ← replace with the real PAN
+  gstin: "07AAIPJ3244P1ZD",
+  pan: "AAIPJ3244P",
+  tin: "07200035767",
   phone: "+91 98731 51767",
   email: "hello@blythediva.in",
   bank: {
-    name: "HDFC Bank",
-    account: "50200000000000",
-    ifsc: "HDFC0000123",
-    branch: "Sadar Bazar, Delhi",
+    name: "Kotak Mahindra Bank",
+    account: "", // ← add the A/c number
+    ifsc: "",    // ← add the IFSC
+    branch: "Delhi",
   },
   terms: [
-    "Goods once sold are subject to our return policy.",
+    "We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.",
     "Interest @18% p.a. is charged on bills not paid within 15 days.",
     "Subject to Delhi jurisdiction only.",
   ],
@@ -47,6 +48,21 @@ export function gstSplit(totalPaise: number, buyerStateCode?: string | null) {
   if (interState) {
     return { taxable, interState, igst: tax, cgst: 0, sgst: 0, tax };
   }
+  const cgst = Math.round(tax / 2);
+  const sgst = tax - cgst;
+  return { taxable, interState, igst: 0, cgst, sgst, tax };
+}
+
+/**
+ * GST-EXCLUSIVE split (#13): the input is the taxable value and GST is added ON TOP.
+ * Used for wholesale (B2B) tax invoices, where the wholesale rate is pre-tax.
+ * Returns the same shape as gstSplit; grand total = taxable + tax.
+ */
+export function gstSplitExclusive(taxablePaise: number, buyerStateCode?: string | null) {
+  const taxable = Math.round(taxablePaise);
+  const tax = Math.round((taxable * GST_RATE) / 100);
+  const interState = !!buyerStateCode && buyerStateCode !== BUSINESS.stateCode;
+  if (interState) return { taxable, interState, igst: tax, cgst: 0, sgst: 0, tax };
   const cgst = Math.round(tax / 2);
   const sgst = tax - cgst;
   return { taxable, interState, igst: 0, cgst, sgst, tax };

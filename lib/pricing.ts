@@ -16,6 +16,14 @@ export type PricingFormula = {
   mrpMultiplier: number;
   /** rounding granularity in paise applied to displayed prices (e.g. 100 => nearest rupee) */
   roundToPaise: number;
+  /** Module 4 — when true, derive prices via the %-build-up chain instead of the multipliers. */
+  useBuildup?: boolean;
+  shippingPct?: number;
+  packingPct?: number;
+  promotionPct?: number;
+  resellerPct?: number;
+  customerDiscountPct?: number;
+  mrpPct?: number;
 };
 
 export type PriceSet = {
@@ -47,11 +55,43 @@ function roundToNearest(valuePaise: number, stepPaise: number): number {
 export function computePrices(baseWholesalePaise: number, formula: PricingFormula): PriceSet {
   const base = Number.isFinite(baseWholesalePaise) ? baseWholesalePaise : NaN;
 
+  // Module 4 — %-build-up chain (mirrors the DB `bd_price()` exactly):
+  // cost → +shipping% → +packing% → +promotion% (landed) → +reseller% (wholesale)
+  //      → +customer_discount% (retail) → +mrp% (MRP).
+  if (formula.useBuildup) {
+    const p = (n?: number) => 1 + (Number(n) || 0) / 100;
+    const landed = base * p(formula.shippingPct) * p(formula.packingPct) * p(formula.promotionPct);
+    const wholesale = landed * p(formula.resellerPct);
+    const retail = wholesale * p(formula.customerDiscountPct);
+    const printedMrp = retail * p(formula.mrpPct);
+    return {
+      wholesaleRate: roundToNearest(wholesale, formula.roundToPaise),
+      retailPrice: roundToNearest(retail, formula.roundToPaise),
+      mrp: roundToNearest(printedMrp, formula.roundToPaise),
+    };
+  }
+
   const wholesaleRate = roundToNearest(base * (1 + formula.wholesaleMarkupPct / 100), formula.roundToPaise);
   const retailPrice = roundToNearest(base * formula.retailMultiplier, formula.roundToPaise);
   const mrp = roundToNearest(base * formula.mrpMultiplier, formula.roundToPaise);
 
   return { wholesaleRate, retailPrice, mrp };
+}
+
+/**
+ * Step-by-step build-up breakdown for the pricing settings preview (display-only).
+ * Returns each stage's running value in paise so the owner can see his sheet reproduced.
+ */
+export function buildupBreakdown(baseWholesalePaise: number, formula: PricingFormula) {
+  const base = Number.isFinite(baseWholesalePaise) ? baseWholesalePaise : 0;
+  const p = (n?: number) => 1 + (Number(n) || 0) / 100;
+  const afterShipping = base * p(formula.shippingPct);
+  const afterPacking = afterShipping * p(formula.packingPct);
+  const afterPromotion = afterPacking * p(formula.promotionPct);
+  const wholesale = afterPromotion * p(formula.resellerPct);
+  const retail = wholesale * p(formula.customerDiscountPct);
+  const mrp = retail * p(formula.mrpPct);
+  return { base, afterShipping, afterPacking, afterPromotion, wholesale, retail, mrp };
 }
 
 /**

@@ -14,8 +14,10 @@ export type EditorProduct = {
   categorySlug: string;
   type: string;
   status: string;
-  visibility: string;   // "all" | "wholesale"
-  labels: string;       // newline/comma-joined
+  /** "all" | "wholesale" — backed by `products.wholesale_only` boolean in the DB. */
+  visibility?: string;
+  /** Newline / comma-joined list of label names. Resolved against the `labels` table on save. */
+  labels?: string;
   basePriceRupees: number;
   qty: number;
   title: string;
@@ -35,10 +37,14 @@ export function ProductEditor({
   product,
   categories,
   formula,
+  effective,
 }: {
   product: EditorProduct;
   categories: Cat[];
   formula: { retailMultiplier: number; mrpMultiplier: number; wholesaleMarkupPct: number };
+  /** Override-aware effective prices (rupees). `custom` = explicit prices are pinned, so the
+   *  formula below is NOT what the product actually sells for. */
+  effective?: { retail: number; mrp: number; wholesale: number; custom: boolean };
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -145,13 +151,24 @@ export function ProductEditor({
           </div>
         </div>
 
-        {/* live price preview */}
-        <div className="mt-4 rounded-xl bg-cream/60 px-4 py-3 text-sm flex flex-wrap gap-x-6 gap-y-1">
-          <span className="text-muted">From your pricing formula:</span>
-          <span>Retail <b className="text-ink">{inr(retail)}</b></span>
-          <span>MRP <b className="text-ink">{inr(mrp)}</b></span>
-          <span>Wholesale rate <b className="text-ink">{inr(wholesale)}</b></span>
-        </div>
+        {/* price preview — show the REAL selling price. If custom prices are pinned (e.g. from
+            import or the Pricing tab) we show those, not the formula, so it never misinforms. */}
+        {effective?.custom ? (
+          <div className="mt-4 rounded-xl bg-gold/10 border border-gold/30 px-4 py-3 text-sm flex flex-wrap gap-x-6 gap-y-1">
+            <span className="text-gold-dark font-medium">Selling at (custom prices):</span>
+            <span>Retail <b className="text-ink">{inr(effective.retail)}</b></span>
+            <span>MRP <b className="text-ink">{inr(effective.mrp)}</b></span>
+            <span>Wholesale <b className="text-ink">{inr(effective.wholesale)}</b></span>
+            <span className="w-full text-xs text-muted/80">Set in the Pricing tab — the formula is overridden for this product. Change the base cost above only to update your records.</span>
+          </div>
+        ) : (
+          <div className="mt-4 rounded-xl bg-cream/60 px-4 py-3 text-sm flex flex-wrap gap-x-6 gap-y-1">
+            <span className="text-muted">From your pricing formula:</span>
+            <span>Retail <b className="text-ink">{inr(retail)}</b></span>
+            <span>MRP <b className="text-ink">{inr(mrp)}</b></span>
+            <span>Wholesale rate <b className="text-ink">{inr(wholesale)}</b></span>
+          </div>
+        )}
       </section>
 
       {/* STOREFRONT CONTENT */}

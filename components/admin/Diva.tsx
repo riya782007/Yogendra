@@ -15,6 +15,7 @@ export function Diva({ roleName = "Owner" }: { roleName?: string }) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [planning, setPlanning] = useState(false);
   const [listening, setListening] = useState(false);
   const [msgs, setMsgs] = useState<Msg[]>([{ who: "diva", text: "Hi Yogendra, I'm DIVA. Talk to me in English, Hindi or Hinglish — e.g. “BD1010 me 20 add kar do”, “Blue kundan necklace ka stock kitna hai?”, “BD1004 ka wholesale price?”, “oxidised necklace ka catalog whatsapp pe bhejo”, “new product create karo”, “customer Ravi ko wholesale bana do”, “pending orders dikhao”. Speak or type — you can Stop me anytime." }]);
   const [steps, setSteps] = useState<Step[]>([]);
@@ -50,9 +51,10 @@ export function Diva({ roleName = "Owner" }: { roleName?: string }) {
     const cmd = (text ?? input).trim();
     if (!cmd) return;
     const myRun = ++runIdRef.current; // supersedes any in-flight run
-    setInput(""); setMsgs((m) => [...m, { who: "owner", text: cmd }]); setBusy(true); setAwaiting(null); sync([]);
+    setInput(""); setMsgs((m) => [...m, { who: "owner", text: cmd }]); setBusy(true); setPlanning(true); setAwaiting(null); sync([]);
     const plan = await divaPlan(cmd, ctxRef.current);
     if (myRun !== runIdRef.current) return;
+    setPlanning(false);
     ctxRef.current = plan.context; // carry conversational memory into the next turn
     setMsgs((m) => [...m, { who: "diva", text: plan.reply }]);
     if (plan.steps.length === 0) { setBusy(false); return; }
@@ -63,7 +65,17 @@ export function Diva({ roleName = "Owner" }: { roleName?: string }) {
   async function run(i: number, myRun: number) {
     if (myRun !== runIdRef.current) return;
     const s = stepsRef.current;
-    if (i >= s.length) { setBusy(false); toast("DIVA finished ✓"); setMsgs((m) => [...m, { who: "diva", text: "Done ✓" }]); loadSuggestions(); return; }
+    if (i >= s.length) {
+      setBusy(false);
+      const okN = s.filter((x) => x.status === "done").length;
+      const errN = s.filter((x) => x.status === "error").length;
+      const skipN = s.filter((x) => x.status === "skipped").length;
+      const clean = errN === 0 && skipN === 0;
+      toast(clean ? "DIVA finished ✓" : "DIVA finished with issues", clean ? undefined : "error");
+      // Honest summary — never claim "Done" when a step actually failed.
+      setMsgs((m) => [...m, { who: "diva", text: clean ? (okN ? "All done ✓" : "Nothing to do.") : `Finished — ${okN} done${errN ? `, ${errN} couldn't run` : ""}${skipN ? `, ${skipN} skipped` : ""}. Check the lines marked ✕.` }]);
+      loadSuggestions(); return;
+    }
     const step = s[i];
     if (step.needsConfirm && !step.confirmed) { setAwaiting(i); setBusy(false); return; }
     step.status = "running"; sync(s);
@@ -79,7 +91,7 @@ export function Diva({ roleName = "Owner" }: { roleName?: string }) {
   function stopRun() {
     runIdRef.current++; // invalidate the running plan
     const s = stepsRef.current.map((x) => x.status === "pending" || x.status === "running" ? { ...x, status: "skipped" as const } : x);
-    sync(s); setAwaiting(null); setBusy(false);
+    sync(s); setAwaiting(null); setBusy(false); setPlanning(false);
     setMsgs((m) => [...m, { who: "diva", text: "Stopped. Tell me what to do instead." }]);
   }
 
@@ -117,6 +129,10 @@ export function Diva({ roleName = "Owner" }: { roleName?: string }) {
                 <div className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-sm ${m.who === "owner" ? "bg-emerald text-white" : "bg-white text-ink shadow-card"}`}>{m.text}</div>
               </div>
             ))}
+
+            {planning && (
+              <div className="flex justify-start"><div className="bg-white text-muted shadow-card rounded-2xl px-3.5 py-2 text-sm flex items-center gap-2"><span className="animate-pulse">●</span> DIVA is thinking…</div></div>
+            )}
 
             {steps.length > 0 && (
               <div className="bg-white rounded-2xl shadow-card p-3 space-y-1.5">

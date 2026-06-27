@@ -12,6 +12,7 @@ export type CardProduct = {
   sku: string; name: string; base_wholesale: number; qty: number;
   category: { name: string; slug: string };
   rating: number; reviews: number; isNew?: boolean;
+  image?: string | null;
   wholesale_override?: number | null; retail_override?: number | null; mrp_override?: number | null;
 };
 
@@ -22,7 +23,7 @@ export function ProductCard({ p, formula, index = 0 }: { p: CardProduct; formula
     <Link href={`/shop/${p.category.slug}/${p.sku}`}
       className="group relative block rounded-2xl bg-white shadow-card hover:shadow-luxe transition-all duration-300 hover:-translate-y-1 overflow-hidden">
       <div className="relative aspect-[4/5] overflow-hidden bg-cream">
-        <div className="card-img h-full w-full"><ProductImage name={p.name} /></div>
+        <div className="card-img h-full w-full"><ProductImage name={p.name} src={p.image} /></div>
 
         <div className="absolute top-3 left-3 flex flex-col gap-1.5">
           {o.hasOffer && <span className="bg-rose text-white text-[11px] font-semibold px-2 py-1 rounded-full shadow-sm">{o.offerPct}% OFF</span>}

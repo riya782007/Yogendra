@@ -3,15 +3,23 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import {
   getProductBySku, getCategories, getPricingFormula, getSubcategories,
-  getProductSalesStats, getStockHistory,
+  getProductSalesStats, getStockHistory, getVariantOptions, getLabels,
 } from "@/lib/supabase/queries";
 import { ProductEditor, type EditorProduct } from "@/components/admin/ProductEditor";
 import { ProductWorkspace, type WorkspaceTab, type TabKey } from "@/components/admin/ProductWorkspace";
 import { ProductStockAdjust } from "@/components/admin/ProductStockAdjust";
 import { MediaCard } from "@/components/admin/MediaCard";
+import VariantAiPhoto from "@/components/admin/VariantAiPhoto";
 import { requirePerm, getSession, can } from "@/lib/auth";
 import { addVariantAction, updateVariantAction, deleteVariantAction } from "@/app/actions/variants";
-import { setProductVisibilityAction, moveProductToSubcategoryAction, savePricingAction } from "@/app/actions/catalog";
+import { VariantPhotos } from "@/components/admin/VariantPhotos";
+import { setProductVisibilityAction, moveProductToSubcategoryAction, savePricingAction, setWholesaleOnlyAction, toggleProductLabelAction } from "@/app/actions/catalog";
+
+const LABEL_CHIP: Record<string, string> = {
+  emerald: "bg-emerald-mist text-emerald-dark", gold: "bg-gold/15 text-gold-dark",
+  wine: "bg-wine/10 text-wine", rose: "bg-rose/10 text-rose",
+  blue: "bg-blue-50 text-blue-700", ink: "bg-ink/10 text-ink",
+};
 import { formatPaise, computePrices, resolvePrices, overridesOf } from "@/lib/pricing";
 import { geminiConfigured } from "@/lib/ai/gemini";
 
@@ -36,11 +44,14 @@ export default async function ProductPage({ params, searchParams }: { params: { 
   ]);
   if (!p) notFound();
 
-  const [subcategories, stats, history] = await Promise.all([
+  const [subcategories, stats, history, vopts, allLabels] = await Promise.all([
     getSubcategories({ categoryId: p.category?.id }),
     getProductSalesStats(p.sku).catch(() => null),
     getStockHistory(p.id).catch(() => []),
+    getVariantOptions().catch(() => ({ color: [], size: [], polish: [] })),
+    getLabels().catch(() => []),
   ]);
+  const labelIds = new Set((((p as any).product_labels as any[]) ?? []).map((x) => x.label_id));
 
   const session = getSession();
   const gc = (p.generated_content as any) ?? {};
@@ -65,8 +76,13 @@ export default async function ProductPage({ params, searchParams }: { params: { 
     categorySlug: p.category?.slug ?? "all",
     type: p.type,
     status: p.status,
-    visibility: (p as any).visibility ?? "all",
-    labels: ((p as any).labels ?? []).join(", "),
+    // Visibility/labels surface the same data the dedicated Catalog tab toggles
+    // already control, so the unified ProductEditor form opens prefilled.
+    visibility: (p as any).wholesale_only ? "wholesale" : "all",
+    labels: (allLabels as any[])
+      .filter((l) => labelIds.has(l.id))
+      .map((l) => l.name)
+      .join(", "),
     basePriceRupees: Math.round((p.base_wholesale ?? 0) / 100),
     qty: p.qty ?? 0,
     title: gc.title ?? p.name,
@@ -85,6 +101,15 @@ export default async function ProductPage({ params, searchParams }: { params: { 
       product={product}
       categories={categories.map((c) => ({ id: c.id, name: c.name, slug: c.slug }))}
       formula={{ retailMultiplier: formula.retailMultiplier, mrpMultiplier: formula.mrpMultiplier, wholesaleMarkupPct: formula.wholesaleMarkupPct }}
+      effective={(() => {
+        const eff = resolvePrices(p.base_wholesale ?? 0, formula, overridesOf(p));
+        return {
+          retail: Math.round(eff.retailPrice / 100),
+          mrp: Math.round(eff.mrp / 100),
+          wholesale: Math.round(eff.wholesaleRate / 100),
+          custom: !!((p as any).wholesale_override || (p as any).retail_override || (p as any).mrp_override),
+        };
+      })()}
     />
   );
 
@@ -164,7 +189,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
           <ul className="divide-y divide-sand/60">
             {variants.map((v: any) => (
               <li key={v.id} className="py-2 flex items-center justify-between text-sm">
-                <span className="text-ink">{[v.color, v.size, v.polish].filter(Boolean).join(" / ") || "—"} <span className="text-muted font-mono text-xs">{v.sku}</span></span>
+                <span className="text-ink">{v.color ?? "—"} <span className="text-muted font-mono text-xs">{v.sku}</span></span>
                 <span className={`font-medium ${(v.qty ?? 0) <= 2 ? "text-rose" : "text-ink"}`}>{v.qty ?? 0} pcs</span>
               </li>
             ))}
@@ -183,36 +208,60 @@ export default async function ProductPage({ params, searchParams }: { params: { 
     </div>
   );
 
+  const vInput = "rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald";
   const variantsPanel = (
     <div className={card}>
+      {/* Datalists power as-you-type suggestions; typing a brand-new value grows the master list. */}
+      <datalist id="opt-color">{vopts.color.map((o) => <option key={o} value={o} />)}</datalist>
+      <datalist id="opt-size">{vopts.size.map((o) => <option key={o} value={o} />)}</datalist>
+      <datalist id="opt-polish">{vopts.polish.map((o) => <option key={o} value={o} />)}</datalist>
+
       <h3 className="font-medium text-ink mb-1">Variants</h3>
-      <p className="text-xs text-muted mb-4">Colour/size options — each gets its own SKU and stock. Variant stock total: <b className="text-ink">{variantStock}</b> pcs.</p>
-      <div className="space-y-2 mb-4">
+      <p className="text-xs text-muted mb-4">Each variant has its own <b>colour, size &amp; polish</b>, SKU, stock and photos. Variant stock total: <b className="text-ink">{variantStock}</b> pcs. Pick from the suggestions or type a new value — it’s remembered for next time.</p>
+
+      <div className="space-y-4 mb-4">
         {variants.length === 0 && <p className="text-sm text-muted">No variants yet — this is a simple product.</p>}
-        {variants.map((v: any) => (
-          <form key={v.id} action={updateVariantAction} className="flex flex-wrap items-center gap-2">
-            <input type="hidden" name="id" value={v.id} />
-            <input type="hidden" name="product_sku" value={p.sku} />
-            <input name="color" defaultValue={v.color ?? ""} placeholder="Colour" className="rounded-xl border border-sand px-3 py-2 text-sm w-28 outline-none focus:border-emerald" />
-            <input name="size" defaultValue={v.size ?? ""} placeholder="Size" className="rounded-xl border border-sand px-3 py-2 text-sm w-24 outline-none focus:border-emerald" />
-            <input name="polish" defaultValue={v.polish ?? ""} placeholder="Polish" className="rounded-xl border border-sand px-3 py-2 text-sm w-28 outline-none focus:border-emerald" />
-            <input name="sku" defaultValue={v.sku ?? ""} placeholder="Variant SKU" className="rounded-xl border border-sand px-3 py-2 text-sm w-36 outline-none focus:border-emerald font-mono" />
-            <label className="text-xs text-muted flex items-center gap-1">Stock <input name="qty" type="number" min={0} defaultValue={v.qty ?? 0} className="rounded-xl border border-sand px-2 py-2 text-sm w-20 text-center outline-none focus:border-emerald" /></label>
-            <button className="px-3 py-2 rounded-xl bg-ink/5 text-ink text-xs hover:bg-ink/10">Save</button>
-            <button formAction={deleteVariantAction} className="text-muted hover:text-rose text-xs">Delete</button>
-          </form>
-        ))}
+        {variants.map((v: any) => {
+          const imgs: string[] = v.image_paths ?? [];
+          return (
+            <div key={v.id} className="rounded-xl border border-sand/70 p-3">
+              <form action={updateVariantAction} className="flex flex-wrap items-end gap-2">
+                <input type="hidden" name="id" value={v.id} />
+                <input type="hidden" name="product_sku" value={p.sku} />
+                <label className="text-[11px] text-muted">Colour<input name="color" list="opt-color" defaultValue={v.color ?? ""} placeholder="Colour" className={`${vInput} w-28 block mt-0.5`} /></label>
+                <label className="text-[11px] text-muted">Size<input name="size" list="opt-size" defaultValue={v.size ?? ""} placeholder="Size" className={`${vInput} w-24 block mt-0.5`} /></label>
+                <label className="text-[11px] text-muted">Polish<input name="polish" list="opt-polish" defaultValue={v.polish ?? ""} placeholder="Polish" className={`${vInput} w-28 block mt-0.5`} /></label>
+                <label className="text-[11px] text-muted">SKU<input name="sku" defaultValue={v.sku ?? ""} placeholder="auto" className={`${vInput} w-32 block mt-0.5 font-mono`} /></label>
+                <label className="text-[11px] text-muted">Stock<input name="qty" type="number" min={0} defaultValue={v.qty ?? 0} className={`${vInput} w-14 text-center block mt-0.5`} /></label>
+                <label className="text-[11px] text-muted">Retail ₹<input name="retail" type="number" min={0} step="0.01" defaultValue={v.retail_override != null ? (v.retail_override / 100).toFixed(2) : ""} placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
+                <label className="text-[11px] text-muted">Wholesale ₹<input name="wholesale" type="number" min={0} step="0.01" defaultValue={v.wholesale_override != null ? (v.wholesale_override / 100).toFixed(2) : ""} placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
+                <label className="text-[11px] text-muted">MRP ₹<input name="mrp" type="number" min={0} step="0.01" defaultValue={v.mrp_override != null ? (v.mrp_override / 100).toFixed(2) : ""} placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
+                <button className="px-3 py-2 rounded-xl bg-ink/5 text-ink text-xs hover:bg-ink/10">Save</button>
+                <button formAction={deleteVariantAction} className="text-muted hover:text-rose text-xs px-1">Delete</button>
+              </form>
+              {/* Per-variant photos (#16) — reliable client uploader (compress + feedback, fixes large/HEIC) */}
+              <div className="flex flex-wrap items-center gap-2 mt-2.5">
+                <VariantPhotos variantId={v.id} productSku={p.sku} color={v.color ?? null} images={imgs} />
+                {can(session, "catalog.ai") && <VariantAiPhoto variantId={v.id} color={v.color ?? null} />}
+              </div>
+            </div>
+          );
+        })}
       </div>
-      <form action={addVariantAction} className="flex flex-wrap items-center gap-2 border-t border-sand/60 pt-4">
+
+      <form action={addVariantAction} className="flex flex-wrap items-end gap-2 border-t border-sand/60 pt-4">
         <input type="hidden" name="product_sku" value={p.sku} />
-        <input name="color" placeholder="Colour" className="rounded-xl border border-sand px-3 py-2 text-sm w-28 outline-none focus:border-emerald" />
-        <input name="size" placeholder="Size" className="rounded-xl border border-sand px-3 py-2 text-sm w-24 outline-none focus:border-emerald" />
-        <input name="polish" placeholder="Polish" className="rounded-xl border border-sand px-3 py-2 text-sm w-28 outline-none focus:border-emerald" />
-        <input name="sku" placeholder="SKU (blank = auto)" className="rounded-xl border border-sand px-3 py-2 text-sm w-40 outline-none focus:border-emerald font-mono" />
-        <label className="text-xs text-muted flex items-center gap-1">Stock <input name="qty" type="number" min={0} defaultValue={0} className="rounded-xl border border-sand px-2 py-2 text-sm w-20 text-center outline-none focus:border-emerald" /></label>
+        <label className="text-[11px] text-muted">Colour<input name="color" list="opt-color" placeholder="e.g. Green" className={`${vInput} w-28 block mt-0.5`} /></label>
+        <label className="text-[11px] text-muted">Size<input name="size" list="opt-size" placeholder="e.g. 2.6" className={`${vInput} w-24 block mt-0.5`} /></label>
+        <label className="text-[11px] text-muted">Polish<input name="polish" list="opt-polish" placeholder="e.g. Oxidised" className={`${vInput} w-28 block mt-0.5`} /></label>
+        <label className="text-[11px] text-muted">SKU<input name="sku" placeholder="blank = auto" className={`${vInput} w-32 block mt-0.5 font-mono`} /></label>
+        <label className="text-[11px] text-muted">Stock<input name="qty" type="number" min={0} defaultValue={0} className={`${vInput} w-14 text-center block mt-0.5`} /></label>
+        <label className="text-[11px] text-muted">Retail ₹<input name="retail" type="number" min={0} step="0.01" placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
+        <label className="text-[11px] text-muted">Wholesale ₹<input name="wholesale" type="number" min={0} step="0.01" placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
+        <label className="text-[11px] text-muted">MRP ₹<input name="mrp" type="number" min={0} step="0.01" placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
         <button className="btn-primary px-4 py-2 text-sm font-medium">+ Add variant</button>
       </form>
-      <p className="text-[11px] text-muted mt-2">Each variant can combine colour + size + polish, with its own SKU &amp; stock.</p>
+      <p className="text-[11px] text-muted mt-2">At least one of colour / size / polish is required. Leave a price <b>blank</b> to use the automatic formula price; enter a value to set that colour&apos;s own retail / wholesale / MRP. Add photos so the storefront shows the right piece per option.</p>
     </div>
   );
 
@@ -221,7 +270,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
       <div className={card}>
         <h3 className="font-medium text-ink mb-3">Storefront visibility</h3>
         <div className="flex items-center justify-between gap-3">
-          <p className="text-sm text-muted">{published ? "This product is live on the shop." : "Hidden — customers can't see it yet."}{(p as any).visibility === "wholesale" ? " It's wholesale-only — hidden from retail shoppers." : ""}</p>
+          <p className="text-sm text-muted">{published ? "This product is live on the shop." : "Hidden — customers can't see it yet."}</p>
           {can(session, "catalog.publish") && (
             <form action={setProductVisibilityAction}>
               <input type="hidden" name="sku" value={p.sku} />
@@ -229,6 +278,15 @@ export default async function ProductPage({ params, searchParams }: { params: { 
               <button className="px-4 py-2 rounded-full bg-gold/15 text-gold-dark text-sm hover:bg-gold/25">{published ? "Hide from store" : "Show on store"}</button>
             </form>
           )}
+        </div>
+        {/* #1 wholesale-only */}
+        <div className="flex items-center justify-between gap-3 mt-3 pt-3 border-t border-sand/60">
+          <p className="text-sm text-muted">{(p as any).wholesale_only ? "Wholesale only — hidden from the D2C storefront, shown to approved retailers." : "Sold to everyone (retail + wholesale)."}</p>
+          <form action={setWholesaleOnlyAction}>
+            <input type="hidden" name="sku" value={p.sku} />
+            <input type="hidden" name="wholesale_only" value={(p as any).wholesale_only ? "0" : "1"} />
+            <button className="px-4 py-2 rounded-full bg-wine/10 text-wine text-sm hover:bg-wine/20 whitespace-nowrap">{(p as any).wholesale_only ? "Make available to all" : "Wholesale only"}</button>
+          </form>
         </div>
       </div>
 
@@ -244,6 +302,30 @@ export default async function ProductPage({ params, searchParams }: { params: { 
           <button className="px-4 py-2 rounded-xl bg-ink/5 text-ink text-sm hover:bg-ink/10">Save</button>
           {subcategories.length === 0 && <span className="text-xs text-muted">No subcategories under {p.category?.name ?? "this category"} yet — add some in Categories.</span>}
         </form>
+      </div>
+
+      <div className={card}>
+        <h3 className="font-medium text-ink mb-1">Labels</h3>
+        <p className="text-xs text-muted mb-3">Stick your own labels on this product. Create new ones in <Link href="/admin/categories" className="text-emerald nav-link">Categories</Link>.</p>
+        {allLabels.length === 0 ? (
+          <p className="text-sm text-muted">No labels yet — add some in Categories.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {allLabels.map((l: any) => {
+              const on = labelIds.has(l.id);
+              return (
+                <form key={l.id} action={toggleProductLabelAction}>
+                  <input type="hidden" name="sku" value={p.sku} />
+                  <input type="hidden" name="label_id" value={l.id} />
+                  <input type="hidden" name="on" value={on ? "0" : "1"} />
+                  <button className={`inline-flex items-center gap-1 rounded-full text-xs px-3 py-1.5 border transition-all ${on ? `${LABEL_CHIP[l.color] ?? LABEL_CHIP.emerald} border-transparent` : "bg-white text-muted border-sand hover:border-gold"}`}>
+                    {on ? "✓ " : "+ "}{l.name}
+                  </button>
+                </form>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className={card}>
@@ -280,9 +362,14 @@ export default async function ProductPage({ params, searchParams }: { params: { 
               <li key={i} className="py-2.5 flex items-center justify-between gap-3 text-sm">
                 <span className={`font-medium tabular-nums ${h.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{h.delta > 0 ? "+" : ""}{h.delta}</span>
                 <span className="flex-1 text-ink truncate">
-                  {h.kind && <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded mr-1.5 ${h.kind === "damage" ? "bg-rose/10 text-rose" : h.kind === "purchase" ? "bg-emerald-mist text-emerald-dark" : "bg-cream text-muted"}`}>{h.kind}</span>}
+                  {h.kind && <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded mr-1.5 ${h.kind === "damage" ? "bg-rose/10 text-rose" : h.kind === "purchase" ? "bg-emerald-mist text-emerald-dark" : h.kind === "sale" ? "bg-gold/15 text-gold-dark" : "bg-cream text-muted"}`}>{h.kind}</span>}
                   {h.source ?? "Adjustment"}{h.reason ? <span className="text-muted"> — {h.reason}</span> : null}
                 </span>
+                {(h as any).ref_id && (h.kind === "sale" || h.kind === "purchase") ? (
+                  <Link href={h.kind === "sale" ? `/admin/invoice/${(h as any).ref_id}` : `/admin/purchase/${(h as any).ref_id}`} className="text-emerald nav-link whitespace-nowrap text-xs">
+                    {h.kind === "sale" ? "View bill →" : "View purchase →"}
+                  </Link>
+                ) : null}
                 <span className="text-muted whitespace-nowrap">{timeAgo(h.created_at)}</span>
               </li>
             ))}
