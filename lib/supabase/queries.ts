@@ -287,21 +287,24 @@ export async function getSupplierLedger(id: string) {
   const sb = supabaseServer();
   const { data: supplier } = await sb.from("suppliers").select("*").eq("id", id).maybeSingle();
   if (!supplier) return null;
-  const { data: purchases } = await sb
-    .from("purchases")
-    .select("id,bill_no,total,created_at, items:purchase_items(qty)")
-    .eq("supplier_id", id)
-    .order("created_at", { ascending: false });
+  const [{ data: purchases }, { data: pays }] = await Promise.all([
+    sb.from("purchases").select("id,bill_no,total,created_at, items:purchase_items(qty)").eq("supplier_id", id).order("created_at", { ascending: false }),
+    sb.from("supplier_payments").select("id,amount,mode,ref,note,created_at").eq("supplier_id", id).order("created_at", { ascending: false }),
+  ]);
   const list = ((purchases as any[]) ?? []).map((p) => ({
     id: p.id, bill_no: p.bill_no, total: p.total ?? 0, created_at: p.created_at,
     qty: ((p.items as any[]) ?? []).reduce((s, x) => s + (x.qty ?? 0), 0),
     lines: ((p.items as any[]) ?? []).length,
   }));
+  const payments = ((pays as any[]) ?? []).map((p) => ({ id: p.id, amount: p.amount ?? 0, mode: p.mode as string, ref: p.ref as string | null, note: p.note as string | null, created_at: p.created_at }));
+  const opening = ((supplier as any).opening_balance ?? 0) as number;
+  const totalPurchased = list.reduce((s, p) => s + p.total, 0);
+  const totalPaid = payments.reduce((s, p) => s + p.amount, 0);
   return {
-    supplier,
-    purchases: list,
-    totalPurchased: list.reduce((s, p) => s + p.total, 0),
-    totalQty: list.reduce((s, p) => s + p.qty, 0),
+    supplier, purchases: list, payments,
+    totalPurchased, totalQty: list.reduce((s, p) => s + p.qty, 0),
+    opening, totalPaid,
+    balanceOwed: opening + totalPurchased - totalPaid, // +ve = we still owe the supplier
   };
 }
 
