@@ -813,6 +813,23 @@ export async function getRoles() {
   const { data } = await sb.from("roles").select("id,name,permissions,passcode").order("name");
   return (data as any[]) ?? [];
 }
+/** Pillar — typeahead suggestions for the shareable catalogue search box.
+ *  Returns published product names + SKUs, category names, and the colour master, so the
+ *  owner (or a customer) can jump straight to a design / category / colour. Capped + de-duped. */
+export async function getCatalogSuggestions(): Promise<{ products: { name: string; sku: string }[]; categories: { name: string; slug: string }[]; colours: string[] }> {
+  const sb = supabaseServer();
+  const [{ data: prods }, { data: cats }, { data: cols }] = await Promise.all([
+    sb.from("products").select("name,sku,wholesale_only").eq("status", "published").eq("wholesale_only", false).order("name").limit(500),
+    sb.from("categories").select("name,slug").order("name"),
+    sb.from("variant_options").select("value").eq("kind", "color").order("sort").order("value"),
+  ]);
+  return {
+    products: ((prods as any[]) ?? []).map((p) => ({ name: p.name, sku: p.sku })),
+    categories: ((cats as any[]) ?? []).map((c) => ({ name: c.name, slug: c.slug })),
+    colours: ((cols as any[]) ?? []).map((c) => c.value).filter(Boolean),
+  };
+}
+
 // ---------- notifications / assignments ----------
 export async function getNotifications() {
   const sb = supabaseServer();
@@ -822,6 +839,15 @@ export async function getNotifications() {
 export async function getAssignmentsRegistry() {
   const sb = supabaseServer();
   const { data } = await sb.from("assignments").select("id,responsibility,channel,sla_minutes,assignee:contacts!assignments_assigned_contact_id_fkey(name),backup:contacts!assignments_backup_contact_id_fkey(name)");
+  return (data as any[]) ?? [];
+}
+
+/** Pillar — the owner-visible Activity feed. Every recorded action (product added /
+ *  deleted / hidden, price changed, category changes, approvals…) from `audit_log`,
+ *  newest first. Backs the "Recent activity" section on the Notifications page. */
+export async function getActivityLog(limit = 60) {
+  const sb = supabaseServer();
+  const { data } = await sb.from("audit_log").select("id,at,actor,action,ref,detail").order("at", { ascending: false }).limit(limit);
   return (data as any[]) ?? [];
 }
 

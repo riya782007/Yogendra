@@ -7,6 +7,7 @@ import {
 } from "@/app/actions/catalog";
 import { getCategoryTree, getLabels } from "@/lib/supabase/queries";
 import { getSession, can } from "@/lib/auth";
+import { CollapsibleCategory } from "@/components/admin/CollapsibleCategory";
 
 export const metadata = { title: "Owner Console · Categories" };
 
@@ -16,7 +17,7 @@ const LABEL_CHIP: Record<string, string> = {
   blue: "bg-blue-50 text-blue-700", ink: "bg-ink/10 text-ink",
 };
 
-export default async function Categories() {
+export default async function Categories({ searchParams }: { searchParams: { q?: string } }) {
   const sb = supabaseServer();
   const [tree, labels, { data: prods }] = await Promise.all([
     getCategoryTree(),
@@ -27,10 +28,25 @@ export default async function Categories() {
   for (const p of (prods as any[]) ?? []) counts.set(p.category_id, (counts.get(p.category_id) ?? 0) + 1);
   const canEdit = can(getSession(), "catalog.edit");
 
+  // Filter: match a parent name OR any of its subcategory names, so searching "kundan"
+  // surfaces the parent that contains a Kundan subcategory. When searching, matching
+  // cards open by default so the owner sees the hit without an extra click.
+  const q = (searchParams.q ?? "").trim().toLowerCase();
+  const filtered = q
+    ? tree.filter((c) => c.name.toLowerCase().includes(q) || c.subcategories.some((s) => s.name.toLowerCase().includes(q)))
+    : tree;
+
   return (
     <main className="p-8 bg-cream/40 min-h-screen max-w-4xl">
       <h1 className="font-display text-4xl text-ink mb-1">Categories &amp; Subcategories</h1>
-      <p className="text-sm text-muted mb-6">Organise your catalogue into parent categories (Necklaces, Earrings…) and subcategories (Oxidised, Kundan, Temple…). Changes appear in the storefront menu and catalogue filters instantly.</p>
+      <p className="text-sm text-muted mb-6">Organise your catalogue into parent categories (Necklaces, Earrings…) and subcategories (Oxidised, Kundan, Temple…). Tap a category to expand its subcategories. Changes appear in the storefront menu and catalogue filters instantly.</p>
+
+      {/* Search across categories + subcategories */}
+      <form action="/admin/categories" className="flex gap-2 mb-4">
+        <input name="q" defaultValue={searchParams.q ?? ""} placeholder="Search categories or subcategories…" className="flex-1 rounded-xl border border-sand px-4 py-2.5 text-sm bg-white outline-none focus:border-emerald" />
+        <button className="px-5 rounded-xl bg-ink text-white text-sm">Search</button>
+        {q && <a href="/admin/categories" className="px-4 grid place-items-center rounded-xl border border-sand text-sm text-muted hover:text-ink">Clear</a>}
+      </form>
 
       {canEdit && (
         <form action={createCategoryAction} className="flex gap-2 mb-8">
@@ -39,23 +55,22 @@ export default async function Categories() {
         </form>
       )}
 
-      <div className="space-y-4">
+      <div className="space-y-3">
         {tree.length === 0 && <p className="text-sm text-muted">No categories yet — add your first one above.</p>}
-        {tree.map((c) => (
-          <div key={c.id} className="bg-white rounded-2xl p-5 shadow-card hover:shadow-luxe transition-shadow">
-            <div className="flex items-center justify-between gap-3 mb-3">
-              <div className="min-w-0">
-                <p className="font-medium text-ink text-lg truncate">{c.name}</p>
-                <p className="text-xs text-muted">/shop/c/{c.slug} · {c.subcategories.length} subcategories</p>
-              </div>
-              <div className="flex items-center gap-3 shrink-0">
-                <span className="text-sm text-emerald font-medium">{counts.get(c.id) ?? 0} designs</span>
-                {canEdit && (counts.get(c.id) ?? 0) === 0 && (
-                  <form action={deleteCategoryAction}><input type="hidden" name="id" value={c.id} /><button title="Delete empty category" className="text-muted hover:text-rose text-sm">🗑</button></form>
-                )}
-              </div>
-            </div>
-
+        {tree.length > 0 && filtered.length === 0 && <p className="text-sm text-muted">No category or subcategory matches “{searchParams.q}”. <a href="/admin/categories" className="text-emerald nav-link">Clear search</a>.</p>}
+        {filtered.map((c) => (
+          <CollapsibleCategory
+            key={c.id}
+            id={c.id}
+            title={c.name}
+            meta={`/shop/c/${c.slug}`}
+            designCount={counts.get(c.id) ?? 0}
+            subCount={c.subcategories.length}
+            defaultOpen={!!q}
+            actions={canEdit && (counts.get(c.id) ?? 0) === 0 ? (
+              <form action={deleteCategoryAction}><input type="hidden" name="id" value={c.id} /><button title="Delete empty category" className="text-muted hover:text-rose text-sm">🗑</button></form>
+            ) : null}
+          >
             {/* Subcategories */}
             <div className="flex flex-col gap-1.5 mb-3">
               {c.subcategories.length === 0 && <span className="text-xs text-muted italic">No subcategories yet.</span>}
@@ -90,7 +105,7 @@ export default async function Categories() {
                 <button className="px-4 py-2 rounded-lg border border-emerald text-emerald text-sm font-medium hover:bg-emerald-mist/40">+ Subcategory</button>
               </form>
             )}
-          </div>
+          </CollapsibleCategory>
         ))}
       </div>
 
