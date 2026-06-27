@@ -9,7 +9,7 @@ export function MobileMenu({ categories }: { categories: { name: string; slug: s
     <>
       <button aria-label="Menu" onClick={() => setOpen(true)} className="md:hidden p-1.5 -ml-1.5 text-ink"><IconMenu /></button>
       {open && (
-        <div className="fixed inset-0 z-50 md:hidden">
+        <div className="fixed inset-0 z-[60] md:hidden">
           <div className="absolute inset-0 bg-ink/40" onClick={() => setOpen(false)} />
           <div className="absolute left-0 top-0 h-full w-72 bg-ivory p-6 animate-[fadeIn_.2s_ease] shadow-luxe">
             <div className="flex items-center justify-between mb-6">
