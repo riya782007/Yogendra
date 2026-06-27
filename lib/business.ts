@@ -23,10 +23,13 @@ export const BUSINESS = {
   phone: "+91 98731 51767",
   email: "hello@blythediva.in",
   bank: {
+    // Yogendra Industries (India) current account — confirmed by the owner. These print on
+    // every GST tax invoice (not confidential — it's how customers pay). Env vars still
+    // override if you ever want to change them without a redeploy.
     name: process.env.BLYTHE_BANK_NAME || "Kotak Mahindra Bank",
-    account: process.env.BLYTHE_BANK_ACCOUNT || "", // configured via env
-    ifsc: process.env.BLYTHE_BANK_IFSC || "",       // configured via env
-    branch: process.env.BLYTHE_BANK_BRANCH || "Delhi",
+    account: process.env.BLYTHE_BANK_ACCOUNT || "9868104364",
+    ifsc: process.env.BLYTHE_BANK_IFSC || "KKBK0000208",
+    branch: process.env.BLYTHE_BANK_BRANCH || "Pitampura, Delhi",
   },
   terms: [
     "We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.",
