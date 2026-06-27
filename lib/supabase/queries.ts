@@ -442,12 +442,25 @@ export async function getProductBySku(sku: string): Promise<
   | null
 > {
   const sb = supabaseServer();
-  const { data } = await sb
+  // Rich select (subcategory + labels). If ANY embedded column/table is out of sync in the
+  // deployed DB (e.g. subcategories.image_style or the product_labels table), PostgREST fails
+  // the WHOLE query and returns null — which would make every storefront product page 404.
+  // So we fall back to a minimal, always-valid select that still returns everything the
+  // product page needs (category, variants, images). The page must never 404 a real product
+  // just because an optional admin-only column drifted.
+  const rich = await sb
     .from("products")
     .select("*, category:categories(id,name,slug), subcategory:subcategories(name,slug,image_style), variants(*), images:product_images(*), product_labels(label_id)")
     .eq("sku", sku)
     .maybeSingle();
-  return (data as any) ?? null;
+  if (rich.data) return rich.data as any;
+
+  const basic = await sb
+    .from("products")
+    .select("*, category:categories(id,name,slug), variants(*), images:product_images(*)")
+    .eq("sku", sku)
+    .maybeSingle();
+  return (basic.data as any) ?? null;
 }
 
 export async function getProductSkus(): Promise<{ sku: string; slug: string }[]> {
@@ -931,7 +944,7 @@ export async function getRecommendations(sku: string, n = 4): Promise<StoreProdu
     const subId = (self as any).subcategory_id;
     const byStock = (arr: StoreProduct[]) => [...arr].sort((a, b) => (b.qty > 0 ? 1 : 0) - (a.qty > 0 ? 1 : 0));
     const sameSub = subId ? others.filter((p) => (p as any).subcategory_id === subId) : [];
-    const sameCat = others.filter((p) => p.category.slug === self.category.slug && !sameSub.some((s) => s.sku === p.sku));
+    const sameCat = others.filter((p) => p.category?.slug && p.category.slug === self.category?.slug && !sameSub.some((s) => s.sku === p.sku));
     const rest = others.filter((p) => !sameSub.some((s) => s.sku === p.sku) && !sameCat.some((s) => s.sku === p.sku));
     ranked = [...byStock(sameSub), ...byStock(sameCat), ...byStock(rest)];
   }

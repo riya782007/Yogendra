@@ -25,7 +25,16 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 export default async function ProductPage({ params }: Params) {
   const [p, formula] = await Promise.all([getProductBySku(params.sku), getPricingFormula()]);
   if (!p) notFound();
-  const [reviews, related] = await Promise.all([getProductReviews(p.id), getRecommendations(p.sku, 4)]);
+  // Reviews + recommendations are secondary — a failure in either must NEVER take down the
+  // whole product page. Degrade gracefully to empty.
+  const [reviews, related] = await Promise.all([
+    getProductReviews(p.id).catch(() => ({ avg: 4.6, count: 0, list: [] as any[], dist: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 } as Record<number, number> })),
+    getRecommendations(p.sku, 4).catch(() => [] as any[]),
+  ]);
+
+  // Category should always be present (FK), but never let a missing relation 500 the page.
+  const catSlug = p.category?.slug ?? "all";
+  const catName = p.category?.name ?? "Jewellery";
 
   const colors = (p.variants ?? []).map((v) => v.color ?? "").filter(Boolean);
   const content = resolveProductContent({ name: p.name, sku: p.sku, categoryName: p.category?.name, colors, generated_content: p.generated_content });
@@ -49,7 +58,7 @@ export default async function ProductPage({ params }: Params) {
   
 
   const jsonLd = {
-    "@context": "https://schema.org", "@type": "Product", name: p.name, sku: p.sku, category: p.category?.name,
+    "@context": "https://schema.org", "@type": "Product", name: p.name, sku: p.sku, category: catName,
     description: content.seo.metaDescription, keywords: content.seo.keywords.join(", "), brand: { "@type": "Brand", name: "Blythe Diva" },
     aggregateRating: { "@type": "AggregateRating", ratingValue: reviews.avg, reviewCount: reviews.count },
     offers: { "@type": "Offer", priceCurrency: "INR", price: (o.price / 100).toFixed(2), availability: p.qty > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock" },
@@ -62,7 +71,7 @@ export default async function ProductPage({ params }: Params) {
         <Back label="Back" />
         <nav className="text-xs text-muted">
           <Link href="/shop" className="hover:text-emerald">Home</Link> /{" "}
-          <Link href={`/shop/c/${p.category.slug}`} className="hover:text-emerald">{p.category.name}</Link> / <span className="text-ink">{p.sku}</span>
+          <Link href={`/shop/c/${catSlug}`} className="hover:text-emerald">{catName}</Link> / <span className="text-ink">{p.sku}</span>
         </nav>
       </div>
 
@@ -70,7 +79,7 @@ export default async function ProductPage({ params }: Params) {
         <div className="animate-fadeIn md:sticky md:top-24 self-start"><Gallery name={p.name} images={galleryImages} /></div>
 
         <div className="md:py-2">
-          <p className="text-[11px] uppercase tracking-[0.2em] text-gold-dark">{p.category.name} · {p.sku}</p>
+          <p className="text-[11px] uppercase tracking-[0.2em] text-gold-dark">{catName} · {p.sku}</p>
           <h1 className="font-display text-4xl text-ink mt-1 leading-tight">{content.title}</h1>
           <div className="mt-3 flex items-center gap-3">
             <Stars rating={reviews.avg} count={reviews.count} size="md" />
@@ -84,7 +93,7 @@ export default async function ProductPage({ params }: Params) {
           </div>
           <p className="text-xs text-muted mt-1">Inclusive of all taxes · You save {formatPaise(o.savings)}</p>
 
-          <BuyBox variants={variantsForBuy} waText={waText} waHref={waHref} item={{ sku: p.sku, name: p.name, price: o.price, category: p.category.slug }} />
+          <BuyBox variants={variantsForBuy} waText={waText} waHref={waHref} item={{ sku: p.sku, name: p.name, price: o.price, category: catSlug }} />
 
           <div className="mt-7 border-t border-sand pt-5">
             <p className="text-ink/80 leading-relaxed">{content.description}</p>
