@@ -235,7 +235,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
               {/* Per-variant photos (#16) — reliable client uploader (compress + feedback, fixes large/HEIC) */}
               <div className="flex flex-wrap items-center gap-2 mt-2.5">
                 <VariantPhotos variantId={v.id} productSku={p.sku} color={v.color ?? null} images={imgs} />
-                {can(session, "catalog.ai") && <VariantAiPhoto variantId={v.id} color={v.color ?? null} />}
+                {can(session, "catalog.ai") && <VariantAiPhoto variantId={v.id} color={v.color ?? null} size={v.size ?? null} polish={v.polish ?? null} />}
               </div>
             </div>
           );

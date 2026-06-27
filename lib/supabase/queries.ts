@@ -181,11 +181,23 @@ export async function getCustomerById(id: string) {
   const list = [...((byId.data as any[]) ?? []), ...((byPhone.data as any[]) ?? [])]
     .filter((o) => (seen.has(o.id) ? false : (seen.add(o.id), true)))
     .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  // Pillar 8 — customer ledger view of "outstanding". Compute it from the actual orders
+  // (sum of bill total - amount paid across non-cancelled orders) so partial payments and
+  // unpaid invoices roll up automatically. The DB column `credit_balance` is now a
+  // *manual override* (advance received, store credit, hand-entered adjustment) — kept as
+  // a fallback so existing data continues to display.
+  const outstandingFromOrders = list
+    .filter((o: any) => o.status !== "cancelled" && o.status !== "void")
+    .reduce((s: number, o: any) => s + Math.max(0, (o.total ?? 0) - (o.amount_paid ?? 0)), 0);
   return {
     customer: c,
     orders: list,
     totalSpent: list.reduce((s, o) => s + (o.total ?? 0), 0),
     orderCount: list.length,
+    /** Computed: ₹ owed by this customer right now, summed across their unpaid/partially-paid bills. */
+    outstanding: outstandingFromOrders,
+    /** Manual override stored on the customers row — used for store credit / advance / adjustments. */
+    creditAdjustment: (c as any).credit_balance ?? 0,
   };
 }
 
@@ -688,9 +700,22 @@ export async function getOrder(id: string) {
 }
 
 // ---------- estimates + returns ----------
-export async function getEstimates() {
+/** Estimate register. Sort whitelist mirrors the sales register so headers feel consistent.
+ *  Field options: ref / customer / date / amount; direction "_asc"|"_desc". Default is newest-first. */
+const ESTIMATES_SORT: Record<string, string> = {
+  ref: "id",
+  customer: "customer_name",
+  date: "created_at",
+  amount: "total",
+};
+export async function getEstimates(opts: { sort?: string } = {}) {
   const sb = supabaseServer();
-  const { data } = await sb.from("estimates").select("id,customer_name,customer_phone,total,status,gst,order_id,notes,created_at").order("created_at", { ascending: false }).limit(200);
+  const [field, dir] = (opts.sort ?? "").split("_");
+  const col = ESTIMATES_SORT[field] ?? "created_at";
+  const asc = col === "created_at" ? dir === "asc" : dir !== "desc";
+  let q = sb.from("estimates").select("id,customer_name,customer_phone,total,status,gst,order_id,notes,created_at").order(col, { ascending: asc, nullsFirst: false });
+  if (col !== "created_at") q = q.order("created_at", { ascending: false });
+  const { data } = await q.limit(200);
   return (data as any[]) ?? [];
 }
 export async function getEstimate(id: string) {

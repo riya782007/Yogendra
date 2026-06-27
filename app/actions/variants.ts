@@ -7,6 +7,22 @@ import { buildVariantImagePrompt } from "@/lib/ai/imagePrompt";
 
 const BUCKET = "product-media";
 
+/** Ensure the variants/product-images bucket exists AND is public.
+ *
+ *  Why this is a function (not just `createBucket(... public:true)`): a previous run may have
+ *  created the bucket with `public: false`, and `createBucket` errors on existing buckets
+ *  (which we swallow). Without `updateBucket`, every subsequent upload would land in a
+ *  bucket where `getPublicUrl(...)` returns a URL that 404s for end users — exactly the
+ *  "image uploaded but won't load" symptom reported (Pillar 16).
+ *  This helper is idempotent and cheap; we call it everywhere we put bytes in. */
+async function ensureMediaBucket(sb: ReturnType<typeof supabaseServer>) {
+  const created = await sb.storage.createBucket(BUCKET, { public: true }).catch(() => null);
+  if (created === null || (created && (created as any).error)) {
+    // Already existed — make sure it's public.
+    await sb.storage.updateBucket(BUCKET, { public: true }).catch(() => {});
+  }
+}
+
 /** Build a readable variant SKU suffix from whichever attribute is present. */
 function autoSku(productSku: string, label: string): string {
   return `${productSku}-${label.replace(/[^a-z0-9]/gi, "").slice(0, 5).toUpperCase() || "VAR"}`;
@@ -96,7 +112,7 @@ export async function addVariantImageAction(formData: FormData): Promise<{ ok: b
   const sb = supabaseServer();
   const files = formData.getAll("images").filter((f): f is File => f instanceof File && f.size > 0);
   if (!files.length) return { ok: false, error: "No image selected." };
-  await sb.storage.createBucket(BUCKET, { public: true }).catch(() => {});
+  await ensureMediaBucket(sb);
   const { data: v } = await sb.from("variants").select("image_paths").eq("id", id).maybeSingle();
   if (!v) return { ok: false, error: "Variant not found." };
   const paths: string[] = [...(((v as any)?.image_paths as string[]) ?? [])];
@@ -131,11 +147,12 @@ export async function deleteVariantImageAction(formData: FormData): Promise<void
 export type VariantImgResult = { ok: boolean; reason?: string; error?: string; url?: string };
 
 /**
- * Module 3 — generate a professional per-colour product photo for ONE variant via Gemini
- * (OpenAI fallback). Uses the parent product's best existing photo as the design reference and
- * re-renders it in the variant's colour, so customers can view each colour individually.
- * The new image is appended to the variant's image_paths and shows everywhere the variant does
- * (product page swatch gallery, wholesale, inventory). Invoked only by an explicit button.
+ * Module 3 — generate a professional per-variant product photo via Gemini
+ * (OpenAI fallback). Uses the parent product's best existing photo as the design reference
+ * and re-renders it with the variant's attributes (colour and/or size/polish), so customers
+ * can view each variation individually. The new image is appended to the variant's
+ * image_paths and shows everywhere the variant does (product page swatch gallery, wholesale,
+ * inventory). Invoked only by an explicit button.
  */
 export async function generateVariantImageAction(variantId: string): Promise<VariantImgResult> {
   if (!(await requirePerm("catalog.ai"))) return { ok: false, reason: "not_permitted" };
@@ -144,12 +161,17 @@ export async function generateVariantImageAction(variantId: string): Promise<Var
 
   const { data: v } = await sb
     .from("variants")
-    .select("id, color, sku, image_paths, product_id")
+    .select("id, color, size, polish, sku, image_paths, product_id")
     .eq("id", variantId)
     .maybeSingle();
   if (!v) return { ok: false, reason: "not_found" };
   const color = String((v as any).color ?? "").trim();
-  if (!color) return { ok: false, reason: "no_color" };
+  const size = String((v as any).size ?? "").trim();
+  const polish = String((v as any).polish ?? "").trim();
+  // Pillar 16: allow AI photos for any variant that has at least one distinguishing
+  // attribute — colour OR size OR polish. The previous version required `color`, which left
+  // size/polish-only variants without a way to get an AI image.
+  if (!color && !size && !polish) return { ok: false, reason: "no_attribute" };
 
   const { data: prod } = await sb
     .from("products")
@@ -184,11 +206,11 @@ export async function generateVariantImageAction(variantId: string): Promise<Var
     return { ok: false, reason: "no_source" };
   }
 
-  const prompt = buildVariantImagePrompt({ category: categorySlug, color, aspect: "1:1" });
+  const prompt = buildVariantImagePrompt({ category: categorySlug, color: color || size || polish, aspect: "1:1" });
   const result = await generateImage({ prompt, referenceBase64, referenceMime, aspectRatio: "1:1" });
   if (!result.ok) return { ok: false, reason: result.reason, error: result.error };
 
-  await sb.storage.createBucket(BUCKET, { public: true }).catch(() => {});
+  await ensureMediaBucket(sb);
   const ext = result.mime.includes("png") ? "png" : "jpg";
   const path = `variants/${variantId}/ai-${Date.now()}.${ext}`;
   const up = await sb.storage

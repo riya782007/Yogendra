@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { getOrder } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { PrintButton } from "@/components/admin/PrintButton";
-import { BUSINESS, HSN_JEWELLERY, GST_RATE, gstSplit, gstSplitExclusive, stateCodeFromGstin, amountInWords } from "@/lib/business";
+import { BUSINESS, HSN_JEWELLERY, GST_RATE, gstSplit, gstSplitExclusive, stateCodeFromGstin, stateNameFromCode, bankHasDetails, amountInWords } from "@/lib/business";
 import { getSession, can } from "@/lib/auth";
 import { recordPaymentAction, setDocTypeAction, saveOrderNoteAction, setBillTypeAction } from "@/app/actions/payments";
 
@@ -76,7 +76,7 @@ export default async function Invoice({ params }: { params: { id: string } }) {
               <div className="flex justify-between"><span className="text-muted">Date</span><span className="text-ink">{date}</span></div>
               <div className="flex justify-between"><span className="text-muted">Payment mode</span><span className="text-ink">{String(order.payment_mode || "—").toUpperCase()}</span></div>
               <div className="flex justify-between"><span className="text-muted">Channel</span><span className="text-ink capitalize">{order.channel}</span></div>
-              {!isCash && <div className="flex justify-between"><span className="text-muted">Place of supply</span><span className="text-ink">{BUSINESS.stateName} ({buyerStateCode || BUSINESS.stateCode})</span></div>}
+              {!isCash && <div className="flex justify-between"><span className="text-muted">Place of supply</span><span className="text-ink">{stateNameFromCode(buyerStateCode || BUSINESS.stateCode)} ({buyerStateCode || BUSINESS.stateCode})</span></div>}
             </div>
           </div>
 
@@ -129,11 +129,11 @@ export default async function Invoice({ params }: { params: { id: string } }) {
             <div className="text-xs">
               <p className="text-muted mb-1">Amount in words</p>
               <p className="text-ink font-medium">{amountInWords(roundedTotal)}</p>
-              {!isCash && (
+              {!isCash && bankHasDetails() && (
                 <div className="mt-4">
                   <p className="text-muted mb-1">Bank details</p>
-                  <p className="text-ink">{BUSINESS.bank.name}{BUSINESS.bank.account ? ` · A/C ${BUSINESS.bank.account}` : ""}</p>
-                  {(BUSINESS.bank.ifsc || BUSINESS.bank.branch) && <p className="text-ink">{[BUSINESS.bank.ifsc && `IFSC ${BUSINESS.bank.ifsc}`, BUSINESS.bank.branch].filter(Boolean).join(" · ")}</p>}
+                  <p className="text-ink">{BUSINESS.bank.name} · A/C {BUSINESS.bank.account}</p>
+                  <p className="text-ink">{[BUSINESS.bank.ifsc && `IFSC ${BUSINESS.bank.ifsc}`, BUSINESS.bank.branch].filter(Boolean).join(" · ")}</p>
                 </div>
               )}
             </div>

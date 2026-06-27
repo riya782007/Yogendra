@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { generateVariantImageAction } from "@/app/actions/variants";
 
 const REASON: Record<string, string> = {
+  no_attribute: "Add a colour, size, or polish to this variant first.",
   no_color: "Add a colour to this variant first.",
   no_source: "Add a product photo first (the AI recolours that).",
   no_key: "No image AI key configured.",
@@ -15,16 +16,29 @@ const REASON: Record<string, string> = {
 };
 
 /**
- * Module 3 — one-tap "Generate {colour} photo" for a variant. Shows live progress
- * (Gemini takes a few seconds) and refreshes the page when the new colour image lands.
+ * Module 3 — one-tap "Generate {attribute} photo" for a variant. Shows live progress
+ * (Gemini takes a few seconds) and refreshes the page when the new image lands.
  */
-export default function VariantAiPhoto({ variantId, color }: { variantId: string; color: string | null }) {
+export default function VariantAiPhoto({
+  variantId,
+  color,
+  size,
+  polish,
+}: {
+  variantId: string;
+  color: string | null;
+  size?: string | null;
+  polish?: string | null;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  if (!color) return null; // colour-swatch image only makes sense for colour variants
+  // Pillar 16: the AI button is available for any variant that has at least one
+  // distinguishing attribute (colour OR size OR polish), not only colour.
+  const label = (color || size || polish || "").trim();
+  if (!label) return null;
 
   async function run() {
     setMsg(null);
@@ -49,15 +63,15 @@ export default function VariantAiPhoto({ variantId, color }: { variantId: string
         onClick={run}
         disabled={working}
         className="px-2.5 py-1.5 rounded-lg bg-gold/15 text-gold-dark text-xs font-medium hover:bg-gold/25 disabled:opacity-60 inline-flex items-center gap-1.5"
-        title={`Generate a professional ${color} photo with AI`}
+        title={`Generate a professional ${label} photo with AI`}
       >
         {working ? (
           <>
             <span className="h-3 w-3 rounded-full border-2 border-gold-dark/40 border-t-gold-dark animate-spin" />
-            Generating {color}…
+            Generating {label}…
           </>
         ) : (
-          <>✨ AI {color} photo</>
+          <>✨ AI {label} photo</>
         )}
       </button>
       {msg === "done" ? (

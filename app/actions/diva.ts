@@ -270,13 +270,13 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
           await sb.from("variants").update({ qty: newV }).eq("id", v.id);
           const sum = variants.reduce((n, x) => n + (x.id === v.id ? newV : (x.qty ?? 0)), 0);
           await sb.from("products").update({ qty: sum, last_movement_at: new Date().toISOString() }).eq("id", pid);
-          await sb.from("stock_adjustments").insert({ product_id: pid, variant_id: v.id, sku: v.sku, delta, kind: "adjust", source: String(args.source ?? "DIVA command"), reason: `${toolName === "add_stock" ? "Added to" : "Removed from"} ${v.color} by DIVA` });
+          await sb.from("stock_adjustments").insert({ product_id: pid, variant_id: v.id, sku: v.sku, delta, kind: "adjustment", source: String(args.source ?? "DIVA command"), reason: `${toolName === "add_stock" ? "Added to" : "Removed from"} ${v.color} by DIVA` });
           revalidatePath("/admin/inventory");
           return { ok: true, message: `${toolName === "add_stock" ? "Added" : "Removed"} ${qty} ${v.color} — ${(p as any).name} ${v.color} is now ${newV} (total ${sum}).` };
         }
         const newQty = Math.max(0, ((p as any).qty ?? 0) + delta);
         await sb.from("products").update({ qty: newQty, last_movement_at: new Date().toISOString() }).eq("id", pid);
-        await sb.from("stock_adjustments").insert({ product_id: pid, sku, delta, source: String(args.source ?? "DIVA command"), reason: "Adjusted by DIVA" });
+        await sb.from("stock_adjustments").insert({ product_id: pid, sku, delta, kind: "adjustment", source: String(args.source ?? "DIVA command"), reason: "Adjusted by DIVA" });
         revalidatePath("/admin/inventory");
         return { ok: true, message: `${toolName === "add_stock" ? "Added" : "Removed"} ${qty} — ${(p as any).name} is now ${newQty} in stock.` };
       }
@@ -398,7 +398,7 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         const sb = supabaseServer();
         const newQty = Math.max(0, (p.qty ?? 0) + delta);
         await sb.from("products").update({ qty: newQty, last_movement_at: new Date().toISOString() }).eq("id", p.id);
-        await sb.from("stock_adjustments").insert({ product_id: p.id, sku: p.sku, delta, source: String(args.source ?? "DIVA command"), reason: "Adjusted by DIVA (by name)" });
+        await sb.from("stock_adjustments").insert({ product_id: p.id, sku: p.sku, delta, kind: "adjustment", source: String(args.source ?? "DIVA command"), reason: "Adjusted by DIVA (by name)" });
         revalidatePath("/admin/inventory");
         return { ok: true, message: `${delta > 0 ? "Added" : "Removed"} ${qty} — ${p.name} (${p.sku}) is now ${newQty} in stock.` };
       }
@@ -471,13 +471,13 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
           await sb.from("variants").update({ qty: newQty }).eq("id", v.id);
           const sum = variants.reduce((n, x) => n + (x.id === v.id ? newQty : (x.qty ?? 0)), 0);
           await sb.from("products").update({ qty: sum, last_movement_at: new Date().toISOString() }).eq("id", target.id);
-          await sb.from("stock_adjustments").insert({ product_id: target.id, variant_id: v.id, sku: v.sku, delta, kind: "adjust", source: "DIVA set stock", reason: `Set ${v.color} to exact count by DIVA` });
+          await sb.from("stock_adjustments").insert({ product_id: target.id, variant_id: v.id, sku: v.sku, delta, kind: "adjustment", source: "DIVA set stock", reason: `Set ${v.color} to exact count by DIVA` });
           revalidatePath("/admin/inventory");
           return { ok: true, message: `${target.name} ${v.color} set to ${newQty} (total ${sum}).` };
         }
         const delta = newQty - (target.qty ?? 0);
         await sb.from("products").update({ qty: newQty, last_movement_at: new Date().toISOString() }).eq("id", target.id);
-        await sb.from("stock_adjustments").insert({ product_id: target.id, sku: target.sku, delta, source: "DIVA set stock", reason: "Set to exact count by DIVA" });
+        await sb.from("stock_adjustments").insert({ product_id: target.id, sku: target.sku, delta, kind: "adjustment", source: "DIVA set stock", reason: "Set to exact count by DIVA" });
         revalidatePath("/admin/inventory");
         return { ok: true, message: `${target.name} (${target.sku}) stock set to ${newQty}${delta ? ` (${delta > 0 ? "+" : ""}${delta})` : ""}.` };
       }
