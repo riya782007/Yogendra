@@ -1,0 +1,12 @@
+-- Phase 2 (#2/#29): block billing more than is in stock, across every channel.
+-- A new p_allow_oversell flag (default false) lets the owner deliberately backorder.
+-- Applied to: place_order, place_wholesale_order, convert_estimate_v2.
+-- (Full function bodies applied via Supabase migration 0006_overselling_guard.)
+
+-- place_order: guards each line; raises a human-readable error naming the SKU,
+--   available qty and billed qty when stock is insufficient and backorder is off.
+-- place_wholesale_order: same guard for the wholesale portal.
+-- convert_estimate_v2: pre-validates every estimate line before billing (atomic).
+--
+-- See git history / Supabase migration list for the authoritative bodies.
+-- Re-running the CREATE OR REPLACE statements is safe (idempotent).

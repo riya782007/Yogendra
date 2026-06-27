@@ -26,7 +26,8 @@ type Variant = { id: string; sku: string; color: string | null; qty: number };
 export function ProductStockAdjust({ sku, qty, variants = [] }: { sku: string; qty: number; variants?: Variant[] }) {
   const [sign, setSign] = useState<1 | -1>(1);
   const [n, setN] = useState(1);
-  const [variantId, setVariantId] = useState("");
+  // Products with colours are managed per colour — default to the first colour, no "whole product".
+  const [variantId, setVariantId] = useState(variants[0]?.id ?? "");
   const fld = "rounded-xl border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-emerald";
 
   const selected = variants.find((v) => v.id === variantId);
@@ -47,7 +48,6 @@ export function ProductStockAdjust({ sku, qty, variants = [] }: { sku: string; q
         {variants.length > 0 && (
           <label className="text-xs text-muted">Apply to
             <select value={variantId} onChange={(e) => setVariantId(e.target.value)} className={`${fld} w-full mt-1`}>
-              <option value="">Whole product</option>
               {variants.map((v) => <option key={v.id} value={v.id}>{v.color ?? v.sku} ({v.qty})</option>)}
             </select>
           </label>

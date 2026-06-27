@@ -2,10 +2,12 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Script from "next/script";
 import { useCart } from "@/components/cart/CartContext";
 import { formatPaise } from "@/lib/pricing";
 import { Back } from "@/components/site/Back";
 import { placeOrderAction } from "@/app/actions/orders";
+import { createRazorpayOrderAction, confirmRazorpayAction } from "@/app/actions/checkoutOnline";
 
 export default function Checkout() {
   const { items, total, clear } = useCart();
@@ -18,10 +20,48 @@ export default function Checkout() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault(); setErr(""); setBusy(true);
-    const res = await placeOrderAction({
-      items: items.map((i) => ({ sku: i.sku, qty: i.qty, color: i.color })),
-      customer: f, payment,
-    });
+    const cartItems = items.map((i) => ({ sku: i.sku, qty: i.qty, color: i.color }));
+
+    // ---- Pay Online (Razorpay) ----
+    if (payment === "online") {
+      const created = await createRazorpayOrderAction(cartItems);
+      if (!created.ok) { setBusy(false); setErr(created.error ?? "Couldn't start the payment."); return; }
+      const RZP = (window as any).Razorpay;
+      if (!RZP) { setBusy(false); setErr("Payment is still loading — please try again in a moment."); return; }
+      const rzp = new RZP({
+        key: created.keyId,
+        amount: created.amount,
+        currency: created.currency,
+        order_id: created.orderId,
+        name: "Blythe Diva",
+        description: "Jewellery order",
+        prefill: { name: f.name, contact: f.phone },
+        notes: { address: f.address },
+        theme: { color: "#0f766e" },
+        handler: async (resp: any) => {
+          setErr("");
+          const conf = await confirmRazorpayAction({
+            items: cartItems, customer: f,
+            razorpay_order_id: resp.razorpay_order_id,
+            razorpay_payment_id: resp.razorpay_payment_id,
+            razorpay_signature: resp.razorpay_signature,
+          });
+          setBusy(false);
+          if (!conf.ok) { setErr(conf.error ?? "We couldn't confirm your order — please contact us."); return; }
+          clear(); router.push(`/order/${conf.orderId}`);
+        },
+        modal: { ondismiss: () => setBusy(false) },
+      });
+      rzp.on("payment.failed", (r: any) => {
+        setBusy(false);
+        setErr(r?.error?.description ?? "Payment failed. Please try again or choose Cash on Delivery.");
+      });
+      rzp.open();
+      return; // stays busy until the modal resolves
+    }
+
+    // ---- Cash on Delivery ----
+    const res = await placeOrderAction({ items: cartItems, customer: f, payment });
     setBusy(false);
     if (!res.ok) { setErr(res.error ?? "Something went wrong"); return; }
     clear(); router.push(`/order/${res.orderId}`);
@@ -38,6 +78,7 @@ export default function Checkout() {
   const input = "w-full rounded-xl border border-sand px-4 py-2.5 text-sm bg-white outline-none focus:border-emerald transition-colors";
   return (
     <div className="max-w-5xl mx-auto px-5 py-8">
+      <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="afterInteractive" />
       <div className="mb-4"><Back label="Back to shopping" /></div>
       <h1 className="font-display text-4xl text-ink mb-6">Checkout</h1>
       <div className="grid md:grid-cols-2 gap-10">
@@ -56,7 +97,7 @@ export default function Checkout() {
               <button type="button" key={p} onClick={() => setPayment(p)}
                 className={`rounded-xl border px-4 py-3 text-sm text-left transition-all ${payment === p ? "border-emerald bg-emerald-mist" : "border-sand hover:border-gold"}`}>
                 <span className="font-medium block text-ink">{p === "cod" ? "Cash on Delivery" : "Pay Online"}</span>
-                <span className="text-xs text-muted">{p === "cod" ? "Pay when it arrives" : "UPI / Card (demo)"}</span>
+                <span className="text-xs text-muted">{p === "cod" ? "Pay when it arrives" : "UPI / Card / Netbanking"}</span>
               </button>
             ))}
           </div>

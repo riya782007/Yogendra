@@ -2,6 +2,7 @@
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 import { sendPurchase } from "@/lib/ga4";
+import { notifyOrderPlaced } from "@/lib/whatsapp";
 
 export type PlaceOrderInput = {
   items: { sku: string; qty: number; color?: string }[];
@@ -18,10 +19,16 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
     p_customer: input.customer,
     p_channel: "retail",
     p_payment: input.payment,
+    p_allow_oversell: false, // online retail never oversells
+    p_tier: "retail",
   });
   if (error) return { ok: false, error: error.message };
   const orderId = (data as any)?.order_id, total = (data as any)?.total;
   await sendPurchase({ orderId, valuePaise: total, channel: "retail", items: input.items.map((i) => ({ sku: i.sku, qty: i.qty })) });
+  await notifyOrderPlaced({
+    orderId, customerName: input.customer.name, customerPhone: input.customer.phone,
+    totalPaise: total, payment: input.payment, itemCount: input.items.reduce((n, i) => n + i.qty, 0),
+  }).catch(() => {});
   return { ok: true, orderId, total };
 }
 
@@ -33,6 +40,10 @@ export async function posSaleAction(input: {
   buyerGstin?: string;
   buyerAddress?: string;
   amountPaidRupees?: number; // partial/advance; defaults to full
+  allowOversell?: boolean; // owner opt-in to bill beyond stock (backorder)
+  tier?: "retail" | "wholesale"; // price list to bill at (#16)
+  payCashRupees?: number; // split tender — cash portion (#14/#37)
+  payBankRupees?: number; // split tender — UPI/card/bank portion (#14/#37)
 }): Promise<{ ok: boolean; orderId?: string; total?: number; error?: string }> {
   if (!(await requirePerm("billing.sell"))) return { ok: false, error: "Your role can't ring up POS sales." };
   if (!input.items?.length) return { ok: false, error: "Add at least one item" };
@@ -40,6 +51,7 @@ export async function posSaleAction(input: {
   const sb = supabaseServer();
   const { data, error } = await sb.rpc("place_order", {
     p_items: input.items, p_customer: input.customer ?? {}, p_channel: "pos", p_payment: input.payment || "cash",
+    p_allow_oversell: !!input.allowOversell, p_tier: input.tier === "wholesale" ? "wholesale" : "retail",
   });
   if (error) return { ok: false, error: error.message };
   const orderId = (data as any)?.order_id, total = (data as any)?.total;
@@ -65,10 +77,23 @@ export async function posSaleAction(input: {
     }
   }
 
-  // Amount received now (defaults to full payment at the counter).
-  const amountPaid = input.amountPaidRupees != null
-    ? Math.min(total as number, Math.max(0, Math.round(input.amountPaidRupees * 100)))
-    : (total as number);
+  // Split tender (#14/#37): cash vs bank (UPI/card). If a split is supplied it drives
+  // the amount paid; otherwise fall back to a single "amount received" at one mode.
+  const splitGiven = input.payCashRupees != null || input.payBankRupees != null;
+  let payCash = Math.max(0, Math.round((input.payCashRupees ?? 0) * 100));
+  let payBank = Math.max(0, Math.round((input.payBankRupees ?? 0) * 100));
+  const amountPaid = splitGiven
+    ? Math.min(total as number, payCash + payBank)
+    : (input.amountPaidRupees != null
+        ? Math.min(total as number, Math.max(0, Math.round(input.amountPaidRupees * 100)))
+        : (total as number));
+  // For a single-mode sale, attribute the whole receipt to the right bucket.
+  if (!splitGiven) {
+    if ((input.payment || "cash") === "cash") payCash = amountPaid; else payBank = amountPaid;
+  }
+  const payMode = splitGiven
+    ? (payCash > 0 && payBank > 0 ? "split" : payBank > 0 ? "upi" : "cash")
+    : (input.payment || "cash");
 
   await sb.from("orders").update({
     bill_type: billType,
@@ -77,6 +102,9 @@ export async function posSaleAction(input: {
     buyer_state: buyerState,
     customer_id: customerId,
     amount_paid: amountPaid,
+    payment_mode: payMode,
+    pay_cash: payCash,
+    pay_bank: payBank,
   }).eq("id", orderId);
   await sb.rpc("assign_invoice_no", { p_order: orderId });
 

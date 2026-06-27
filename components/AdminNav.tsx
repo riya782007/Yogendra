@@ -16,7 +16,10 @@ const GROUPS: { title: string; links: L[] }[] = [
     { href: "/admin/catalogue", label: "Catalogue", icon: "✦", perm: "catalog.view" },
     { href: "/admin/media", label: "Product Photos", icon: "▣", perm: "catalog.ai" },
     { href: "/admin/categories", label: "Categories", icon: "▦", perm: "catalog.edit" },
+    { href: "/admin/colours", label: "Colours & Options", icon: "◧", perm: "catalog.edit" },
+    { href: "/admin/pricing", label: "Pricing formula", icon: "％", perm: "catalog.price_edit" },
     { href: "/admin/inventory", label: "Inventory", icon: "▤", perm: "inventory.view" },
+    { href: "/admin/stock-movements", label: "Stock Movement", icon: "⇅", perm: "inventory.view" },
     { href: "/admin/barcodes", label: "Barcodes", icon: "▥", perm: "inventory.barcode" },
     { href: "/admin/reorder", label: "AI Reorder", icon: "✨", perm: "inventory.view" },
   ]},
@@ -26,6 +29,7 @@ const GROUPS: { title: string; links: L[] }[] = [
     { href: "/admin/estimates", label: "Estimates", icon: "≈", perm: "estimates.create" },
     { href: "/admin/returns", label: "Returns", icon: "⤺", perm: "billing.refund" },
     { href: "/admin/purchases", label: "Purchases", icon: "⇪", perm: "purchases.view" },
+    { href: "/admin/cashbook", label: "Bank & Cash", icon: "₹", perm: "analytics.view" },
   ]},
   { title: "People", links: [
     { href: "/admin/customers", label: "Customers", icon: "♚", perm: "customers.view" },

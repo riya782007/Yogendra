@@ -4,27 +4,35 @@ import { notFound } from "next/navigation";
 import { getOrder } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { PrintButton } from "@/components/admin/PrintButton";
-import { BUSINESS, HSN_JEWELLERY, GST_RATE, gstSplit, stateCodeFromGstin, amountInWords } from "@/lib/business";
+import { BUSINESS, HSN_JEWELLERY, GST_RATE, gstSplit, gstSplitExclusive, stateCodeFromGstin, amountInWords } from "@/lib/business";
 import { getSession, can } from "@/lib/auth";
-import { recordPaymentAction, setDocTypeAction } from "@/app/actions/payments";
+import { recordPaymentAction, setDocTypeAction, saveOrderNoteAction, setBillTypeAction } from "@/app/actions/payments";
 
 export const metadata = { title: "Invoice" };
 
 export default async function Invoice({ params }: { params: { id: string } }) {
   const data = await getOrder(params.id);
   if (!data) notFound();
-  const { order, items } = data;
+  const { order } = data;
+  // #4/#35: list bill lines in A–Z SKU order so picking/checking is predictable.
+  const items = [...data.items].sort((a: any, b: any) => String(a.product?.sku ?? "").localeCompare(String(b.product?.sku ?? "")));
 
   const isCash = order.bill_type === "cash";
   const isProforma = order.doc_type === "proforma";
   const total = order.total as number;
   const paid = order.amount_paid ?? 0;
-  const balanceDue = Math.max(0, total - paid);
-  const payStatus = paid <= 0 ? "Unpaid" : paid >= total ? "Paid" : "Partial";
   const buyerStateCode = order.buyer_state || stateCodeFromGstin(order.buyer_gstin);
-  const g = gstSplit(total, buyerStateCode);
-  const roundedTotal = Math.round(total / 100) * 100;
-  const roundOff = roundedTotal - total;
+  // #13: wholesale (B2B) tax invoices are GST-EXCLUSIVE — the stored total is the
+  // pre-tax wholesale value and GST is added on top. Retail/POS GST invoices stay
+  // GST-INCLUSIVE (the shelf price already includes tax).
+  const gstExclusive = !isCash && order.channel === "wholesale";
+  const g = gstExclusive ? gstSplitExclusive(total, buyerStateCode) : gstSplit(total, buyerStateCode);
+  // What the customer actually owes: inclusive total (or pre-tax + GST when exclusive).
+  const payable = isCash ? total : gstExclusive ? total + g.tax : total;
+  const balanceDue = Math.max(0, payable - paid);
+  const payStatus = paid <= 0 ? "Unpaid" : paid >= payable ? "Paid" : "Partial";
+  const roundedTotal = Math.round(payable / 100) * 100;
+  const roundOff = roundedTotal - payable;
 
   const docTitle = isCash ? "CASH MEMO" : isProforma ? "PROFORMA INVOICE" : "TAX INVOICE";
   const invNo = order.invoice_no || ((isCash ? "CM-" : "INV-") + String(order.id).slice(0, 8).toUpperCase());
@@ -60,7 +68,7 @@ export default async function Invoice({ params }: { params: { id: string } }) {
               <p className="text-xs text-muted mt-0.5">{BUSINESS.legalName}</p>
               <p className="text-xs text-muted mt-1">{BUSINESS.address}</p>
               <p className="text-xs text-ink mt-1"><b>GSTIN:</b> {BUSINESS.gstin}</p>
-              <p className="text-xs text-muted"><b>PAN:</b> {BUSINESS.pan} · State: {BUSINESS.stateName} ({BUSINESS.stateCode})</p>
+              <p className="text-xs text-muted"><b>PAN:</b> {BUSINESS.pan}{BUSINESS.tin ? <> · <b>TIN:</b> {BUSINESS.tin}</> : null} · State: {BUSINESS.stateName} ({BUSINESS.stateCode})</p>
               <p className="text-xs text-muted">{BUSINESS.phone} · {BUSINESS.email}</p>
             </div>
             <div className="p-4 text-xs space-y-1">
@@ -95,12 +103,12 @@ export default async function Invoice({ params }: { params: { id: string } }) {
             </thead>
             <tbody>
               {items.map((it: any, i: number) => {
-                const lineTaxable = isCash ? it.line_total : Math.round(it.line_total / (1 + GST_RATE / 100));
-                const unit = isCash ? it.unit_price : Math.round(it.unit_price / (1 + GST_RATE / 100));
+                const lineTaxable = (isCash || gstExclusive) ? it.line_total : Math.round(it.line_total / (1 + GST_RATE / 100));
+                const unit = (isCash || gstExclusive) ? it.unit_price : Math.round(it.unit_price / (1 + GST_RATE / 100));
                 return (
                   <tr key={i} className="border-b border-sand/60">
                     <td className={`${td} text-muted`}>{i + 1}</td>
-                    <td className={`${td} text-ink`}>{it.product?.name}<span className="text-muted text-xs"> · {it.product?.sku}</span></td>
+                    <td className={`${td} text-ink`}>{it.product?.name} <span className="font-mono font-semibold text-ink bg-cream border border-sand rounded px-1.5 py-0.5 text-[11px] whitespace-nowrap">{it.product?.sku}</span></td>
                     {!isCash && <td className={`${td} text-center text-muted`}>{HSN_JEWELLERY}</td>}
                     <td className={`${td} text-right`}>{it.qty}</td>
                     <td className={`${td} text-right`}>{formatPaise(unit)}</td>
@@ -124,8 +132,8 @@ export default async function Invoice({ params }: { params: { id: string } }) {
               {!isCash && (
                 <div className="mt-4">
                   <p className="text-muted mb-1">Bank details</p>
-                  <p className="text-ink">{BUSINESS.bank.name} · A/C {BUSINESS.bank.account}</p>
-                  <p className="text-ink">IFSC {BUSINESS.bank.ifsc} · {BUSINESS.bank.branch}</p>
+                  <p className="text-ink">{BUSINESS.bank.name}{BUSINESS.bank.account ? ` · A/C ${BUSINESS.bank.account}` : ""}</p>
+                  {(BUSINESS.bank.ifsc || BUSINESS.bank.branch) && <p className="text-ink">{[BUSINESS.bank.ifsc && `IFSC ${BUSINESS.bank.ifsc}`, BUSINESS.bank.branch].filter(Boolean).join(" · ")}</p>}
                 </div>
               )}
             </div>
@@ -139,9 +147,58 @@ export default async function Invoice({ params }: { params: { id: string } }) {
               {roundOff !== 0 && <div className="flex justify-between text-muted"><span>Round off</span><span>{formatPaise(roundOff)}</span></div>}
               <div className="flex justify-between font-semibold text-ink border-t border-sand pt-2 text-base"><span>Grand Total</span><span>{formatPaise(roundedTotal)}</span></div>
               <div className="flex justify-between text-emerald-dark"><span>Amount paid</span><span>{formatPaise(paid)}</span></div>
+              {(order.pay_cash > 0 || order.pay_bank > 0) && (order.pay_cash > 0 && order.pay_bank > 0) && (
+                <div className="flex justify-between text-[11px] text-muted"><span>— Cash {formatPaise(order.pay_cash)} · UPI/Bank {formatPaise(order.pay_bank)}</span><span /></div>
+              )}
               {balanceDue > 0 && <div className="flex justify-between font-semibold text-rose"><span>Balance due</span><span>{formatPaise(balanceDue)}</span></div>}
             </div>
           </div>
+
+          {/* HSN-wise tax summary (GST Rule 46) */}
+          {!isCash && (
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-[11px] border border-sand">
+                <thead className="bg-cream text-muted">
+                  <tr>
+                    <th className="p-2 text-left">HSN/SAC</th>
+                    <th className="p-2 text-right">Taxable Value</th>
+                    {!g.interState ? (<>
+                      <th className="p-2 text-right">CGST&nbsp;Rate</th><th className="p-2 text-right">CGST&nbsp;Amt</th>
+                      <th className="p-2 text-right">SGST&nbsp;Rate</th><th className="p-2 text-right">SGST&nbsp;Amt</th>
+                    </>) : (<>
+                      <th className="p-2 text-right">IGST&nbsp;Rate</th><th className="p-2 text-right">IGST&nbsp;Amt</th>
+                    </>)}
+                    <th className="p-2 text-right">Total&nbsp;Tax</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-t border-sand">
+                    <td className="p-2">{HSN_JEWELLERY}</td>
+                    <td className="p-2 text-right">{formatPaise(g.taxable)}</td>
+                    {!g.interState ? (<>
+                      <td className="p-2 text-right">{GST_RATE / 2}%</td><td className="p-2 text-right">{formatPaise(g.cgst)}</td>
+                      <td className="p-2 text-right">{GST_RATE / 2}%</td><td className="p-2 text-right">{formatPaise(g.sgst)}</td>
+                    </>) : (<>
+                      <td className="p-2 text-right">{GST_RATE}%</td><td className="p-2 text-right">{formatPaise(g.igst)}</td>
+                    </>)}
+                    <td className="p-2 text-right">{formatPaise(g.tax)}</td>
+                  </tr>
+                  <tr className="border-t border-sand bg-cream/50 font-medium">
+                    <td className="p-2 text-ink">Total</td>
+                    <td className="p-2 text-right">{formatPaise(g.taxable)}</td>
+                    {!g.interState ? (<>
+                      <td className="p-2"></td><td className="p-2 text-right">{formatPaise(g.cgst)}</td>
+                      <td className="p-2"></td><td className="p-2 text-right">{formatPaise(g.sgst)}</td>
+                    </>) : (<>
+                      <td className="p-2"></td><td className="p-2 text-right">{formatPaise(g.igst)}</td>
+                    </>)}
+                    <td className="p-2 text-right">{formatPaise(g.tax)}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p className="text-[11px] text-muted mt-1">Tax Amount (in words): {amountInWords(g.tax)}</p>
+            </div>
+          )}
 
           {/* Terms + signature */}
           <div className="grid sm:grid-cols-2 gap-4 mt-6 pt-4 border-t border-sand">
@@ -164,16 +221,43 @@ export default async function Invoice({ params }: { params: { id: string } }) {
         {/* Admin controls (never printed) */}
         {(can(session, "billing.sell") || can(session, "billing.gst")) && (
           <div className="no-print grid sm:grid-cols-2 gap-4 mt-5">
+            {can(session, "billing.sell") && (
+              <div className="bg-white rounded-2xl p-5 shadow-card sm:col-span-2">
+                <h2 className="font-medium text-ink mb-1">Internal note <span className="text-xs text-muted font-normal">· staff only, never printed</span></h2>
+                <form action={saveOrderNoteAction} className="flex flex-col sm:flex-row gap-2 mt-2">
+                  <input type="hidden" name="order_id" value={order.id} />
+                  <textarea name="admin_note" rows={2} defaultValue={order.admin_note ?? ""} placeholder="e.g. balance to be collected on delivery; discount given verbally; replacement piece pending…" className="flex-1 rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald" />
+                  <button className="btn-primary px-4 py-2 text-sm font-medium self-start">Save note</button>
+                </form>
+              </div>
+            )}
             {can(session, "billing.sell") && balanceDue > 0 && (
               <div className="bg-white rounded-2xl p-5 shadow-card">
                 <h2 className="font-medium text-ink mb-1">Record a payment</h2>
                 <p className="text-xs text-muted mb-3">Balance due {formatPaise(balanceDue)}. Log an advance or part-payment.</p>
-                <form action={recordPaymentAction} className="flex items-center gap-2">
+                <form action={recordPaymentAction} className="flex items-center gap-2 flex-wrap">
                   <input type="hidden" name="order_id" value={order.id} />
                   <span className="text-muted">₹</span>
-                  <input name="amount" type="number" min={1} placeholder={String(Math.round(balanceDue / 100))} className="rounded-xl border border-sand px-3 py-2 text-sm w-32 outline-none focus:border-emerald" />
+                  <input name="amount" type="number" min={1} placeholder={String(Math.round(balanceDue / 100))} className="rounded-xl border border-sand px-3 py-2 text-sm w-28 outline-none focus:border-emerald" />
+                  <select name="mode" className="rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald" title="How was it paid?">
+                    <option value="cash">Cash</option>
+                    <option value="bank">Bank</option>
+                    <option value="upi">UPI</option>
+                  </select>
                   <button className="btn-primary px-4 py-2 text-sm font-medium">Record</button>
                 </form>
+              </div>
+            )}
+            {can(session, "billing.gst") && (
+              <div className="bg-white rounded-2xl p-5 shadow-card">
+                <h2 className="font-medium text-ink mb-1">Bill type</h2>
+                <p className="text-xs text-muted mb-3">Currently a <b>{isCash ? "Cash Memo" : "GST Tax Invoice"}</b>. Customer changed their mind? Switch it.</p>
+                <form action={setBillTypeAction}>
+                  <input type="hidden" name="order_id" value={order.id} />
+                  <input type="hidden" name="bill_type" value={isCash ? "gst" : "cash"} />
+                  <button className="px-4 py-2 rounded-full bg-ink/5 text-ink text-sm hover:bg-ink/10">{isCash ? "Convert to GST Tax Invoice →" : "Convert to Cash Memo →"}</button>
+                </form>
+                {isCash && !order.buyer_gstin && <p className="text-[11px] text-gold-dark mt-2">Tip: add the buyer's GSTIN for a complete B2B tax invoice.</p>}
               </div>
             )}
             {can(session, "billing.gst") && !isCash && (
@@ -185,6 +269,14 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                   <input type="hidden" name="doc_type" value={isProforma ? "invoice" : "proforma"} />
                   <button className="px-4 py-2 rounded-full bg-ink/5 text-ink text-sm hover:bg-ink/10">{isProforma ? "Finalise as Tax Invoice →" : "Mark as Proforma"}</button>
                 </form>
+              </div>
+            )}
+            {/* #39: nudge the customer for feedback on WhatsApp */}
+            {can(session, "billing.sell") && order.customer_phone && (
+              <div className="bg-white rounded-2xl p-5 shadow-card">
+                <h2 className="font-medium text-ink mb-1">Ask for feedback</h2>
+                <p className="text-xs text-muted mb-3">Nudge {order.customer_name || "the customer"} on WhatsApp to rate their experience.</p>
+                <a href={`https://wa.me/91${String(order.customer_phone).replace(/\D/g, "").slice(-10)}?text=${encodeURIComponent(`Thank you for shopping with ${BUSINESS.brand}! 💛 We'd love your feedback: ${(process.env.NEXT_PUBLIC_SITE_URL ?? "").replace(/\/$/, "")}/feedback?ref=${invNo}`)}`} target="_blank" rel="noreferrer" className="inline-block px-4 py-2 rounded-full bg-[#25D366] text-white text-sm font-medium">Request on WhatsApp →</a>
               </div>
             )}
           </div>

@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
-import { getStorefront } from "@/lib/supabase/queries";
+import { getStorefront, getWholesaleOrderHistory } from "@/lib/supabase/queries";
+import { supabaseServer } from "@/lib/supabase/server";
 import { resolvePrices, overridesOf, formatPaise } from "@/lib/pricing";
 import { Back } from "@/components/site/Back";
 import { getWholesaleSession } from "@/lib/wholesale";
@@ -7,23 +8,35 @@ import { wholesaleLoginAction } from "@/app/actions/wholesale";
 import { WholesaleCatalog } from "@/components/site/WholesaleCatalog";
 
 export const metadata = { title: "Wholesale — Trade Pricing for Retailers" };
+const WHOLESALE_MIN = 300000; // ₹3,000 in paise (#27)
 
 export default async function Wholesale({ searchParams }: { searchParams: { error?: string } }) {
   const session = await getWholesaleSession();
-  const { products, formula } = await getStorefront();
+  const { products, formula } = await getStorefront({ includeWholesaleOnly: true });
 
   // Logged in & approved → real wholesale catalog with ordering.
   if (session) {
-    const list = products.map((p) => ({
-      sku: p.sku, name: p.name, category: p.category.name, qty: p.qty,
-      price: resolvePrices(p.base_wholesale, formula, overridesOf(p)).wholesaleRate,
-    }));
+    // First real photo per product (wholesalers must see the actual piece).
+    const sb = supabaseServer();
+    const { data: imgRows } = await sb.from("product_images").select("product_id,path,sort");
+    const imgBy = new Map<string, string>();
+    for (const r of ((imgRows as any[]) ?? []).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))) {
+      if (typeof r.path === "string" && r.path.startsWith("http") && !imgBy.has(r.product_id)) imgBy.set(r.product_id, r.path);
+    }
+    const list = products.map((p) => {
+      const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));
+      return {
+        sku: p.sku, name: p.name, category: p.category.name, qty: p.qty,
+        price: ps.wholesaleRate, mrp: ps.mrp, image: imgBy.get((p as any).id) ?? null,
+      };
+    });
+    const history = await getWholesaleOrderHistory(session.id).catch(() => []);
     return (
       <div className="max-w-7xl mx-auto px-5 py-8">
         <div className="mb-4"><Back label="Back to store" /></div>
         <h1 className="font-display text-4xl text-ink mb-1">Wholesale Catalogue</h1>
-        <p className="text-sm text-muted mb-6">Factory-direct trade rates. Enter quantities and place your order — no retail discounts, just your wholesale price.</p>
-        <WholesaleCatalog products={list} customerName={session.name} />
+        <p className="text-sm text-muted mb-6">Factory-direct trade rates. Enter quantities and place your order — ₹3,000 minimum. Your margin vs MRP is shown on every line.</p>
+        <WholesaleCatalog products={list} customerName={session.name} minOrder={WHOLESALE_MIN} history={history} />
       </div>
     );
   }
@@ -34,11 +47,11 @@ export default async function Wholesale({ searchParams }: { searchParams: { erro
   return (
     <div className="max-w-5xl mx-auto px-5 py-8">
       <div className="mb-3"><Back label="Back to store" /></div>
-      <section className="rounded-3xl bg-ink text-cream px-8 py-12 relative overflow-hidden mb-8">
+      <section className="rounded-3xl bg-ink text-cream px-6 sm:px-8 py-10 sm:py-12 relative overflow-hidden mb-8">
         <div className="absolute inset-0 opacity-25" style={{ background: "radial-gradient(circle at 15% 20%, #C8A24C, transparent 38%), radial-gradient(circle at 85% 90%, #0F5C4D, transparent 42%)" }} />
         <div className="relative max-w-2xl">
           <p className="text-gold-light tracking-[0.3em] uppercase text-xs">Blythe Diva · Trade</p>
-          <h1 className="font-display text-5xl mt-2">Wholesale Portal</h1>
+          <h1 className="font-display text-4xl sm:text-5xl mt-2 leading-tight break-words">Wholesale Portal</h1>
           <p className="text-cream/70 mt-3">Factory-direct rates from Sadar Bazar. {products.length} designs live · {formatPaise(totalValue)} stock on hand. Approved retailers sign in to see trade prices and order.</p>
         </div>
       </section>

@@ -31,6 +31,13 @@ export async function getPricingFormula(): Promise<PricingFormula> {
     retailMultiplier: Number(data?.retail_multiplier ?? 2.2),
     mrpMultiplier: Number(data?.mrp_multiplier ?? 2.75),
     roundToPaise: Number(data?.round_to ?? 100),
+    useBuildup: Boolean(data?.use_buildup ?? false),
+    shippingPct: Number(data?.shipping_pct ?? 10),
+    packingPct: Number(data?.packing_pct ?? 11.36),
+    promotionPct: Number(data?.promotion_pct ?? 10.2),
+    resellerPct: Number(data?.reseller_pct ?? 15),
+    customerDiscountPct: Number(data?.customer_discount_pct ?? 5),
+    mrpPct: Number(data?.mrp_pct ?? 25),
   };
 }
 
@@ -41,7 +48,7 @@ export async function getCategories(): Promise<DbCategory[]> {
 }
 
 // ---------- category hierarchy (subcategories) ----------
-export type DbSubcategory = { id: string; category_id: string | null; name: string; slug: string; sort: number };
+export type DbSubcategory = { id: string; category_id: string | null; name: string; slug: string; sort: number; image_style?: string };
 export type CategoryNode = DbCategory & { sort?: number; subcategories: DbSubcategory[]; productCount?: number };
 
 /** Parent categories, each with their ordered subcategories — for the management UI + filters. */
@@ -49,7 +56,7 @@ export async function getCategoryTree(): Promise<CategoryNode[]> {
   const sb = supabaseServer();
   const [{ data: cats }, { data: subs }] = await Promise.all([
     sb.from("categories").select("id,name,slug,sort,parent_id").order("sort").order("name"),
-    sb.from("subcategories").select("id,category_id,name,slug,sort").order("sort").order("name"),
+    sb.from("subcategories").select("id,category_id,name,slug,sort,image_style").order("sort").order("name"),
   ]);
   const subList = (subs as DbSubcategory[]) ?? [];
   // Only top-level categories (parent_id null) are roots; nested categories are ignored here.
@@ -106,7 +113,7 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
   const formula = await getPricingFormula();
   let query = sb.from("products")
     .select("id,sku,name,qty,base_wholesale,wholesale_override,retail_override,mrp_override,generated_content,category:categories(name,slug),subcategory:subcategories(name,slug),images:product_images(path,kind,sort)")
-    .eq("status", "published").order("sku");
+    .eq("status", "published").eq("wholesale_only", false).order("sku");
 
   if (opts.category && opts.category !== "all") {
     const { data: cat } = await sb.from("categories").select("id").eq("slug", opts.category).maybeSingle();
@@ -197,7 +204,10 @@ export async function getSupplierCities() {
   return Array.from(new Set(((data as any[]) ?? []).map((r) => r.city).filter(Boolean))).sort();
 }
 
-export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?: string; channel?: string; from?: string; to?: string }) {
+// Sortable columns for the sales/invoice register (Pillar 1 — "A–Z order of invoice").
+// Token format is `<field>_<dir>`, e.g. "inv_asc". Default = newest first.
+const ORDERS_SORT: Record<string, string> = { inv: "invoice_no", name: "customer_name", date: "created_at", amount: "total" };
+export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?: string; channel?: string; from?: string; to?: string; sort?: string }) {
   const sb = supabaseServer();
   const pageSize = opts.pageSize ?? 25;
   const page = Math.max(1, opts.page ?? 1);
@@ -206,8 +216,14 @@ export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?
   if (opts.channel && opts.channel !== "all") query = query.eq("channel", opts.channel);
   if (opts.from) query = query.gte("created_at", opts.from);
   if (opts.to) query = query.lte("created_at", opts.to);
+  const [field, dir] = (opts.sort ?? "").split("_");
+  const col = ORDERS_SORT[field] ?? "created_at";
+  const asc = col === "created_at" ? dir === "asc" : dir !== "desc"; // text/amount default A→Z / low→high; date defaults newest
   const fromIdx = (page - 1) * pageSize;
-  const { data, count } = await query.order("created_at", { ascending: false }).range(fromIdx, fromIdx + pageSize - 1);
+  // Stable tiebreaker on created_at so equal keys keep a deterministic order.
+  let q = query.order(col, { ascending: asc, nullsFirst: false });
+  if (col !== "created_at") q = q.order("created_at", { ascending: false });
+  const { data, count } = await q.range(fromIdx, fromIdx + pageSize - 1);
   return { rows: (data as any[]) ?? [], total: count ?? 0, page, pageSize };
 }
 
@@ -221,6 +237,161 @@ export async function getPublishedProducts(): Promise<(DbProduct & { category: D
   return (data as any) ?? [];
 }
 
+/** Customer feedback inbox (#39). */
+export async function getFeedback() {
+  const sb = supabaseServer();
+  const { data } = await sb.from("feedback").select("*").order("created_at", { ascending: false }).limit(100);
+  return (data as any[]) ?? [];
+}
+
+/** Owner-defined labels (#9/#31). */
+export async function getLabels() {
+  const sb = supabaseServer();
+  const { data } = await sb.from("labels").select("id,name,color,sort").order("sort").order("name");
+  return (data as any[]) ?? [];
+}
+
+/** Last purchase cost per product & per variant (#11/#30) — paise. */
+export async function getLastPurchaseCosts(): Promise<{ byProduct: Record<string, number>; byVariant: Record<string, number> }> {
+  const sb = supabaseServer();
+  const { data } = await sb
+    .from("purchase_items")
+    .select("mapped_product_id,variant_id,unit_cost, purchase:purchases(created_at)");
+  const rows = ((data as any[]) ?? [])
+    .map((r) => ({ pid: r.mapped_product_id, vid: r.variant_id, cost: r.unit_cost, at: r.purchase?.created_at ?? "" }))
+    .sort((a, b) => (a.at < b.at ? 1 : -1)); // newest first
+  const byProduct: Record<string, number> = {};
+  const byVariant: Record<string, number> = {};
+  for (const r of rows) {
+    if (r.pid && byProduct[r.pid] === undefined) byProduct[r.pid] = r.cost;
+    if (r.vid && byVariant[r.vid] === undefined) byVariant[r.vid] = r.cost;
+  }
+  return { byProduct, byVariant };
+}
+
+/** A wholesale customer's past orders (with line items) — for history + one-click reorder. */
+export async function getWholesaleOrderHistory(customerId: string) {
+  const sb = supabaseServer();
+  const { data: orders } = await sb.from("orders")
+    .select("id,total,created_at,invoice_no, order_items(qty, product:products(sku,name))")
+    .eq("customer_id", customerId).eq("channel", "wholesale")
+    .order("created_at", { ascending: false }).limit(20);
+  return ((orders as any[]) ?? []).map((o) => ({
+    id: o.id as string, total: (o.total ?? 0) as number, created_at: o.created_at as string, invoice_no: (o.invoice_no ?? null) as string | null,
+    items: ((o.order_items as any[]) ?? []).map((it) => ({ sku: it.product?.sku as string, name: it.product?.name as string, qty: it.qty as number })).filter((x) => x.sku),
+  }));
+}
+
+/** Supplier ledger (#36): a vendor's purchase history with running totals. */
+export async function getSupplierLedger(id: string) {
+  const sb = supabaseServer();
+  const { data: supplier } = await sb.from("suppliers").select("*").eq("id", id).maybeSingle();
+  if (!supplier) return null;
+  const [{ data: purchases }, { data: pays }] = await Promise.all([
+    sb.from("purchases").select("id,bill_no,total,created_at, items:purchase_items(qty)").eq("supplier_id", id).order("created_at", { ascending: false }),
+    sb.from("supplier_payments").select("id,amount,mode,ref,note,created_at").eq("supplier_id", id).order("created_at", { ascending: false }),
+  ]);
+  const list = ((purchases as any[]) ?? []).map((p) => ({
+    id: p.id, bill_no: p.bill_no, total: p.total ?? 0, created_at: p.created_at,
+    qty: ((p.items as any[]) ?? []).reduce((s, x) => s + (x.qty ?? 0), 0),
+    lines: ((p.items as any[]) ?? []).length,
+  }));
+  const payments = ((pays as any[]) ?? []).map((p) => ({ id: p.id, amount: p.amount ?? 0, mode: p.mode as string, ref: p.ref as string | null, note: p.note as string | null, created_at: p.created_at }));
+  const opening = ((supplier as any).opening_balance ?? 0) as number;
+  const totalPurchased = list.reduce((s, p) => s + p.total, 0);
+  const totalPaid = payments.reduce((s, p) => s + p.amount, 0);
+  return {
+    supplier, purchases: list, payments,
+    totalPurchased, totalQty: list.reduce((s, p) => s + p.qty, 0),
+    opening, totalPaid,
+    balanceOwed: opening + totalPurchased - totalPaid, // +ve = we still owe the supplier
+  };
+}
+
+// Pillar 9 — Bank & Cash position: opening + collections in (pay_cash/pay_bank) − payments out.
+export async function getCashBankBook() {
+  const sb = supabaseServer();
+  const { data: sum } = await sb.rpc("cash_bank_summary");
+  const s: any = (Array.isArray(sum) ? sum[0] : sum) ?? {};
+  const opening_cash = Number(s.opening_cash ?? 0), opening_bank = Number(s.opening_bank ?? 0);
+  const cashIn = Number(s.cash_in ?? 0), bankIn = Number(s.bank_in ?? 0);
+  const cashOut = Number(s.cash_out ?? 0), bankOut = Number(s.bank_out ?? 0);
+  const [{ data: orders }, { data: pays }] = await Promise.all([
+    sb.from("orders").select("id,invoice_no,customer_name,pay_cash,pay_bank,created_at").or("pay_cash.gt.0,pay_bank.gt.0").order("created_at", { ascending: false }).limit(80),
+    sb.from("supplier_payments").select("id,supplier_id,amount,mode,note,created_at, supplier:suppliers(name)").order("created_at", { ascending: false }).limit(80),
+  ]);
+  const moves: any[] = [];
+  for (const o of (orders as any[]) ?? []) {
+    moves.push({ date: o.created_at, label: `Collection · ${o.invoice_no || String(o.id).slice(0, 6).toUpperCase()}${o.customer_name ? ` · ${o.customer_name}` : ""}`, link: `/admin/invoice/${o.id}`, cash: o.pay_cash ?? 0, bank: o.pay_bank ?? 0 });
+  }
+  for (const p of (pays as any[]) ?? []) {
+    const isCash = p.mode === "cash";
+    moves.push({ date: p.created_at, label: `Paid supplier · ${p.supplier?.name ?? ""}${p.note ? ` — ${p.note}` : ""}`, link: `/admin/supplier/${p.supplier_id}`, cash: isCash ? -(p.amount ?? 0) : 0, bank: isCash ? 0 : -(p.amount ?? 0) });
+  }
+  moves.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  return {
+    opening_cash, opening_bank, cashIn, bankIn, cashOut, bankOut,
+    cashBalance: opening_cash + cashIn - cashOut,
+    bankBalance: opening_bank + bankIn - bankOut,
+    moves: moves.slice(0, 120),
+  };
+}
+
+/** Self-growing master lists for variant attributes (colour / size / polish). */
+export async function getVariantOptions(): Promise<{ color: string[]; size: string[]; polish: string[] }> {
+  const sb = supabaseServer();
+  const { data } = await sb.from("variant_options").select("kind,value,sort").order("sort").order("value");
+  const out = { color: [] as string[], size: [] as string[], polish: [] as string[] };
+  for (const r of (data as any[]) ?? []) {
+    const k = (r as any).kind as "color" | "size" | "polish";
+    if (out[k]) out[k].push((r as any).value);
+  }
+  return out;
+}
+
+export type OptionRow = { value: string; hex: string | null; count: number };
+/** Pillar 7 — the colour/size/polish master with swatch + how many variants use each. */
+export async function getOptionMaster(): Promise<{ color: OptionRow[]; size: OptionRow[]; polish: OptionRow[] }> {
+  const sb = supabaseServer();
+  const [{ data: opts }, { data: vars }] = await Promise.all([
+    sb.from("variant_options").select("kind,value,hex,sort").order("sort").order("value"),
+    sb.from("variants").select("color,size,polish"),
+  ]);
+  const counts: Record<string, Record<string, number>> = { color: {}, size: {}, polish: {} };
+  for (const v of (vars as any[]) ?? []) {
+    for (const k of ["color", "size", "polish"] as const) {
+      const val = (v as any)[k]; if (val) counts[k][val] = (counts[k][val] ?? 0) + 1;
+    }
+  }
+  const out = { color: [] as OptionRow[], size: [] as OptionRow[], polish: [] as OptionRow[] };
+  for (const r of (opts as any[]) ?? []) {
+    const k = (r as any).kind as "color" | "size" | "polish";
+    if (out[k]) out[k].push({ value: (r as any).value, hex: (r as any).hex ?? null, count: counts[k][(r as any).value] ?? 0 });
+  }
+  return out;
+}
+
+/** Pillar 11 — every printable label: each product AND each colour/size/polish variant
+ *  (its own SKU + correctly-resolved retail price), so barcodes can be printed per piece. */
+export async function getLabelItems(): Promise<{ sku: string; name: string; price: number }[]> {
+  const sb = supabaseServer();
+  const formula = await getPricingFormula();
+  const { data } = await sb
+    .from("products")
+    .select("sku,name,base_wholesale,wholesale_override,retail_override,mrp_override, variants(sku,color,size,polish,wholesale_override,retail_override,mrp_override)")
+    .order("sku");
+  const out: { sku: string; name: string; price: number }[] = [];
+  for (const p of (data as any[]) ?? []) {
+    out.push({ sku: p.sku, name: p.name, price: _resolvePrices(p.base_wholesale, formula, overridesOf(null), overridesOf(p)).retailPrice });
+    for (const v of (p.variants as any[]) ?? []) {
+      if (!v.sku) continue;
+      const opt = [v.color, v.size, v.polish].filter(Boolean).join(" / ");
+      out.push({ sku: v.sku, name: `${p.name}${opt ? ` — ${opt}` : ""}`, price: _resolvePrices(p.base_wholesale, formula, overridesOf(v), overridesOf(p)).retailPrice });
+    }
+  }
+  return out;
+}
+
 export async function getProductBySku(sku: string): Promise<
   | (DbProduct & { category: DbCategory; variants: DbVariant[]; images: DbImage[] })
   | null
@@ -228,7 +399,7 @@ export async function getProductBySku(sku: string): Promise<
   const sb = supabaseServer();
   const { data } = await sb
     .from("products")
-    .select("*, category:categories(id,name,slug), variants(*), images:product_images(*)")
+    .select("*, category:categories(id,name,slug), subcategory:subcategories(name,slug,image_style), variants(*), images:product_images(*), product_labels(label_id)")
     .eq("sku", sku)
     .maybeSingle();
   return (data as any) ?? null;
@@ -241,16 +412,54 @@ export async function getProductSkus(): Promise<{ sku: string; slug: string }[]>
 }
 
 /** Recent stock movements for one product — powers the Product workspace History tab. */
-export async function getStockHistory(productId: string, limit = 25): Promise<{ delta: number; source: string | null; reason: string | null; kind: string | null; created_at: string }[]> {
+export async function getStockHistory(productId: string, limit = 25): Promise<{ delta: number; source: string | null; reason: string | null; kind: string | null; ref_id: string | null; created_at: string }[]> {
   if (!productId) return [];
   const sb = supabaseServer();
   const { data } = await sb
     .from("stock_adjustments")
-    .select("delta,source,reason,kind,created_at")
+    .select("delta,source,reason,kind,ref_id,created_at")
     .eq("product_id", productId)
     .order("created_at", { ascending: false })
     .limit(limit);
   return (data as any[]) ?? [];
+}
+
+// Pillar 5 — the single Stock Movement History register: every in/out across all products,
+// each row carrying ref_id so its purchase/sale bill opens straight from here.
+export async function getStockMovements(opts: { page?: number; pageSize?: number; kind?: string; q?: string; from?: string; to?: string }) {
+  const sb = supabaseServer();
+  const pageSize = opts.pageSize ?? 30;
+  const page = Math.max(1, opts.page ?? 1);
+  let query = sb.from("stock_adjustments")
+    .select("id,delta,kind,source,reason,ref_id,sku,created_at, product:products(sku,name), variant:variants(color)", { count: "exact" });
+  if (opts.kind && opts.kind !== "all") query = query.eq("kind", opts.kind);
+  if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.ilike("sku", `%${s}%`); }
+  if (opts.from) query = query.gte("created_at", opts.from);
+  if (opts.to) query = query.lte("created_at", opts.to);
+  const fromIdx = (page - 1) * pageSize;
+  const { data, count } = await query.order("created_at", { ascending: false }).range(fromIdx, fromIdx + pageSize - 1);
+  return { rows: (data as any[]) ?? [], total: count ?? 0, page, pageSize };
+}
+
+// Pillar 6 — open estimates "reserve" stock softly (not yet billed). Surface them, highlighted,
+// at the top of the Stock Movement register so the owner sees what's spoken-for by live quotes.
+export async function getOpenEstimateReservations(limit = 50) {
+  const sb = supabaseServer();
+  const { data } = await sb
+    .from("estimates")
+    .select("id, customer_name, created_at, estimate_items(qty, product:products(sku,name))")
+    .eq("status", "open")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  return ((data as any[]) ?? []).map((e) => ({
+    id: e.id as string,
+    customer_name: e.customer_name as string | null,
+    created_at: e.created_at as string,
+    lines: ((e.estimate_items as any[]) ?? []).map((li) => ({
+      qty: li.qty as number, sku: li.product?.sku as string | undefined, name: li.product?.name as string | undefined,
+    })),
+    qty: ((e.estimate_items as any[]) ?? []).reduce((s, li) => s + (li.qty ?? 0), 0),
+  })).filter((e) => e.lines.length > 0);
 }
 
 // ---------- dashboard + inventory intelligence (Req 6, 7; yogendra.pdf §8) ----------
@@ -259,6 +468,7 @@ import { computePrices, type PricingFormula as PF } from "../pricing";
 
 export type DashboardData = {
   revenue: number; orders: number; cod: number; pos: number;
+  cashCollected: number; bankCollected: number;
   retailers: number; pendingApprovals: number;
   totalProducts: number; newProducts: number; categories: number;
   dead: number; low: number; inactive: number; healthy: number;
@@ -270,7 +480,7 @@ export async function getDashboardData(fromISO: string, toISO: string, rule: Inv
   const sb = supabaseServer();
   const now = new Date();
   const [ordersRes, prodRes, catRes, retRes, apprRes] = await Promise.all([
-    sb.from("orders").select("total,channel,payment_mode,created_at").gte("created_at", fromISO).lte("created_at", toISO),
+    sb.from("orders").select("total,channel,payment_mode,pay_cash,pay_bank,created_at").gte("created_at", fromISO).lte("created_at", toISO),
     sb.from("products").select("sku,name,qty,last_movement_at,created_at,category:categories(name)"),
     sb.from("categories").select("id"),
     sb.from("retailers").select("id,approved"),
@@ -282,6 +492,8 @@ export async function getDashboardData(fromISO: string, toISO: string, rule: Inv
   const revenue = orders.reduce((s, o: any) => s + (o.total ?? 0), 0);
   const cod = orders.filter((o: any) => o.payment_mode === "cod").length;
   const pos = orders.filter((o: any) => o.channel === "pos").length;
+  const cashCollected = orders.reduce((s, o: any) => s + (o.pay_cash ?? 0), 0);
+  const bankCollected = orders.reduce((s, o: any) => s + (o.pay_bank ?? 0), 0);
 
   const classed = products.map((p: any) => ({ ...p, cls: classify({ qty: p.qty, lastMovementAt: p.last_movement_at }, rule, now) }));
   const dead = classed.filter((p) => p.cls === "dead");
@@ -291,7 +503,7 @@ export async function getDashboardData(fromISO: string, toISO: string, rule: Inv
   const newProducts = products.filter((p: any) => p.created_at >= fromISO && p.created_at <= toISO).length;
 
   return {
-    revenue, orders: orders.length, cod, pos,
+    revenue, orders: orders.length, cod, pos, cashCollected, bankCollected,
     retailers: (retRes.data ?? []).filter((r: any) => r.approved).length,
     pendingApprovals: (apprRes.data ?? []).filter((a: any) => a.status === "pending").length,
     totalProducts: products.length, newProducts, categories: (catRes.data ?? []).length,
@@ -322,32 +534,48 @@ export async function getApprovals() {
 
 // ---------- storefront with ratings (premium UI) ----------
 export type StoreProduct = DbProduct & {
-  category: DbCategory; rating: number; reviews: number; isNew: boolean;
+  category: DbCategory; rating: number; reviews: number; isNew: boolean; image?: string | null;
 };
 
-export async function getStorefront(opts: { includeUnpublished?: boolean } = {}): Promise<{ products: StoreProduct[]; formula: PF }> {
+export async function getStorefront(
+  opts: { includeDrafts?: boolean; includeWholesaleOnly?: boolean } = {},
+): Promise<{ products: StoreProduct[]; formula: PF }> {
   const sb = supabaseServer();
-  // POS billing sells any in-stock product, including drafts not yet photographed/published;
-  // public retail surfaces only list published products.
-  let prodQ = sb.from("products").select("*, category:categories(id,name,slug)");
-  prodQ = opts.includeUnpublished ? prodQ.in("status", ["published", "draft"]) : prodQ.eq("status", "published");
-  const [{ data: prods }, { data: revs }, formula] = await Promise.all([
-    prodQ.order("sku"),
+  // D2C-safe defaults: only published, and never wholesale-only items (#1, #23).
+  let pq = sb.from("products").select("*, category:categories(id,name,slug)").order("sku");
+  if (!opts.includeDrafts) pq = pq.eq("status", "published");
+  const [{ data: prods }, { data: revs }, { data: pimgs }, { data: vimgs }, formula] = await Promise.all([
+    pq,
     sb.from("reviews").select("product_id, rating"),
+    sb.from("product_images").select("product_id, path, sort").order("sort", { ascending: true }),
+    sb.from("variants").select("product_id, image_paths"),
     getPricingFormula(),
   ]);
   const agg = new Map<string, { sum: number; n: number }>();
   for (const r of (revs as any[]) ?? []) {
     const a = agg.get(r.product_id) ?? { sum: 0, n: 0 }; a.sum += r.rating; a.n++; agg.set(r.product_id, a);
   }
+  // Primary thumbnail per product: first product_image (sorted, so AI "model" shot wins),
+  // else the first real variant photo — so cards show the same image as the product page.
+  const imgByProduct = new Map<string, string>();
+  for (const r of (pimgs as any[]) ?? []) {
+    if (!r.path || !String(r.path).startsWith("http")) continue;
+    if (!imgByProduct.has(r.product_id)) imgByProduct.set(r.product_id, r.path);
+  }
+  for (const v of (vimgs as any[]) ?? []) {
+    if (imgByProduct.has(v.product_id)) continue;
+    const u = (((v.image_paths as string[]) ?? []).find((x) => x && x.startsWith("http")));
+    if (u) imgByProduct.set(v.product_id, u);
+  }
   const now = Date.now();
-  const products = ((prods as any[]) ?? []).map((p) => {
+  let products = ((prods as any[]) ?? []).map((p) => {
     const a = agg.get(p.id);
     const rating = a && a.n ? a.sum / a.n : 4.6;
     const reviews = a?.n ?? 0;
     const isNew = p.created_at ? now - new Date(p.created_at).getTime() < 1000 * 60 * 60 * 24 * 21 : false;
-    return { ...p, rating: Math.round(rating * 10) / 10, reviews, isNew };
+    return { ...p, image: imgByProduct.get(p.id) ?? null, rating: Math.round(rating * 10) / 10, reviews, isNew };
   });
+  if (!opts.includeWholesaleOnly) products = products.filter((p: any) => !p.wholesale_only);
   return { products, formula };
 }
 
@@ -469,7 +697,7 @@ export async function getEstimate(id: string) {
   const sb = supabaseServer();
   const { data: estimate } = await sb.from("estimates").select("*").eq("id", id).maybeSingle();
   if (!estimate) return null;
-  const { data: items } = await sb.from("estimate_items").select("qty,unit_price,line_total,product:products(name,sku)").eq("estimate_id", id);
+  const { data: items } = await sb.from("estimate_items").select("id,qty,unit_price,line_total,product:products(name,sku)").eq("estimate_id", id);
   return { estimate, items: (items as any[]) ?? [] };
 }
 export async function getRecentOrders(limit = 12) {
@@ -495,6 +723,19 @@ export async function getProductsLite() {
   const sb = supabaseServer();
   const { data } = await sb.from("products").select("id,name,sku").order("sku");
   return (data as any[]) ?? [];
+}
+
+/** Products plus their variants — for purchase entry where stock can land on a specific variant. */
+export async function getProductsForPurchase() {
+  const sb = supabaseServer();
+  const { data } = await sb.from("products").select("id,name,sku, variants(id,sku,color,size,polish)").order("sku");
+  return ((data as any[]) ?? []).map((p) => ({
+    id: p.id, name: p.name, sku: p.sku,
+    variants: ((p.variants as any[]) ?? []).map((v) => ({
+      id: v.id, sku: v.sku,
+      label: [v.color, v.size, v.polish].filter(Boolean).join(" · ") || v.sku,
+    })),
+  }));
 }
 export async function getRecentPurchases() {
   const sb = supabaseServer();
@@ -592,17 +833,26 @@ export async function getRecommendations(sku: string, n = 4): Promise<StoreProdu
   for (const r of (embRows as any[]) ?? []) if (Array.isArray(r.embedding)) embBy.set(r.sku, r.embedding);
   const self = products.find((p) => p.sku === sku);
   if (!self) return [];
+  const others = products.filter((p) => p.sku !== sku);
   const selfEmb = embBy.get(sku);
   let ranked: StoreProduct[];
-  if (selfEmb) {
-    ranked = products.filter((p) => p.sku !== sku && embBy.has(p.sku))
+  if (selfEmb && others.some((p) => embBy.has(p.sku))) {
+    // Semantic when embeddings exist.
+    ranked = others.filter((p) => embBy.has(p.sku))
       .map((p) => ({ p, s: _cosine(selfEmb, embBy.get(p.sku)!) }))
       .sort((a, b) => b.s - a.s).map((x) => x.p);
   } else {
-    ranked = products.filter((p) => p.sku !== sku && p.category.slug === self.category.slug);
+    // Inventory-aware fallback (works with zero embeddings): same subcategory → same
+    // category → everything else, preferring in-stock pieces. Never returns empty.
+    const subId = (self as any).subcategory_id;
+    const byStock = (arr: StoreProduct[]) => [...arr].sort((a, b) => (b.qty > 0 ? 1 : 0) - (a.qty > 0 ? 1 : 0));
+    const sameSub = subId ? others.filter((p) => (p as any).subcategory_id === subId) : [];
+    const sameCat = others.filter((p) => p.category.slug === self.category.slug && !sameSub.some((s) => s.sku === p.sku));
+    const rest = others.filter((p) => !sameSub.some((s) => s.sku === p.sku) && !sameCat.some((s) => s.sku === p.sku));
+    ranked = [...byStock(sameSub), ...byStock(sameCat), ...byStock(rest)];
   }
   if (ranked.length < n) {
-    const extra = products.filter((p) => p.sku !== sku && !ranked.some((r) => r.sku === p.sku));
+    const extra = others.filter((p) => !ranked.some((r) => r.sku === p.sku));
     ranked = [...ranked, ...extra];
   }
   return ranked.slice(0, n);
