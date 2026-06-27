@@ -6,6 +6,7 @@ import {
   createProductWithImageAction, createOneRowAction, aiParseRowsAction,
   createCategoryJsonAction,
 } from "@/app/actions/catalog";
+import { getProductVariantsAction, addVariantImageAction } from "@/app/actions/variants";
 import { generateContentAction } from "@/app/actions/aiContent";
 import { compressImage } from "@/lib/image";
 
@@ -25,11 +26,12 @@ type VariantRow = {
   retail: string;
   wholesale: string;
   mrp: string;
+  image: File | null; // optional per-variant photo, uploaded right after create (Pillar 16)
 };
 
 const emptyVariant = (): VariantRow => ({
   key: Math.random().toString(36).slice(2),
-  color: "", size: "", polish: "", sku: "", qty: "", retail: "", wholesale: "", mrp: "",
+  color: "", size: "", polish: "", sku: "", qty: "", retail: "", wholesale: "", mrp: "", image: null,
 });
 
 /** A variant row counts as "real" when at least one of colour/size/polish is filled. */
@@ -171,6 +173,37 @@ export function UploadClient({
       const res = await createProductWithImageAction(fd);
       if (!res.ok) { patchLast("err", `Failed: ${res.error}`); toast(res.error ?? "Could not add", "error"); return; }
       patchLast("ok", `Created ${res.sku} ✓${file ? " · published" : " · saved as draft (add a photo or Show it to publish)"}`);
+
+      // Pillar 16 — attach any per-variant photos picked in the editor. We resolve the
+      // freshly-created variants by SKU, match each editor row by colour/size/polish, and
+      // upload its photo to that variant. Best-effort: a failed match just skips that photo.
+      if (useVariantRows && res.sku) {
+        const withPhotos = realVariants.filter((v) => v.image);
+        if (withPhotos.length) {
+          push({ text: `Adding ${withPhotos.length} variant photo${withPhotos.length === 1 ? "" : "s"}…`, status: "run" });
+          try {
+            const created = await getProductVariantsAction(res.sku);
+            const norm = (s?: string | null) => (s ?? "").trim().toLowerCase();
+            let done = 0;
+            for (const row of withPhotos) {
+              const match = created.find((cv) =>
+                norm(cv.color) === norm(row.color) && norm(cv.size) === norm(row.size) && norm(cv.polish) === norm(row.polish));
+              if (!match || !row.image) continue;
+              const img = await compressImage(row.image);
+              const vfd = new FormData();
+              vfd.set("id", match.id);
+              vfd.set("product_sku", res.sku);
+              vfd.append("images", img);
+              const r = await addVariantImageAction(vfd);
+              if (r.ok) done++;
+            }
+            patchLast(done > 0 ? "ok" : "err", done > 0 ? `Added ${done} variant photo${done === 1 ? "" : "s"} ✓` : "Couldn't match variant photos — add them from the product's Variants tab.");
+          } catch {
+            patchLast("err", "Variant photos skipped — add them from the product's Variants tab.");
+          }
+        }
+      }
+
       setProgress({ done: 1, total: writeAi ? 2 : 1 });
       if (writeAi && res.sku) { await writeAiPage(res.sku, form.name.trim()); setProgress({ done: 2, total: 2 }); }
       toast(`${res.sku} added`);
@@ -359,10 +392,21 @@ export function UploadClient({
                         {/* Pillar 11 — live preview of the barcode/SKU that will print on
                             this variant's label. Spans both columns on narrow screens. */}
                         {isRealVariant(v) && (
-                          <p className="col-span-2 md:col-span-9 text-[10px] text-muted pl-1 -mt-0.5">
-                            Barcode/SKU: <span className="font-mono text-ink/80">{previewSku(v)}</span>
+                          <p className="col-span-2 md:col-span-9 text-[10px] text-muted pl-1 -mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span>Barcode/SKU: <span className="font-mono text-ink/80">{previewSku(v)}</span></span>
                             {v.color.trim() && !colorCodes[v.color.trim().toLowerCase()] && (
-                              <span className="ml-1.5 text-gold-dark">· “{v.color.trim()}” isn&apos;t in the colour master — code is auto-derived</span>
+                              <span className="text-gold-dark">· “{v.color.trim()}” isn&apos;t in the colour master — code is auto-derived</span>
+                            )}
+                            {/* Pillar 16 — pick a photo for this variant; uploaded right after the design is created. */}
+                            <label className="inline-flex items-center gap-1 cursor-pointer text-emerald-dark hover:underline">
+                              📷 {v.image ? v.image.name.slice(0, 18) : "Add photo"}
+                              <input
+                                type="file" accept="image/*" className="hidden"
+                                onChange={(e) => updateVariant(idx, { image: e.target.files?.[0] ?? null })}
+                              />
+                            </label>
+                            {v.image && (
+                              <button type="button" onClick={() => updateVariant(idx, { image: null })} className="text-muted hover:text-rose">remove photo</button>
                             )}
                           </p>
                         )}

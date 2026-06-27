@@ -76,7 +76,17 @@ export default async function Categories({ searchParams }: { searchParams: { q?:
               {c.subcategories.length === 0 && <span className="text-xs text-muted italic">No subcategories yet.</span>}
               {c.subcategories.map((s) => (
                 <div key={s.id} className="flex items-center gap-2 flex-wrap">
-                  <span className="inline-flex items-center rounded-full bg-emerald-mist/60 text-emerald-dark text-xs px-3 py-1.5">{s.name}</span>
+                  {/* Pillar 12 — subcategories are navigable: tap to open that subcategory's
+                      products on the storefront (the /shop/c/<cat>?sub=<slug> filter). */}
+                  <a
+                    href={`/shop/c/${c.slug}?sub=${s.slug}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={`View ${s.name} products`}
+                    className="inline-flex items-center gap-1 rounded-full bg-emerald-mist/60 text-emerald-dark text-xs px-3 py-1.5 hover:bg-emerald-mist transition-colors"
+                  >
+                    {s.name} <span aria-hidden className="opacity-60">↗</span>
+                  </a>
                   {canEdit && (
                     <form action={setSubcategoryStyleAction} className="inline-flex items-center gap-1">
                       <input type="hidden" name="id" value={s.id} />
