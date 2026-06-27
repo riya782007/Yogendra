@@ -36,7 +36,32 @@ async function nextSku(sb: ReturnType<typeof supabaseServer>): Promise<number> {
   return max + 1;
 }
 
-export type NewProduct = { categoryId: string; name: string; basePriceRupees: number; qty: number; type: "simple" | "configurable"; colors: string[]; manualSku?: string };
+/** A single owner-defined variant row from the Upload form.
+ *  Any of colour / size / polish is enough — at least one must be present for the row to count.
+ *  Price fields are in rupees (UI-friendly) and are converted to paise before insert.
+ *  null/undefined/<=0 = "inherit the formula / product price". */
+export type VariantInput = {
+  color?: string;
+  size?: string;
+  polish?: string;
+  sku?: string;                // manual SKU; blank = auto from parent SKU + attributes
+  qty: number;
+  retailRupees?: number | null;
+  wholesaleRupees?: number | null;
+  mrpRupees?: number | null;
+};
+export type NewProduct = {
+  categoryId: string;
+  name: string;
+  basePriceRupees: number;
+  qty: number;
+  type: "simple" | "configurable";
+  colors: string[];
+  manualSku?: string;
+  /** Optional richer variant definitions. If provided (and type === 'configurable'),
+   *  these take precedence over the legacy `colors` comma-list shortcut. */
+  variants?: VariantInput[];
+};
 export type RowResult = { row: number; ok: boolean; sku?: string; error?: string };
 
 async function insertOne(sb: ReturnType<typeof supabaseServer>, formula: any, n: NewProduct, skuNum: number, publish = false): Promise<RowResult> {
@@ -52,22 +77,99 @@ async function insertOne(sb: ReturnType<typeof supabaseServer>, formula: any, n:
     const { data: dup } = await sb.from("products").select("id").eq("sku", manual).maybeSingle();
     if (dup) return { row: skuNum, ok: false, error: `SKU ${manual} already exists` };
   }
+
+  // ----- Decide variant strategy -----
+  // 1) Explicit variants[] from the Upload form (preferred — has colour+size+polish+prices).
+  // 2) Legacy `colors` comma-list shortcut (kept for back-compat with AI/CSV import).
+  const explicitVariants = n.type === "configurable"
+    ? (n.variants ?? []).filter((v) => ((v.color ?? "").trim() || (v.size ?? "").trim() || (v.polish ?? "").trim()))
+    : [];
+  const useExplicit = explicitVariants.length > 0;
+
+  if (useExplicit) {
+    // Catch duplicate manual SKUs early so we don't half-insert.
+    const manuals = explicitVariants.map((v) => (v.sku ?? "").trim().toUpperCase().replace(/\s+/g, "-")).filter(Boolean);
+    const seen = new Set<string>();
+    for (const s of manuals) {
+      if (seen.has(s)) return { row: skuNum, ok: false, error: `Duplicate variant SKU ${s} in the form` };
+      seen.add(s);
+    }
+    if (seen.size) {
+      const { data: dup } = await sb.from("variants").select("sku").in("sku", [...seen]).limit(1);
+      const taken = (dup as any[] | null)?.[0]?.sku as string | undefined;
+      if (taken) return { row: skuNum, ok: false, error: `Variant SKU ${taken} already exists` };
+    }
+  }
+
+  // When the owner spelled out explicit variant rows, the product's total qty is the sum of
+  // those rows — this matches the legacy split-evenly behaviour but is exact (no rounding
+  // loss) and it keeps the product header in sync with the Variants tab.
+  const productQty = useExplicit
+    ? explicitVariants.reduce((s, v) => s + Math.max(0, Math.floor(Number(v.qty) || 0)), 0)
+    : Math.max(0, n.qty);
+
   // Incomplete products (no photo yet) stay DRAFT so they never appear on the storefront
   // looking unfinished. They publish automatically once a photo is added, or via Show.
   const { data: prod, error } = await sb.from("products").insert({
     category_id: n.categoryId, sku, name: n.name, type: n.type,
-    base_wholesale: n.basePriceRupees * 100, qty: Math.max(0, n.qty), status: publish ? "published" : "draft", last_movement_at: new Date().toISOString(),
+    base_wholesale: n.basePriceRupees * 100, qty: productQty, status: publish ? "published" : "draft", last_movement_at: new Date().toISOString(),
   }).select("id").single();
   if (error) return { row: skuNum, ok: false, error: error.message };
+
   // Log the opening inventory as a stock movement so it shows in the product's history
   // (the "Opening stock" line), just like purchases/sales/returns do.
   const opening: any[] = [];
-  if (n.type === "configurable" && n.colors.length) {
+  const toPaise = (rs?: number | null) => (rs != null && Number.isFinite(rs) && rs > 0 ? Math.round(rs * 100) : null);
+  const autoVariantSku = (parent: string, label: string) =>
+    `${parent}-${label.replace(/[^a-z0-9]/gi, "").slice(0, 5).toUpperCase() || "VAR"}`;
+
+  if (useExplicit) {
+    const variantRows = explicitVariants.map((v) => {
+      const color = (v.color ?? "").trim();
+      const size = (v.size ?? "").trim();
+      const polish = (v.polish ?? "").trim();
+      const label = [color, size, polish].filter(Boolean).join("-") || "VAR";
+      const manualV = (v.sku ?? "").trim().toUpperCase().replace(/\s+/g, "-");
+      return {
+        product_id: prod!.id,
+        color: color || null,
+        size: size || null,
+        polish: polish || null,
+        sku: manualV || autoVariantSku(sku, label),
+        qty: Math.max(0, Math.floor(Number(v.qty) || 0)),
+        retail_override: toPaise(v.retailRupees ?? null),
+        wholesale_override: toPaise(v.wholesaleRupees ?? null),
+        mrp_override: toPaise(v.mrpRupees ?? null),
+      };
+    });
+    const { data: vs, error: vErr } = await sb.from("variants").insert(variantRows).select("id, qty");
+    if (vErr) {
+      // Best-effort rollback so we don't leave an orphaned product when only the variants failed.
+      await sb.from("products").delete().eq("id", prod!.id);
+      return { row: skuNum, ok: false, error: vErr.message };
+    }
+    for (const v of (vs as any[]) ?? []) {
+      if (v.qty > 0) opening.push({ product_id: prod!.id, variant_id: v.id, delta: v.qty, kind: "opening", source: "create", reason: "Opening stock" });
+    }
+    // Grow the autocomplete master list so newly-typed colours/sizes/polishes show as
+    // suggestions next time (same behaviour as addVariantAction's rememberOptions).
+    const optRows: { kind: string; value: string }[] = [];
+    for (const v of explicitVariants) {
+      const c = (v.color ?? "").trim(), z = (v.size ?? "").trim(), p = (v.polish ?? "").trim();
+      if (c) optRows.push({ kind: "color", value: c });
+      if (z) optRows.push({ kind: "size", value: z });
+      if (p) optRows.push({ kind: "polish", value: p });
+    }
+    if (optRows.length) await sb.from("variant_options").upsert(optRows, { onConflict: "kind,value", ignoreDuplicates: true });
+  } else if (n.type === "configurable" && n.colors.length) {
     const per = Math.floor(n.qty / Math.max(1, n.colors.length));
     const { data: vs } = await sb.from("variants").insert(n.colors.map((c) => ({
       product_id: prod!.id, color: c, sku: `${sku}-${c.slice(0, 3).toUpperCase()}`, qty: per,
     }))).select("id, qty");
     for (const v of (vs as any[]) ?? []) if (v.qty > 0) opening.push({ product_id: prod!.id, variant_id: v.id, delta: v.qty, kind: "opening", source: "create", reason: "Opening stock" });
+    // Also remember the colours so they appear as suggestions on the Variants tab later.
+    const optRows = n.colors.map((c) => ({ kind: "color", value: c.trim() })).filter((r) => r.value);
+    if (optRows.length) await sb.from("variant_options").upsert(optRows, { onConflict: "kind,value", ignoreDuplicates: true });
   } else if (n.qty > 0) {
     opening.push({ product_id: prod!.id, delta: n.qty, kind: "opening", source: "create", reason: "Opening stock" });
   }
@@ -111,6 +213,32 @@ async function ensureMediaBucket(sb: ReturnType<typeof supabaseServer>) {
 export async function createProductWithImageAction(formData: FormData): Promise<RowResult> {
   if (!(await requirePerm("catalog.create"))) return { row: 0, ok: false, error: "Your role can't add products." };
   const sb = supabaseServer();
+
+  // Optional structured variants payload from the Upload form — JSON-encoded array of
+  // VariantInput. Silently ignored if malformed; falls back to the colours-comma shortcut.
+  let variants: VariantInput[] | undefined;
+  const variantsRaw = String(formData.get("variants") ?? "").trim();
+  if (variantsRaw) {
+    try {
+      const parsed = JSON.parse(variantsRaw);
+      if (Array.isArray(parsed)) {
+        variants = parsed
+          .map((v: any) => ({
+            color: v?.color ? String(v.color).trim() : undefined,
+            size: v?.size ? String(v.size).trim() : undefined,
+            polish: v?.polish ? String(v.polish).trim() : undefined,
+            sku: v?.sku ? String(v.sku).trim() : undefined,
+            qty: Math.max(0, Math.floor(Number(v?.qty) || 0)),
+            retailRupees: v?.retailRupees != null && Number(v.retailRupees) > 0 ? Number(v.retailRupees) : null,
+            wholesaleRupees: v?.wholesaleRupees != null && Number(v.wholesaleRupees) > 0 ? Number(v.wholesaleRupees) : null,
+            mrpRupees: v?.mrpRupees != null && Number(v.mrpRupees) > 0 ? Number(v.mrpRupees) : null,
+          }))
+          // Drop rows that don't define ANY attribute (Colour / Size / Polish).
+          .filter((v) => Boolean(v.color || v.size || v.polish));
+      }
+    } catch { /* ignore — legacy colours-comma path still works */ }
+  }
+
   const n: NewProduct = {
     categoryId: String(formData.get("categoryId") ?? ""),
     name: String(formData.get("name") ?? "").trim(),
@@ -119,6 +247,7 @@ export async function createProductWithImageAction(formData: FormData): Promise<
     type: String(formData.get("type")) === "configurable" ? "configurable" : "simple",
     colors: String(formData.get("colors") ?? "").split(",").map((s) => s.trim()).filter(Boolean),
     manualSku: String(formData.get("sku") ?? "").trim() || undefined,
+    variants,
   };
   const [formula, skuNum] = await Promise.all([getPricingFormula(), nextSku(sb)]);
   const file = formData.get("image") as File | null;
