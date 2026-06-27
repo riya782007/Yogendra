@@ -13,13 +13,14 @@ function escLike(s: string): string {
 }
 
 export type DbCategory = { id: string; name: string; slug: string };
-export type DbVariant = { id: string; color: string | null; sku: string; qty: number; image_paths: string[]; wholesale_override?: number | null; retail_override?: number | null; mrp_override?: number | null };
+export type DbVariant = { id: string; color: string | null; sku: string; qty: number; image_paths: string[]; size?: string | null; polish?: string | null; wholesale_override?: number | null; retail_override?: number | null; mrp_override?: number | null };
 export type DbImage = { id: string; path: string; kind: string | null; sort: number };
 export type DbProduct = {
   id: string; category_id: string; sku: string; name: string;
   type: "simple" | "configurable"; base_wholesale: number; qty: number;
   status: string; generated_content: any; last_movement_at: string | null;
   subcategory_id?: string | null;
+  wholesale_only?: boolean;
   wholesale_override?: number | null; retail_override?: number | null; mrp_override?: number | null;
 };
 
@@ -106,14 +107,20 @@ export type CatalogCard = {
   subcategory: string | null; subcategorySlug: string | null;
   qty: number; wholesale: number; price: number; mrp: number; offerPct: number; hasOffer: boolean;
   image: string | null; tags: string[]; keywords: string[];
+  /** Owner-defined labels (Bridal, Bestseller, etc.) sourced from the labels table via product_labels. */
+  labels: string[];
+  /** True when the product is marked wholesale-only — hidden on the D2C shop, visible on wholesale + POS. */
+  wholesaleOnly: boolean;
 };
 
-export async function getCatalogProducts(opts: { category?: string; subcategory?: string; q?: string; skus?: string[] }): Promise<CatalogCard[]> {
+export async function getCatalogProducts(opts: { category?: string; subcategory?: string; q?: string; skus?: string[]; includeWholesaleOnly?: boolean }): Promise<CatalogCard[]> {
   const sb = supabaseServer();
   const formula = await getPricingFormula();
   let query = sb.from("products")
-    .select("id,sku,name,qty,base_wholesale,wholesale_override,retail_override,mrp_override,generated_content,category:categories(name,slug),subcategory:subcategories(name,slug),images:product_images(path,kind,sort)")
-    .eq("status", "published").eq("wholesale_only", false).order("sku");
+    .select("id,sku,name,qty,base_wholesale,wholesale_only,wholesale_override,retail_override,mrp_override,generated_content,category:categories(name,slug),subcategory:subcategories(name,slug),images:product_images(path,kind,sort),product_labels(label_id,labels(name))")
+    .eq("status", "published").order("sku");
+  // Retail catalogue hides wholesale-only items; wholesale view + POS pass includeWholesaleOnly.
+  if (!opts.includeWholesaleOnly) query = query.eq("wholesale_only", false);
 
   if (opts.category && opts.category !== "all") {
     const { data: cat } = await sb.from("categories").select("id").eq("slug", opts.category).maybeSingle();
@@ -145,6 +152,10 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
     const set = _resolvePrices(p.base_wholesale, formula, ov);
     const imgs = (p.images ?? []).filter((i: any) => typeof i.path === "string" && i.path.startsWith("http")).sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0));
     const seo = (p.generated_content as any)?.seo ?? {};
+    // Labels come through the join as product_labels[{ label_id, labels: { name } }]; flatten to names.
+    const labelNames = ((p.product_labels ?? []) as any[])
+      .map((pl) => pl?.labels?.name)
+      .filter((n): n is string => typeof n === "string" && n.length > 0);
     return {
       sku: p.sku, name: p.name,
       category: p.category?.name ?? "", categorySlug: p.category?.slug ?? "all",
@@ -153,6 +164,8 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       image: imgs[0]?.path ?? null,
       tags: ((p.generated_content as any)?.tags ?? []).slice(0, 6),
       keywords: (seo.keywords ?? []).slice(0, 6),
+      labels: labelNames.slice(0, 6),
+      wholesaleOnly: !!p.wholesale_only,
     };
   });
 }

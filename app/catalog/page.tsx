@@ -16,7 +16,7 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
 
   const [tree, fetched] = await Promise.all([
     getCategoryTree(),
-    getCatalogProducts({ category, subcategory, q, skus: skus.length ? skus : undefined }),
+    getCatalogProducts({ category, subcategory, q, skus: skus.length ? skus : undefined, includeWholesaleOnly: view === "wholesale" }),
   ]);
   // Never dead-end a shared sub-category link: if nothing is tagged there yet,
   // fall back to the whole parent category so the catalogue always shows stock.

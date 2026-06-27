@@ -86,6 +86,9 @@ export async function updateProductAction(formData: FormData): Promise<UpdateRes
       category_id: categoryId,
       type,
       status,
+      // Schema note: visibility is stored as the `wholesale_only` boolean (main's design).
+      // The form still sends "visibility=wholesale|all" so existing UI doesn't change.
+      wholesale_only: String(formData.get("visibility") ?? "all") === "wholesale",
       base_wholesale: Math.round(basePriceRupees * 100),
       qty,
       generated_content,
@@ -93,6 +96,31 @@ export async function updateProductAction(formData: FormData): Promise<UpdateRes
     })
     .eq("id", existing.id);
   if (error) return { ok: false, error: error.message };
+
+  // Labels are stored in a separate `labels` table joined via `product_labels`. The form
+  // submits a comma/newline list of names; we (a) upsert each name into labels so unknown
+  // names get auto-created, then (b) re-sync the product_labels rows for this product.
+  const labelNames = parseList(String(formData.get("labels") ?? ""));
+  if (labelNames.length) {
+    await sb.from("labels").upsert(
+      labelNames.map((name) => ({ name, color: "emerald" })),
+      { onConflict: "name", ignoreDuplicates: true },
+    );
+  }
+  const { data: labelRows } = await sb.from("labels").select("id,name").in("name", labelNames.length ? labelNames : ["__none__"]);
+  const wantIds = new Set(((labelRows as any[]) ?? []).map((r) => r.id));
+  // Replace the join set: delete the rows we no longer want, insert the new ones.
+  const { data: existingJoin } = await sb.from("product_labels").select("label_id").eq("product_id", existing.id);
+  const haveIds = new Set(((existingJoin as any[]) ?? []).map((r) => r.label_id));
+  const toAdd = [...wantIds].filter((id) => !haveIds.has(id));
+  const toRemove = [...haveIds].filter((id) => !wantIds.has(id));
+  if (toRemove.length) await sb.from("product_labels").delete().eq("product_id", existing.id).in("label_id", toRemove);
+  if (toAdd.length) {
+    await sb.from("product_labels").upsert(
+      toAdd.map((labelId) => ({ product_id: existing.id, label_id: labelId })),
+      { onConflict: "product_id,label_id", ignoreDuplicates: true },
+    );
+  }
 
   // Optional: rename the SKU (the client asked for editable SKUs). Validate uniqueness
   // first so we never create a duplicate. FK references use product_id, so this is safe.
@@ -113,6 +141,8 @@ export async function updateProductAction(formData: FormData): Promise<UpdateRes
   revalidatePath(`/shop/${slug}/${sku}`);
   revalidatePath(`/shop/c/${slug}`);
   revalidatePath("/shop");
+  revalidatePath("/catalog");
+  revalidatePath("/wholesale");
   revalidatePath("/admin/catalogue");
   revalidatePath("/admin/media");
   return { ok: true };
