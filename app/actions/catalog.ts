@@ -6,6 +6,7 @@ import { getPricingFormula, getColorCodeMap } from "@/lib/supabase/queries";
 import { requirePerm } from "@/lib/auth";
 import { generateContentAction } from "@/app/actions/aiContent";
 import { barcodeCodeForColor } from "@/lib/colors";
+import { logActivity } from "@/lib/audit";
 
 const slugify = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
@@ -15,6 +16,7 @@ export async function createCategoryAction(formData: FormData) {
   if (!name) return;
   const sb = supabaseServer();
   await sb.from("categories").insert({ name, slug: slugify(name) });
+  await logActivity({ action: "category_created", ref: name, detail: `Added category “${name}”.` });
   revalidatePath("/admin/categories");
   revalidatePath("/shop");
 }
@@ -27,7 +29,9 @@ export async function deleteCategoryAction(formData: FormData): Promise<void> {
   const sb = supabaseServer();
   const { count } = await sb.from("products").select("id", { count: "exact", head: true }).eq("category_id", id);
   if ((count ?? 0) > 0) return; // refuse to delete a non-empty category
+  const { data: cat } = await sb.from("categories").select("name").eq("id", id).maybeSingle();
   await sb.from("categories").delete().eq("id", id);
+  await logActivity({ action: "category_deleted", ref: id, detail: `Deleted category${(cat as any)?.name ? ` “${(cat as any).name}”` : ""}.` });
   revalidatePath("/admin/categories"); revalidatePath("/shop");
 }
 
@@ -284,6 +288,7 @@ export async function createProductWithImageAction(formData: FormData): Promise<
     }
   }
   revalidatePath("/admin/catalogue"); revalidatePath("/shop");
+  if (res.ok && res.sku) await logActivity({ action: "product_created", ref: res.sku, detail: `Added ${n.name} (${res.sku})${hasPhoto ? " · published" : " · draft"}.` });
   return res;
 }
 
@@ -396,6 +401,7 @@ export async function setProductVisibilityAction(formData: FormData): Promise<vo
   const status = String(formData.get("status") ?? "") === "published" ? "published" : "draft";
   if (!sku) return;
   await supabaseServer().from("products").update({ status }).eq("sku", sku);
+  await logActivity({ action: status === "published" ? "product_shown" : "product_hidden", ref: sku, detail: `${sku} ${status === "published" ? "shown on" : "hidden from"} the store.` });
   revalidatePath("/admin/inventory"); revalidatePath("/admin/catalogue"); revalidatePath("/shop");
 }
 
@@ -406,6 +412,7 @@ export async function setWholesaleOnlyAction(formData: FormData): Promise<void> 
   const on = String(formData.get("wholesale_only") ?? "") === "1";
   if (!sku) return;
   await supabaseServer().from("products").update({ wholesale_only: on }).eq("sku", sku);
+  await logActivity({ action: "product_wholesale_only", ref: sku, detail: `${sku} set to ${on ? "wholesale-only" : "available to all"}.` });
   revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidatePath("/wholesale");
 }
 
@@ -459,8 +466,10 @@ export async function deleteProductAction(formData: FormData): Promise<{ ok: boo
   revalidatePath("/admin/inventory"); revalidatePath("/admin/catalogue"); revalidatePath("/shop");
   if (error) {
     await sb.from("products").update({ status: "draft" }).eq("id", pid);
+    await logActivity({ action: "product_hidden", ref: sku, detail: `${(p as any).name} (${sku}) has past orders — hidden from the store instead of deleted.` });
     return { ok: true, message: `${sku} has past orders — hidden from the store instead of deleted.` };
   }
+  await logActivity({ action: "product_deleted", ref: sku, detail: `Deleted ${(p as any).name} (${sku}).` });
   return { ok: true, message: `Deleted ${(p as any).name} (${sku}).` };
 }
 
@@ -490,6 +499,7 @@ export async function createSubcategoryAction(formData: FormData): Promise<void>
     categoryId = (pc as any)?.id ?? null;
   }
   await sb.from("subcategories").insert({ name, slug: slugify(name), category_id: categoryId });
+  await logActivity({ action: "subcategory_created", ref: name, detail: `Added subcategory “${name}”.` });
   revalidatePath("/admin/categories"); revalidatePath("/shop");
 }
 
@@ -508,7 +518,10 @@ export async function deleteSubcategoryAction(formData: FormData): Promise<void>
   if (!(await requirePerm("catalog.edit"))) return;
   const id = String(formData.get("id") ?? "").trim();
   if (!id) return;
-  await supabaseServer().from("subcategories").delete().eq("id", id);
+  const sb = supabaseServer();
+  const { data: sub } = await sb.from("subcategories").select("name").eq("id", id).maybeSingle();
+  await sb.from("subcategories").delete().eq("id", id);
+  await logActivity({ action: "subcategory_deleted", ref: id, detail: `Deleted subcategory${(sub as any)?.name ? ` “${(sub as any).name}”` : ""}.` });
   revalidatePath("/admin/categories"); revalidatePath("/shop");
 }
 
@@ -585,6 +598,7 @@ export async function savePricingAction(formData: FormData): Promise<void> {
     ),
   );
 
+  await logActivity({ action: "price_changed", ref: sku, detail: `Prices updated for ${sku}.` });
   revalidatePath(`/admin/catalogue/${sku}`);
   revalidatePath(`/admin/product/${sku}`);
   revalidatePath("/shop");

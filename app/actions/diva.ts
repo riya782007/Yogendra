@@ -23,6 +23,7 @@ import { generateOneAction } from "@/app/actions/images";
 import { computePrices, isValidPriceSet } from "@/lib/pricing";
 import { createProductAction, createCategoryJsonAction } from "@/app/actions/catalog";
 import { revalidatePath } from "next/cache";
+import { logActivity } from "@/lib/audit";
 
 export type DivaStep = { tool: string; args: Record<string, any>; label: string; kind: string; needsConfirm: boolean };
 export type DivaPlan = {
@@ -319,6 +320,7 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         const sb = supabaseServer();
         const { error } = await sb.from("products").update({ status }).eq("sku", sku);
         if (error) return { ok: false, message: error.message };
+        await logActivity({ action: status === "published" ? "product_shown" : "product_hidden", ref: sku, detail: `${sku} ${status === "published" ? "shown on" : "hidden from"} the store (via DIVA).` });
         revalidatePath("/admin/catalogue"); revalidatePath("/shop");
         return { ok: true, message: `${sku} is now ${status === "published" ? "visible on the store" : "hidden from the store"}.` };
       }
@@ -336,8 +338,10 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         if (error) {
           // Has past orders → can't hard-delete; hide instead.
           await sb.from("products").update({ status: "draft" }).eq("id", pid);
+          await logActivity({ action: "product_hidden", ref: sku, detail: `${(p as any).name} (${sku}) has past orders — hidden instead of deleted (via DIVA).` });
           return { ok: true, message: `${sku} has past orders, so I hid it from the store instead of deleting (keeps your books intact).` };
         }
+        await logActivity({ action: "product_deleted", ref: sku, detail: `Deleted ${(p as any).name} (${sku}) via DIVA.` });
         return { ok: true, message: `Deleted ${(p as any).name} (${sku}).` };
       }
       case "delete_role": {
