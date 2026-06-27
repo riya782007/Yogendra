@@ -103,6 +103,7 @@ export async function confirmRazorpayAction(input: {
     amount_paid: total,
     payment_mode: "online",
     payment_ref: razorpay_payment_id,
+    pay_bank: total, // Razorpay/UPI settles to bank — count it in the bank book (Pillar 9)
   }).eq("id", orderId);
 
   await sendPurchase({ orderId, valuePaise: total, channel: "retail", items: input.items.map((i) => ({ sku: i.sku, qty: i.qty })) });

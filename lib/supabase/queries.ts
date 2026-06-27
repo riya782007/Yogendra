@@ -308,6 +308,35 @@ export async function getSupplierLedger(id: string) {
   };
 }
 
+// Pillar 9 — Bank & Cash position: opening + collections in (pay_cash/pay_bank) − payments out.
+export async function getCashBankBook() {
+  const sb = supabaseServer();
+  const { data: sum } = await sb.rpc("cash_bank_summary");
+  const s: any = (Array.isArray(sum) ? sum[0] : sum) ?? {};
+  const opening_cash = Number(s.opening_cash ?? 0), opening_bank = Number(s.opening_bank ?? 0);
+  const cashIn = Number(s.cash_in ?? 0), bankIn = Number(s.bank_in ?? 0);
+  const cashOut = Number(s.cash_out ?? 0), bankOut = Number(s.bank_out ?? 0);
+  const [{ data: orders }, { data: pays }] = await Promise.all([
+    sb.from("orders").select("id,invoice_no,customer_name,pay_cash,pay_bank,created_at").or("pay_cash.gt.0,pay_bank.gt.0").order("created_at", { ascending: false }).limit(80),
+    sb.from("supplier_payments").select("id,supplier_id,amount,mode,note,created_at, supplier:suppliers(name)").order("created_at", { ascending: false }).limit(80),
+  ]);
+  const moves: any[] = [];
+  for (const o of (orders as any[]) ?? []) {
+    moves.push({ date: o.created_at, label: `Collection · ${o.invoice_no || String(o.id).slice(0, 6).toUpperCase()}${o.customer_name ? ` · ${o.customer_name}` : ""}`, link: `/admin/invoice/${o.id}`, cash: o.pay_cash ?? 0, bank: o.pay_bank ?? 0 });
+  }
+  for (const p of (pays as any[]) ?? []) {
+    const isCash = p.mode === "cash";
+    moves.push({ date: p.created_at, label: `Paid supplier · ${p.supplier?.name ?? ""}${p.note ? ` — ${p.note}` : ""}`, link: `/admin/supplier/${p.supplier_id}`, cash: isCash ? -(p.amount ?? 0) : 0, bank: isCash ? 0 : -(p.amount ?? 0) });
+  }
+  moves.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  return {
+    opening_cash, opening_bank, cashIn, bankIn, cashOut, bankOut,
+    cashBalance: opening_cash + cashIn - cashOut,
+    bankBalance: opening_bank + bankIn - bankOut,
+    moves: moves.slice(0, 120),
+  };
+}
+
 /** Self-growing master lists for variant attributes (colour / size / polish). */
 export async function getVariantOptions(): Promise<{ color: string[]; size: string[]; polish: string[] }> {
   const sb = supabaseServer();

@@ -8,9 +8,19 @@ export async function recordPaymentAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("billing.sell"))) return;
   const orderId = String(formData.get("order_id") ?? "");
   const amount = Math.round((Number(formData.get("amount") ?? 0) || 0) * 100);
+  const mode = ["cash", "bank", "upi"].includes(String(formData.get("mode"))) ? String(formData.get("mode")) : "cash";
   if (!orderId || !amount) return;
-  await supabaseServer().rpc("record_payment", { p_order: orderId, p_amount: amount });
-  revalidatePath(`/admin/invoice/${orderId}`); revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard");
+  await supabaseServer().rpc("record_payment", { p_order: orderId, p_amount: amount, p_mode: mode });
+  revalidatePath(`/admin/invoice/${orderId}`); revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard"); revalidatePath("/admin/cashbook");
+}
+
+/** Pillar 9: set the opening cash-in-hand and bank balances for the cash book (₹ → paise). */
+export async function setCashBankOpeningAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("analytics.view"))) return;
+  const cash = Math.max(0, Math.round((Number(formData.get("opening_cash") ?? 0) || 0) * 100));
+  const bank = Math.max(0, Math.round((Number(formData.get("opening_bank") ?? 0) || 0) * 100));
+  await supabaseServer().from("doc_settings").update({ opening_cash: cash, opening_bank: bank }).eq("id", 1);
+  revalidatePath("/admin/cashbook");
 }
 
 /** Save an internal note on an order (#5/#34) — admin reference only, never printed. */

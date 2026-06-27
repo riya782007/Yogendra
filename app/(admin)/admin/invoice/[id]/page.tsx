@@ -189,10 +189,15 @@ export default async function Invoice({ params }: { params: { id: string } }) {
               <div className="bg-white rounded-2xl p-5 shadow-card">
                 <h2 className="font-medium text-ink mb-1">Record a payment</h2>
                 <p className="text-xs text-muted mb-3">Balance due {formatPaise(balanceDue)}. Log an advance or part-payment.</p>
-                <form action={recordPaymentAction} className="flex items-center gap-2">
+                <form action={recordPaymentAction} className="flex items-center gap-2 flex-wrap">
                   <input type="hidden" name="order_id" value={order.id} />
                   <span className="text-muted">₹</span>
-                  <input name="amount" type="number" min={1} placeholder={String(Math.round(balanceDue / 100))} className="rounded-xl border border-sand px-3 py-2 text-sm w-32 outline-none focus:border-emerald" />
+                  <input name="amount" type="number" min={1} placeholder={String(Math.round(balanceDue / 100))} className="rounded-xl border border-sand px-3 py-2 text-sm w-28 outline-none focus:border-emerald" />
+                  <select name="mode" className="rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald" title="How was it paid?">
+                    <option value="cash">Cash</option>
+                    <option value="bank">Bank</option>
+                    <option value="upi">UPI</option>
+                  </select>
                   <button className="btn-primary px-4 py-2 text-sm font-medium">Record</button>
                 </form>
               </div>

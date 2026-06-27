@@ -29,6 +29,7 @@ const GROUPS: { title: string; links: L[] }[] = [
     { href: "/admin/estimates", label: "Estimates", icon: "≈", perm: "estimates.create" },
     { href: "/admin/returns", label: "Returns", icon: "⤺", perm: "billing.refund" },
     { href: "/admin/purchases", label: "Purchases", icon: "⇪", perm: "purchases.view" },
+    { href: "/admin/cashbook", label: "Bank & Cash", icon: "₹", perm: "analytics.view" },
   ]},
   { title: "People", links: [
     { href: "/admin/customers", label: "Customers", icon: "♚", perm: "customers.view" },
