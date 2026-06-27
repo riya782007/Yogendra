@@ -68,7 +68,7 @@ export default async function Invoice({ params }: { params: { id: string } }) {
               <p className="text-xs text-muted mt-0.5">{BUSINESS.legalName}</p>
               <p className="text-xs text-muted mt-1">{BUSINESS.address}</p>
               <p className="text-xs text-ink mt-1"><b>GSTIN:</b> {BUSINESS.gstin}</p>
-              <p className="text-xs text-muted"><b>PAN:</b> {BUSINESS.pan} · State: {BUSINESS.stateName} ({BUSINESS.stateCode})</p>
+              <p className="text-xs text-muted"><b>PAN:</b> {BUSINESS.pan}{BUSINESS.tin ? <> · <b>TIN:</b> {BUSINESS.tin}</> : null} · State: {BUSINESS.stateName} ({BUSINESS.stateCode})</p>
               <p className="text-xs text-muted">{BUSINESS.phone} · {BUSINESS.email}</p>
             </div>
             <div className="p-4 text-xs space-y-1">
@@ -132,8 +132,8 @@ export default async function Invoice({ params }: { params: { id: string } }) {
               {!isCash && (
                 <div className="mt-4">
                   <p className="text-muted mb-1">Bank details</p>
-                  <p className="text-ink">{BUSINESS.bank.name} · A/C {BUSINESS.bank.account}</p>
-                  <p className="text-ink">IFSC {BUSINESS.bank.ifsc} · {BUSINESS.bank.branch}</p>
+                  <p className="text-ink">{BUSINESS.bank.name}{BUSINESS.bank.account ? ` · A/C ${BUSINESS.bank.account}` : ""}</p>
+                  {(BUSINESS.bank.ifsc || BUSINESS.bank.branch) && <p className="text-ink">{[BUSINESS.bank.ifsc && `IFSC ${BUSINESS.bank.ifsc}`, BUSINESS.bank.branch].filter(Boolean).join(" · ")}</p>}
                 </div>
               )}
             </div>
@@ -153,6 +153,52 @@ export default async function Invoice({ params }: { params: { id: string } }) {
               {balanceDue > 0 && <div className="flex justify-between font-semibold text-rose"><span>Balance due</span><span>{formatPaise(balanceDue)}</span></div>}
             </div>
           </div>
+
+          {/* HSN-wise tax summary (GST Rule 46) */}
+          {!isCash && (
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-[11px] border border-sand">
+                <thead className="bg-cream text-muted">
+                  <tr>
+                    <th className="p-2 text-left">HSN/SAC</th>
+                    <th className="p-2 text-right">Taxable Value</th>
+                    {!g.interState ? (<>
+                      <th className="p-2 text-right">CGST&nbsp;Rate</th><th className="p-2 text-right">CGST&nbsp;Amt</th>
+                      <th className="p-2 text-right">SGST&nbsp;Rate</th><th className="p-2 text-right">SGST&nbsp;Amt</th>
+                    </>) : (<>
+                      <th className="p-2 text-right">IGST&nbsp;Rate</th><th className="p-2 text-right">IGST&nbsp;Amt</th>
+                    </>)}
+                    <th className="p-2 text-right">Total&nbsp;Tax</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-t border-sand">
+                    <td className="p-2">{HSN_JEWELLERY}</td>
+                    <td className="p-2 text-right">{formatPaise(g.taxable)}</td>
+                    {!g.interState ? (<>
+                      <td className="p-2 text-right">{GST_RATE / 2}%</td><td className="p-2 text-right">{formatPaise(g.cgst)}</td>
+                      <td className="p-2 text-right">{GST_RATE / 2}%</td><td className="p-2 text-right">{formatPaise(g.sgst)}</td>
+                    </>) : (<>
+                      <td className="p-2 text-right">{GST_RATE}%</td><td className="p-2 text-right">{formatPaise(g.igst)}</td>
+                    </>)}
+                    <td className="p-2 text-right">{formatPaise(g.tax)}</td>
+                  </tr>
+                  <tr className="border-t border-sand bg-cream/50 font-medium">
+                    <td className="p-2 text-ink">Total</td>
+                    <td className="p-2 text-right">{formatPaise(g.taxable)}</td>
+                    {!g.interState ? (<>
+                      <td className="p-2"></td><td className="p-2 text-right">{formatPaise(g.cgst)}</td>
+                      <td className="p-2"></td><td className="p-2 text-right">{formatPaise(g.sgst)}</td>
+                    </>) : (<>
+                      <td className="p-2"></td><td className="p-2 text-right">{formatPaise(g.igst)}</td>
+                    </>)}
+                    <td className="p-2 text-right">{formatPaise(g.tax)}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p className="text-[11px] text-muted mt-1">Tax Amount (in words): {amountInWords(g.tax)}</p>
+            </div>
+          )}
 
           {/* Terms + signature */}
           <div className="grid sm:grid-cols-2 gap-4 mt-6 pt-4 border-t border-sand">

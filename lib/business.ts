@@ -9,22 +9,23 @@
  */
 export const BUSINESS = {
   brand: "Blythe Diva",
-  legalName: "Yogendra Industries",
-  address: "Sadar Bazar, Rui Mandi, Delhi 110006",
+  legalName: "Yogendra Industries (India)",
+  address: "5150-B, Rui Mandi, Sadar Bazar, Delhi-110006",
   stateName: "Delhi",
   stateCode: "07", // GST state code for Delhi
-  gstin: "07ABCDE1234F1Z5", // ← replace with the real GSTIN
-  pan: "ABCDE1234F",        // ← replace with the real PAN
+  gstin: "07AAIPJ3244P1ZD",
+  pan: "AAIPJ3244P",
+  tin: "07200035767",
   phone: "+91 98731 51767",
   email: "hello@blythediva.in",
   bank: {
-    name: "HDFC Bank",
-    account: "50200000000000",
-    ifsc: "HDFC0000123",
-    branch: "Sadar Bazar, Delhi",
+    name: "Kotak Mahindra Bank",
+    account: "", // ← add the A/c number
+    ifsc: "",    // ← add the IFSC
+    branch: "Delhi",
   },
   terms: [
-    "Goods once sold are subject to our return policy.",
+    "We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.",
     "Interest @18% p.a. is charged on bills not paid within 15 days.",
     "Subject to Delhi jurisdiction only.",
   ],
