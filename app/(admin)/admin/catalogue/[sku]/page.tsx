@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import {
   getProductBySku, getCategories, getPricingFormula, getSubcategories,
-  getProductSalesStats, getStockHistory, getVariantOptions, getLabels,
+  getProductSalesStats, getStockHistory, getVariantOptions, getLabels, getColorCodeMap,
 } from "@/lib/supabase/queries";
 import { ProductEditor, type EditorProduct } from "@/components/admin/ProductEditor";
 import { ProductWorkspace, type WorkspaceTab, type TabKey } from "@/components/admin/ProductWorkspace";
@@ -44,12 +44,13 @@ export default async function ProductPage({ params, searchParams }: { params: { 
   ]);
   if (!p) notFound();
 
-  const [subcategories, stats, history, vopts, allLabels] = await Promise.all([
+  const [subcategories, stats, history, vopts, allLabels, colorCodes] = await Promise.all([
     getSubcategories({ categoryId: p.category?.id }),
     getProductSalesStats(p.sku).catch(() => null),
     getStockHistory(p.id).catch(() => []),
     getVariantOptions().catch(() => ({ color: [], size: [], polish: [] })),
     getLabels().catch(() => []),
+    getColorCodeMap().catch(() => ({} as Record<string, string>)),
   ]);
   const labelIds = new Set((((p as any).product_labels as any[]) ?? []).map((x) => x.label_id));
 
@@ -217,12 +218,24 @@ export default async function ProductPage({ params, searchParams }: { params: { 
       <datalist id="opt-polish">{vopts.polish.map((o) => <option key={o} value={o} />)}</datalist>
 
       <h3 className="font-medium text-ink mb-1">Variants</h3>
-      <p className="text-xs text-muted mb-4">Each variant has its own <b>colour, size &amp; polish</b>, SKU, stock and photos. Variant stock total: <b className="text-ink">{variantStock}</b> pcs. Pick from the suggestions or type a new value — it’s remembered for next time.</p>
+      <p className="text-xs text-muted mb-4">Each variant has its own <b>colour, size &amp; polish</b>, SKU, stock and photos. Variant stock total: <b className="text-ink">{variantStock}</b> pcs. SKUs auto-generate as <code className="bg-cream px-1 rounded">{`${p.sku}-{colourCode}`}</code> — see your <Link href="/admin/colours" className="text-emerald nav-link">Colours master</Link> for the codes. Type a brand-new value and it joins the list automatically.</p>
 
       <div className="space-y-4 mb-4">
         {variants.length === 0 && <p className="text-sm text-muted">No variants yet — this is a simple product.</p>}
         {variants.map((v: any) => {
           const imgs: string[] = v.image_paths ?? [];
+          // Pillar 11 — what the canonical SKU WOULD be (if the owner clears the SKU
+          // field and saves). Shown below the row when it differs from the stored SKU,
+          // so the owner can spot variants printing the legacy 5-char truncation and
+          // normalise them in one click.
+          const canonicalColorCode = v.color ? (colorCodes[String(v.color).toLowerCase()] ?? null) : null;
+          const canonicalSku = canonicalColorCode
+            ? `${p.sku}-${[canonicalColorCode,
+                v.size ? String(v.size).toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4) : null,
+                v.polish ? String(v.polish).toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4) : null,
+              ].filter(Boolean).join("-")}`
+            : null;
+          const needsNormalise = !!canonicalSku && canonicalSku !== v.sku;
           return (
             <div key={v.id} className="rounded-xl border border-sand/70 p-3">
               <form action={updateVariantAction} className="flex flex-wrap items-end gap-2">
@@ -244,6 +257,15 @@ export default async function ProductPage({ params, searchParams }: { params: { 
                 <VariantPhotos variantId={v.id} productSku={p.sku} color={v.color ?? null} images={imgs} />
                 {can(session, "catalog.ai") && <VariantAiPhoto variantId={v.id} color={v.color ?? null} size={v.size ?? null} polish={v.polish ?? null} />}
               </div>
+              {/* Pillar 11 — canonical-SKU hint. If the stored SKU is from the old
+                  5-char-truncation era, show the canonical form the system would now
+                  generate, so the owner can clear the SKU field above and save to align it. */}
+              {needsNormalise && (
+                <p className="mt-2 text-[11px] text-gold-dark">
+                  Tip: this variant prints <span className="font-mono">{v.sku}</span>; the canonical barcode would be{" "}
+                  <span className="font-mono text-ink">{canonicalSku}</span> — clear the SKU field and Save to switch.
+                </p>
+              )}
             </div>
           );
         })}

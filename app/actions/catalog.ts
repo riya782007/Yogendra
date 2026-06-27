@@ -2,9 +2,10 @@
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { computePrices, isValidPriceSet } from "@/lib/pricing";
-import { getPricingFormula } from "@/lib/supabase/queries";
+import { getPricingFormula, getColorCodeMap } from "@/lib/supabase/queries";
 import { requirePerm } from "@/lib/auth";
 import { generateContentAction } from "@/app/actions/aiContent";
+import { barcodeCodeForColor } from "@/lib/colors";
 
 const slugify = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
@@ -120,22 +121,34 @@ async function insertOne(sb: ReturnType<typeof supabaseServer>, formula: any, n:
   // (the "Opening stock" line), just like purchases/sales/returns do.
   const opening: any[] = [];
   const toPaise = (rs?: number | null) => (rs != null && Number.isFinite(rs) && rs > 0 ? Math.round(rs * 100) : null);
-  const autoVariantSku = (parent: string, label: string) =>
-    `${parent}-${label.replace(/[^a-z0-9]/gi, "").slice(0, 5).toUpperCase() || "VAR"}`;
+
+  // Pillar 11 — when auto-generating variant SKUs, prefer the canonical colour code from
+  // the colours master (variant_options.barcode_code) so the printed barcode reads
+  // "{productSku}-RED" / "{productSku}-MULTI1" / etc., not a 5-char truncation.
+  // Static fallback in lib/colors comes into play if the colour isn't in the master yet.
+  const colorCodes = useExplicit && explicitVariants.some((v) => (v.color ?? "").trim())
+    ? await getColorCodeMap()
+    : ({} as Record<string, string>);
+  const autoVariantSku = (parent: string, parts: { color?: string | null; size?: string | null; polish?: string | null }) => {
+    const code = parts.color ? (colorCodes[parts.color.toLowerCase()] ?? barcodeCodeForColor(parts.color)) : null;
+    const sizeCode = parts.size ? parts.size.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4) : null;
+    const polishCode = parts.polish ? parts.polish.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4) : null;
+    const suffix = [code, sizeCode, polishCode].filter(Boolean).join("-") || "VAR";
+    return `${parent}-${suffix}`;
+  };
 
   if (useExplicit) {
     const variantRows = explicitVariants.map((v) => {
       const color = (v.color ?? "").trim();
       const size = (v.size ?? "").trim();
       const polish = (v.polish ?? "").trim();
-      const label = [color, size, polish].filter(Boolean).join("-") || "VAR";
       const manualV = (v.sku ?? "").trim().toUpperCase().replace(/\s+/g, "-");
       return {
         product_id: prod!.id,
         color: color || null,
         size: size || null,
         polish: polish || null,
-        sku: manualV || autoVariantSku(sku, label),
+        sku: manualV || autoVariantSku(sku, { color, size, polish }),
         qty: Math.max(0, Math.floor(Number(v.qty) || 0)),
         retail_override: toPaise(v.retailRupees ?? null),
         wholesale_override: toPaise(v.wholesaleRupees ?? null),
@@ -163,9 +176,13 @@ async function insertOne(sb: ReturnType<typeof supabaseServer>, formula: any, n:
     if (optRows.length) await sb.from("variant_options").upsert(optRows, { onConflict: "kind,value", ignoreDuplicates: true });
   } else if (n.type === "configurable" && n.colors.length) {
     const per = Math.floor(n.qty / Math.max(1, n.colors.length));
-    const { data: vs } = await sb.from("variants").insert(n.colors.map((c) => ({
-      product_id: prod!.id, color: c, sku: `${sku}-${c.slice(0, 3).toUpperCase()}`, qty: per,
-    }))).select("id, qty");
+    // Bulk colours-comma shortcut: also honour the canonical colour code so old import
+    // paths print proper barcodes (BD2024-RED instead of BD2024-RED5).
+    const legacyCodes = await getColorCodeMap();
+    const { data: vs } = await sb.from("variants").insert(n.colors.map((c) => {
+      const code = legacyCodes[c.toLowerCase()] ?? barcodeCodeForColor(c) ?? c.slice(0, 3).toUpperCase();
+      return { product_id: prod!.id, color: c, sku: `${sku}-${code}`, qty: per };
+    })).select("id, qty");
     for (const v of (vs as any[]) ?? []) if (v.qty > 0) opening.push({ product_id: prod!.id, variant_id: v.id, delta: v.qty, kind: "opening", source: "create", reason: "Opening stock" });
     // Also remember the colours so they appear as suggestions on the Variants tab later.
     const optRows = n.colors.map((c) => ({ kind: "color", value: c.trim() })).filter((r) => r.value);
