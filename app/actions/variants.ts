@@ -168,6 +168,19 @@ export async function deleteVariantImageAction(formData: FormData): Promise<void
 
 export type VariantImgResult = { ok: boolean; reason?: string; error?: string; url?: string };
 
+/** List a product's variants (by SKU) with their attributes + id — used by the Upload form
+ *  to attach per-variant photos straight after the product+variants are created (Pillar 16). */
+export async function getProductVariantsAction(sku: string): Promise<{ id: string; color: string | null; size: string | null; polish: string | null; sku: string }[]> {
+  if (!(await requirePerm("catalog.create"))) return [];
+  const trimmed = (sku ?? "").trim();
+  if (!trimmed) return [];
+  const sb = supabaseServer();
+  const { data: p } = await sb.from("products").select("id").ilike("sku", trimmed).maybeSingle();
+  if (!p) return [];
+  const { data } = await sb.from("variants").select("id,color,size,polish,sku").eq("product_id", (p as any).id);
+  return ((data as any[]) ?? []).map((v) => ({ id: v.id, color: v.color ?? null, size: v.size ?? null, polish: v.polish ?? null, sku: v.sku }));
+}
+
 /**
  * Module 3 — generate a professional per-variant product photo via Gemini
  * (OpenAI fallback). Uses the parent product's best existing photo as the design reference

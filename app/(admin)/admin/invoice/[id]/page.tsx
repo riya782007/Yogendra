@@ -6,7 +6,7 @@ import { formatPaise } from "@/lib/pricing";
 import { PrintButton } from "@/components/admin/PrintButton";
 import { BUSINESS, HSN_JEWELLERY, GST_RATE, gstSplit, gstSplitExclusive, stateCodeFromGstin, stateNameFromCode, bankHasDetails, amountInWords } from "@/lib/business";
 import { getSession, can } from "@/lib/auth";
-import { recordPaymentAction, setDocTypeAction, saveOrderNoteAction, setBillTypeAction } from "@/app/actions/payments";
+import { recordPaymentAction, setDocTypeAction, saveOrderNoteAction, setBillTypeAction, setGstModeAction } from "@/app/actions/payments";
 
 export const metadata = { title: "Invoice" };
 
@@ -22,10 +22,12 @@ export default async function Invoice({ params }: { params: { id: string } }) {
   const total = order.total as number;
   const paid = order.amount_paid ?? 0;
   const buyerStateCode = order.buyer_state || stateCodeFromGstin(order.buyer_gstin);
-  // #13: wholesale (B2B) tax invoices are GST-EXCLUSIVE — the stored total is the
-  // pre-tax wholesale value and GST is added on top. Retail/POS GST invoices stay
-  // GST-INCLUSIVE (the shelf price already includes tax).
-  const gstExclusive = !isCash && order.channel === "wholesale";
+  // #13/#3: wholesale (B2B) tax invoices are GST-EXCLUSIVE — the stored total is the
+  // pre-tax value and GST is added on top. Retail/POS GST invoices default to
+  // GST-INCLUSIVE (the shelf price already includes tax). The owner can override this
+  // per bill via gst_mode ('exclusive' | 'inclusive'); null = the channel default above.
+  const gstMode = (order.gst_mode as "inclusive" | "exclusive" | null | undefined) ?? null;
+  const gstExclusive = !isCash && (gstMode ? gstMode === "exclusive" : order.channel === "wholesale");
   const g = gstExclusive ? gstSplitExclusive(total, buyerStateCode) : gstSplit(total, buyerStateCode);
   // What the customer actually owes: inclusive total (or pre-tax + GST when exclusive).
   const payable = isCash ? total : gstExclusive ? total + g.tax : total;
@@ -258,6 +260,35 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                   <button className="px-4 py-2 rounded-full bg-ink/5 text-ink text-sm hover:bg-ink/10">{isCash ? "Convert to GST Tax Invoice →" : "Convert to Cash Memo →"}</button>
                 </form>
                 {isCash && !order.buyer_gstin && <p className="text-[11px] text-gold-dark mt-2">Tip: add the buyer's GSTIN for a complete B2B tax invoice.</p>}
+              </div>
+            )}
+            {can(session, "billing.gst") && !isCash && (
+              <div className="bg-white rounded-2xl p-5 shadow-card">
+                <h2 className="font-medium text-ink mb-1">GST on this invoice</h2>
+                <p className="text-xs text-muted mb-3">
+                  Showing GST <b>{gstExclusive ? "added on top (exclusive)" : "included in the rate (inclusive)"}</b>
+                  {gstMode ? " · pinned" : " · auto by channel"}. A tax invoice is usually GST-exclusive — the rate is pre-tax and CGST/SGST is added on top.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <form action={setGstModeAction}>
+                    <input type="hidden" name="order_id" value={order.id} />
+                    <input type="hidden" name="gst_mode" value="exclusive" />
+                    <button className={`px-3 py-1.5 rounded-full text-sm ${gstExclusive ? "bg-emerald text-white" : "bg-ink/5 text-ink hover:bg-ink/10"}`}>GST extra (exclusive)</button>
+                  </form>
+                  <form action={setGstModeAction}>
+                    <input type="hidden" name="order_id" value={order.id} />
+                    <input type="hidden" name="gst_mode" value="inclusive" />
+                    <button className={`px-3 py-1.5 rounded-full text-sm ${!gstExclusive ? "bg-emerald text-white" : "bg-ink/5 text-ink hover:bg-ink/10"}`}>GST included</button>
+                  </form>
+                  {gstMode && (
+                    <form action={setGstModeAction}>
+                      <input type="hidden" name="order_id" value={order.id} />
+                      <input type="hidden" name="gst_mode" value="auto" />
+                      <button className="px-3 py-1.5 rounded-full text-sm text-muted hover:text-ink">Reset to auto</button>
+                    </form>
+                  )}
+                </div>
+                <p className="text-[11px] text-muted mt-2">Exclusive adds {GST_RATE}% on top of the rate; the grand total changes accordingly.</p>
               </div>
             )}
             {can(session, "billing.gst") && !isCash && (

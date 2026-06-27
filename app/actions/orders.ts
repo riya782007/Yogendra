@@ -33,7 +33,7 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
 }
 
 export async function posSaleAction(input: {
-  items: { sku: string; qty: number }[];
+  items: { sku: string; qty: number; priceRupees?: number }[];
   customer: { name?: string; phone?: string };
   payment: string;
   billType?: "gst" | "cash";
@@ -50,11 +50,46 @@ export async function posSaleAction(input: {
   for (const it of input.items) if (!Number.isFinite(it.qty) || it.qty < 1) return { ok: false, error: "Every line needs a quantity of 1 or more" };
   const sb = supabaseServer();
   const { data, error } = await sb.rpc("place_order", {
-    p_items: input.items, p_customer: input.customer ?? {}, p_channel: "pos", p_payment: input.payment || "cash",
+    p_items: input.items.map((i) => ({ sku: i.sku, qty: i.qty })), p_customer: input.customer ?? {}, p_channel: "pos", p_payment: input.payment || "cash",
     p_allow_oversell: !!input.allowOversell, p_tier: input.tier === "wholesale" ? "wholesale" : "retail",
   });
   if (error) return { ok: false, error: error.message };
-  const orderId = (data as any)?.order_id, total = (data as any)?.total;
+  const orderId = (data as any)?.order_id;
+  let total = (data as any)?.total as number;
+
+  // Pillar 15 — per-line price edits (manual discount / custom rate at the counter).
+  // The RPC priced every line at the catalogue/tier rate; here we overwrite the unit price
+  // on the specific lines the owner edited, then ALWAYS recompute the order total from the
+  // actual order_items so the bill, GST split and ledger stay internally consistent even
+  // if a match is skipped. Best-effort and fully guarded — a failed match falls back to the
+  // catalogue price rather than corrupting the bill.
+  const overrides = (input.items ?? []).filter((i) => i.priceRupees != null && Number.isFinite(i.priceRupees) && (i.priceRupees as number) >= 0);
+  if (orderId && overrides.length) {
+    try {
+      for (const o of overrides) {
+        const unit = Math.round((o.priceRupees as number) * 100);
+        // Resolve the scanned SKU to its product (and variant, if it's a variant SKU).
+        let productId: string | null = null;
+        let variantId: string | null = null;
+        const { data: prod } = await sb.from("products").select("id").ilike("sku", o.sku).maybeSingle();
+        if (prod) productId = (prod as any).id;
+        else {
+          const { data: v } = await sb.from("variants").select("id,product_id").ilike("sku", o.sku).maybeSingle();
+          if (v) { variantId = (v as any).id; productId = (v as any).product_id; }
+        }
+        if (!productId) continue; // can't map — leave the catalogue price on that line
+        let upd = sb.from("order_items").update({ unit_price: unit, line_total: unit * o.qty }).eq("order_id", orderId).eq("product_id", productId);
+        upd = variantId ? upd.eq("variant_id", variantId) : upd.is("variant_id", null);
+        await upd;
+      }
+      // Recompute the authoritative total from the (possibly edited) line items.
+      const { data: lines } = await sb.from("order_items").select("line_total").eq("order_id", orderId);
+      const recomputed = ((lines as any[]) ?? []).reduce((s, l) => s + (l.line_total ?? 0), 0);
+      if (recomputed > 0) total = recomputed;
+    } catch {
+      /* keep the RPC's total if reconciliation hits a snag — never corrupt the bill */
+    }
+  }
 
   // Persist B2B bill metadata on the order so the invoice/cash-memo renders correctly.
   const billType = input.billType === "cash" ? "cash" : "gst";
@@ -101,6 +136,7 @@ export async function posSaleAction(input: {
     buyer_address: input.buyerAddress?.trim() || null,
     buyer_state: buyerState,
     customer_id: customerId,
+    total,
     amount_paid: amountPaid,
     payment_mode: payMode,
     pay_cash: payCash,

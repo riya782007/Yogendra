@@ -6,7 +6,7 @@ import { posSaleAction } from "@/app/actions/orders";
 import { QtyField } from "@/components/admin/QtyField";
 
 type P = { sku: string; name: string; price: number; wholesale: number; category: string; qty: number };
-type Line = { sku: string; name: string; price: number; wholesale: number; qty: number; stock: number };
+type Line = { sku: string; name: string; price: number; wholesale: number; qty: number; stock: number; override: string };
 type Cust = { id: string; name: string; phone: string; type: string; gstin: string };
 
 export function POSClient({ products, customers = [] }: { products: P[]; customers?: Cust[] }) {
@@ -27,6 +27,13 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
   const [allowBackorder, setAllowBackorder] = useState(false);
   const [tier, setTier] = useState<"retail" | "wholesale">("retail");
   const unitOf = (l: Line | P) => (tier === "wholesale" ? l.wholesale : l.price);
+  /** Effective unit price for a cart line: the owner's manual override if entered
+   *  (Pillar 15 — counter discount / custom rate), otherwise the tier price. */
+  const effUnit = (l: Line) => {
+    const ov = l.override.trim();
+    if (ov !== "" && Number.isFinite(Number(ov)) && Number(ov) >= 0) return Math.round(Number(ov) * 100);
+    return unitOf(l);
+  };
   const [custQ, setCustQ] = useState("");
   const [custOpen, setCustOpen] = useState(false);
   const custMatches = useMemo(() => {
@@ -48,9 +55,10 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
     return products.filter((p) => p.name.toLowerCase().includes(s) || p.sku.toLowerCase().includes(s)).slice(0, 6);
   }, [q, products]);
 
-  const total = lines.reduce((s, l) => s + unitOf(l) * l.qty, 0);
-  function addLine(p: P) { setLines((prev) => { const ex = prev.find((l) => l.sku === p.sku); if (ex) return prev.map((l) => l.sku === p.sku ? { ...l, qty: l.qty + 1 } : l); return [...prev, { sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, qty: 1, stock: p.qty }]; }); setQ(""); }
+  const total = lines.reduce((s, l) => s + effUnit(l) * l.qty, 0);
+  function addLine(p: P) { setLines((prev) => { const ex = prev.find((l) => l.sku === p.sku); if (ex) return prev.map((l) => l.sku === p.sku ? { ...l, qty: l.qty + 1 } : l); return [...prev, { sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, qty: 1, stock: p.qty, override: "" }]; }); setQ(""); }
   function setQty(sku: string, qty: number) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, qty: Math.max(1, Math.floor(qty || 1)) } : l)); }
+  function setOverride(sku: string, val: string) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, override: val } : l)); }
   function rm(sku: string) { setLines((p) => p.filter((l) => l.sku !== sku)); }
 
   /** Barcode scanner sends "<SKU>\n" — match exactly and add, showing available stock. */
@@ -75,7 +83,7 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
     const c = Number(cTxt) || 0, b = Number(bTxt) || 0;
     const mode = anySplit ? (c > 0 && b > 0 ? "split" : b > 0 ? "upi" : "cash") : "cash";
     const res = await posSaleAction({
-      items: lines.map((l) => ({ sku: l.sku, qty: l.qty })),
+      items: lines.map((l) => ({ sku: l.sku, qty: l.qty, ...(l.override.trim() !== "" && Number(l.override) >= 0 ? { priceRupees: Number(l.override) } : {}) })),
       customer: cust, payment: mode,
       billType, buyerGstin: billType === "gst" ? gstin : "", buyerAddress: addr,
       // Blank split → treat as paid in full (cash). Any entry → record the cash/bank split.
@@ -122,16 +130,27 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
           {lines.length === 0 && <p className="text-sm text-muted">No items yet. Search above to add.</p>}
           {lines.map((l) => (
             <div key={l.sku} className="flex items-center gap-3 border-b border-sand/60 pb-2">
-              <div className="flex-1">
-                <p className="text-sm text-ink">{l.name}</p>
-                <p className="text-xs text-muted">{l.sku} · {formatPaise(unitOf(l))} · <span className={l.qty > l.stock ? "text-rose font-medium" : "text-emerald"}>{l.stock} in stock</span>{l.qty > l.stock && <span className="text-rose"> — only {l.stock} available!</span>}</p>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-ink truncate">{l.name}</p>
+                <p className="text-xs text-muted">{l.sku} · <span className={l.qty > l.stock ? "text-rose font-medium" : "text-emerald"}>{l.stock} in stock</span>{l.qty > l.stock && <span className="text-rose"> — only {l.stock} available!</span>}</p>
               </div>
+              {/* Editable unit price (Pillar 15) — placeholder is the tier price; type to override. */}
+              <label className="inline-flex items-center gap-1 rounded-full border border-sand px-2 py-1 text-sm" title="Edit unit price (discount / custom rate)">
+                <span className="text-muted text-xs">₹</span>
+                <input
+                  value={l.override}
+                  onChange={(e) => setOverride(l.sku, e.target.value)}
+                  inputMode="decimal"
+                  placeholder={String(Math.round(unitOf(l) / 100))}
+                  className={`w-16 text-right outline-none bg-transparent ${l.override.trim() !== "" ? "text-emerald-dark font-medium" : "text-ink"}`}
+                />
+              </label>
               <div className="inline-flex items-center rounded-full border border-sand text-sm overflow-hidden">
                 <button onClick={() => setQty(l.sku, l.qty - 1)} className="px-2.5 py-1 hover:bg-cream" aria-label="decrease">−</button>
-                <QtyField value={l.qty} onChange={(n) => setQty(l.sku, n)} className="w-14 text-center border-x border-sand py-1 outline-none focus:bg-emerald-mist" />
+                <QtyField value={l.qty} onChange={(n) => setQty(l.sku, n)} className="w-12 text-center border-x border-sand py-1 outline-none focus:bg-emerald-mist" />
                 <button onClick={() => setQty(l.sku, l.qty + 1)} className="px-2.5 py-1 hover:bg-cream" aria-label="increase">+</button>
               </div>
-              <span className="text-sm font-medium w-20 text-right">{formatPaise(unitOf(l) * l.qty)}</span>
+              <span className="text-sm font-medium w-20 text-right">{formatPaise(effUnit(l) * l.qty)}</span>
               <button onClick={() => rm(l.sku)} className="text-muted hover:text-rose text-xs">✕</button>
             </div>
           ))}

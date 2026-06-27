@@ -61,3 +61,18 @@ export async function setDocTypeAction(formData: FormData): Promise<void> {
   if (docType === "invoice") await sb.rpc("assign_invoice_no", { p_order: orderId });
   revalidatePath(`/admin/invoice/${orderId}`);
 }
+
+/** Pillar 3 — choose how GST is shown on a tax invoice:
+ *   'exclusive' → rate is pre-tax, GST added on top (taxable + GST = grand total)
+ *   'inclusive' → rate already includes GST (back-computed from the stored total)
+ *   'auto'      → clear the override; fall back to the channel default
+ *                 (wholesale = exclusive, retail/pos = inclusive). */
+export async function setGstModeAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("billing.gst"))) return;
+  const orderId = String(formData.get("order_id") ?? "");
+  const raw = String(formData.get("gst_mode") ?? "");
+  const gst_mode = raw === "exclusive" ? "exclusive" : raw === "inclusive" ? "inclusive" : null;
+  if (!orderId) return;
+  await supabaseServer().from("orders").update({ gst_mode }).eq("id", orderId);
+  revalidatePath(`/admin/invoice/${orderId}`);
+}

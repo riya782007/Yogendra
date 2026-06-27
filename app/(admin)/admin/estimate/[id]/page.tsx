@@ -30,8 +30,18 @@ export default async function EstimatePrint({ params }: { params: { id: string }
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center justify-between mb-4 no-print">
           <Link href="/admin/estimates" className="text-sm text-emerald nav-link">← Estimates</Link>
-          <PrintButton />
+          <div className="flex items-center gap-2">
+            {canEdit && <a href="#edit-estimate" className="px-4 py-2 rounded-full bg-emerald-mist text-emerald-dark text-sm font-medium hover:bg-emerald/20">✏️ Edit items &amp; prices</a>}
+            <PrintButton />
+          </div>
         </div>
+        {!isOpen && (
+          <div className="no-print mb-4 rounded-2xl border border-gold/40 bg-gold/5 p-3 text-sm text-gold-dark">
+            This estimate is <b className="capitalize">{String(estimate.status).replace("_", " ")}</b>, so its items and prices are locked.
+            {estimate.order_id && <> View the <Link href={`/admin/invoice/${estimate.order_id}`} className="text-emerald nav-link">billed invoice →</Link></>}
+            {(estimate.status === "denied" || estimate.status === "expired") && <> Re-open it from the <Link href="/admin/estimates" className="text-emerald nav-link">Estimates list</Link> to edit again.</>}
+          </div>
+        )}
 
         <div className="print-area bg-white rounded-2xl shadow-card p-5 sm:p-8 text-[13px]" id="estimate">
           <div className="text-center pb-3 mb-3 border-b-2 border-ink/80">
@@ -96,9 +106,9 @@ export default async function EstimatePrint({ params }: { params: { id: string }
 
         {/* #18: edit panel — only for OPEN estimates (locks once billed) */}
         {canEdit && (
-          <div className="no-print mt-5 bg-white rounded-2xl shadow-card p-5">
-            <h2 className="font-medium text-ink mb-1">Edit estimate</h2>
-            <p className="text-xs text-muted mb-4">This estimate is open — change items, quantities or the customer. It locks once billed.</p>
+          <div id="edit-estimate" className="no-print mt-5 bg-white rounded-2xl shadow-card p-5 scroll-mt-4 ring-1 ring-emerald/20">
+            <h2 className="font-medium text-ink mb-1">Edit estimate · items &amp; prices</h2>
+            <p className="text-xs text-muted mb-4">This estimate is open — change items, quantities, the <b>per-line rate</b> (use this to give a discount), or the customer. Tap <b>Save rate</b> after editing a price. It locks once billed.</p>
             <datalist id="est-skus">{products.map((p: any) => <option key={p.id} value={p.sku}>{p.name}</option>)}</datalist>
 
             <form action={updateEstimateCustomerAction} className="flex flex-wrap items-end gap-2 mb-4">
