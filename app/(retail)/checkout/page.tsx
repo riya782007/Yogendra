@@ -24,7 +24,7 @@ export default function Checkout() {
 
     // ---- Pay Online (Razorpay) ----
     if (payment === "online") {
-      const created = await createRazorpayOrderAction(cartItems);
+      const created = await createRazorpayOrderAction(cartItems, f);
       if (!created.ok) { setBusy(false); setErr(created.error ?? "Couldn't start the payment."); return; }
       const RZP = (window as any).Razorpay;
       if (!RZP) { setBusy(false); setErr("Payment is still loading — please try again in a moment."); return; }
