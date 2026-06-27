@@ -6,6 +6,10 @@
  *
  * Imitation/artificial jewellery → HSN 7117, GST 3% (CGST 1.5 + SGST 1.5 intra-state,
  * or IGST 3% inter-state). Change GST_RATE / HSN if the product mix differs.
+ *
+ * Bank account / IFSC are read from env (BLYTHE_BANK_ACCOUNT, BLYTHE_BANK_IFSC) so the
+ * production values stay out of source control. Hard-coded fallbacks are empty strings;
+ * the invoice template hides the Bank details block when both are blank.
  */
 export const BUSINESS = {
   brand: "Blythe Diva",
@@ -19,10 +23,10 @@ export const BUSINESS = {
   phone: "+91 98731 51767",
   email: "hello@blythediva.in",
   bank: {
-    name: "Kotak Mahindra Bank",
-    account: "", // ← add the A/c number
-    ifsc: "",    // ← add the IFSC
-    branch: "Delhi",
+    name: process.env.BLYTHE_BANK_NAME || "Kotak Mahindra Bank",
+    account: process.env.BLYTHE_BANK_ACCOUNT || "", // configured via env
+    ifsc: process.env.BLYTHE_BANK_IFSC || "",       // configured via env
+    branch: process.env.BLYTHE_BANK_BRANCH || "Delhi",
   },
   terms: [
     "We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.",
@@ -30,6 +34,30 @@ export const BUSINESS = {
     "Subject to Delhi jurisdiction only.",
   ],
 } as const;
+
+/** True when the bank block has enough information to be useful on a printed invoice. */
+export function bankHasDetails(): boolean {
+  return !!(BUSINESS.bank.account?.trim() && BUSINESS.bank.ifsc?.trim());
+}
+
+/** GST state codes (first 2 of GSTIN) → human-readable place-of-supply name. Used on tax
+ *  invoices so the "Place of supply" line shows the BUYER's state, not the seller's. */
+const STATE_NAME_BY_CODE: Record<string, string> = {
+  "01": "Jammu & Kashmir", "02": "Himachal Pradesh", "03": "Punjab", "04": "Chandigarh",
+  "05": "Uttarakhand", "06": "Haryana", "07": "Delhi", "08": "Rajasthan",
+  "09": "Uttar Pradesh", "10": "Bihar", "11": "Sikkim", "12": "Arunachal Pradesh",
+  "13": "Nagaland", "14": "Manipur", "15": "Mizoram", "16": "Tripura",
+  "17": "Meghalaya", "18": "Assam", "19": "West Bengal", "20": "Jharkhand",
+  "21": "Odisha", "22": "Chhattisgarh", "23": "Madhya Pradesh", "24": "Gujarat",
+  "25": "Daman & Diu", "26": "Dadra & Nagar Haveli and Daman & Diu", "27": "Maharashtra",
+  "28": "Andhra Pradesh", "29": "Karnataka", "30": "Goa", "31": "Lakshadweep",
+  "32": "Kerala", "33": "Tamil Nadu", "34": "Puducherry", "35": "Andaman & Nicobar Islands",
+  "36": "Telangana", "37": "Andhra Pradesh (New)", "38": "Ladakh", "97": "Other Territory",
+};
+export function stateNameFromCode(code?: string | null): string {
+  if (!code) return BUSINESS.stateName;
+  return STATE_NAME_BY_CODE[code] ?? BUSINESS.stateName;
+}
 
 export const HSN_JEWELLERY = "7117";
 export const GST_RATE = 3; // percent, for imitation jewellery

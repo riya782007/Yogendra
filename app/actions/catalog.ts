@@ -280,18 +280,57 @@ export async function aiParseRowsAction(rawText: string): Promise<{ rows: Parsed
   let rows: ParsedRow[] = [];
   let usedAi = false;
   if (text && (groqConfigured() || openaiConfigured())) {
-    const system = `You convert a messy product list into clean JSON for a jewellery store. Output STRICT JSON: {"rows":[{"name":string,"base_price":number,"qty":number,"type":"simple"|"configurable","colors":string[],"sku":string}]}. The input may be CSV, tab-separated, or freeform, with columns in any order or with different header names (price/cost/wholesale -> base_price in rupees as a number; quantity/stock/pcs -> qty integer; colours/variants -> colors array; sku/code/item code -> sku, an optional existing product code — copy it EXACTLY if present, else "" ; if multiple colours are present set type to "configurable" else "simple"). Ignore header rows and currency symbols. Infer sensibly. Return ONLY JSON.`;
+    const system = `You convert a messy product list into clean JSON for a jewellery store. Output STRICT JSON:
+{"rows":[{
+  "name":string,
+  "base_price":number,                        // wholesale cost in rupees, no currency symbols
+  "qty":number,                                // total stock, integer
+  "type":"simple"|"configurable",
+  "colors":string[],                           // ["Red","Green"] — empty = simple
+  "sku":string,                                // optional existing product code — copy verbatim, else ""
+  "variants":[{                                // optional — only when sizes / polishes / per-variant prices appear
+    "color":string,                            // any of color / size / polish must be present per row
+    "size":string,
+    "polish":string,
+    "sku":string,
+    "qty":number,
+    "retail":number,                           // optional rupees override
+    "wholesale":number,
+    "mrp":number
+  }]
+}]}.
+The input may be CSV, tab-separated, or freeform, with columns in any order or different header names: price/cost/wholesale -> base_price (rupees, number); quantity/stock/pcs -> qty (int); colours/variants -> colors[]; sku/code/item code -> sku (verbatim if given else ""). When the row mentions sizes (S/M/L, 2.4, 2.6 etc.) or polishes (Antique, Oxidised, Matte etc.) or per-variant prices, populate "variants" instead of plain "colors" and set type="configurable". A row with >1 colour OR any variants[] entry must be "configurable". Ignore header rows, currency symbols, and totals. Return ONLY JSON.`;
     try {
       const out = groqConfigured() ? await groqChat({ system, user: text, json: true }) : await openaiChat({ system, user: text, json: true });
       const parsed = JSON.parse(out);
-      rows = (parsed.rows ?? []).map((r: any) => ({
-        name: String(r.name ?? "").trim(),
-        basePriceRupees: Number(r.base_price) || 0,
-        qty: parseInt(r.qty, 10) || 0,
-        type: (r.type === "configurable" || (Array.isArray(r.colors) && r.colors.length > 1) ? "configurable" : "simple") as "simple" | "configurable",
-        colors: Array.isArray(r.colors) ? r.colors.map((c: any) => String(c).trim()).filter(Boolean) : [],
-        manualSku: r.sku ? String(r.sku).trim() : undefined,
-      })).filter((r: any) => r.name);
+      rows = (parsed.rows ?? []).map((r: any) => {
+        // Pillar 10 — capture full variants when the AI emits them. Each entry can carry
+        // colour/size/polish + qty + per-variant retail/wholesale/MRP. Rows with at least
+        // one structured variant flip to "configurable" regardless of the colors[] hint.
+        const variantsRaw: any[] = Array.isArray(r.variants) ? r.variants : [];
+        const variants = variantsRaw
+          .map((v: any) => ({
+            color: v?.color ? String(v.color).trim() : undefined,
+            size: v?.size ? String(v.size).trim() : undefined,
+            polish: v?.polish ? String(v.polish).trim() : undefined,
+            sku: v?.sku ? String(v.sku).trim() : undefined,
+            qty: Math.max(0, Math.floor(Number(v?.qty) || 0)),
+            retailRupees: v?.retail != null && Number(v.retail) > 0 ? Number(v.retail) : null,
+            wholesaleRupees: v?.wholesale != null && Number(v.wholesale) > 0 ? Number(v.wholesale) : null,
+            mrpRupees: v?.mrp != null && Number(v.mrp) > 0 ? Number(v.mrp) : null,
+          }))
+          .filter((v: any) => v.color || v.size || v.polish);
+        const isConfigurable = r.type === "configurable" || variants.length > 0 || (Array.isArray(r.colors) && r.colors.length > 1);
+        return {
+          name: String(r.name ?? "").trim(),
+          basePriceRupees: Number(r.base_price) || 0,
+          qty: parseInt(r.qty, 10) || 0,
+          type: (isConfigurable ? "configurable" : "simple") as "simple" | "configurable",
+          colors: Array.isArray(r.colors) ? r.colors.map((c: any) => String(c).trim()).filter(Boolean) : [],
+          manualSku: r.sku ? String(r.sku).trim() : undefined,
+          variants: variants.length ? variants : undefined,
+        };
+      }).filter((r: any) => r.name);
       usedAi = rows.length > 0;
     } catch { /* fall through */ }
   }

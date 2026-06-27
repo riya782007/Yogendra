@@ -20,6 +20,8 @@ const KIND_STYLE: Record<string, string> = {
   purchase: "bg-emerald-mist text-emerald-dark",
   damage: "bg-rose/10 text-rose",
   opening: "bg-blue-100 text-blue-700",
+  adjustment: "bg-cream text-muted",
+  estimate: "bg-gold/10 text-gold-dark",
 };
 
 // Pillar 5 — every movement opens its source bill straight from this register.
@@ -27,7 +29,8 @@ function docFor(r: any): { href: string; label: string } | null {
   if (!r.ref_id) return null;
   if (r.kind === "sale") return { href: `/admin/invoice/${r.ref_id}`, label: "View bill →" };
   if (r.kind === "purchase") return { href: `/admin/purchase/${r.ref_id}`, label: "View purchase →" };
-  if (r.kind === "estimate") return { href: `/admin/estimates`, label: "View estimate →" };
+  // #6: the estimate row opens the specific quote it reserved stock for, not the list page.
+  if (r.kind === "estimate") return { href: `/admin/estimate/${r.ref_id}`, label: "View estimate →" };
   return null;
 }
 
@@ -39,7 +42,10 @@ export default async function StockMovements({ searchParams }: { searchParams: {
   const to = searchParams.to ?? "";
   const [{ rows, total }, reservations] = await Promise.all([
     getStockMovements({ page, pageSize: PAGE_SIZE, kind, q, from: from || undefined, to: to ? to + "T23:59:59" : undefined }),
-    page === 1 && (kind === "all" || kind === "estimate") ? getOpenEstimateReservations() : Promise.resolve([] as any[]),
+    // #6: soft holds are a separate concept from the stock_adjustments ledger — show them on
+    // every page (not only page 1) whenever the user is on the All or Estimate tab, so the
+    // open-estimate reservations don't disappear as soon as you scroll.
+    (kind === "all" || kind === "estimate") ? getOpenEstimateReservations() : Promise.resolve([] as any[]),
   ]);
   const reservedTotal = (reservations as any[]).reduce((s, e) => s + e.qty, 0);
   const sel = "rounded-xl border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-emerald";
