@@ -339,6 +339,27 @@ export async function getOptionMaster(): Promise<{ color: OptionRow[]; size: Opt
   return out;
 }
 
+/** Pillar 11 — every printable label: each product AND each colour/size/polish variant
+ *  (its own SKU + correctly-resolved retail price), so barcodes can be printed per piece. */
+export async function getLabelItems(): Promise<{ sku: string; name: string; price: number }[]> {
+  const sb = supabaseServer();
+  const formula = await getPricingFormula();
+  const { data } = await sb
+    .from("products")
+    .select("sku,name,base_wholesale,wholesale_override,retail_override,mrp_override, variants(sku,color,size,polish,wholesale_override,retail_override,mrp_override)")
+    .order("sku");
+  const out: { sku: string; name: string; price: number }[] = [];
+  for (const p of (data as any[]) ?? []) {
+    out.push({ sku: p.sku, name: p.name, price: _resolvePrices(p.base_wholesale, formula, overridesOf(null), overridesOf(p)).retailPrice });
+    for (const v of (p.variants as any[]) ?? []) {
+      if (!v.sku) continue;
+      const opt = [v.color, v.size, v.polish].filter(Boolean).join(" / ");
+      out.push({ sku: v.sku, name: `${p.name}${opt ? ` — ${opt}` : ""}`, price: _resolvePrices(p.base_wholesale, formula, overridesOf(v), overridesOf(p)).retailPrice });
+    }
+  }
+  return out;
+}
+
 export async function getProductBySku(sku: string): Promise<
   | (DbProduct & { category: DbCategory; variants: DbVariant[]; images: DbImage[] })
   | null
