@@ -224,8 +224,11 @@ export default async function ProductPage({ params, searchParams }: { params: { 
                 <label className="text-[11px] text-muted">Colour<input name="color" list="opt-color" defaultValue={v.color ?? ""} placeholder="Colour" className={`${vInput} w-28 block mt-0.5`} /></label>
                 <label className="text-[11px] text-muted">Size<input name="size" list="opt-size" defaultValue={v.size ?? ""} placeholder="Size" className={`${vInput} w-24 block mt-0.5`} /></label>
                 <label className="text-[11px] text-muted">Polish<input name="polish" list="opt-polish" defaultValue={v.polish ?? ""} placeholder="Polish" className={`${vInput} w-28 block mt-0.5`} /></label>
-                <label className="text-[11px] text-muted">SKU<input name="sku" defaultValue={v.sku ?? ""} placeholder="auto" className={`${vInput} w-36 block mt-0.5 font-mono`} /></label>
-                <label className="text-[11px] text-muted">Stock<input name="qty" type="number" min={0} defaultValue={v.qty ?? 0} className={`${vInput} w-16 text-center block mt-0.5`} /></label>
+                <label className="text-[11px] text-muted">SKU<input name="sku" defaultValue={v.sku ?? ""} placeholder="auto" className={`${vInput} w-32 block mt-0.5 font-mono`} /></label>
+                <label className="text-[11px] text-muted">Stock<input name="qty" type="number" min={0} defaultValue={v.qty ?? 0} className={`${vInput} w-14 text-center block mt-0.5`} /></label>
+                <label className="text-[11px] text-muted">Retail ₹<input name="retail" type="number" min={0} step="0.01" defaultValue={v.retail_override != null ? (v.retail_override / 100).toFixed(2) : ""} placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
+                <label className="text-[11px] text-muted">Wholesale ₹<input name="wholesale" type="number" min={0} step="0.01" defaultValue={v.wholesale_override != null ? (v.wholesale_override / 100).toFixed(2) : ""} placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
+                <label className="text-[11px] text-muted">MRP ₹<input name="mrp" type="number" min={0} step="0.01" defaultValue={v.mrp_override != null ? (v.mrp_override / 100).toFixed(2) : ""} placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
                 <button className="px-3 py-2 rounded-xl bg-ink/5 text-ink text-xs hover:bg-ink/10">Save</button>
                 <button formAction={deleteVariantAction} className="text-muted hover:text-rose text-xs px-1">Delete</button>
               </form>
@@ -244,11 +247,14 @@ export default async function ProductPage({ params, searchParams }: { params: { 
         <label className="text-[11px] text-muted">Colour<input name="color" list="opt-color" placeholder="e.g. Green" className={`${vInput} w-28 block mt-0.5`} /></label>
         <label className="text-[11px] text-muted">Size<input name="size" list="opt-size" placeholder="e.g. 2.6" className={`${vInput} w-24 block mt-0.5`} /></label>
         <label className="text-[11px] text-muted">Polish<input name="polish" list="opt-polish" placeholder="e.g. Oxidised" className={`${vInput} w-28 block mt-0.5`} /></label>
-        <label className="text-[11px] text-muted">SKU<input name="sku" placeholder="blank = auto" className={`${vInput} w-36 block mt-0.5 font-mono`} /></label>
-        <label className="text-[11px] text-muted">Stock<input name="qty" type="number" min={0} defaultValue={0} className={`${vInput} w-16 text-center block mt-0.5`} /></label>
+        <label className="text-[11px] text-muted">SKU<input name="sku" placeholder="blank = auto" className={`${vInput} w-32 block mt-0.5 font-mono`} /></label>
+        <label className="text-[11px] text-muted">Stock<input name="qty" type="number" min={0} defaultValue={0} className={`${vInput} w-14 text-center block mt-0.5`} /></label>
+        <label className="text-[11px] text-muted">Retail ₹<input name="retail" type="number" min={0} step="0.01" placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
+        <label className="text-[11px] text-muted">Wholesale ₹<input name="wholesale" type="number" min={0} step="0.01" placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
+        <label className="text-[11px] text-muted">MRP ₹<input name="mrp" type="number" min={0} step="0.01" placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
         <button className="btn-primary px-4 py-2 text-sm font-medium">+ Add variant</button>
       </form>
-      <p className="text-[11px] text-muted mt-2">At least one of colour / size / polish is required. Add photos to each variant so the storefront shows the right piece per option.</p>
+      <p className="text-[11px] text-muted mt-2">At least one of colour / size / polish is required. Leave a price <b>blank</b> to use the automatic formula price; enter a value to set that colour&apos;s own retail / wholesale / MRP. Add photos so the storefront shows the right piece per option.</p>
     </div>
   );
 

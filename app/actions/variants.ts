@@ -12,6 +12,14 @@ function autoSku(productSku: string, label: string): string {
   return `${productSku}-${label.replace(/[^a-z0-9]/gi, "").slice(0, 5).toUpperCase() || "VAR"}`;
 }
 
+/** Parse a rupee form field to integer paise, or null when blank (= "use the formula price"). */
+function toPaise(v: FormDataEntryValue | null): number | null {
+  const s = String(v ?? "").trim();
+  if (s === "") return null;
+  const n = Number(s);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null;
+}
+
 /** Remember any new colour/size/polish value so the master list grows itself. */
 async function rememberOptions(sb: ReturnType<typeof supabaseServer>, o: { color?: string; size?: string; polish?: string }) {
   const rows: { kind: string; value: string }[] = [];
@@ -41,7 +49,10 @@ export async function addVariantAction(formData: FormData): Promise<void> {
   const { data: p } = await sb.from("products").select("id,type").ilike("sku", productSku).maybeSingle();
   if (!p) return;
   if (!vsku) vsku = autoSku(productSku, [color, size, polish].filter(Boolean).join("-"));
-  await sb.from("variants").insert({ product_id: (p as any).id, color: color || null, size: size || null, polish: polish || null, sku: vsku, qty });
+  await sb.from("variants").insert({
+    product_id: (p as any).id, color: color || null, size: size || null, polish: polish || null, sku: vsku, qty,
+    retail_override: toPaise(formData.get("retail")), wholesale_override: toPaise(formData.get("wholesale")), mrp_override: toPaise(formData.get("mrp")),
+  });
   await rememberOptions(sb, { color, size, polish });
   if ((p as any).type !== "configurable") await sb.from("products").update({ type: "configurable" }).eq("id", (p as any).id);
   reval(productSku);
@@ -61,6 +72,7 @@ export async function updateVariantAction(formData: FormData): Promise<void> {
   await sb.from("variants").update({
     color: color || null, size: size || null, polish: polish || null,
     sku: sku || autoSku(productSku, [color, size, polish].filter(Boolean).join("-")), qty,
+    retail_override: toPaise(formData.get("retail")), wholesale_override: toPaise(formData.get("wholesale")), mrp_override: toPaise(formData.get("mrp")),
   }).eq("id", id);
   await rememberOptions(sb, { color, size, polish });
   reval(productSku);
