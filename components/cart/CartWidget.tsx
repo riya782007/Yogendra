@@ -14,7 +14,7 @@ export function CartWidget() {
         {count > 0 && <span className="absolute -top-0.5 -right-0.5 bg-gold text-ink text-[10px] h-4 min-w-4 px-1 rounded-full grid place-items-center">{count}</span>}
       </button>
       {open && (
-        <div className="fixed inset-0 z-50">
+        <div className="fixed inset-0 z-[60]">
           <div className="absolute inset-0 bg-ink/40 animate-fadeIn" onClick={() => setOpen(false)} />
           <div className="absolute right-0 top-0 h-full w-[88%] max-w-md bg-ivory shadow-luxe flex flex-col animate-[fadeIn_.2s_ease]">
             <div className="flex items-center justify-between p-5 border-b border-sand">
