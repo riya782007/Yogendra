@@ -42,6 +42,9 @@ export const ACTIVITY_META: Record<string, { label: string; tone: string; icon: 
   category_deleted: { label: "Category deleted", tone: "rose", icon: "🗑" },
   subcategory_created: { label: "Subcategory added", tone: "emerald", icon: "＋" },
   subcategory_deleted: { label: "Subcategory deleted", tone: "rose", icon: "🗑" },
+  product_submitted: { label: "Product submitted", tone: "gold", icon: "📥" },
+  submission_approved: { label: "Submission approved", tone: "emerald", icon: "✓" },
+  submission_rejected: { label: "Submission rejected", tone: "rose", icon: "✕" },
   // approvals.ts / reorder.ts already write these:
   otp_rejected: { label: "OTP rejected", tone: "rose", icon: "✕" },
   approved: { label: "Approved", tone: "emerald", icon: "✓" },

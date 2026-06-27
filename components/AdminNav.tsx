@@ -13,6 +13,7 @@ const GROUPS: { title: string; links: L[] }[] = [
   ]},
   { title: "Catalog", links: [
     { href: "/admin/upload", label: "Add Inventory", icon: "↑", perm: "catalog.create" },
+    { href: "/admin/submissions", label: "Submissions", icon: "📥", perm: "catalog.create" },
     { href: "/admin/catalogue", label: "Catalogue", icon: "✦", perm: "catalog.view" },
     { href: "/admin/media", label: "Product Photos", icon: "▣", perm: "catalog.ai" },
     { href: "/admin/categories", label: "Categories", icon: "▦", perm: "catalog.edit" },

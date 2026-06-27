@@ -590,6 +590,28 @@ export async function getApprovals() {
   return data ?? [];
 }
 
+// ---------- "Sell with us" product submissions (customers + wholesalers) ----------
+export type DbProductSubmission = {
+  id: string; channel: string; submitter_customer_id: string | null;
+  submitter_name: string | null; submitter_phone: string | null; submitter_email: string | null;
+  product_name: string; category_id: string | null; category_other: string | null;
+  description: string | null; color: string | null; asking_price: number | null; qty: number;
+  image_path: string | null; status: "pending" | "approved" | "rejected";
+  review_note: string | null; created_product_sku: string | null;
+  created_at: string; decided_at: string | null;
+  category?: DbCategory | null;
+};
+
+/** All product submissions, newest first, with their (optional) category joined. */
+export async function getProductSubmissions(): Promise<DbProductSubmission[]> {
+  const sb = supabaseServer();
+  const { data } = await sb
+    .from("product_submissions")
+    .select("*, category:categories(id,name,slug)")
+    .order("created_at", { ascending: false });
+  return (data as DbProductSubmission[]) ?? [];
+}
+
 // ---------- storefront with ratings (premium UI) ----------
 export type StoreProduct = DbProduct & {
   category: DbCategory; rating: number; reviews: number; isNew: boolean; image?: string | null;
