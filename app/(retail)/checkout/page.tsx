@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Script from "next/script";
@@ -17,6 +17,13 @@ export default function Checkout() {
   const [err, setErr] = useState("");
   const [f, setF] = useState({ name: "", phone: "", address: "", pincode: "", city: "" });
   const shipping = total >= 99900 || total === 0 ? 0 : 5000;
+
+  // Honour the method chosen via a "Buy Now" / "Cash on Delivery" button on the product page
+  // (e.g. /checkout?pay=online). Read from the URL on mount to avoid a Suspense boundary.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search).get("pay");
+    if (p === "online" || p === "cod") setPayment(p);
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault(); setErr(""); setBusy(true);

@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useCart } from "@/components/cart/CartContext";
 import { useToast } from "@/components/ui/Toast";
 import { formatPaise } from "@/lib/pricing";
@@ -13,6 +14,7 @@ export function BuyBox({ variants = [], waHref, item }: {
 }) {
   const { add } = useCart();
   const { toast } = useToast();
+  const router = useRouter();
   const hasVariants = variants.length > 0;
   const [vi, setVi] = useState(0);
   const [qty, setQty] = useState(1);
@@ -22,13 +24,24 @@ export function BuyBox({ variants = [], waHref, item }: {
   const price = sel ? sel.price : item.price;
   const outOfStock = sel ? sel.qty <= 0 : false;
 
+  // The exact line that goes into the cart for this product/variant + chosen qty.
+  const cartLine = () => ({ sku: item.sku, name: item.name, price, category: item.category, color: sel?.label });
+
   const onAdd = () => {
     if (outOfStock) return;
     // Cart carries the PRODUCT sku (checkout/billing resolves products by sku) plus the
     // chosen variant as its label, so the order records exactly which option was picked.
-    add({ sku: item.sku, name: item.name, price, category: item.category, color: sel?.label }, qty);
+    add(cartLine(), qty);
     toast(`${item.name}${sel ? ` (${sel.label})` : ""} added to bag`);
     setAdded(true); setTimeout(() => setAdded(false), 1500);
+  };
+
+  // "Buy now": drop this single item in the bag and go straight to checkout with the
+  // payment method preselected (delivery address is still required there for both flows).
+  const buyNow = (method: "online" | "cod") => {
+    if (outOfStock) return;
+    add(cartLine(), qty);
+    router.push(`/checkout?pay=${method}`);
   };
 
   return (
@@ -62,11 +75,23 @@ export function BuyBox({ variants = [], waHref, item }: {
           <button onClick={() => setQty((q) => q + 1)} className="px-3 py-1.5 hover:bg-cream transition-colors">+</button>
         </div>
       </div>
-      <div className="flex gap-3">
-        <button onClick={onAdd} disabled={outOfStock} className="btn-primary flex-1 py-3.5 text-sm font-medium disabled:opacity-50">{outOfStock ? "Out of stock" : added ? "✓ Added to cart" : "Add to cart"}</button>
-        <a href={waHref} target="_blank" rel="noreferrer" className="px-5 py-3.5 rounded-full bg-[#25D366] text-white text-sm font-medium transition-transform hover:-translate-y-0.5 active:scale-95">WhatsApp</a>
+      {/* Primary: buy now — straight to a one-step checkout with the method preselected */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <button onClick={() => buyNow("online")} disabled={outOfStock} className="btn-primary py-3.5 text-sm font-semibold disabled:opacity-50">
+          {outOfStock ? "Out of stock" : "Buy Now · Pay Online"}
+        </button>
+        <button onClick={() => buyNow("cod")} disabled={outOfStock} className="py-3.5 rounded-full border-2 border-emerald text-emerald text-sm font-semibold transition-colors hover:bg-emerald-mist disabled:opacity-50">
+          Cash on Delivery
+        </button>
       </div>
-      <p className="text-xs text-muted mt-3 flex flex-wrap items-center gap-4"><span>✓ COD available</span><span>✓ Free shipping over ₹999</span><span>✓ 7-day returns</span></p>
+      {/* Secondary: keep building a bag, or order over WhatsApp */}
+      <div className="flex gap-3 mt-3">
+        <button onClick={onAdd} disabled={outOfStock} className="flex-1 py-3 rounded-full border border-sand text-ink text-sm font-medium transition-colors hover:border-gold disabled:opacity-50">
+          {added ? "✓ Added to cart" : "Add to cart"}
+        </button>
+        <a href={waHref} target="_blank" rel="noreferrer" className="px-5 py-3 rounded-full bg-[#25D366] text-white text-sm font-medium transition-transform hover:-translate-y-0.5 active:scale-95">WhatsApp</a>
+      </div>
+      <p className="text-xs text-muted mt-3 flex flex-wrap items-center gap-x-4 gap-y-1"><span>✓ COD available</span><span>✓ Free shipping over ₹999</span><span>✓ 7-day returns</span></p>
     </div>
   );
 }
