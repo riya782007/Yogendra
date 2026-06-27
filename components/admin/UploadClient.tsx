@@ -12,6 +12,7 @@ import { compressImage } from "@/lib/image";
 type Cat = { id: string; name: string };
 type LogLine = { text: string; status: "run" | "ok" | "err" };
 type VariantOptions = { color: string[]; size: string[]; polish: string[] };
+type ColorCodeMap = Record<string, string>;
 
 /** One row in the Variants editor (strings so inputs stay controlled even when blank). */
 type VariantRow = {
@@ -38,9 +39,12 @@ const isRealVariant = (v: VariantRow) =>
 export function UploadClient({
   categories,
   variantOptions = { color: [], size: [], polish: [] },
+  colorCodes = {},
 }: {
   categories: Cat[];
   variantOptions?: VariantOptions;
+  /** Lowercased colour name → canonical barcode suffix (RED, MULTI1, SBLUE…). */
+  colorCodes?: ColorCodeMap;
 }) {
   const { toast } = useToast();
   const [cats, setCats] = useState<Cat[]>(categories);
@@ -68,6 +72,21 @@ export function UploadClient({
     () => realVariants.reduce((s, v) => s + (Number(v.qty) || 0), 0),
     [realVariants],
   );
+
+  /** Live preview of the barcode/SKU that will be printed on the variant's label.
+   *  Mirrors the server's autoSku() logic exactly so what you see here is what
+   *  prints later. Falls back to a derived suffix if a colour isn't in the master. */
+  const previewSku = (v: VariantRow): string => {
+    const parent = (form.sku.trim() || "BD####").toUpperCase();
+    if (v.sku.trim()) return v.sku.trim().toUpperCase().replace(/\s+/g, "-");
+    const colorCode = v.color.trim()
+      ? (colorCodes[v.color.trim().toLowerCase()] ?? v.color.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))
+      : null;
+    const sizeCode = v.size.trim() ? v.size.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4) : null;
+    const polishCode = v.polish.trim() ? v.polish.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4) : null;
+    const suffix = [colorCode, sizeCode, polishCode].filter(Boolean).join("-") || "VAR";
+    return `${parent}-${suffix}`;
+  };
 
   async function createCat() {
     const nm = newCat.trim(); if (!nm) return;
@@ -337,6 +356,16 @@ export function UploadClient({
                           aria-label="Remove variant"
                           title="Remove this variant"
                         >×</button>
+                        {/* Pillar 11 — live preview of the barcode/SKU that will print on
+                            this variant's label. Spans both columns on narrow screens. */}
+                        {isRealVariant(v) && (
+                          <p className="col-span-2 md:col-span-9 text-[10px] text-muted pl-1 -mt-0.5">
+                            Barcode/SKU: <span className="font-mono text-ink/80">{previewSku(v)}</span>
+                            {v.color.trim() && !colorCodes[v.color.trim().toLowerCase()] && (
+                              <span className="ml-1.5 text-gold-dark">· “{v.color.trim()}” isn&apos;t in the colour master — code is auto-derived</span>
+                            )}
+                          </p>
+                        )}
                       </div>
                     ))}
                     {realVariants.length > 0 && (

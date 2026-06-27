@@ -4,6 +4,8 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 import { generateImage, geminiConfigured } from "@/lib/ai/gemini";
 import { buildVariantImagePrompt } from "@/lib/ai/imagePrompt";
+import { getColorCodeMap } from "@/lib/supabase/queries";
+import { barcodeCodeForColor } from "@/lib/colors";
 
 const BUCKET = "product-media";
 
@@ -23,9 +25,23 @@ async function ensureMediaBucket(sb: ReturnType<typeof supabaseServer>) {
   }
 }
 
-/** Build a readable variant SKU suffix from whichever attribute is present. */
-function autoSku(productSku: string, label: string): string {
-  return `${productSku}-${label.replace(/[^a-z0-9]/gi, "").slice(0, 5).toUpperCase() || "VAR"}`;
+/** Build a readable variant SKU suffix from whichever attributes are present, preferring
+ *  the canonical colour code from the colours master (Pillar 11). Examples:
+ *    autoSku("BD2024", { color: "Red" })              → "BD2024-RED"
+ *    autoSku("BD2024", { color: "Red", size: "M" })   → "BD2024-RED-M"
+ *    autoSku("BD2024", { size: "M", polish: "Matte"}) → "BD2024-M-MATT"
+ *  If `colorCode` is supplied (a DB-resolved override from `variant_options.barcode_code`)
+ *  it wins over the static fallback in `lib/colors.ts`. */
+function autoSku(
+  productSku: string,
+  parts: { color?: string | null; size?: string | null; polish?: string | null },
+  colorCodeOverride?: string | null,
+): string {
+  const colorCode = colorCodeOverride ?? (parts.color ? barcodeCodeForColor(parts.color) : null);
+  const sizeCode = parts.size ? parts.size.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4) : null;
+  const polishCode = parts.polish ? parts.polish.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4) : null;
+  const suffix = [colorCode, sizeCode, polishCode].filter(Boolean).join("-") || "VAR";
+  return `${productSku}-${suffix}`;
 }
 
 /** Parse a rupee form field to integer paise, or null when blank (= "use the formula price"). */
@@ -62,9 +78,13 @@ export async function addVariantAction(formData: FormData): Promise<void> {
   // At least one attribute is required so the variant is meaningful.
   if (!productSku || !(color || size || polish)) return;
   const sb = supabaseServer();
-  const { data: p } = await sb.from("products").select("id,type").ilike("sku", productSku).maybeSingle();
+  const [{ data: p }, codes] = await Promise.all([
+    sb.from("products").select("id,type").ilike("sku", productSku).maybeSingle(),
+    color ? getColorCodeMap() : Promise.resolve({} as Record<string, string>),
+  ]);
   if (!p) return;
-  if (!vsku) vsku = autoSku(productSku, [color, size, polish].filter(Boolean).join("-"));
+  const dbColorCode = color ? codes[color.toLowerCase()] ?? null : null;
+  if (!vsku) vsku = autoSku(productSku, { color, size, polish }, dbColorCode);
   await sb.from("variants").insert({
     product_id: (p as any).id, color: color || null, size: size || null, polish: polish || null, sku: vsku, qty,
     retail_override: toPaise(formData.get("retail")), wholesale_override: toPaise(formData.get("wholesale")), mrp_override: toPaise(formData.get("mrp")),
@@ -85,9 +105,11 @@ export async function updateVariantAction(formData: FormData): Promise<void> {
   const qty = Math.max(0, Math.floor(Number(formData.get("qty") ?? 0)));
   if (!id || !(color || size || polish)) return;
   const sb = supabaseServer();
+  const codes = color ? await getColorCodeMap() : ({} as Record<string, string>);
+  const dbColorCode = color ? codes[color.toLowerCase()] ?? null : null;
   await sb.from("variants").update({
     color: color || null, size: size || null, polish: polish || null,
-    sku: sku || autoSku(productSku, [color, size, polish].filter(Boolean).join("-")), qty,
+    sku: sku || autoSku(productSku, { color, size, polish }, dbColorCode), qty,
     retail_override: toPaise(formData.get("retail")), wholesale_override: toPaise(formData.get("wholesale")), mrp_override: toPaise(formData.get("mrp")),
   }).eq("id", id);
   await rememberOptions(sb, { color, size, polish });

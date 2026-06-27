@@ -361,12 +361,27 @@ export async function getVariantOptions(): Promise<{ color: string[]; size: stri
   return out;
 }
 
-export type OptionRow = { value: string; hex: string | null; count: number };
+/** Pillar 11 — name → barcode_code lookup for the canonical colour list. Used by every
+ *  auto-SKU code path (manual variant add, bulk upload, catalogue edit) so the printed
+ *  barcode is consistent: BD2024-RED for a red variant, not BD2024-RED5. */
+export async function getColorCodeMap(): Promise<Record<string, string>> {
+  const sb = supabaseServer();
+  const { data } = await sb.from("variant_options").select("value,barcode_code").eq("kind", "color");
+  const out: Record<string, string> = {};
+  for (const r of (data as any[]) ?? []) {
+    const v = String((r as any).value ?? "").trim();
+    const c = String((r as any).barcode_code ?? "").trim();
+    if (v && c) out[v.toLowerCase()] = c;
+  }
+  return out;
+}
+
+export type OptionRow = { value: string; hex: string | null; count: number; barcode_code?: string | null };
 /** Pillar 7 — the colour/size/polish master with swatch + how many variants use each. */
 export async function getOptionMaster(): Promise<{ color: OptionRow[]; size: OptionRow[]; polish: OptionRow[] }> {
   const sb = supabaseServer();
   const [{ data: opts }, { data: vars }] = await Promise.all([
-    sb.from("variant_options").select("kind,value,hex,sort").order("sort").order("value"),
+    sb.from("variant_options").select("kind,value,hex,sort,barcode_code").order("sort").order("value"),
     sb.from("variants").select("color,size,polish"),
   ]);
   const counts: Record<string, Record<string, number>> = { color: {}, size: {}, polish: {} };
@@ -378,7 +393,12 @@ export async function getOptionMaster(): Promise<{ color: OptionRow[]; size: Opt
   const out = { color: [] as OptionRow[], size: [] as OptionRow[], polish: [] as OptionRow[] };
   for (const r of (opts as any[]) ?? []) {
     const k = (r as any).kind as "color" | "size" | "polish";
-    if (out[k]) out[k].push({ value: (r as any).value, hex: (r as any).hex ?? null, count: counts[k][(r as any).value] ?? 0 });
+    if (out[k]) out[k].push({
+      value: (r as any).value,
+      hex: (r as any).hex ?? null,
+      count: counts[k][(r as any).value] ?? 0,
+      barcode_code: (r as any).barcode_code ?? null,
+    });
   }
   return out;
 }
