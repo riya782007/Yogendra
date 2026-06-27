@@ -80,16 +80,16 @@ export default async function ProductPage({ params }: Params) {
 
         <div className="md:py-2">
           <p className="text-[11px] uppercase tracking-[0.2em] text-gold-dark">{catName} · {p.sku}</p>
-          <h1 className="font-display text-4xl text-ink mt-1 leading-tight">{content.title}</h1>
-          <div className="mt-3 flex items-center gap-3">
+          <h1 className="font-display text-4xl text-ink mt-1 leading-snug break-words">{content.title}</h1>
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1">
             <Stars rating={reviews.avg} count={reviews.count} size="md" />
             <a href="#reviews" className="text-xs text-emerald nav-link">Read reviews</a>
           </div>
 
-          <div className="mt-5 flex items-baseline gap-3">
-            <span className="text-3xl font-semibold text-ink">{formatPaise(o.price)}</span>
-            {o.hasOffer && <span className="text-lg text-muted line-through">{formatPaise(o.mrp)}</span>}
-            {o.hasOffer && <span className="text-sm font-semibold text-white bg-rose px-2 py-0.5 rounded-full">{o.offerPct}% OFF</span>}
+          <div className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <span className="text-3xl font-semibold text-ink leading-none">{formatPaise(o.price)}</span>
+            {o.hasOffer && <span className="text-lg text-muted line-through leading-none">{formatPaise(o.mrp)}</span>}
+            {o.hasOffer && <span className="text-sm font-semibold text-white bg-rose px-2 py-0.5 rounded-full leading-none">{o.offerPct}% OFF</span>}
           </div>
           <p className="text-xs text-muted mt-1">Inclusive of all taxes · You save {formatPaise(o.savings)}</p>
 
