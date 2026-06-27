@@ -17,7 +17,7 @@ export type CatalogItem = {
   category: string; categorySlug: string;
   subcategory: string | null; subcategorySlug: string | null;
   qty: number; wholesale: number; price: number; mrp: number; offerPct: number; hasOffer: boolean;
-  image: string | null; tags: string[]; keywords: string[];
+  image: string | null; tags: string[]; keywords: string[]; labels: string[]; wholesaleOnly: boolean;
 };
 
 export function SelectableCatalog({ products, view, brand, phone }: { products: CatalogItem[]; view: "retail" | "wholesale"; brand: string; phone: string }) {
@@ -73,6 +73,7 @@ export function SelectableCatalog({ products, view, brand, phone }: { products: 
                     <span className={`absolute top-2 left-2 h-6 w-6 rounded-full grid place-items-center text-xs ${on ? "bg-emerald text-white" : "bg-white/80 text-ink border border-sand"}`}>{on ? "✓" : ""}</span>
                   )}
                   {!picking && p.hasOffer && view === "retail" && <span className="absolute top-2 left-2 bg-rose text-white text-[10px] px-2 py-0.5 rounded-full">{p.offerPct}% OFF</span>}
+                  {p.wholesaleOnly && <span className="absolute bottom-2 left-2 bg-ink/80 text-gold-light text-[10px] px-2 py-0.5 rounded-full">Wholesale only</span>}
                   {p.qty <= 0 && <span className="absolute top-2 right-2 bg-ink/80 text-cream text-[10px] px-2 py-0.5 rounded-full">Out</span>}
                   {p.qty > 0 && p.qty <= 3 && <span className="absolute top-2 right-2 bg-gold text-ink text-[10px] px-2 py-0.5 rounded-full">Only {p.qty}</span>}
                 </div>
@@ -88,6 +89,11 @@ export function SelectableCatalog({ products, view, brand, phone }: { products: 
                       <span className="text-xs text-muted line-through">{formatPaise(p.mrp)}</span>
                     ) : null}
                   </div>
+                  {(p.labels ?? []).length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {p.labels.slice(0, 3).map((l) => <span key={l} className="text-[9px] px-1.5 py-0.5 rounded-full bg-gold/15 text-gold-dark font-medium">{l}</span>)}
+                    </div>
+                  )}
                   {chips.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-2">
                       {chips.map((t) => <span key={t} className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-mist text-emerald-dark">{t}</span>)}

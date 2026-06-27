@@ -23,6 +23,19 @@ export async function generateContentAction(sku: string): Promise<ContentResult>
   return { ok: true, sku, provider, fallbackUsed, title: content.title };
 }
 
+/** Suggest a polished product title from a name + category (Req 6). Explicit button only. */
+export async function suggestProductTitleAction(input: { name: string; category?: string }): Promise<{ ok: boolean; title?: string; error?: string }> {
+  if (!(await requirePerm("catalog.edit"))) return { ok: false, error: "not permitted" };
+  const name = (input.name ?? "").trim();
+  if (!name) return { ok: false, error: "Enter a product name first" };
+  try {
+    const { content } = await generateProductContent({ name, sku: "", categoryName: input.category, colors: [] });
+    return { ok: true, title: content.title };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Could not suggest a title" };
+  }
+}
+
 export async function generateAllContentAction(): Promise<{ total: number; ok: number; results: ContentResult[] }> {
   const products = await getPublishedProducts();
   const results: ContentResult[] = [];

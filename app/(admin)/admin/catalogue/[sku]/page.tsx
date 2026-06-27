@@ -77,6 +77,13 @@ export default async function ProductPage({ params, searchParams }: { params: { 
     categorySlug: p.category?.slug ?? "all",
     type: p.type,
     status: p.status,
+    // Visibility/labels surface the same data the dedicated Catalog tab toggles
+    // already control, so the unified ProductEditor form opens prefilled.
+    visibility: (p as any).wholesale_only ? "wholesale" : "all",
+    labels: (allLabels as any[])
+      .filter((l) => labelIds.has(l.id))
+      .map((l) => l.name)
+      .join(", "),
     basePriceRupees: Math.round((p.base_wholesale ?? 0) / 100),
     qty: p.qty ?? 0,
     title: gc.title ?? p.name,
