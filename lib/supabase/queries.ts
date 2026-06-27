@@ -48,7 +48,7 @@ export async function getCategories(): Promise<DbCategory[]> {
 }
 
 // ---------- category hierarchy (subcategories) ----------
-export type DbSubcategory = { id: string; category_id: string | null; name: string; slug: string; sort: number };
+export type DbSubcategory = { id: string; category_id: string | null; name: string; slug: string; sort: number; image_style?: string };
 export type CategoryNode = DbCategory & { sort?: number; subcategories: DbSubcategory[]; productCount?: number };
 
 /** Parent categories, each with their ordered subcategories — for the management UI + filters. */
@@ -56,7 +56,7 @@ export async function getCategoryTree(): Promise<CategoryNode[]> {
   const sb = supabaseServer();
   const [{ data: cats }, { data: subs }] = await Promise.all([
     sb.from("categories").select("id,name,slug,sort,parent_id").order("sort").order("name"),
-    sb.from("subcategories").select("id,category_id,name,slug,sort").order("sort").order("name"),
+    sb.from("subcategories").select("id,category_id,name,slug,sort,image_style").order("sort").order("name"),
   ]);
   const subList = (subs as DbSubcategory[]) ?? [];
   // Only top-level categories (parent_id null) are roots; nested categories are ignored here.
@@ -346,7 +346,7 @@ export async function getProductBySku(sku: string): Promise<
   const sb = supabaseServer();
   const { data } = await sb
     .from("products")
-    .select("*, category:categories(id,name,slug), variants(*), images:product_images(*), product_labels(label_id)")
+    .select("*, category:categories(id,name,slug), subcategory:subcategories(name,slug,image_style), variants(*), images:product_images(*), product_labels(label_id)")
     .eq("sku", sku)
     .maybeSingle();
   return (data as any) ?? null;

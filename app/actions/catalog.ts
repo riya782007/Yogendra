@@ -308,6 +308,17 @@ export async function deleteSubcategoryAction(formData: FormData): Promise<void>
   revalidatePath("/admin/categories"); revalidatePath("/shop");
 }
 
+/** Pillar 12: set the AI image style for a subcategory — 'auto' | 'indian' | 'western'.
+ *  Drives which model the per-product photo generator uses (e.g. western necklace → foreign model). */
+export async function setSubcategoryStyleAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("catalog.edit"))) return;
+  const id = String(formData.get("id") ?? "").trim();
+  const style = String(formData.get("style") ?? "auto").trim();
+  if (!id || !["auto", "indian", "western"].includes(style)) return;
+  await supabaseServer().from("subcategories").update({ image_style: style }).eq("id", id);
+  revalidatePath("/admin/categories");
+}
+
 /** Reorder subcategories: pass an ordered list of ids; sets their `sort` to match. */
 export async function reorderSubcategoriesAction(ids: string[]): Promise<void> {
   if (!(await requirePerm("catalog.edit"))) return;

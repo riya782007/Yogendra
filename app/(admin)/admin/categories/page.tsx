@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { supabaseServer } from "@/lib/supabase/server";
 import {
   createCategoryAction, deleteCategoryAction,
-  createSubcategoryAction, deleteSubcategoryAction,
+  createSubcategoryAction, deleteSubcategoryAction, setSubcategoryStyleAction,
   createLabelAction, deleteLabelAction,
 } from "@/app/actions/catalog";
 import { getCategoryTree, getLabels } from "@/lib/supabase/queries";
@@ -57,18 +57,29 @@ export default async function Categories() {
             </div>
 
             {/* Subcategories */}
-            <div className="flex flex-wrap gap-2 mb-3">
+            <div className="flex flex-col gap-1.5 mb-3">
               {c.subcategories.length === 0 && <span className="text-xs text-muted italic">No subcategories yet.</span>}
               {c.subcategories.map((s) => (
-                <span key={s.id} className="inline-flex items-center gap-1.5 rounded-full bg-emerald-mist/60 text-emerald-dark text-xs px-3 py-1.5">
-                  {s.name}
+                <div key={s.id} className="flex items-center gap-2 flex-wrap">
+                  <span className="inline-flex items-center rounded-full bg-emerald-mist/60 text-emerald-dark text-xs px-3 py-1.5">{s.name}</span>
+                  {canEdit && (
+                    <form action={setSubcategoryStyleAction} className="inline-flex items-center gap-1">
+                      <input type="hidden" name="id" value={s.id} />
+                      <select name="style" defaultValue={s.image_style ?? "auto"} title="AI model for this subcategory's photos" className="rounded-lg border border-sand px-2 py-1 text-xs bg-white outline-none focus:border-emerald">
+                        <option value="auto">Auto model</option>
+                        <option value="indian">Indian model</option>
+                        <option value="western">Western model</option>
+                      </select>
+                      <button className="px-2 py-1 rounded-lg bg-ink/5 text-ink text-[11px] hover:bg-ink/10">Set</button>
+                    </form>
+                  )}
                   {canEdit && (
                     <form action={deleteSubcategoryAction} className="inline">
                       <input type="hidden" name="id" value={s.id} />
-                      <button title="Remove subcategory" className="text-emerald-dark/60 hover:text-rose leading-none">×</button>
+                      <button title="Remove subcategory" className="text-muted hover:text-rose leading-none px-1">×</button>
                     </form>
                   )}
-                </span>
+                </div>
               ))}
             </div>
 

@@ -91,10 +91,12 @@ export function buildImagePrompt(opts: {
   subcategory?: string;
   index?: number;
   aspect?: ImageAspect;
+  /** Explicit per-subcategory choice (Pillar 12). 'auto'/undefined falls back to name detection. */
+  style?: "auto" | "indian" | "western";
 }): string {
   const i = opts.index ?? 0;
   const styleHint = `${opts.category} ${opts.subcategory ?? ""}`;
-  const western = isWesternStyle(styleHint);
+  const western = opts.style === "western" ? true : opts.style === "indian" ? false : isWesternStyle(styleHint);
   const pool = western ? WESTERN_SUBJECTS : SUBJECTS;
   const subject = pool[i % pool.length];
   const background = BACKGROUNDS[i % BACKGROUNDS.length];

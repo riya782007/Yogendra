@@ -24,7 +24,13 @@ export async function generateOneAction(sku: string): Promise<GenResult> {
   // Pass category + a style hint (subcategory + product name) so the prompt picks the right
   // shot (kanchain vs necklace …) and the right model (western/fusion → Western, else Indian).
   const styleHint = [(p as any).subcategory?.name, (p as any).category?.name, p.name].filter(Boolean).join(" ");
-  const prompt = buildImagePrompt({ category: (p as any).category?.name ?? p.category?.slug ?? "necklace", subcategory: styleHint, index, aspect: "4:5" });
+  const prompt = buildImagePrompt({
+    category: (p as any).category?.name ?? p.category?.slug ?? "necklace",
+    subcategory: styleHint,
+    style: (p as any).subcategory?.image_style as ("auto" | "indian" | "western" | undefined),
+    index,
+    aspect: "4:5",
+  });
 
   if (!geminiConfigured()) return { ok: false, sku, reason: "no_key", prompt };
 
