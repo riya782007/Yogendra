@@ -365,13 +365,17 @@ export function UploadClient({
                 <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
                   <div>
                     <p className="text-sm font-medium text-ink">Variants <span className="text-muted font-normal">— colour, size, polish, stock &amp; price</span></p>
-                    <p className="text-[11px] text-muted">Each row creates one variant with its own SKU and stock. Leave a price <b>blank</b> to use the formula price.</p>
+                    <p className="text-[11px] text-muted">Each row creates one variant with its own SKU and stock. A blank price = <b>Same as Parent</b> (uses the product's price).</p>
                   </div>
                   <div className="flex items-center gap-2">
                     {form.colors.trim() && (
                       <button type="button" onClick={buildRowsFromColours} className="px-3 py-1.5 rounded-full bg-emerald-mist text-emerald-dark text-xs hover:bg-emerald-mist/70">
                         Build from colours →
                       </button>
+                    )}
+                    {variants.length > 0 && (
+                      <button type="button" onClick={() => setVariants((vs) => vs.map((v) => ({ ...v, retail: "", wholesale: "", mrp: "" })))} title="Make every variant use the parent product's price"
+                        className="px-3 py-1.5 rounded-full bg-gold/15 text-gold-dark text-xs hover:bg-gold/25">= Same as parent</button>
                     )}
                     <button type="button" onClick={addVariantRow} className="px-3 py-1.5 rounded-full bg-ink text-white text-xs">+ Add variant</button>
                     {variants.length > 0 && (
