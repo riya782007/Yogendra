@@ -9,10 +9,9 @@ type P = { sku: string; name: string; price: number; wholesale: number; category
 type Line = { sku: string; name: string; price: number; wholesale: number; qty: number; stock: number; override: string; disc: string };
 type Cust = { id: string; name: string; phone: string; type: string; gstin: string };
 
-// Owner shorthand for the two price lists (kept private from onlookers):
-//   DC = retail (direct customer) · WC = wholesale customer.
+// Owner shorthand for the two price lists (kept private from onlookers): R = retail, W = wholesale.
 // Per the client: the tier is NOT chosen manually — it comes from the selected customer.
-const TIER_LABEL: Record<string, string> = { retail: "DC", wholesale: "WC" };
+const TIER_LABEL: Record<string, string> = { retail: "R", wholesale: "W" };
 
 export function POSClient({ products, customers = [] }: { products: P[]; customers?: Cust[] }) {
   const router = useRouter();
@@ -203,7 +202,7 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
           <div>
             <div className="flex items-center justify-between mb-1">
               <p className="text-xs text-muted">Customer</p>
-              <span className={`text-[11px] px-2 py-0.5 rounded-full ${custType === "wholesale" ? "bg-wine/10 text-wine" : "bg-emerald-mist text-emerald-dark"}`}>{TIER_LABEL[custType]} · {custType === "wholesale" ? "wholesale" : "retail"} price</span>
+              <span title={custType === "wholesale" ? "Wholesale price" : "Retail price"} className={`text-xs font-semibold px-2.5 py-0.5 rounded-full ${custType === "wholesale" ? "bg-wine/10 text-wine" : "bg-emerald-mist text-emerald-dark"}`}>{TIER_LABEL[custType]}</span>
             </div>
             <div className="flex gap-2 mb-2">
               <button onClick={() => walkIn("retail")} className="flex-1 rounded-xl border border-sand px-3 py-1.5 text-sm text-muted hover:border-emerald">Cash (R)</button>
@@ -218,7 +217,7 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
                     {custMatches.map((c) => (
                       <button key={c.id} onClick={() => pickCustomer(c)} className="w-full text-left px-4 py-2.5 text-sm hover:bg-emerald-mist flex justify-between">
                         <span>{c.name} <span className="text-muted">· {c.phone || "no phone"}</span></span>
-                        <span className={`text-xs ${c.type === "wholesale" ? "text-wine" : "text-muted"}`}>{TIER_LABEL[c.type] ?? "DC"}</span>
+                        <span className={`text-xs ${c.type === "wholesale" ? "text-wine" : "text-muted"}`}>{TIER_LABEL[c.type] ?? "R"}</span>
                       </button>
                     ))}
                     {!custMatches.some((c) => (c.name ?? "").toLowerCase() === custQ.trim().toLowerCase()) && (
