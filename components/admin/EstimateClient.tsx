@@ -17,6 +17,9 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [custType, setCustType] = useState<"retail" | "wholesale">("retail"); // from the customer
+  const [packing, setPacking] = useState("");
+  const [courier, setCourier] = useState("");
+  const [adjustment, setAdjustment] = useState(""); // ± round-off / concession
   const [custQ, setCustQ] = useState("");
   const [custOpen, setCustOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -36,7 +39,9 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
     if (ov !== "" && Number.isFinite(Number(ov)) && Number(ov) >= 0) return Math.round(Number(ov) * 100);
     return baseUnit(l);
   };
-  const total = lines.reduce((s, l) => s + effUnit(l) * l.qty, 0);
+  const toPaise = (v: string) => { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) : 0; };
+  const chargesTotal = Math.max(0, toPaise(packing)) + Math.max(0, toPaise(courier)) + toPaise(adjustment);
+  const total = lines.reduce((s, l) => s + effUnit(l) * l.qty, 0) + chargesTotal;
 
   const add = (p: P) => { setLines((prev) => (prev.find((l) => l.sku === p.sku) ? prev.map((l) => (l.sku === p.sku ? { ...l, qty: l.qty + 1 } : l)) : [...prev, { sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, qty: 1, override: "" }])); setQ(""); };
   const setOverride = (sku: string, v: string) => setLines((p) => p.map((l) => (l.sku === sku ? { ...l, override: v } : l)));
@@ -52,9 +57,10 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
       // converts to — uses exactly what's on screen.
       items: lines.map((l) => ({ sku: l.sku, qty: l.qty, priceRupees: effUnit(l) / 100 })),
       customer: { name, phone },
+      packingRupees: Number(packing) || 0, courierRupees: Number(courier) || 0, adjustmentRupees: Number(adjustment) || 0,
     });
     setBusy(false);
-    if (res.ok) { setMsg(`✓ Estimate saved (${formatPaise(res.total ?? 0)}) — find it below to bill or hold.`); setLines([]); setName(""); setPhone(""); setCustType("retail"); }
+    if (res.ok) { setMsg(`✓ Estimate saved (${formatPaise(res.total ?? 0)}) — find it below to bill or hold.`); setLines([]); setName(""); setPhone(""); setCustType("retail"); setPacking(""); setCourier(""); setAdjustment(""); }
     else setMsg(`✕ ${res.error}`);
   }
 
@@ -124,6 +130,13 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
           <button onClick={() => setLines((p) => p.filter((x) => x.sku !== l.sku))} className="text-muted hover:text-rose">✕</button>
         </div>
       ))}
+      {lines.length > 0 && (
+        <div className="grid grid-cols-3 gap-2 mt-3">
+          <label className="text-[11px] text-muted">Packing ₹<input value={packing} onChange={(e) => setPacking(e.target.value)} inputMode="decimal" placeholder="0" className={`${input} mt-0.5`} /></label>
+          <label className="text-[11px] text-muted">Courier ₹<input value={courier} onChange={(e) => setCourier(e.target.value)} inputMode="decimal" placeholder="0" className={`${input} mt-0.5`} /></label>
+          <label className="text-[11px] text-muted">Adjust ± ₹<input value={adjustment} onChange={(e) => setAdjustment(e.target.value)} inputMode="decimal" placeholder="0" className={`${input} mt-0.5`} /></label>
+        </div>
+      )}
       <div className="flex items-center justify-end gap-3 mt-4">
         <span className="text-lg font-semibold text-ink whitespace-nowrap">{formatPaise(total)}</span>
         <button onClick={save} disabled={busy || !lines.length} className="btn-primary px-5 py-2.5 text-sm font-medium disabled:opacity-50">{busy ? "Saving…" : "Save estimate"}</button>

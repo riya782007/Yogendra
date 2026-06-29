@@ -9,8 +9,13 @@ import { resolvePrices, overridesOf } from "@/lib/pricing";
 /** Recompute an estimate's total from its current line items. */
 async function recomputeEstimateTotal(sb: ReturnType<typeof supabaseServer>, estimateId: string) {
   const { data } = await sb.from("estimate_items").select("line_total").eq("estimate_id", estimateId);
-  const total = ((data as any[]) ?? []).reduce((s, r) => s + (r.line_total ?? 0), 0);
-  await sb.from("estimates").update({ total }).eq("id", estimateId);
+  const items = ((data as any[]) ?? []).reduce((s, r) => s + (r.line_total ?? 0), 0);
+  // Fold in the estimate's extra charges (Packing/Courier/Adjustment) so the quote total — and
+  // the bill it converts to — matches the screen. Columns absent pre-migration ⇒ treated as 0.
+  let charges = 0;
+  const { data: est } = await sb.from("estimates").select("extra_packing,extra_courier,extra_adjustment").eq("id", estimateId).maybeSingle();
+  if (est) charges = (((est as any).extra_packing) || 0) + (((est as any).extra_courier) || 0) + (((est as any).extra_adjustment) || 0);
+  await sb.from("estimates").update({ total: items + charges }).eq("id", estimateId);
 }
 
 /** #18: edit an open estimate — customer details. */
@@ -85,7 +90,7 @@ export async function addEstimateLineAction(formData: FormData): Promise<void> {
   revalidatePath(`/admin/estimate/${estimateId}`);
 }
 
-export async function createEstimateAction(input: { items: { sku: string; qty: number; priceRupees?: number }[]; customer: { name?: string; phone?: string } }): Promise<{ ok: boolean; estimateId?: string; total?: number; error?: string }> {
+export async function createEstimateAction(input: { items: { sku: string; qty: number; priceRupees?: number }[]; customer: { name?: string; phone?: string }; packingRupees?: number; courierRupees?: number; adjustmentRupees?: number }): Promise<{ ok: boolean; estimateId?: string; total?: number; error?: string }> {
   if (!(await requirePerm("estimates.create"))) return { ok: false, error: "Your role can't create estimates." };
   if (!input.items?.length) return { ok: false, error: "Add at least one item" };
   const sb = supabaseServer();
@@ -94,6 +99,15 @@ export async function createEstimateAction(input: { items: { sku: string; qty: n
   const estimateId = (data as any)?.estimate_id;
   let outTotal = (data as any)?.total as number | undefined;
   if (estimateId) {
+    // Extra charges (best-effort; needs migration 0021). Adjustment may be ±.
+    const xp = Math.max(0, Math.round((input.packingRupees ?? 0) * 100));
+    const xc = Math.max(0, Math.round((input.courierRupees ?? 0) * 100));
+    const xa = Math.round((input.adjustmentRupees ?? 0) * 100);
+    const hasCharges = xp !== 0 || xc !== 0 || xa !== 0;
+    if (hasCharges) {
+      const { error: chErr } = await sb.from("estimates").update({ extra_packing: xp, extra_courier: xc, extra_adjustment: xa }).eq("id", estimateId);
+      if (chErr) console.warn("estimate charges not saved — apply migration 0021_billing_charges.sql:", chErr.message);
+    }
     // Apply the per-line rates the counter set (R/W tier or an edited rate) so the saved quote —
     // and the bill it converts to (convert uses estimate_items.unit_price) — matches the screen.
     // Match estimate_items back to the inputs by SKU.
@@ -108,8 +122,8 @@ export async function createEstimateAction(input: { items: { sku: string; qty: n
         const unit = Math.round((i.priceRupees as number) * 100);
         await sb.from("estimate_items").update({ unit_price: unit, line_total: unit * m.qty }).eq("id", m.id);
       }
-      await recomputeEstimateTotal(sb, estimateId);
     }
+    if (priced.length || hasCharges) await recomputeEstimateTotal(sb, estimateId);
     // The RPC stores only the name; persist the phone too.
     if (input.customer?.phone) await sb.from("estimates").update({ customer_phone: input.customer.phone }).eq("id", estimateId);
     const { data: est } = await sb.from("estimates").select("total").eq("id", estimateId).maybeSingle();
@@ -141,7 +155,18 @@ export async function billEstimateAction(formData: FormData) {
   // instead of throwing a server error page.
   if (error) redirect(`/admin/estimate/${id}?billerror=${encodeURIComponent(error.message)}`);
   const orderId = (data as any)?.order_id;
-  if (orderId) await sb.rpc("assign_invoice_no", { p_order: orderId });
+  if (orderId) {
+    // Carry the estimate's extra charges onto the new order so the bill itemises them and GST
+    // applies — order.total is recomputed as items + charges to stay authoritative.
+    const { data: est } = await sb.from("estimates").select("extra_packing,extra_courier,extra_adjustment").eq("id", id).maybeSingle();
+    const xp = ((est as any)?.extra_packing) || 0, xc = ((est as any)?.extra_courier) || 0, xa = ((est as any)?.extra_adjustment) || 0;
+    if (xp !== 0 || xc !== 0 || xa !== 0) {
+      const { data: oi } = await sb.from("order_items").select("line_total").eq("order_id", orderId);
+      const itemsSum = ((oi as any[]) ?? []).reduce((s, r) => s + (r.line_total ?? 0), 0);
+      await sb.from("orders").update({ extra_packing: xp, extra_courier: xc, extra_adjustment: xa, total: itemsSum + xp + xc + xa }).eq("id", orderId);
+    }
+    await sb.rpc("assign_invoice_no", { p_order: orderId });
+  }
   revalidatePath("/admin/estimates"); revalidatePath("/admin/dashboard"); revalidatePath("/admin/sales");
   if (orderId) redirect(`/admin/invoice/${orderId}`);
   redirect("/admin/estimates");
