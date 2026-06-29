@@ -86,9 +86,10 @@ export async function updateProductAction(formData: FormData): Promise<UpdateRes
       category_id: categoryId,
       type,
       status,
-      // Schema note: visibility is stored as the `wholesale_only` boolean (main's design).
-      // The form still sends "visibility=wholesale|all" so existing UI doesn't change.
+      // Visibility → two flags: wholesale-only (hide from retail shop) or retail-only (hide from
+      // wholesale portal); "all" clears both. Form sends visibility=all|wholesale|retail.
       wholesale_only: String(formData.get("visibility") ?? "all") === "wholesale",
+      retail_only: String(formData.get("visibility") ?? "all") === "retail",
       base_wholesale: Math.round(basePriceRupees * 100),
       qty,
       generated_content,

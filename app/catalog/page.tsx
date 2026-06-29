@@ -17,7 +17,7 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
 
   const [tree, fetched, suggestions] = await Promise.all([
     getCategoryTree(),
-    getCatalogProducts({ category, subcategory, q, skus: skus.length ? skus : undefined, includeWholesaleOnly: view === "wholesale" }),
+    getCatalogProducts({ category, subcategory, q, skus: skus.length ? skus : undefined, includeWholesaleOnly: view === "wholesale", excludeRetailOnly: view === "wholesale" }),
     getCatalogSuggestions().catch(() => ({ products: [], categories: [], colours: [] })),
   ]);
   // Never dead-end a shared sub-category link: if nothing is tagged there yet,

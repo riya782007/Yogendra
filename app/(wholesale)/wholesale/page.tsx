@@ -13,7 +13,7 @@ const WHOLESALE_MIN = 300000; // ₹3,000 in paise (#27)
 
 export default async function Wholesale({ searchParams }: { searchParams: { error?: string } }) {
   const session = await getWholesaleSession();
-  const { products, formula } = await getStorefront({ includeWholesaleOnly: true });
+  const { products, formula } = await getStorefront({ includeWholesaleOnly: true, excludeRetailOnly: true });
 
   // Logged in & approved → real wholesale catalog with ordering.
   if (session) {

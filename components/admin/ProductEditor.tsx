@@ -124,7 +124,8 @@ export function ProductEditor({
           <div>
             <label className={label}>Visibility</label>
             <select name="visibility" defaultValue={product.visibility} className={field}>
-              <option value="all">All customers (retail + wholesale)</option>
+              <option value="all">Both storefronts (retail + wholesale)</option>
+              <option value="retail">Retail only (hidden from wholesale)</option>
               <option value="wholesale">Wholesale only (hidden from retail shop)</option>
             </select>
           </div>

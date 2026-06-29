@@ -113,14 +113,15 @@ export type CatalogCard = {
   wholesaleOnly: boolean;
 };
 
-export async function getCatalogProducts(opts: { category?: string; subcategory?: string; q?: string; skus?: string[]; includeWholesaleOnly?: boolean }): Promise<CatalogCard[]> {
+export async function getCatalogProducts(opts: { category?: string; subcategory?: string; q?: string; skus?: string[]; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean }): Promise<CatalogCard[]> {
   const sb = supabaseServer();
   const formula = await getPricingFormula();
   let query = sb.from("products")
-    .select("id,sku,name,qty,base_wholesale,wholesale_only,wholesale_override,retail_override,mrp_override,generated_content,category:categories(name,slug),subcategory:subcategories(name,slug),images:product_images(path,kind,sort),product_labels(label_id,labels(name))")
+    .select("id,sku,name,qty,base_wholesale,wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,generated_content,category:categories(name,slug),subcategory:subcategories(name,slug),images:product_images(path,kind,sort),product_labels(label_id,labels(name))")
     .eq("status", "published").order("sku");
   // Retail catalogue hides wholesale-only items; wholesale view + POS pass includeWholesaleOnly.
   if (!opts.includeWholesaleOnly) query = query.eq("wholesale_only", false);
+  if (opts.excludeRetailOnly) query = query.eq("retail_only", false);
 
   if (opts.category && opts.category !== "all") {
     const { data: cat } = await sb.from("categories").select("id").eq("slug", opts.category).maybeSingle();
@@ -648,7 +649,7 @@ export type StoreProduct = DbProduct & {
 };
 
 export async function getStorefront(
-  opts: { includeDrafts?: boolean; includeWholesaleOnly?: boolean } = {},
+  opts: { includeDrafts?: boolean; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean } = {},
 ): Promise<{ products: StoreProduct[]; formula: PF }> {
   const sb = supabaseServer();
   // D2C-safe defaults: only published, and never wholesale-only items (#1, #23).
@@ -686,6 +687,8 @@ export async function getStorefront(
     return { ...p, image: imgByProduct.get(p.id) ?? null, rating: Math.round(rating * 10) / 10, reviews, isNew };
   });
   if (!opts.includeWholesaleOnly) products = products.filter((p: any) => !p.wholesale_only);
+  // Wholesale storefront hides retail-only items (admin/POS pass excludeRetailOnly=false → see all).
+  if (opts.excludeRetailOnly) products = products.filter((p: any) => !p.retail_only);
   return { products, formula };
 }
 

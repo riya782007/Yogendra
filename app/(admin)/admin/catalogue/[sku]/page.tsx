@@ -79,7 +79,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
     status: p.status,
     // Visibility/labels surface the same data the dedicated Catalog tab toggles
     // already control, so the unified ProductEditor form opens prefilled.
-    visibility: (p as any).wholesale_only ? "wholesale" : "all",
+    visibility: (p as any).retail_only ? "retail" : (p as any).wholesale_only ? "wholesale" : "all",
     labels: (allLabels as any[])
       .filter((l) => labelIds.has(l.id))
       .map((l) => l.name)
