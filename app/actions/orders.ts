@@ -45,6 +45,9 @@ export async function posSaleAction(input: {
   tier?: "retail" | "wholesale"; // price list to bill at (#16)
   payCashRupees?: number; // split tender — cash portion (#14/#37)
   payBankRupees?: number; // split tender — UPI/card/bank portion (#14/#37)
+  packingRupees?: number; // extra charge — packing (GST-applicable)
+  courierRupees?: number; // extra charge — courier / shipping (GST-applicable)
+  adjustmentRupees?: number; // ± adjustment / round-off (GST-applicable)
 }): Promise<{ ok: boolean; orderId?: string; total?: number; error?: string }> {
   if (!(await requirePerm("billing.sell"))) return { ok: false, error: "Your role can't ring up POS sales." };
   if (!input.items?.length) return { ok: false, error: "Add at least one item" };
@@ -91,6 +94,14 @@ export async function posSaleAction(input: {
       /* keep the RPC's total if reconciliation hits a snag — never corrupt the bill */
     }
   }
+
+  // Extra charges (Packing / Courier / Adjustment) — GST-applicable, so they fold into the
+  // order total (GST is computed on it) and are itemised on the bill. Adjustment may be ±.
+  const xPacking = Math.max(0, Math.round((input.packingRupees ?? 0) * 100));
+  const xCourier = Math.max(0, Math.round((input.courierRupees ?? 0) * 100));
+  const xAdjust = Math.round((input.adjustmentRupees ?? 0) * 100);
+  const xCharges = xPacking + xCourier + xAdjust;
+  total = total + xCharges;
 
   // Persist B2B bill metadata on the order so the invoice/cash-memo renders correctly.
   const billType = input.billType === "cash" ? "cash" : "gst";
@@ -143,6 +154,12 @@ export async function posSaleAction(input: {
     pay_cash: payCash,
     pay_bank: payBank,
   }).eq("id", orderId);
+
+  // Itemised charge breakdown — best-effort; needs migration 0021. Never breaks a sale.
+  if (xCharges !== 0) {
+    const { error: chErr } = await sb.from("orders").update({ extra_packing: xPacking, extra_courier: xCourier, extra_adjustment: xAdjust }).eq("id", orderId);
+    if (chErr) console.warn("charge breakdown not saved — apply migration 0021_billing_charges.sql:", chErr.message);
+  }
   await sb.rpc("assign_invoice_no", { p_order: orderId });
 
   // Backorder flag — best-effort so it can never break a sale. When the owner billed

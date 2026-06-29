@@ -29,6 +29,14 @@ export default async function Invoice({ params }: { params: { id: string } }) {
   const gstMode = (order.gst_mode as "inclusive" | "exclusive" | null | undefined) ?? null;
   const gstExclusive = !isCash && (gstMode ? gstMode === "exclusive" : true);
   const g = gstExclusive ? gstSplitExclusive(total, buyerStateCode) : gstSplit(total, buyerStateCode);
+  // Extra charges (Packing/Courier/Adjustment) are folded into the total so GST applies to them;
+  // here we split them back out so the bill itemises them. Products portion = total − charges.
+  const xPacking = (order.extra_packing as number) || 0;
+  const xCourier = (order.extra_courier as number) || 0;
+  const xAdjust = (order.extra_adjustment as number) || 0;
+  const xCharges = xPacking + xCourier + xAdjust;
+  const itemsTotal = total - xCharges;
+  const itemsTaxable = (isCash || gstExclusive) ? itemsTotal : Math.round(itemsTotal / (1 + GST_RATE / 100));
   // What the customer actually owes: inclusive total (or pre-tax + GST when exclusive).
   const payable = isCash ? total : gstExclusive ? total + g.tax : total;
   const balanceDue = Math.max(0, payable - paid);
@@ -124,7 +132,7 @@ export default async function Invoice({ params }: { params: { id: string } }) {
               <tr className="bg-cream/50 font-medium">
                 <td className={td}></td><td className={`${td} text-ink`}>Total</td>{!isCash && <td className={td}></td>}
                 <td className={`${td} text-right`}>{qtyTotal}</td><td className={td}></td>
-                <td className={`${td} text-right`}>{formatPaise(isCash ? total : g.taxable)}</td>
+                <td className={`${td} text-right`}>{formatPaise(itemsTaxable)}</td>
               </tr>
             </tbody>
           </table>
@@ -143,7 +151,11 @@ export default async function Invoice({ params }: { params: { id: string } }) {
               )}
             </div>
             <div className="text-sm space-y-1">
-              <div className="flex justify-between text-muted"><span>{isCash ? "Sub-total" : "Taxable value"}</span><span>{formatPaise(isCash ? total : g.taxable)}</span></div>
+              <div className="flex justify-between text-muted"><span>{isCash ? "Sub-total" : "Taxable value (goods)"}</span><span>{formatPaise(itemsTaxable)}</span></div>
+              {xPacking > 0 && <div className="flex justify-between text-muted"><span>Packing</span><span>{formatPaise(xPacking)}</span></div>}
+              {xCourier > 0 && <div className="flex justify-between text-muted"><span>Courier</span><span>{formatPaise(xCourier)}</span></div>}
+              {xAdjust !== 0 && <div className="flex justify-between text-muted"><span>Adjustment</span><span>{formatPaise(xAdjust)}</span></div>}
+              {!isCash && xCharges !== 0 && <div className="flex justify-between text-muted font-medium border-t border-sand/40 pt-1"><span>Taxable value</span><span>{formatPaise(g.taxable)}</span></div>}
               {!isCash && !g.interState && <>
                 <div className="flex justify-between text-muted"><span>CGST @{GST_RATE / 2}%</span><span>{formatPaise(g.cgst)}</span></div>
                 <div className="flex justify-between text-muted"><span>SGST @{GST_RATE / 2}%</span><span>{formatPaise(g.sgst)}</span></div>

@@ -26,6 +26,9 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
   const [gstin, setGstin] = useState("");
   const [addr, setAddr] = useState("");
   const [globalDisc, setGlobalDisc] = useState(""); // global % discount, auto-applies to every line
+  const [packing, setPacking] = useState("");
+  const [courier, setCourier] = useState("");
+  const [adjustment, setAdjustment] = useState(""); // ± round-off / concession
   const [payCash, setPayCash] = useState("");
   const [payBank, setPayBank] = useState("");
   const [busy, setBusy] = useState(false);
@@ -71,7 +74,10 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
     return products.filter((p) => p.name.toLowerCase().includes(s) || p.sku.toLowerCase().includes(s)).slice(0, 6);
   }, [q, products]);
 
-  const total = lines.reduce((s, l) => s + effUnit(l) * l.qty, 0);
+  const toPaise = (v: string) => { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) : 0; };
+  const chargesTotal = Math.max(0, toPaise(packing)) + Math.max(0, toPaise(courier)) + toPaise(adjustment);
+  const itemsTotal = lines.reduce((s, l) => s + effUnit(l) * l.qty, 0);
+  const total = itemsTotal + chargesTotal;
   function addLine(p: P) { setLines((prev) => { const ex = prev.find((l) => l.sku === p.sku); if (ex) return prev.map((l) => l.sku === p.sku ? { ...l, qty: l.qty + 1 } : l); return [...prev, { sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, qty: 1, stock: p.qty, override: "", disc: "" }]; }); setQ(""); }
   function setQty(sku: string, qty: number) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, qty: Math.max(1, Math.floor(qty || 1)) } : l)); }
   function setOverride(sku: string, val: string) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, override: val } : l)); }
@@ -115,6 +121,7 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
       ...(anySplit ? { payCashRupees: c, payBankRupees: b } : {}),
       allowOversell: allowBackorder, tier: custType,
       backorder: allowBackorder && lines.some((l) => l.qty > l.stock),
+      packingRupees: Number(packing) || 0, courierRupees: Number(courier) || 0, adjustmentRupees: Number(adjustment) || 0,
     });
     setBusy(false);
     if (!res.ok) { setErr(res.error ?? "Failed"); return; }
@@ -240,6 +247,15 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
               <input value={globalDisc} onChange={(e) => setGlobalDisc(e.target.value)} inputMode="decimal" placeholder="0"
                 className={`w-14 text-right outline-none bg-transparent ${gDisc > 0 ? "text-emerald-dark font-medium" : "text-ink"}`} />
               <span className="text-muted text-xs">% off every product</span>
+            </div>
+          </div>
+          {/* Other charges — Packing / Courier / Adjustment (GST-applicable, added to the bill). */}
+          <div>
+            <p className="text-xs text-muted mb-1">Other charges <span className="text-muted/70">— GST applies</span></p>
+            <div className="grid grid-cols-3 gap-2">
+              <label className="text-[11px] text-muted">Packing ₹<input value={packing} onChange={(e) => setPacking(e.target.value)} inputMode="decimal" placeholder="0" className={`${input} mt-0.5`} /></label>
+              <label className="text-[11px] text-muted">Courier ₹<input value={courier} onChange={(e) => setCourier(e.target.value)} inputMode="decimal" placeholder="0" className={`${input} mt-0.5`} /></label>
+              <label className="text-[11px] text-muted">Adjust ± ₹<input value={adjustment} onChange={(e) => setAdjustment(e.target.value)} inputMode="decimal" placeholder="0" className={`${input} mt-0.5`} /></label>
             </div>
           </div>
           {billType === "gst" && (
