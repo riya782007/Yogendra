@@ -85,17 +85,38 @@ export async function addEstimateLineAction(formData: FormData): Promise<void> {
   revalidatePath(`/admin/estimate/${estimateId}`);
 }
 
-export async function createEstimateAction(input: { items: { sku: string; qty: number }[]; customer: { name?: string; phone?: string } }): Promise<{ ok: boolean; estimateId?: string; total?: number; error?: string }> {
+export async function createEstimateAction(input: { items: { sku: string; qty: number; priceRupees?: number }[]; customer: { name?: string; phone?: string } }): Promise<{ ok: boolean; estimateId?: string; total?: number; error?: string }> {
   if (!(await requirePerm("estimates.create"))) return { ok: false, error: "Your role can't create estimates." };
   if (!input.items?.length) return { ok: false, error: "Add at least one item" };
   const sb = supabaseServer();
-  const { data, error } = await sb.rpc("create_estimate", { p_items: input.items, p_customer: input.customer ?? {} });
+  const { data, error } = await sb.rpc("create_estimate", { p_items: input.items.map((i) => ({ sku: i.sku, qty: i.qty })), p_customer: input.customer ?? {} });
   if (error) return { ok: false, error: error.message };
   const estimateId = (data as any)?.estimate_id;
-  // The RPC stores only the name; persist the phone too.
-  if (estimateId && input.customer?.phone) await sb.from("estimates").update({ customer_phone: input.customer.phone }).eq("id", estimateId);
+  let outTotal = (data as any)?.total as number | undefined;
+  if (estimateId) {
+    // Apply the per-line rates the counter set (R/W tier or an edited rate) so the saved quote —
+    // and the bill it converts to (convert uses estimate_items.unit_price) — matches the screen.
+    // Match estimate_items back to the inputs by SKU.
+    const priced = input.items.filter((i) => i.priceRupees != null && Number.isFinite(i.priceRupees) && (i.priceRupees as number) >= 0);
+    if (priced.length) {
+      const { data: its } = await sb.from("estimate_items").select("id, qty, product:products(sku)").eq("estimate_id", estimateId);
+      const bySku = new Map<string, { id: string; qty: number }>();
+      for (const it of ((its as any[]) ?? [])) { const sku = (it as any).product?.sku; if (sku) bySku.set(String(sku).toUpperCase(), { id: it.id, qty: it.qty }); }
+      for (const i of priced) {
+        const m = bySku.get(i.sku.toUpperCase());
+        if (!m) continue;
+        const unit = Math.round((i.priceRupees as number) * 100);
+        await sb.from("estimate_items").update({ unit_price: unit, line_total: unit * m.qty }).eq("id", m.id);
+      }
+      await recomputeEstimateTotal(sb, estimateId);
+    }
+    // The RPC stores only the name; persist the phone too.
+    if (input.customer?.phone) await sb.from("estimates").update({ customer_phone: input.customer.phone }).eq("id", estimateId);
+    const { data: est } = await sb.from("estimates").select("total").eq("id", estimateId).maybeSingle();
+    if (est) outTotal = (est as any).total;
+  }
   revalidatePath("/admin/estimates");
-  return { ok: true, estimateId, total: (data as any)?.total };
+  return { ok: true, estimateId, total: outTotal };
 }
 
 export async function convertEstimateAction(formData: FormData) {

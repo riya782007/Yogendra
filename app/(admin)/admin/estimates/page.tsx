@@ -1,8 +1,7 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
-import { getEstimates, getStorefront } from "@/lib/supabase/queries";
-import { liveOffer } from "@/lib/offers";
-import { formatPaise } from "@/lib/pricing";
+import { getEstimates, getStorefront, getCustomersDb } from "@/lib/supabase/queries";
+import { formatPaise, resolvePrices, overridesOf } from "@/lib/pricing";
 import { EstimateClient } from "@/components/admin/EstimateClient";
 import { billEstimateAction, denyEstimateAction, reopenEstimateAction } from "@/app/actions/billing";
 
@@ -28,8 +27,9 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 export default async function Estimates({ searchParams }: { searchParams: { tab?: string; q?: string; sort?: string } }) {
-  const [{ products, formula }, estimates] = await Promise.all([getStorefront({ includeDrafts: true, includeWholesaleOnly: true }), getEstimates({ sort: searchParams.sort })]);
-  const list = products.map((p) => ({ sku: p.sku, name: p.name, price: liveOffer(p.base_wholesale, formula).price }));
+  const [{ products, formula }, estimates, customers] = await Promise.all([getStorefront({ includeDrafts: true, includeWholesaleOnly: true }), getEstimates({ sort: searchParams.sort }), getCustomersDb({})]);
+  const list = products.map((p) => { const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p)); return { sku: p.sku, name: p.name, price: ps.retailPrice, wholesale: ps.wholesaleRate }; });
+  const custList = customers.map((c: any) => ({ id: c.id, name: c.name, phone: c.phone ?? "", type: c.type ?? "retail", gstin: c.gstin ?? "" }));
 
   const tab = TABS.find((t) => t.key === (searchParams.tab ?? "all")) ?? TABS[0];
   const q = (searchParams.q ?? "").toLowerCase().trim();
@@ -56,7 +56,7 @@ export default async function Estimates({ searchParams }: { searchParams: { tab?
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen max-w-5xl">
       <h1 className="font-display text-4xl text-ink mb-1">Estimates &amp; Quotations</h1>
       <p className="text-sm text-muted mb-6">Quote now; bill only when the customer confirms. Each estimate can be held, billed with GST, billed as a cash memo, or denied.</p>
-      <EstimateClient products={list} />
+      <EstimateClient products={list} customers={custList} />
 
       {/* tabs + search */}
       <div className="flex flex-wrap items-center gap-2 mb-3">
