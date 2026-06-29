@@ -77,11 +77,11 @@ body {
   body { background: #fff !important; }
   .print-area { box-shadow: none !important; }
 
-  /* Barcode labels: exactly 64 per A4 (8 columns × 8 rows) */
+  /* Barcode labels: column count driven by the chosen paper size (--bc-cols). */
   @page { size: A4; margin: 6mm; }
   .barcode-grid {
     display: grid !important;
-    grid-template-columns: repeat(8, 1fr) !important;
+    grid-template-columns: repeat(var(--bc-cols, 8), 1fr) !important;
     gap: 1mm !important;
   }
   .barcode-label {

@@ -22,12 +22,12 @@ export default async function Invoice({ params }: { params: { id: string } }) {
   const total = order.total as number;
   const paid = order.amount_paid ?? 0;
   const buyerStateCode = order.buyer_state || stateCodeFromGstin(order.buyer_gstin);
-  // #13/#3: wholesale (B2B) tax invoices are GST-EXCLUSIVE — the stored total is the
-  // pre-tax value and GST is added on top. Retail/POS GST invoices default to
-  // GST-INCLUSIVE (the shelf price already includes tax). The owner can override this
-  // per bill via gst_mode ('exclusive' | 'inclusive'); null = the channel default above.
+  // #3: a TAX INVOICE is GST-EXCLUSIVE — the rate shown is pre-tax and CGST/SGST is added on
+  // top (the storefront/D2C shelf price stays tax-inclusive, but the printed tax invoice is
+  // exclusive). So every GST invoice defaults to exclusive; the owner can still pin a specific
+  // bill to inclusive via gst_mode ('exclusive' | 'inclusive').
   const gstMode = (order.gst_mode as "inclusive" | "exclusive" | null | undefined) ?? null;
-  const gstExclusive = !isCash && (gstMode ? gstMode === "exclusive" : order.channel === "wholesale");
+  const gstExclusive = !isCash && (gstMode ? gstMode === "exclusive" : true);
   const g = gstExclusive ? gstSplitExclusive(total, buyerStateCode) : gstSplit(total, buyerStateCode);
   // What the customer actually owes: inclusive total (or pre-tax + GST when exclusive).
   const payable = isCash ? total : gstExclusive ? total + g.tax : total;

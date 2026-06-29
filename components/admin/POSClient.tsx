@@ -6,8 +6,13 @@ import { posSaleAction } from "@/app/actions/orders";
 import { QtyField } from "@/components/admin/QtyField";
 
 type P = { sku: string; name: string; price: number; wholesale: number; category: string; qty: number };
-type Line = { sku: string; name: string; price: number; wholesale: number; qty: number; stock: number; override: string };
+type Line = { sku: string; name: string; price: number; wholesale: number; qty: number; stock: number; override: string; disc: string };
 type Cust = { id: string; name: string; phone: string; type: string; gstin: string };
+
+// Owner shorthand for the two price lists (kept private from onlookers):
+//   DC = retail (direct customer) · WC = wholesale customer.
+// Per the client: the tier is NOT chosen manually — it comes from the selected customer.
+const TIER_LABEL: Record<string, string> = { retail: "DC", wholesale: "WC" };
 
 export function POSClient({ products, customers = [] }: { products: P[]; customers?: Cust[] }) {
   const router = useRouter();
@@ -17,42 +22,30 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
   const scanRef = useRef<HTMLInputElement>(null);
   const [lines, setLines] = useState<Line[]>([]);
   const [cust, setCust] = useState({ name: "", phone: "" });
+  const [custType, setCustType] = useState<"retail" | "wholesale">("retail"); // from the customer, not a manual toggle
   const [billType, setBillType] = useState<"gst" | "cash">("gst");
   const [gstin, setGstin] = useState("");
   const [addr, setAddr] = useState("");
+  const [globalDisc, setGlobalDisc] = useState(""); // global % discount, auto-applies to every line
   const [payCash, setPayCash] = useState("");
   const [payBank, setPayBank] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [allowBackorder, setAllowBackorder] = useState(false);
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // PRICE PRIVACY (client requirement): the bill shows ONE neutral price for
-  // every buyer — no "retail vs wholesale" tier is ever exposed or selected.
-  // The owner decides what each customer pays his own way, privately, using:
-  //   • a per-line price edit (custom rate on any line), and
-  //   • an optional counter discount % applied to the whole bill.
-  // Neither prints a tier/category name anywhere. Internally everything is just
-  // a price; the wholesale field is no longer surfaced in the UI.
-  // ──────────────────────────────────────────────────────────────────────────
-  const [disc, setDisc] = useState(""); // private counter discount %, owner-only
-  const discPct = (() => {
-    const n = Number(disc);
-    return Number.isFinite(n) && n > 0 && n < 100 ? n : 0;
-  })();
+  const pct = (v: string) => { const n = Number(v); return Number.isFinite(n) && n > 0 && n < 100 ? n : 0; };
+  const gDisc = pct(globalDisc);
 
-  /** The single listed price for a product/line (no tier). */
-  const listPrice = (l: Line | P) => l.price;
-
-  /** Effective unit price for a cart line, in paise:
-   *  1) the owner's manual per-line edit if entered, else
-   *  2) the listed price reduced by the private counter discount %, else
-   *  3) the listed price. */
+  /** Tier base unit. WC uses the wholesale rate (falls back to retail if missing/zero so it
+   *  never bills ₹0). The tier follows the selected customer. */
+  const baseUnit = (l: Line | P) => (custType === "wholesale" && l.wholesale > 0 ? l.wholesale : l.price);
+  /** Effective unit (paise): manual price override → else per-line discount → else global discount → tier base. */
   const effUnit = (l: Line) => {
     const ov = l.override.trim();
     if (ov !== "" && Number.isFinite(Number(ov)) && Number(ov) >= 0) return Math.round(Number(ov) * 100);
-    if (discPct > 0) return Math.round((l.price * (100 - discPct)) / 100 / 100) * 100; // nearest ₹1
-    return l.price;
+    const d = pct(l.disc) || gDisc;
+    const base = baseUnit(l);
+    return d > 0 ? Math.round((base * (100 - d)) / 100) : base;
   };
 
   const [custQ, setCustQ] = useState("");
@@ -60,15 +53,17 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
   const custMatches = useMemo(() => {
     const s = custQ.trim().toLowerCase();
     if (!s) return [];
-    // Null-safe — a customer saved without a name/phone must never break the search.
     return customers.filter((c) => (c.name ?? "").toLowerCase().includes(s) || (c.phone ?? "").includes(s)).slice(0, 6);
   }, [custQ, customers]);
   function pickCustomer(c: Cust) {
     setCust({ name: c.name, phone: c.phone });
     if (c.gstin) setGstin(c.gstin);
-    // Note: customer "type" is intentionally NOT used to switch pricing — price
-    // privacy means the bill never auto-reveals retail/wholesale treatment.
+    setCustType(c.type === "wholesale" ? "wholesale" : "retail"); // tier auto-derived from the customer
     setCustQ(""); setCustOpen(false);
+  }
+  function walkIn(type: "retail" | "wholesale") {
+    setCust({ name: type === "wholesale" ? "Cash (W)" : "Cash (R)", phone: "" });
+    setCustType(type);
   }
 
   const matches = useMemo(() => {
@@ -78,9 +73,10 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
   }, [q, products]);
 
   const total = lines.reduce((s, l) => s + effUnit(l) * l.qty, 0);
-  function addLine(p: P) { setLines((prev) => { const ex = prev.find((l) => l.sku === p.sku); if (ex) return prev.map((l) => l.sku === p.sku ? { ...l, qty: l.qty + 1 } : l); return [...prev, { sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, qty: 1, stock: p.qty, override: "" }]; }); setQ(""); }
+  function addLine(p: P) { setLines((prev) => { const ex = prev.find((l) => l.sku === p.sku); if (ex) return prev.map((l) => l.sku === p.sku ? { ...l, qty: l.qty + 1 } : l); return [...prev, { sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, qty: 1, stock: p.qty, override: "", disc: "" }]; }); setQ(""); }
   function setQty(sku: string, qty: number) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, qty: Math.max(1, Math.floor(qty || 1)) } : l)); }
   function setOverride(sku: string, val: string) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, override: val } : l)); }
+  function setLineDisc(sku: string, val: string) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, disc: val } : l)); }
   function rm(sku: string) { setLines((p) => p.filter((l) => l.sku !== sku)); }
 
   /** Barcode scanner sends "<SKU>\n" — match exactly and add, showing available stock. */
@@ -105,21 +101,21 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
     const c = Number(cTxt) || 0, b = Number(bTxt) || 0;
     const mode = anySplit ? (c > 0 && b > 0 ? "split" : b > 0 ? "upi" : "cash") : "cash";
     const res = await posSaleAction({
-      // Send the exact unit the counter showed whenever the owner edited a line OR a
-      // counter discount is active, so the printed bill, GST split and ledger match the
-      // screen to the rupee. Lines at the plain listed price send no override.
+      // Lines the owner hand-edited (price override) or that carry a discount send an explicit
+      // unit; the rest are priced by the server at the customer's tier (DC/WC) via p_tier.
       items: lines.map((l) => {
         const ov = l.override.trim();
         const hasOv = ov !== "" && Number.isFinite(Number(ov)) && Number(ov) >= 0;
-        if (hasOv) return { sku: l.sku, qty: l.qty, priceRupees: Number(ov) };       // exact custom rate (decimals ok)
-        if (discPct > 0) return { sku: l.sku, qty: l.qty, priceRupees: Math.round(effUnit(l) / 100) }; // discounted, nearest ₹1
-        return { sku: l.sku, qty: l.qty };                                            // plain listed price
+        if (hasOv) return { sku: l.sku, qty: l.qty, priceRupees: Number(ov) };
+        const d = pct(l.disc) || gDisc;
+        if (d > 0) return { sku: l.sku, qty: l.qty, priceRupees: effUnit(l) / 100 };
+        return { sku: l.sku, qty: l.qty };
       }),
       customer: cust, payment: mode,
       billType, buyerGstin: billType === "gst" ? gstin : "", buyerAddress: addr,
-      // Blank split → treat as paid in full (cash). Any entry → record the cash/bank split.
       ...(anySplit ? { payCashRupees: c, payBankRupees: b } : {}),
-      allowOversell: allowBackorder,
+      allowOversell: allowBackorder, tier: custType,
+      backorder: allowBackorder && lines.some((l) => l.qty > l.stock),
     });
     setBusy(false);
     if (!res.ok) { setErr(res.error ?? "Failed"); return; }
@@ -151,7 +147,7 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
             <div className="absolute z-10 left-0 right-0 mt-1 bg-white rounded-xl shadow-luxe border border-sand overflow-hidden">
               {matches.map((p) => (
                 <button key={p.sku} onClick={() => addLine(p)} className="w-full text-left px-4 py-2.5 text-sm hover:bg-emerald-mist flex justify-between">
-                  <span>{p.name} <span className="text-muted">· {p.sku}</span></span><span className="text-ink">{formatPaise(listPrice(p))}</span>
+                  <span>{p.name} <span className="text-muted">· {p.sku}</span></span><span className="text-ink">{formatPaise(baseUnit(p))}</span>
                 </button>
               ))}
             </div>
@@ -160,28 +156,31 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
         <div className="mt-4 space-y-2">
           {lines.length === 0 && <p className="text-sm text-muted">No items yet. Search above to add.</p>}
           {lines.map((l) => (
-            <div key={l.sku} className="flex items-center gap-3 border-b border-sand/60 pb-2">
+            <div key={l.sku} className="flex items-center gap-2 border-b border-sand/60 pb-2">
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-ink truncate">{l.name}</p>
-                <p className="text-xs text-muted">{l.sku} · <span className={l.qty > l.stock ? "text-rose font-medium" : "text-emerald"}>{l.stock} in stock</span>{l.qty > l.stock && <span className="text-rose"> — only {l.stock} available!</span>}</p>
+                <p className="text-xs text-muted">{l.sku} · <span className={l.qty > l.stock ? "text-rose font-medium" : "text-emerald"}>{l.stock} in stock</span>{l.qty > l.stock && <span className="text-rose"> — only {l.stock}!</span>}</p>
               </div>
-              {/* Editable unit price — placeholder is the listed price; type to set a custom rate. */}
-              <label className="inline-flex items-center gap-1 rounded-full border border-sand px-2 py-1 text-sm" title="Edit unit price (custom rate for this customer)">
+              {/* Editable unit price — placeholder is the live tier+discount price; type to override. */}
+              <label className="inline-flex items-center gap-0.5 rounded-full border border-sand px-2 py-1 text-sm" title="Edit unit price">
                 <span className="text-muted text-xs">₹</span>
-                <input
-                  value={l.override}
-                  onChange={(e) => setOverride(l.sku, e.target.value)}
-                  inputMode="decimal"
+                <input value={l.override} onChange={(e) => setOverride(l.sku, e.target.value)} inputMode="decimal"
                   placeholder={String(Math.round(effUnit(l) / 100))}
-                  className={`w-16 text-right outline-none bg-transparent ${l.override.trim() !== "" ? "text-emerald-dark font-medium" : "text-ink"}`}
-                />
+                  className={`w-14 text-right outline-none bg-transparent ${l.override.trim() !== "" ? "text-emerald-dark font-medium" : "text-ink"}`} />
+              </label>
+              {/* Per-line discount % (overrides the global discount for this line). */}
+              <label className="inline-flex items-center gap-0.5 rounded-full border border-sand px-2 py-1 text-sm" title="Discount % for this line">
+                <input value={l.disc} onChange={(e) => setLineDisc(l.sku, e.target.value)} inputMode="decimal"
+                  placeholder={gDisc > 0 ? String(gDisc) : "0"}
+                  className={`w-9 text-right outline-none bg-transparent ${pct(l.disc) > 0 ? "text-emerald-dark font-medium" : "text-ink"}`} />
+                <span className="text-muted text-xs">%</span>
               </label>
               <div className="inline-flex items-center rounded-full border border-sand text-sm overflow-hidden">
-                <button onClick={() => setQty(l.sku, l.qty - 1)} className="px-2.5 py-1 hover:bg-cream" aria-label="decrease">−</button>
-                <QtyField value={l.qty} onChange={(n) => setQty(l.sku, n)} className="w-12 text-center border-x border-sand py-1 outline-none focus:bg-emerald-mist" />
-                <button onClick={() => setQty(l.sku, l.qty + 1)} className="px-2.5 py-1 hover:bg-cream" aria-label="increase">+</button>
+                <button onClick={() => setQty(l.sku, l.qty - 1)} className="px-2 py-1 hover:bg-cream" aria-label="decrease">−</button>
+                <QtyField value={l.qty} onChange={(n) => setQty(l.sku, n)} className="w-10 text-center border-x border-sand py-1 outline-none focus:bg-emerald-mist" />
+                <button onClick={() => setQty(l.sku, l.qty + 1)} className="px-2 py-1 hover:bg-cream" aria-label="increase">+</button>
               </div>
-              <span className="text-sm font-medium w-20 text-right">{formatPaise(effUnit(l) * l.qty)}</span>
+              <span className="text-sm font-medium w-16 text-right">{formatPaise(effUnit(l) * l.qty)}</span>
               <button onClick={() => rm(l.sku)} className="text-muted hover:text-rose text-xs">✕</button>
             </div>
           ))}
@@ -200,49 +199,57 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
               ))}
             </div>
           </div>
-          {/* Existing-customer picker */}
-          {customers.length > 0 && (
-            <div className="relative">
-              <input className={input} placeholder="🔎 Find existing customer by name / phone…" value={custQ}
-                onChange={(e) => { setCustQ(e.target.value); setCustOpen(true); }} onFocus={() => setCustOpen(true)} />
-              {custOpen && custQ.trim() && (
-                <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl shadow-luxe border border-sand overflow-hidden">
-                  {custMatches.map((c) => (
-                    <button key={c.id} onClick={() => pickCustomer(c)} className="w-full text-left px-4 py-2.5 text-sm hover:bg-emerald-mist flex justify-between">
-                      <span>{c.name} <span className="text-muted">· {c.phone || "no phone"}</span></span>
-                    </button>
-                  ))}
-                  {/* Always allow adding a brand-new customer by the typed name. */}
-                  {!custMatches.some((c) => (c.name ?? "").toLowerCase() === custQ.trim().toLowerCase()) && (
-                    <button onClick={() => { setCust({ name: custQ.trim(), phone: "" }); setCustQ(""); setCustOpen(false); }}
-                      className="w-full text-left px-4 py-2.5 text-sm text-emerald-dark hover:bg-gold/10 border-t border-sand">
-                      + Add “{custQ.trim()}” as a new customer
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-          {/* Counter discount — PRIVATE, owner-only. Lets the owner give any customer
-              his own rate without exposing a retail/wholesale category on the bill. */}
+          {/* Customer — drives the price tier automatically. Walk-ins use Cash (R)/Cash (W). */}
           <div>
-            <p className="text-xs text-muted mb-1">Counter discount <span className="text-muted/70">— private, never printed as a category</span></p>
-            <div className="inline-flex items-center gap-1 rounded-xl border border-sand px-3 py-2 text-sm">
-              <input value={disc} onChange={(e) => setDisc(e.target.value)} inputMode="decimal" placeholder="0"
-                className={`w-16 text-right outline-none bg-transparent ${discPct > 0 ? "text-emerald-dark font-medium" : "text-ink"}`} />
-              <span className="text-muted text-xs">% off the listed price</span>
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-xs text-muted">Customer</p>
+              <span className={`text-[11px] px-2 py-0.5 rounded-full ${custType === "wholesale" ? "bg-wine/10 text-wine" : "bg-emerald-mist text-emerald-dark"}`}>{TIER_LABEL[custType]} · {custType === "wholesale" ? "wholesale" : "retail"} price</span>
             </div>
-            {discPct > 0 && <p className="text-[11px] text-emerald-dark mt-1">This bill is priced at {discPct}% off — applies to every line without its own custom rate.</p>}
+            <div className="flex gap-2 mb-2">
+              <button onClick={() => walkIn("retail")} className="flex-1 rounded-xl border border-sand px-3 py-1.5 text-sm text-muted hover:border-emerald">Cash (R)</button>
+              <button onClick={() => walkIn("wholesale")} className="flex-1 rounded-xl border border-sand px-3 py-1.5 text-sm text-muted hover:border-emerald">Cash (W)</button>
+            </div>
+            {customers.length > 0 && (
+              <div className="relative">
+                <input className={input} placeholder="🔎 Find existing customer by name / phone…" value={custQ}
+                  onChange={(e) => { setCustQ(e.target.value); setCustOpen(true); }} onFocus={() => setCustOpen(true)} />
+                {custOpen && custQ.trim() && (
+                  <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl shadow-luxe border border-sand overflow-hidden">
+                    {custMatches.map((c) => (
+                      <button key={c.id} onClick={() => pickCustomer(c)} className="w-full text-left px-4 py-2.5 text-sm hover:bg-emerald-mist flex justify-between">
+                        <span>{c.name} <span className="text-muted">· {c.phone || "no phone"}</span></span>
+                        <span className={`text-xs ${c.type === "wholesale" ? "text-wine" : "text-muted"}`}>{TIER_LABEL[c.type] ?? "DC"}</span>
+                      </button>
+                    ))}
+                    {!custMatches.some((c) => (c.name ?? "").toLowerCase() === custQ.trim().toLowerCase()) && (
+                      <button onClick={() => { setCust({ name: custQ.trim(), phone: "" }); setCustQ(""); setCustOpen(false); }}
+                        className="w-full text-left px-4 py-2.5 text-sm text-emerald-dark hover:bg-gold/10 border-t border-sand">
+                        + Add “{custQ.trim()}” as a new customer
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+            <input className={`${input} mt-2`} placeholder="Customer / firm name (override)" value={cust.name} onChange={(e) => setCust({ ...cust, name: e.target.value })} />
+            <input className={`${input} mt-2`} placeholder="Phone (optional)" value={cust.phone} onChange={(e) => setCust({ ...cust, phone: e.target.value })} />
           </div>
-          <input className={input} placeholder="Customer / firm name (optional)" value={cust.name} onChange={(e) => setCust({ ...cust, name: e.target.value })} />
-          <input className={input} placeholder="Phone (optional)" value={cust.phone} onChange={(e) => setCust({ ...cust, phone: e.target.value })} />
+          {/* Global discount — auto-applies to every line; a line's own % overrides it. */}
+          <div>
+            <p className="text-xs text-muted mb-1">Global discount <span className="text-muted/70">— applies to all lines</span></p>
+            <div className="inline-flex items-center gap-1 rounded-xl border border-sand px-3 py-2 text-sm">
+              <input value={globalDisc} onChange={(e) => setGlobalDisc(e.target.value)} inputMode="decimal" placeholder="0"
+                className={`w-14 text-right outline-none bg-transparent ${gDisc > 0 ? "text-emerald-dark font-medium" : "text-ink"}`} />
+              <span className="text-muted text-xs">% off every product</span>
+            </div>
+          </div>
           {billType === "gst" && (
             <>
               <input className={input} placeholder="Buyer GSTIN (for B2B tax invoice)" value={gstin} onChange={(e) => setGstin(e.target.value.toUpperCase())} />
               <textarea className={input} rows={2} placeholder="Buyer billing address (optional)" value={addr} onChange={(e) => setAddr(e.target.value)} />
             </>
           )}
-          {/* Split tender — record how much came via cash vs UPI/bank (#14/#37) */}
+          {/* Split tender */}
           <div>
             <p className="text-xs text-muted mb-1">Payment received <span className="text-muted/70">— leave blank for paid-in-full (cash)</span></p>
             <div className="grid grid-cols-2 gap-2">
@@ -276,7 +283,7 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
         )}
         {err && <p className="text-sm text-rose mt-2">{err}</p>}
         <button onClick={complete} disabled={busy || lines.length === 0} className="btn-primary w-full mt-4 py-3.5 text-sm font-medium disabled:opacity-50">
-          {busy ? "Completing…" : billType === "gst" ? "Complete sale & print tax invoice" : "Complete sale & print cash memo"}
+          {busy ? "Completing…" : billType === "gst" ? "Generate tax invoice" : "Generate cash memo"}
         </button>
       </div>
     </div>

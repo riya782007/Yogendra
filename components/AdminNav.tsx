@@ -27,6 +27,7 @@ const GROUPS: { title: string; links: L[] }[] = [
   { title: "Sales & Billing", links: [
     { href: "/admin/billing", label: "Billing (POS)", icon: "₹", perm: "billing.sell" },
     { href: "/admin/sales", label: "Sales Records", icon: "❑", perm: "sales.view" },
+    { href: "/admin/backorders", label: "Backorders", icon: "⏳", perm: "sales.view" },
     { href: "/admin/estimates", label: "Estimates", icon: "≈", perm: "estimates.create" },
     { href: "/admin/returns", label: "Returns", icon: "⤺", perm: "billing.refund" },
     { href: "/admin/purchases", label: "Purchases", icon: "⇪", perm: "purchases.view" },

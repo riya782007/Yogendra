@@ -41,6 +41,7 @@ export async function posSaleAction(input: {
   buyerAddress?: string;
   amountPaidRupees?: number; // partial/advance; defaults to full
   allowOversell?: boolean; // owner opt-in to bill beyond stock (backorder)
+  backorder?: boolean; // this sale was billed beyond available stock (surfaces in /admin/backorders)
   tier?: "retail" | "wholesale"; // price list to bill at (#16)
   payCashRupees?: number; // split tender — cash portion (#14/#37)
   payBankRupees?: number; // split tender — UPI/card/bank portion (#14/#37)
@@ -143,6 +144,14 @@ export async function posSaleAction(input: {
     pay_bank: payBank,
   }).eq("id", orderId);
   await sb.rpc("assign_invoice_no", { p_order: orderId });
+
+  // Backorder flag — best-effort so it can never break a sale. When the owner billed
+  // beyond available stock (ticked "bill anyway as a backorder"), mark the order so it
+  // shows on /admin/backorders. No-ops gracefully until migration 0020 adds the column.
+  if (input.backorder) {
+    const { error: boErr } = await sb.from("orders").update({ is_backorder: true }).eq("id", orderId);
+    if (boErr) console.warn("backorder flag not set — apply migration 0020_order_backorder.sql:", boErr.message);
+  }
 
   await sendPurchase({ orderId, valuePaise: total, channel: "retail", items: input.items.map((i) => ({ sku: i.sku, qty: i.qty })) });
   return { ok: true, orderId, total };

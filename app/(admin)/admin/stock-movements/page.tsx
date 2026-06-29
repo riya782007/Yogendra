@@ -106,7 +106,12 @@ export default async function StockMovements({ searchParams }: { searchParams: {
                   <td className="p-3"><span className={`px-2 py-0.5 rounded-full text-xs capitalize ${KIND_STYLE[r.kind] ?? "bg-cream text-muted"}`}>{r.kind ?? "—"}</span></td>
                   <td className={`p-3 text-right font-semibold tabular-nums ${r.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{r.delta > 0 ? "+" : ""}{r.delta}</td>
                   <td className="p-3 text-muted max-w-[260px] truncate">{r.source ?? ""}{r.reason ? ` — ${r.reason}` : ""}</td>
-                  <td className="p-3">{doc ? <Link href={doc.href} className="text-emerald nav-link whitespace-nowrap text-xs">{doc.label}</Link> : <span className="text-muted text-xs">—</span>}</td>
+                  <td className="p-3">{doc ? (
+                    <div className="whitespace-nowrap">
+                      {r.kind === "sale" && <span className="block text-[11px] font-medium text-ink">{r.invoice_no || `INV-${String(r.ref_id).slice(0, 8).toUpperCase()}`}</span>}
+                      <Link href={doc.href} className="text-emerald nav-link text-xs">{doc.label}</Link>
+                    </div>
+                  ) : <span className="text-muted text-xs">—</span>}</td>
                 </tr>
               );
             })}

@@ -418,20 +418,40 @@ export async function getOptionMaster(): Promise<{ color: OptionRow[]; size: Opt
 
 /** Pillar 11 — every printable label: each product AND each colour/size/polish variant
  *  (its own SKU + correctly-resolved retail price), so barcodes can be printed per piece. */
-export async function getLabelItems(): Promise<{ sku: string; name: string; price: number }[]> {
+export type LabelItem = {
+  sku: string; name: string;
+  price: number;         // retail (paise)
+  wholesale: number;     // wholesale rate (paise)
+  mrp: number;           // printed MRP (paise)
+  kind: "product" | "variant";
+  option?: string;       // e.g. "Red / M" — set on variant rows
+  parentSku?: string;    // the product SKU a variant belongs to
+  variantCount?: number; // on product rows — how many printable variants it has
+};
+export async function getLabelItems(): Promise<LabelItem[]> {
   const sb = supabaseServer();
   const formula = await getPricingFormula();
   const { data } = await sb
     .from("products")
     .select("sku,name,base_wholesale,wholesale_override,retail_override,mrp_override, variants(sku,color,size,polish,wholesale_override,retail_override,mrp_override)")
     .order("sku");
-  const out: { sku: string; name: string; price: number }[] = [];
+  const out: LabelItem[] = [];
   for (const p of (data as any[]) ?? []) {
-    out.push({ sku: p.sku, name: p.name, price: _resolvePrices(p.base_wholesale, formula, overridesOf(null), overridesOf(p)).retailPrice });
-    for (const v of (p.variants as any[]) ?? []) {
-      if (!v.sku) continue;
+    const vs = ((p.variants as any[]) ?? []).filter((v) => v.sku);
+    const pp = _resolvePrices(p.base_wholesale, formula, overridesOf(null), overridesOf(p));
+    out.push({
+      sku: p.sku, name: p.name,
+      price: pp.retailPrice, wholesale: pp.wholesaleRate, mrp: pp.mrp,
+      kind: "product", variantCount: vs.length,
+    });
+    for (const v of vs) {
       const opt = [v.color, v.size, v.polish].filter(Boolean).join(" / ");
-      out.push({ sku: v.sku, name: `${p.name}${opt ? ` — ${opt}` : ""}`, price: _resolvePrices(p.base_wholesale, formula, overridesOf(v), overridesOf(p)).retailPrice });
+      const vp = _resolvePrices(p.base_wholesale, formula, overridesOf(v), overridesOf(p));
+      out.push({
+        sku: v.sku, name: `${p.name}${opt ? ` — ${opt}` : ""}`,
+        price: vp.retailPrice, wholesale: vp.wholesaleRate, mrp: vp.mrp,
+        kind: "variant", option: opt || undefined, parentSku: p.sku,
+      });
     }
   }
   return out;
@@ -496,7 +516,17 @@ export async function getStockMovements(opts: { page?: number; pageSize?: number
   if (opts.to) query = query.lte("created_at", opts.to);
   const fromIdx = (page - 1) * pageSize;
   const { data, count } = await query.order("created_at", { ascending: false }).range(fromIdx, fromIdx + pageSize - 1);
-  return { rows: (data as any[]) ?? [], total: count ?? 0, page, pageSize };
+  const rows = (data as any[]) ?? [];
+  // Attach the bill/invoice number to each sale row (ref_id → orders.invoice_no). ref_id is a
+  // generic reference (orders/purchases/estimates), not a PostgREST FK, so we look it up in one
+  // extra query and map it back rather than embedding.
+  const saleRefs = [...new Set(rows.filter((r) => r.kind === "sale" && r.ref_id).map((r) => r.ref_id))];
+  if (saleRefs.length) {
+    const { data: ords } = await sb.from("orders").select("id,invoice_no").in("id", saleRefs as string[]);
+    const byId = new Map(((ords as any[]) ?? []).map((o) => [o.id, o.invoice_no]));
+    for (const r of rows) if (r.kind === "sale" && r.ref_id) r.invoice_no = byId.get(r.ref_id) ?? null;
+  }
+  return { rows, total: count ?? 0, page, pageSize };
 }
 
 // Pillar 6 — open estimates "reserve" stock softly (not yet billed). Surface them, highlighted,
