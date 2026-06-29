@@ -90,6 +90,23 @@ export function UploadClient({
     return `${parent}-${suffix}`;
   };
 
+  const [colorQ, setColorQ] = useState("");
+  // Fixed colour list (A–Z) the owner picks from — replaces free-text colour entry (#17).
+  const colorList = useMemo(() => {
+    const m = new Map<string, string>(); // lowercase -> display name
+    for (const c of variantOptions.color ?? []) { const t = c.trim(); if (t) m.set(t.toLowerCase(), t); }
+    for (const k of Object.keys(colorCodes ?? {})) { const t = k.trim(); if (t && !m.has(t.toLowerCase())) m.set(t.toLowerCase(), t.charAt(0).toUpperCase() + t.slice(1)); }
+    return [...m.values()].sort((a, b) => a.localeCompare(b));
+  }, [variantOptions, colorCodes]);
+  const selectedColors = form.colors.split(",").map((s) => s.trim()).filter(Boolean);
+  const selectedColorSet = new Set(selectedColors.map((s) => s.toLowerCase()));
+  const filteredColors = colorQ.trim() ? colorList.filter((c) => c.toLowerCase().includes(colorQ.trim().toLowerCase())) : colorList;
+  function toggleColor(c: string) {
+    const lc = c.toLowerCase();
+    const next = selectedColorSet.has(lc) ? selectedColors.filter((x) => x.toLowerCase() !== lc) : [...selectedColors, c];
+    setForm({ ...form, colors: next.join(", ") });
+  }
+
   async function createCat() {
     const nm = newCat.trim(); if (!nm) return;
     setBusy(true);
@@ -310,8 +327,36 @@ export function UploadClient({
                 <option value="simple">Simple (one item)</option>
                 <option value="configurable">Configurable (colour / size / polish)</option>
               </select>
-              <input className={input} placeholder="Colours, comma separated" value={form.colors} onChange={(e) => setForm({ ...form, colors: e.target.value })} disabled={form.type !== "configurable"} />
+              <div className="text-xs text-muted self-center">{form.type === "configurable" ? "Pick colours below ↓" : "Single design — no colours"}</div>
             </div>
+
+            {/* Colour picker — choose from the saved colour list (A–Z, searchable). Replaces the
+                old free-text "comma separated" box (#17: fixed colours, no CRUD). */}
+            {form.type === "configurable" && (
+              <div className="rounded-2xl border border-sand bg-white p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm font-medium text-ink">Colours <span className="text-muted font-normal">— tap to select (A–Z)</span></p>
+                  {selectedColors.length > 0 && <button type="button" onClick={() => setForm({ ...form, colors: "" })} className="text-[11px] text-muted hover:text-rose">clear ({selectedColors.length})</button>}
+                </div>
+                <input className={input} placeholder="🔎 Search colours…" value={colorQ} onChange={(e) => setColorQ(e.target.value)} />
+                <div className="mt-2 max-h-44 overflow-y-auto flex flex-wrap gap-1.5 pr-1">
+                  {colorList.length === 0 && !colorQ.trim() && <p className="text-xs text-muted py-2">No colours saved yet — type one above to add it.</p>}
+                  {filteredColors.length === 0 && colorQ.trim() && (
+                    <button type="button" onClick={() => { toggleColor(colorQ.trim()); setColorQ(""); }} className="px-2.5 py-1 rounded-full text-xs border border-emerald text-emerald-dark hover:bg-emerald-mist">+ Add “{colorQ.trim()}”</button>
+                  )}
+                  {filteredColors.map((c) => {
+                    const on = selectedColorSet.has(c.toLowerCase());
+                    return (
+                      <button key={c} type="button" onClick={() => toggleColor(c)}
+                        className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${on ? "border-emerald bg-emerald text-white" : "border-sand text-muted hover:border-emerald"}`}>
+                        {on ? "✓ " : ""}{c}
+                      </button>
+                    );
+                  })}
+                </div>
+                {selectedColors.length > 0 && <p className="text-[11px] text-muted mt-2">Selected: <span className="text-ink">{selectedColors.join(", ")}</span></p>}
+              </div>
+            )}
 
             {/* -------- Variants editor (only when configurable). Optional: if the owner leaves
                 it empty, the comma list still works the old way. -------- */}

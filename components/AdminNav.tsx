@@ -56,7 +56,7 @@ const EXTERNAL: L[] = [
 
 const allow = (perms: Perms, perm?: string) => !perm || perms === "*" || perms.includes(perm);
 
-function NavInner({ collapsed, onNavigate, perms }: { collapsed: boolean; onNavigate?: () => void; perms: Perms }) {
+function NavInner({ collapsed, onNavigate, perms, badges = {} }: { collapsed: boolean; onNavigate?: () => void; perms: Perms; badges?: Record<string, number> }) {
   const path = usePathname();
   const isActive = (href: string) => path === href || path.startsWith(href + "/");
   const groups = GROUPS.map((g) => ({ ...g, links: g.links.filter((l) => allow(perms, l.perm)) })).filter((g) => g.links.length > 0);
@@ -67,13 +67,19 @@ function NavInner({ collapsed, onNavigate, perms }: { collapsed: boolean; onNavi
           <div key={g.title}>
             {!collapsed && <p className="px-3 mb-1 text-[10px] uppercase tracking-widest text-cream/35">{g.title}</p>}
             <div className="space-y-0.5">
-              {g.links.map((l) => (
+              {g.links.map((l) => {
+                const badge = badges[l.href] ?? 0;
+                return (
                 <Link key={l.href} href={l.href} onClick={onNavigate} title={collapsed ? l.label : undefined}
-                  className={`group flex items-center gap-3 rounded-xl text-sm transition-all ${collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2.5 hover:translate-x-0.5"} ${isActive(l.href) ? "bg-white/15 text-ivory" : "text-cream/85 hover:bg-white/10"}`}>
+                  className={`group relative flex items-center gap-3 rounded-xl text-sm transition-all ${collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2.5 hover:translate-x-0.5"} ${isActive(l.href) ? "bg-white/15 text-ivory" : "text-cream/85 hover:bg-white/10"}`}>
                   <span className="w-5 text-center text-gold-light shrink-0">{l.icon}</span>
                   {!collapsed && <span className="truncate">{l.label}</span>}
+                  {badge > 0 && (!collapsed
+                    ? <span className="ml-auto text-[10px] font-semibold rounded-full bg-rose text-white px-1.5 py-0.5 min-w-[18px] text-center">{badge}</span>
+                    : <span className="absolute top-1 right-1.5 h-2 w-2 rounded-full bg-rose" />)}
                 </Link>
-              ))}
+                );
+              })}
             </div>
           </div>
         ))}
@@ -97,7 +103,7 @@ function NavInner({ collapsed, onNavigate, perms }: { collapsed: boolean; onNavi
   );
 }
 
-export function AdminNav({ perms = "*", roleName = "Owner" }: { perms?: Perms; roleName?: string }) {
+export function AdminNav({ perms = "*", roleName = "Owner", badges = {} }: { perms?: Perms; roleName?: string; badges?: Record<string, number> }) {
   const [open, setOpen] = useState(false);       // mobile drawer
   const [collapsed, setCollapsed] = useState(false); // desktop rail
   const path = usePathname();
@@ -127,7 +133,7 @@ export function AdminNav({ perms = "*", roleName = "Owner" }: { perms?: Perms; r
           </div>
           <button onClick={() => setOpen(false)} aria-label="Close menu" className="text-cream/70 text-xl px-2">✕</button>
         </div>
-        <NavInner collapsed={false} onNavigate={() => setOpen(false)} perms={perms} />
+        <NavInner collapsed={false} onNavigate={() => setOpen(false)} perms={perms} badges={badges} />
       </aside>
 
       {/* Desktop sidebar — sticky & self-scrolling, independent of the page scroll */}
@@ -140,7 +146,7 @@ export function AdminNav({ perms = "*", roleName = "Owner" }: { perms?: Perms; r
           <button onClick={toggleCollapsed} aria-label="Collapse menu" className="text-cream/60 hover:text-white text-lg px-1">{collapsed ? "»" : "«"}</button>
         </div>
         <div className="flex-1 overflow-y-auto">
-          <NavInner collapsed={collapsed} perms={perms} />
+          <NavInner collapsed={collapsed} perms={perms} badges={badges} />
         </div>
         {!collapsed && (
           <div className="px-3 pt-4">
