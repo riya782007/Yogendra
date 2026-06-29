@@ -48,6 +48,9 @@ export default async function Invoice({ params }: { params: { id: string } }) {
 
   return (
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
+      {/* #1 (Meeting 2): print invoices on A5 — better paper use for many-SKU orders. Scoped
+          to this route via a page-level @page so the barcode sheet (A4) is unaffected. */}
+      <style dangerouslySetInnerHTML={{ __html: "@media print{@page{size:A5;margin:6mm}.print-area{font-size:11px}.print-area .font-display{font-size:1.25rem}}" }} />
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center justify-between mb-4 no-print">
           <Link href="/admin/billing" className="text-sm text-emerald nav-link">← New sale</Link>
