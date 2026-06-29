@@ -172,7 +172,7 @@ export function UploadClient({
       push({ text: `Creating ${form.name.trim()}${useVariantRows ? ` with ${realVariants.length} variant${realVariants.length === 1 ? "" : "s"}` : ""}…`, status: "run" });
       const res = await createProductWithImageAction(fd);
       if (!res.ok) { patchLast("err", `Failed: ${res.error}`); toast(res.error ?? "Could not add", "error"); return; }
-      patchLast("ok", `Created ${res.sku} ✓${file ? " · published" : " · saved as draft (add a photo or Show it to publish)"}`);
+      patchLast("ok", `Created ${res.sku} ✓ · saved as draft — publish it from the catalogue when ready`);
 
       // Pillar 16 — attach any per-variant photos picked in the editor. We resolve the
       // freshly-created variants by SKU, match each editor row by colour/size/polish, and

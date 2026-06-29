@@ -274,7 +274,7 @@ export async function createProductWithImageAction(formData: FormData): Promise<
   const file = formData.get("image") as File | null;
   const hasPhoto = !!(file && typeof file === "object" && file.size > 0);
   // Publish immediately only when a photo is attached (complete listing); otherwise draft.
-  const res = await insertOne(sb, formula, n, skuNum, hasPhoto);
+  const res = await insertOne(sb, formula, n, skuNum, false);
   if (res.ok && res.sku && hasPhoto && file) {
     await ensureMediaBucket(sb);
     const ext = ((file.type.split("/")[1]) || "jpg").replace("jpeg", "jpg");
@@ -288,7 +288,7 @@ export async function createProductWithImageAction(formData: FormData): Promise<
     }
   }
   revalidatePath("/admin/catalogue"); revalidatePath("/shop");
-  if (res.ok && res.sku) await logActivity({ action: "product_created", ref: res.sku, detail: `Added ${n.name} (${res.sku})${hasPhoto ? " · published" : " · draft"}.` });
+  if (res.ok && res.sku) await logActivity({ action: "product_created", ref: res.sku, detail: `Added ${n.name} (${res.sku}) · draft (awaiting owner publish).` });
   return res;
 }
 

@@ -17,7 +17,7 @@ export default async function UploadPage() {
   return (
     <main className="p-8 bg-cream/40 min-h-screen">
       <h1 className="font-display text-4xl text-ink mb-1">Add Inventory</h1>
-      <p className="text-sm text-muted mb-6">Category first, then designs — single or bulk. New designs go live on the storefront instantly. Each colour variant prints a barcode of <code className="bg-cream px-1 rounded">{`{productSKU}-{colourCode}`}</code> from your <a href="/admin/colours" className="text-emerald nav-link">Colours master</a>.</p>
+      <p className="text-sm text-muted mb-6">Category first, then designs — single or bulk. New designs are saved as drafts — you decide when to publish, and whether each appears on the shop, to wholesale buyers, or both. Each colour variant prints a barcode of <code className="bg-cream px-1 rounded">{`{productSKU}-{colourCode}`}</code> from your <a href="/admin/colours" className="text-emerald nav-link">Colours master</a>.</p>
       <UploadClient
         categories={categories.map((c) => ({ id: c.id, name: c.name }))}
         variantOptions={variantOptions}

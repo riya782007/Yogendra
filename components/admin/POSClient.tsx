@@ -25,15 +25,36 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [allowBackorder, setAllowBackorder] = useState(false);
-  const [tier, setTier] = useState<"retail" | "wholesale">("retail");
-  const unitOf = (l: Line | P) => (tier === "wholesale" ? l.wholesale : l.price);
-  /** Effective unit price for a cart line: the owner's manual override if entered
-   *  (Pillar 15 — counter discount / custom rate), otherwise the tier price. */
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // PRICE PRIVACY (client requirement): the bill shows ONE neutral price for
+  // every buyer — no "retail vs wholesale" tier is ever exposed or selected.
+  // The owner decides what each customer pays his own way, privately, using:
+  //   • a per-line price edit (custom rate on any line), and
+  //   • an optional counter discount % applied to the whole bill.
+  // Neither prints a tier/category name anywhere. Internally everything is just
+  // a price; the wholesale field is no longer surfaced in the UI.
+  // ──────────────────────────────────────────────────────────────────────────
+  const [disc, setDisc] = useState(""); // private counter discount %, owner-only
+  const discPct = (() => {
+    const n = Number(disc);
+    return Number.isFinite(n) && n > 0 && n < 100 ? n : 0;
+  })();
+
+  /** The single listed price for a product/line (no tier). */
+  const listPrice = (l: Line | P) => l.price;
+
+  /** Effective unit price for a cart line, in paise:
+   *  1) the owner's manual per-line edit if entered, else
+   *  2) the listed price reduced by the private counter discount %, else
+   *  3) the listed price. */
   const effUnit = (l: Line) => {
     const ov = l.override.trim();
     if (ov !== "" && Number.isFinite(Number(ov)) && Number(ov) >= 0) return Math.round(Number(ov) * 100);
-    return unitOf(l);
+    if (discPct > 0) return Math.round((l.price * (100 - discPct)) / 100 / 100) * 100; // nearest ₹1
+    return l.price;
   };
+
   const [custQ, setCustQ] = useState("");
   const [custOpen, setCustOpen] = useState(false);
   const custMatches = useMemo(() => {
@@ -45,7 +66,8 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
   function pickCustomer(c: Cust) {
     setCust({ name: c.name, phone: c.phone });
     if (c.gstin) setGstin(c.gstin);
-    if (c.type === "wholesale") setTier("wholesale");
+    // Note: customer "type" is intentionally NOT used to switch pricing — price
+    // privacy means the bill never auto-reveals retail/wholesale treatment.
     setCustQ(""); setCustOpen(false);
   }
 
@@ -83,12 +105,21 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
     const c = Number(cTxt) || 0, b = Number(bTxt) || 0;
     const mode = anySplit ? (c > 0 && b > 0 ? "split" : b > 0 ? "upi" : "cash") : "cash";
     const res = await posSaleAction({
-      items: lines.map((l) => ({ sku: l.sku, qty: l.qty, ...(l.override.trim() !== "" && Number(l.override) >= 0 ? { priceRupees: Number(l.override) } : {}) })),
+      // Send the exact unit the counter showed whenever the owner edited a line OR a
+      // counter discount is active, so the printed bill, GST split and ledger match the
+      // screen to the rupee. Lines at the plain listed price send no override.
+      items: lines.map((l) => {
+        const ov = l.override.trim();
+        const hasOv = ov !== "" && Number.isFinite(Number(ov)) && Number(ov) >= 0;
+        if (hasOv) return { sku: l.sku, qty: l.qty, priceRupees: Number(ov) };       // exact custom rate (decimals ok)
+        if (discPct > 0) return { sku: l.sku, qty: l.qty, priceRupees: Math.round(effUnit(l) / 100) }; // discounted, nearest ₹1
+        return { sku: l.sku, qty: l.qty };                                            // plain listed price
+      }),
       customer: cust, payment: mode,
       billType, buyerGstin: billType === "gst" ? gstin : "", buyerAddress: addr,
       // Blank split → treat as paid in full (cash). Any entry → record the cash/bank split.
       ...(anySplit ? { payCashRupees: c, payBankRupees: b } : {}),
-      allowOversell: allowBackorder, tier,
+      allowOversell: allowBackorder,
     });
     setBusy(false);
     if (!res.ok) { setErr(res.error ?? "Failed"); return; }
@@ -120,7 +151,7 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
             <div className="absolute z-10 left-0 right-0 mt-1 bg-white rounded-xl shadow-luxe border border-sand overflow-hidden">
               {matches.map((p) => (
                 <button key={p.sku} onClick={() => addLine(p)} className="w-full text-left px-4 py-2.5 text-sm hover:bg-emerald-mist flex justify-between">
-                  <span>{p.name} <span className="text-muted">· {p.sku}</span></span><span className="text-ink">{formatPaise(unitOf(p))}</span>
+                  <span>{p.name} <span className="text-muted">· {p.sku}</span></span><span className="text-ink">{formatPaise(listPrice(p))}</span>
                 </button>
               ))}
             </div>
@@ -134,14 +165,14 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
                 <p className="text-sm text-ink truncate">{l.name}</p>
                 <p className="text-xs text-muted">{l.sku} · <span className={l.qty > l.stock ? "text-rose font-medium" : "text-emerald"}>{l.stock} in stock</span>{l.qty > l.stock && <span className="text-rose"> — only {l.stock} available!</span>}</p>
               </div>
-              {/* Editable unit price (Pillar 15) — placeholder is the tier price; type to override. */}
-              <label className="inline-flex items-center gap-1 rounded-full border border-sand px-2 py-1 text-sm" title="Edit unit price (discount / custom rate)">
+              {/* Editable unit price — placeholder is the listed price; type to set a custom rate. */}
+              <label className="inline-flex items-center gap-1 rounded-full border border-sand px-2 py-1 text-sm" title="Edit unit price (custom rate for this customer)">
                 <span className="text-muted text-xs">₹</span>
                 <input
                   value={l.override}
                   onChange={(e) => setOverride(l.sku, e.target.value)}
                   inputMode="decimal"
-                  placeholder={String(Math.round(unitOf(l) / 100))}
+                  placeholder={String(Math.round(effUnit(l) / 100))}
                   className={`w-16 text-right outline-none bg-transparent ${l.override.trim() !== "" ? "text-emerald-dark font-medium" : "text-ink"}`}
                 />
               </label>
@@ -169,7 +200,7 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
               ))}
             </div>
           </div>
-          {/* Existing-customer picker (#3) */}
+          {/* Existing-customer picker */}
           {customers.length > 0 && (
             <div className="relative">
               <input className={input} placeholder="🔎 Find existing customer by name / phone…" value={custQ}
@@ -179,7 +210,6 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
                   {custMatches.map((c) => (
                     <button key={c.id} onClick={() => pickCustomer(c)} className="w-full text-left px-4 py-2.5 text-sm hover:bg-emerald-mist flex justify-between">
                       <span>{c.name} <span className="text-muted">· {c.phone || "no phone"}</span></span>
-                      <span className={`text-xs ${c.type === "wholesale" ? "text-wine" : "text-muted"}`}>{c.type}</span>
                     </button>
                   ))}
                   {/* Always allow adding a brand-new customer by the typed name. */}
@@ -193,15 +223,16 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
               )}
             </div>
           )}
-          {/* Price list — retailers get wholesale rates (#16) */}
+          {/* Counter discount — PRIVATE, owner-only. Lets the owner give any customer
+              his own rate without exposing a retail/wholesale category on the bill. */}
           <div>
-            <p className="text-xs text-muted mb-1">Price list</p>
-            <div className="grid grid-cols-2 gap-2">
-              {([["retail", "Retail (D2C)"], ["wholesale", "Wholesale"]] as const).map(([v, label]) => (
-                <button key={v} onClick={() => setTier(v)} className={`rounded-xl border px-3 py-2 text-sm transition-all ${tier === v ? "border-emerald bg-emerald-mist text-emerald" : "border-sand text-muted hover:border-gold"}`}>{label}</button>
-              ))}
+            <p className="text-xs text-muted mb-1">Counter discount <span className="text-muted/70">— private, never printed as a category</span></p>
+            <div className="inline-flex items-center gap-1 rounded-xl border border-sand px-3 py-2 text-sm">
+              <input value={disc} onChange={(e) => setDisc(e.target.value)} inputMode="decimal" placeholder="0"
+                className={`w-16 text-right outline-none bg-transparent ${discPct > 0 ? "text-emerald-dark font-medium" : "text-ink"}`} />
+              <span className="text-muted text-xs">% off the listed price</span>
             </div>
-            {tier === "wholesale" && <p className="text-[11px] text-gold-dark mt-1">Billing at wholesale rates — use for approved retailers.</p>}
+            {discPct > 0 && <p className="text-[11px] text-emerald-dark mt-1">This bill is priced at {discPct}% off — applies to every line without its own custom rate.</p>}
           </div>
           <input className={input} placeholder="Customer / firm name (optional)" value={cust.name} onChange={(e) => setCust({ ...cust, name: e.target.value })} />
           <input className={input} placeholder="Phone (optional)" value={cust.phone} onChange={(e) => setCust({ ...cust, phone: e.target.value })} />
