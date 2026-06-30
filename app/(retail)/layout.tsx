@@ -10,8 +10,8 @@ import { WishlistProvider } from "@/components/wishlist/WishlistContext";
 export const dynamic = "force-dynamic";
 
 export default async function RetailLayout({ children }: { children: React.ReactNode }) {
-  // #24: a signed-in wholesaler is kept off the D2C storefront — route them to trade pricing.
-  if (await getWholesaleSession()) redirect("/wholesale");
+  // #24: a signed-in dealer is kept off the D2C storefront — route them to the trade portal.
+  if (await getWholesaleSession()) redirect("/trade");
   const tree = await getCategoryTree();
   const cats = tree.map((c) => ({ name: c.name, slug: c.slug, subcategories: c.subcategories.map((s) => ({ name: s.name, slug: s.slug })) }));
   return (

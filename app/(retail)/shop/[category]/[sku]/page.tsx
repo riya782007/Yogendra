@@ -118,7 +118,6 @@ export default async function ProductPage({ params }: Params) {
               </div>
             </div>
           )}
-          <p className="mt-6 text-xs text-muted">Are you a retailer? <Link href="/wholesale" className="text-emerald nav-link">See wholesale / trade pricing →</Link></p>
         </div>
       </div>
 

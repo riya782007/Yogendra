@@ -5,19 +5,27 @@ import { CatalogShareBar } from "@/components/site/CatalogShareBar";
 import { CatalogSearch } from "@/components/site/CatalogSearch";
 import { SelectableCatalog } from "@/components/site/SelectableCatalog";
 import { BUSINESS } from "@/lib/business";
+import { getSession } from "@/lib/auth";
+import { getWholesaleSession } from "@/lib/wholesale";
 
 export const metadata = { title: "Catalogue — Blythe Diva" };
 
 export default async function Catalog({ searchParams }: { searchParams: { category?: string; subcategory?: string; view?: string; q?: string; skus?: string } }) {
   const category = searchParams.category ?? "all";
   const subcategory = searchParams.subcategory ?? "all";
-  const view: "retail" | "wholesale" = searchParams.view === "wholesale" ? "wholesale" : "retail";
   const q = (searchParams.q ?? "").trim();
   const skus = (searchParams.skus ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 
+  // AUTHORIZATION GATE: the wholesale view + trade pricing are only available to an
+  // authenticated admin/staff OR an approved dealer. A retail visitor (or anyone who
+  // receives a shared ?view=wholesale link) is silently forced back to the retail view,
+  // and trade prices are never fetched or serialized for them.
+  const canSeeWholesale = getSession().authed || !!(await getWholesaleSession());
+  const view: "retail" | "wholesale" = searchParams.view === "wholesale" && canSeeWholesale ? "wholesale" : "retail";
+
   const [tree, fetched, suggestions] = await Promise.all([
     getCategoryTree(),
-    getCatalogProducts({ category, subcategory, q, skus: skus.length ? skus : undefined, includeWholesaleOnly: view === "wholesale", excludeRetailOnly: view === "wholesale" }),
+    getCatalogProducts({ category, subcategory, q, skus: skus.length ? skus : undefined, includeWholesaleOnly: view === "wholesale", excludeRetailOnly: view === "wholesale", includeWholesalePricing: view === "wholesale" }),
     getCatalogSuggestions().catch(() => ({ products: [], categories: [], colours: [] })),
   ]);
   // Never dead-end a shared sub-category link: if nothing is tagged there yet,
@@ -59,11 +67,13 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
           <div className="flex flex-col items-end gap-2">
             {/* Search with live suggestions — designs, SKUs, categories, colours. */}
             <CatalogSearch suggestions={suggestions} view={view} initialQuery={q} />
-            {/* Retail / Wholesale toggle */}
-            <div className="no-print inline-flex rounded-full bg-white/10 p-1 text-sm">
-              <Link href={{ pathname: "/catalog", query: cleanQuery({ category, subcategory, q, skus: searchParams.skus }) }} className={`px-3 py-1 rounded-full ${view === "retail" ? "bg-gold text-ink" : "text-cream/80"}`}>Retail</Link>
-              <Link href={{ pathname: "/catalog", query: cleanQuery({ category, subcategory, q, skus: searchParams.skus, view: "wholesale" }) }} className={`px-3 py-1 rounded-full ${view === "wholesale" ? "bg-gold text-ink" : "text-cream/80"}`}>Wholesale</Link>
-            </div>
+            {/* Retail / Wholesale toggle — shown ONLY to authenticated admin/dealer users. */}
+            {canSeeWholesale && (
+              <div className="no-print inline-flex rounded-full bg-white/10 p-1 text-sm">
+                <Link href={{ pathname: "/catalog", query: cleanQuery({ category, subcategory, q, skus: searchParams.skus }) }} className={`px-3 py-1 rounded-full ${view === "retail" ? "bg-gold text-ink" : "text-cream/80"}`}>Retail</Link>
+                <Link href={{ pathname: "/catalog", query: cleanQuery({ category, subcategory, q, skus: searchParams.skus, view: "wholesale" }) }} className={`px-3 py-1 rounded-full ${view === "wholesale" ? "bg-gold text-ink" : "text-cream/80"}`}>Wholesale</Link>
+              </div>
+            )}
             <CatalogShareBar shareText={shareText} />
           </div>
         </div>

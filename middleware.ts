@@ -38,6 +38,26 @@ const ROUTE_PERM: [string, string | string[]][] = [
 ];
 
 export function middleware(req: NextRequest) {
+  const path = req.nextUrl.pathname;
+
+  // ---- TRADE (wholesale) portal ----------------------------------------------------------
+  // Completely separate auth domain from /admin. Dealers carry a `bd_wholesale` cookie set by
+  // wholesaleLoginAction. Every /trade route is protected EXCEPT the login screen. This is the
+  // first, cheap gate (cookie presence); the authoritative approved-dealer check runs in each
+  // page via getWholesaleSession(). Note: an admin's bd_session does NOT grant trade access.
+  if (path === "/trade" || path.startsWith("/trade/")) {
+    if (path === "/trade/login") return NextResponse.next();
+    const dealer = req.cookies.get("bd_wholesale")?.value;
+    if (!dealer) {
+      const url = req.nextUrl.clone();
+      url.pathname = "/trade/login";
+      url.search = "";
+      return NextResponse.redirect(url);
+    }
+    return NextResponse.next();
+  }
+
+  // ---- ADMIN console -----------------------------------------------------------------------
   const session = req.cookies.get("bd_session")?.value;
   const authed = session === OWNER || session === STAFF;
   if (!authed) {
@@ -52,7 +72,6 @@ export function middleware(req: NextRequest) {
 
   // Staff → enforce route permission.
   const perms = (req.cookies.get("bd_perms")?.value ?? "").split(",").filter(Boolean);
-  const path = req.nextUrl.pathname;
   const match = ROUTE_PERM.filter(([p]) => path === p || path.startsWith(p + "/")).sort((a, b) => b[0].length - a[0].length)[0];
   if (match) {
     const required = Array.isArray(match[1]) ? match[1] : [match[1]];
@@ -67,4 +86,4 @@ export function middleware(req: NextRequest) {
   return NextResponse.next();
 }
 
-export const config = { matcher: ["/admin/:path*"] };
+export const config = { matcher: ["/admin/:path*", "/trade/:path*"] };

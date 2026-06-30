@@ -413,7 +413,7 @@ export async function setWholesaleOnlyAction(formData: FormData): Promise<void> 
   if (!sku) return;
   await supabaseServer().from("products").update({ wholesale_only: on }).eq("sku", sku);
   await logActivity({ action: "product_wholesale_only", ref: sku, detail: `${sku} set to ${on ? "wholesale-only" : "available to all"}.` });
-  revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidatePath("/wholesale");
+  revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidatePath("/trade");
 }
 
 const LABEL_COLORS = ["emerald", "gold", "wine", "rose", "blue", "ink"];
@@ -602,7 +602,7 @@ export async function savePricingAction(formData: FormData): Promise<void> {
   revalidatePath(`/admin/catalogue/${sku}`);
   revalidatePath(`/admin/product/${sku}`);
   revalidatePath("/shop");
-  revalidatePath("/wholesale");
+  revalidatePath("/trade");
 }
 
 /** Module 4 — save the GLOBAL pricing formula (pricing_settings): the %-build-up
@@ -635,7 +635,7 @@ export async function savePricingFormulaAction(formData: FormData): Promise<void
   else await sb.from("pricing_settings").insert(patch);
   revalidatePath("/admin/pricing");
   revalidatePath("/shop");
-  revalidatePath("/wholesale");
+  revalidatePath("/trade");
   revalidatePath("/admin/catalogue");
 }
 

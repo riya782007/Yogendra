@@ -6,7 +6,7 @@ export function Footer({ categories }: { categories: { name: string; slug: strin
       <div className="max-w-7xl mx-auto px-5 py-14 grid md:grid-cols-4 gap-10">
         <div>
           <p className="font-display text-3xl text-ivory">Blythe Diva</p>
-          <p className="text-sm mt-3 text-cream/60 leading-relaxed">Where elegance meets empowerment. Handcrafted artificial jewellery from Sadar Bazar, Delhi — for retail &amp; wholesale.</p>
+          <p className="text-sm mt-3 text-cream/60 leading-relaxed">Where elegance meets empowerment. Handcrafted artificial jewellery from Sadar Bazar, Delhi.</p>
           <div className="flex gap-3 mt-5">
             <a href="https://wa.me/919873151767" target="_blank" rel="noopener" aria-label="WhatsApp" title="WhatsApp"
               className="w-9 h-9 grid place-items-center rounded-full bg-white/10 hover:bg-gold hover:text-ink transition-colors">
@@ -33,7 +33,6 @@ export function Footer({ categories }: { categories: { name: string; slug: strin
         <div>
           <p className="text-gold-light text-xs uppercase tracking-widest mb-4">Information</p>
           <ul className="space-y-2 text-sm">
-            <li><Link href="/wholesale" className="hover:text-gold transition-colors">Wholesale Signup</Link></li>
             <li><Link href="/sell" className="hover:text-gold transition-colors">Sell with us</Link></li>
             <li><Link href="/shipping" className="hover:text-gold transition-colors">Shipping Policy</Link></li>
             <li><Link href="/returns" className="hover:text-gold transition-colors">Returns &amp; Cancellation</Link></li>
@@ -57,7 +56,10 @@ export function Footer({ categories }: { categories: { name: string; slug: strin
       <div className="border-t border-white/10">
         <div className="max-w-7xl mx-auto px-5 py-5 flex flex-col md:flex-row items-center justify-between gap-3 text-xs text-cream/50">
           <span>© 2026 Blythe Diva · Yogendra Industries. All rights reserved.</span>
-          <span className="flex gap-2 text-cream/40">Visa · Mastercard · UPI · Paytm · COD</span>
+          <span className="flex gap-2 items-center text-cream/40">
+            Visa · Mastercard · UPI · Paytm · COD
+            <Link href="/trade/login" className="ml-3 text-cream/30 hover:text-cream/60 transition-colors">Dealer Login</Link>
+          </span>
         </div>
       </div>
     </footer>

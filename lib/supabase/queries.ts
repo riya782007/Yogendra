@@ -106,7 +106,11 @@ export type CatalogCard = {
   sku: string; name: string;
   category: string; categorySlug: string;
   subcategory: string | null; subcategorySlug: string | null;
-  qty: number; wholesale: number; price: number; mrp: number; offerPct: number; hasOffer: boolean;
+  /** Trade (wholesale) rate in paise. OPTIONAL by design: it is ONLY populated when the
+   *  caller explicitly passes includeWholesalePricing (i.e. an authenticated dealer/admin).
+   *  For retail responses the field is absent from the JSON entirely — never just hidden. */
+  wholesale?: number;
+  qty: number; price: number; mrp: number; offerPct: number; hasOffer: boolean;
   image: string | null; tags: string[]; keywords: string[];
   /** Owner-defined labels (Bridal, Bestseller, etc.) sourced from the labels table via product_labels. */
   labels: string[];
@@ -114,7 +118,7 @@ export type CatalogCard = {
   wholesaleOnly: boolean;
 };
 
-export async function getCatalogProducts(opts: { category?: string; subcategory?: string; q?: string; skus?: string[]; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean }): Promise<CatalogCard[]> {
+export async function getCatalogProducts(opts: { category?: string; subcategory?: string; q?: string; skus?: string[]; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean; includeWholesalePricing?: boolean }): Promise<CatalogCard[]> {
   const sb = supabaseServer();
   const formula = await getPricingFormula();
 
@@ -181,7 +185,9 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       sku: p.sku, name: p.name,
       category: p.category?.name ?? "", categorySlug: p.category?.slug ?? "all",
       subcategory: p.subcategory?.name ?? null, subcategorySlug: p.subcategory?.slug ?? null,
-      qty: p.qty, wholesale: set.wholesaleRate, price: o.price, mrp: o.mrp, offerPct: o.offerPct, hasOffer: o.hasOffer,
+      // Trade price is emitted ONLY for authorised callers; omitted from retail JSON entirely.
+      ...(opts.includeWholesalePricing ? { wholesale: set.wholesaleRate } : {}),
+      qty: p.qty, price: o.price, mrp: o.mrp, offerPct: o.offerPct, hasOffer: o.hasOffer,
       image: imgs[0]?.path ?? null,
       tags: ((p.generated_content as any)?.tags ?? []).slice(0, 6),
       keywords: (seo.keywords ?? []).slice(0, 6),

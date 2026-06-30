@@ -258,7 +258,7 @@ export async function generateVariantImageAction(variantId: string): Promise<Var
   await sb.from("variants").update({ image_paths: next }).eq("id", variantId);
 
   if (productSku) reval(productSku);
-  revalidatePath("/wholesale");
+  revalidatePath("/trade");
   revalidatePath("/admin/inventory");
   return { ok: true, url };
 }
