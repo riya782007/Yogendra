@@ -42,17 +42,19 @@ export function UploadClient({
   categories,
   variantOptions = { color: [], size: [], polish: [] },
   colorCodes = {},
+  initialMode = "single",
 }: {
   categories: Cat[];
   variantOptions?: VariantOptions;
   /** Lowercased colour name → canonical barcode suffix (RED, MULTI1, SBLUE…). */
   colorCodes?: ColorCodeMap;
+  initialMode?: "single" | "bulk";
 }) {
   const { toast } = useToast();
   const [cats, setCats] = useState<Cat[]>(categories);
   const [catId, setCatId] = useState("");
   const [newCat, setNewCat] = useState(""); const [showNewCat, setShowNewCat] = useState(false);
-  const [mode, setMode] = useState<"single" | "bulk">("single");
+  const [mode, setMode] = useState<"single" | "bulk">(initialMode);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({ name: "", price: "", qty: "", type: "simple" as "simple" | "configurable", colors: "", sku: "" });
   const [variants, setVariants] = useState<VariantRow[]>([]);
