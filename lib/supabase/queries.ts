@@ -931,6 +931,24 @@ export async function getProductForPim(id: string) {
 }
 export type ProductPim = NonNullable<Awaited<ReturnType<typeof getProductForPim>>>;
 
+// ---------- AI Photography Studio — per-product raw + generations ----------
+export async function getStudioData(productId: string) {
+  if (!productId) return null;
+  const sb = supabaseServer();
+  const { data: p } = await sb.from("products").select("id,sku,name,status, category:categories(name,slug)").eq("id", productId).maybeSingle();
+  if (!p) return null;
+  const prod = p as any;
+  const { data: imgs } = await sb.from("product_images").select("id,path,kind,sort,generation_id").eq("product_id", productId).order("sort");
+  let generations: any[] = [];
+  try { generations = (await sb.from("image_generations").select("*").eq("product_id", productId).order("created_at", { ascending: false })).data ?? []; } catch { generations = []; }
+  const images = ((imgs as any[]) ?? []).filter((i) => typeof i.path === "string");
+  const raw = images.find((i) => i.kind === "source" || i.kind === "flatlay") ?? null;
+  const published = images.filter((i) => i.path.startsWith("http")).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0));
+  const detected = generations.find((g) => g.detected)?.detected ?? null;
+  return { product: prod, raw, images: published, generations, detected };
+}
+export type StudioData = NonNullable<Awaited<ReturnType<typeof getStudioData>>>;
+
 // ---------- dashboard + inventory intelligence (Req 6, 7; yogendra.pdf §8) ----------
 import { classify, type InventoryRule, DEFAULT_RULE } from "../inventory";
 import { computePrices, type PricingFormula as PF } from "../pricing";

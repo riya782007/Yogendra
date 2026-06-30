@@ -1,0 +1,142 @@
+"use server";
+/**
+ * AI Jewellery Photography Studio actions.
+ * Generation is NON-DESTRUCTIVE: every Regenerate appends a new `image_generations` candidate;
+ * nothing is overwritten. Publishing a candidate copies its URL into product_images (the
+ * storefront source), so retail + wholesale + category + search update automatically.
+ */
+import { revalidatePath } from "next/cache";
+import { supabaseServer } from "@/lib/supabase/server";
+import { requirePerm } from "@/lib/auth";
+import { logActivity } from "@/lib/audit";
+import { buildStudioPrompt, type ShotType, type StudioSettings } from "@/lib/ai/imagePrompt";
+import { generateImage, geminiConfigured } from "@/lib/ai/gemini";
+import { detectJewellery } from "@/lib/ai/detect";
+
+const BUCKET = "product-media";
+
+export type GenOut = { ok: boolean; error?: string; reason?: string; id?: string; url?: string; provider?: string };
+
+async function fetchAsBase64(url: string): Promise<{ base64: string; mime: string } | null> {
+  try {
+    const r = await fetch(url);
+    const mime = r.headers.get("content-type") || "image/jpeg";
+    return { base64: Buffer.from(await r.arrayBuffer()).toString("base64"), mime };
+  } catch { return null; }
+}
+
+/** Generate ONE candidate for a shot type with optional art-direction settings. Appends; never overwrites. */
+export async function generateStudioImageAction(input: {
+  productId: string; shotType: ShotType; settings?: StudioSettings; variantId?: string;
+  style?: "auto" | "indian" | "western";
+}): Promise<GenOut> {
+  if (!(await requirePerm("catalog.ai"))) return { ok: false, reason: "not_permitted" };
+  const { productId, shotType } = input;
+  if (!productId || !shotType) return { ok: false, reason: "bad_input" };
+  const sb = supabaseServer();
+
+  const { data: p } = await sb.from("products").select("id,sku,name, category:categories(name,slug)").eq("id", productId).maybeSingle();
+  if (!p) return { ok: false, reason: "not_found" };
+  const prod = p as any;
+
+  // Reference = the raw upload (source/flatlay), else any existing http image.
+  const { data: imgs } = await sb.from("product_images").select("id,path,kind").eq("product_id", productId);
+  const all = ((imgs as any[]) ?? []).filter((i) => typeof i.path === "string" && i.path.startsWith("http"));
+  const ref = all.find((i) => i.kind === "source" || i.kind === "flatlay") ?? all[0];
+  if (!ref) return { ok: false, reason: "no_source" };
+
+  if (!geminiConfigured()) return { ok: false, reason: "no_key" };
+
+  // Auto-detect the piece (Gemini vision → keyword fallback) to choose the strategy.
+  const hint = [prod.name, prod.category?.name].filter(Boolean).join(" ");
+  const detected = await detectJewellery({ imageUrl: ref.path, hint });
+
+  const { prompt, aspect } = buildStudioPrompt({
+    category: prod.category?.name ?? "necklace", subcategory: hint, shotType, settings: input.settings, detected, style: input.style,
+  });
+
+  const refImg = await fetchAsBase64(ref.path);
+  const result = await generateImage({ prompt, referenceBase64: refImg?.base64, referenceMime: refImg?.mime, aspectRatio: aspect });
+  if (!result.ok) return { ok: false, reason: result.reason, error: result.error };
+
+  // Upload candidate.
+  await sb.storage.createBucket(BUCKET, { public: true }).catch(() => {});
+  const ext = result.mime.includes("png") ? "png" : "jpg";
+  const path = `${prod.sku}/${shotType}-${Date.now()}.${ext}`;
+  const up = await sb.storage.from(BUCKET).upload(path, Buffer.from(result.base64, "base64"), { contentType: result.mime, upsert: true });
+  if (up.error) return { ok: false, reason: "upload_failed", error: up.error.message };
+  const { data: pub } = sb.storage.from(BUCKET).getPublicUrl(path);
+
+  // Version = next per (product, shot_type).
+  const { count } = await sb.from("image_generations").select("id", { count: "exact", head: true }).eq("product_id", productId).eq("shot_type", shotType);
+  const version = (count ?? 0) + 1;
+
+  const { data: row } = await sb.from("image_generations").insert({
+    product_id: productId, variant_id: input.variantId ?? null, raw_image_path: ref.path, output_path: pub.publicUrl,
+    shot_type: shotType, prompt, settings: input.settings ?? {}, detected, provider: result.model, version,
+    status: "candidate", created_by: "owner",
+  }).select("id").maybeSingle();
+
+  await logActivity({ action: "photo_generated", ref: prod.sku, detail: `${shotType} v${version} (${result.model})` });
+  revalidatePath(`/admin/media/${productId}`);
+  return { ok: true, id: (row as any)?.id, url: pub.publicUrl, provider: result.model };
+}
+
+/** A/B status: favorite | rejected | archived | candidate (restore). */
+export async function setGenerationStatusAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("catalog.ai"))) return;
+  const id = String(formData.get("id") ?? "").trim();
+  const status = String(formData.get("status") ?? "");
+  if (!id || !["candidate", "favorite", "rejected", "archived"].includes(status)) return;
+  const sb = supabaseServer();
+  const { data: g } = await sb.from("image_generations").update({ status }).eq("id", id).select("product_id").maybeSingle();
+  await logActivity({ action: "photo_status", ref: id, detail: status });
+  if ((g as any)?.product_id) revalidatePath(`/admin/media/${(g as any).product_id}`);
+}
+
+/** Publish a candidate → storefront. Copies its URL into product_images and sets it as the
+ *  primary hero (or an angle), so every storefront surface updates. Previous images are kept. */
+export async function publishGenerationAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("catalog.publish")) && !(await requirePerm("catalog.ai"))) return;
+  const id = String(formData.get("id") ?? "").trim();
+  if (!id) return;
+  const sb = supabaseServer();
+  const { data: g } = await sb.from("image_generations").select("*").eq("id", id).maybeSingle();
+  const gen = g as any;
+  if (!gen || !gen.output_path) return;
+
+  const isHero = ["hero", "model", "lifestyle", "social_crop"].includes(gen.shot_type);
+  const kind = isHero ? "model" : "angle";
+
+  if (isHero) {
+    // Demote the current primary, then insert this as the new primary (sort -10). Non-destructive.
+    await sb.from("product_images").update({ sort: 2 }).eq("product_id", gen.product_id).lt("sort", 0);
+  }
+  await sb.from("product_images").insert({
+    product_id: gen.product_id, variant_id: gen.variant_id ?? null, path: gen.output_path,
+    kind, sort: isHero ? -10 : 1, generation_id: gen.id, metadata: { shot_type: gen.shot_type, provider: gen.provider },
+  });
+  await sb.from("image_generations").update({ status: "published" }).eq("id", id);
+
+  // Update every storefront surface.
+  const { data: prod } = await sb.from("products").select("sku, category:categories(slug)").eq("id", gen.product_id).maybeSingle();
+  const sku = (prod as any)?.sku;
+  const slug = (prod as any)?.category?.slug ?? "all";
+  await logActivity({ action: "photo_published", ref: sku ?? gen.product_id, detail: gen.shot_type });
+  revalidatePath(`/admin/media/${gen.product_id}`);
+  revalidatePath("/admin/catalogue"); revalidatePath("/admin/products"); revalidatePath("/shop");
+  if (sku) { revalidatePath(`/shop/${slug}/${sku}`); revalidatePath(`/admin/products/${gen.product_id}`); }
+}
+
+/** Auto-detect + persist the piece classification (the studio's "AI inspect" step). */
+export async function detectJewelleryAction(productId: string): Promise<{ ok: boolean; detected?: any }> {
+  if (!(await requirePerm("catalog.ai"))) return { ok: false };
+  const sb = supabaseServer();
+  const { data: p } = await sb.from("products").select("id,name, category:categories(name), images:product_images(path,kind)").eq("id", productId).maybeSingle();
+  if (!p) return { ok: false };
+  const prod = p as any;
+  const ref = (prod.images ?? []).find((i: any) => typeof i.path === "string" && i.path.startsWith("http"));
+  const detected = await detectJewellery({ imageUrl: ref?.path, hint: [prod.name, prod.category?.name].filter(Boolean).join(" ") });
+  revalidatePath(`/admin/media/${productId}`);
+  return { ok: true, detected };
+}

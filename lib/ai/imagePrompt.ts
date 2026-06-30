@@ -83,6 +83,90 @@ OUTPUT FRAMING: Render the final image in ${aspectNote}, the jewellery centered 
 OUTPUT: A clean product photograph with NO text, NO watermark, NO logo and NO graphic overlays anywhere.`;
 }
 
+// ===================== AI Photography Studio (Product Photos) =====================
+export type ShotType =
+  | "hero" | "model" | "closeup" | "lifestyle" | "side" | "angle45" | "back" | "detail"
+  | "catalog_white" | "transparent" | "social_crop"
+  | "enhance_shadows" | "enhance_sparkle" | "remove_bg" | "upscale";
+
+export const SHOT_META: Record<ShotType, { label: string; frame: string; aspect: ImageAspect; productOnly?: boolean; extra?: string }> = {
+  hero:          { label: "Hero", frame: "a full editorial HERO of a model wearing the piece, jewellery the unmistakable hero", aspect: "4:5" },
+  model:         { label: "Model Shot", frame: "a three-quarter model portrait wearing the piece", aspect: "4:5" },
+  closeup:       { label: "Close-up", frame: "an extreme macro close-up of the jewellery on the skin, every stone tack-sharp", aspect: "1:1" },
+  lifestyle:     { label: "Lifestyle", frame: "an aspirational lifestyle scene — model in a soft real environment, the jewellery emphasised", aspect: "4:5" },
+  side:          { label: "Side View", frame: "a side-profile of the model showing the piece from the side", aspect: "4:5" },
+  angle45:       { label: "45°", frame: "a 45-degree three-quarter angle of the model and the piece", aspect: "4:5" },
+  back:          { label: "Back View", frame: "a back view showing the clasp / nape drape of the piece", aspect: "4:5" },
+  detail:        { label: "Detail Shot", frame: "a detail shot isolating the craftsmanship — clasp, motif and stone setting", aspect: "1:1" },
+  catalog_white: { label: "Catalog White", frame: "a clean catalog product shot of the jewellery ALONE on a pure white seamless background", aspect: "1:1", productOnly: true },
+  transparent:   { label: "Transparent PNG", frame: "the jewellery ALONE perfectly isolated on a flat pure-white background with crisp clean edges, ready to cut out", aspect: "1:1", productOnly: true },
+  social_crop:   { label: "Social Crop", frame: "a square social-media crop, model and jewellery centred with comfortable breathing room", aspect: "1:1" },
+  enhance_shadows: { label: "Add Shadows", frame: "a model wearing the piece", aspect: "4:5", extra: "Add natural, soft contact shadows and gentle depth so the piece feels grounded and three-dimensional." },
+  enhance_sparkle: { label: "Enhance Sparkle", frame: "a model wearing the piece", aspect: "4:5", extra: "Maximise gemstone brilliance and sparkle with crisp specular highlights; make metal gleam." },
+  remove_bg:     { label: "Remove Background", frame: "the jewellery ALONE isolated on a pure white seamless background, crisp clean edges", aspect: "1:1", productOnly: true, extra: "Remove any background entirely — flat pure white only." },
+  upscale:       { label: "Upscale", frame: "a model wearing the piece", aspect: "4:5", extra: "Render at ultra-high resolution with maximum sharpness, fine detail and clean noise-free output." },
+};
+
+export type StudioSettings = {
+  lighting?: string; modelStyle?: string; background?: string; focus?: string;
+  ethnicity?: string; age?: string; skinTone?: string; hair?: string; makeup?: string;
+  pose?: string; cameraAngle?: string; lens?: string; mood?: string; luxury?: string; emphasis?: string;
+};
+
+const FIDELITY = `This is a REAL, manufactured jewellery product the customer will physically receive — the design in your output MUST be a pixel-faithful reproduction of the attached reference image. Same metal colour & finish, same gemstone cut/colour/size/placement, same engravings, links, clasps and proportions. Do NOT redesign, restyle, embellish or "improve" the piece.`;
+const NO_TEXT = `ABSOLUTELY NO TEXT of any kind anywhere — no words, letters, numbers, captions, labels, logos, watermarks, price tags or UI. Every surface must be free of writing.`;
+
+function settingsBlock(s: StudioSettings): string {
+  const lines: string[] = [];
+  const add = (k: string, v?: string) => { if (v && v.trim()) lines.push(`- ${k}: ${v.trim()}`); };
+  add("Model ethnicity", s.ethnicity); add("Model age", s.age); add("Skin tone", s.skinTone);
+  add("Hair", s.hair); add("Makeup", s.makeup); add("Pose", s.pose);
+  add("Camera angle", s.cameraAngle); add("Lens", s.lens); add("Luxury level", s.luxury);
+  add("Jewellery emphasis", s.emphasis); add("Model style", s.modelStyle);
+  return lines.length ? `\nART-DIRECTION OVERRIDES (follow exactly):\n${lines.join("\n")}` : "";
+}
+
+/** Build a studio prompt for a specific SHOT TYPE with art-direction overrides + detected attrs. */
+export function buildStudioPrompt(opts: {
+  category: string; subcategory?: string; shotType: ShotType; settings?: StudioSettings;
+  detected?: { category?: string; material?: string; style?: string; attributes?: string[] } | null;
+  index?: number; style?: "auto" | "indian" | "western";
+}): { prompt: string; aspect: ImageAspect } {
+  const meta = SHOT_META[opts.shotType] ?? SHOT_META.hero;
+  const i = opts.index ?? 0;
+  const s = opts.settings ?? {};
+  const styleHint = `${opts.category} ${opts.subcategory ?? ""} ${opts.detected?.style ?? ""}`;
+  const western = opts.style === "western" ? true : opts.style === "indian" ? false : isWesternStyle(styleHint);
+  const subject = (western ? WESTERN_SUBJECTS : SUBJECTS)[i % 2];
+  const background = s.background?.trim() || BACKGROUNDS[i % BACKGROUNDS.length];
+  const shot = shotTypeFor(opts.subcategory || opts.category);
+  const aspectNote = meta.aspect === "1:1"
+    ? "a SQUARE 1:1 aspect ratio (e.g. 1024x1024)"
+    : "a VERTICAL PORTRAIT 4:5 aspect ratio (e.g. 1080x1350), comfortable margins so nothing is cropped";
+  const detectedNote = opts.detected
+    ? `\nDETECTED PIECE: ${[opts.detected.category, opts.detected.material, opts.detected.style, ...(opts.detected.attributes ?? [])].filter(Boolean).join(", ")}.`
+    : "";
+  const subjectBlock = meta.productOnly
+    ? `PRESENTATION: the jewellery laid out / standing cleanly as the single hero, sharply in focus, on ${background}. No model, no hands.`
+    : `SUBJECT: ${subject}.${western ? " Polished international look." : " The model MUST look clearly Indian/South Asian."} Skin bright, luminous, well-exposed.
+SHOT TYPE: ${meta.frame} — worn at ${shot}, framed so the jewellery is the clear hero and tack-sharp.
+BACKGROUND & MOOD: ${background}. ${s.mood?.trim() || "Calm, aspirational, luxury Indian brand feel."}`;
+
+  const prompt = `${FIDELITY}
+${detectedNote}
+
+${subjectBlock}
+
+THE JEWELLERY IS THE HERO: it must be the brightest, sharpest, most eye-catching element — light and expose FOR the piece so metal gleams and every stone sparkles and reads vivid and true.
+LIGHTING: ${s.lighting?.trim() || "bright, clean, high-key studio beauty lighting"}; crisp directional key on the jewellery; no dark/muddy tones, no heavy face shadows, no blown highlights.
+TECHNICAL: photorealistic, ${s.lens?.trim() || "85mm lens look"}, ${s.focus?.trim() || "shallow depth of field, jewellery tack-sharp"}, high resolution, natural skin texture, professional colour grading.${meta.extra ? `\nENHANCEMENT: ${meta.extra}` : ""}${settingsBlock(s)}
+
+${NO_TEXT}
+OUTPUT FRAMING: render in ${aspectNote}.
+OUTPUT: a clean photograph with NO text, NO watermark, NO logo and NO graphic overlays.`;
+  return { prompt, aspect: meta.aspect };
+}
+
 /** Build the full prompt. `index` makes subject/background deterministic per product.
  *  `subcategory` (and the category) drive BOTH the shot framing (where the piece is worn)
  *  and the model: western/fusion styles get a Western model, everything else an Indian model. */

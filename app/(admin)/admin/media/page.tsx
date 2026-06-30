@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+import Link from "next/link";
 import { getProductsWithMedia } from "@/lib/supabase/queries";
 import { geminiConfigured } from "@/lib/ai/gemini";
 import { MediaCard } from "@/components/admin/MediaCard";
@@ -15,8 +16,14 @@ export default async function Media() {
       <div className={`rounded-xl px-4 py-2.5 mb-5 text-sm ${ready ? "bg-emerald-mist text-emerald-dark" : "bg-gold/15 text-gold-dark"}`}>
         {ready ? "● AI photo generation connected — generate professional photos from raw shots (Gemini, with OpenAI fallback)." : "○ Not connected — add GEMINI_API_KEY or OPENAI_API_KEY to enable photo generation. You can still upload raw photos now."}
       </div>
+      <p className="text-xs text-muted mb-3">Open a product's <b>AI Studio</b> to generate a hero, angles &amp; enhancements with art-direction controls.</p>
       <div className="grid md:grid-cols-2 gap-4">
-        {products.map((p) => <MediaCard key={p.id} p={p as any} geminiReady={ready} />)}
+        {products.map((p) => (
+          <div key={p.id} className="relative">
+            <Link href={`/admin/media/${(p as any).id}`} className="absolute right-3 top-3 z-10 px-2.5 py-1 rounded-full bg-ink text-white text-xs hover:bg-ink/90">✦ AI Studio</Link>
+            <MediaCard p={p as any} geminiReady={ready} />
+          </div>
+        ))}
       </div>
     </main>
   );
