@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 import { getStorefront, getWholesaleOrderHistory, getCategories } from "@/lib/supabase/queries";
 import { supabaseServer } from "@/lib/supabase/server";
-import { resolvePrices, overridesOf, formatPaise } from "@/lib/pricing";
+import { resolvePrices, overridesOf } from "@/lib/pricing";
 import { Back } from "@/components/site/Back";
 import { getWholesaleSession } from "@/lib/wholesale";
 import { wholesaleLoginAction } from "@/app/actions/wholesale";
@@ -67,9 +67,8 @@ export default async function Wholesale({ searchParams }: { searchParams: { erro
     );
   }
 
-  const totalValue = products.reduce((s, p) => s + resolvePrices(p.base_wholesale, formula, overridesOf(p)).wholesaleRate * p.qty, 0);
-
-  // Not logged in → trade login + value prop.
+  // Not logged in → trade login + request-access only. Strict separation (#20): we show NO
+  // wholesale data (design count, stock value, or prices) to non-approved visitors.
   return (
     <div className="max-w-5xl mx-auto px-5 py-8">
       <div className="mb-3"><Back label="Back to store" /></div>
@@ -78,7 +77,7 @@ export default async function Wholesale({ searchParams }: { searchParams: { erro
         <div className="relative max-w-2xl">
           <p className="text-gold-light tracking-[0.3em] uppercase text-xs">Blythe Diva · Trade</p>
           <h1 className="font-display text-4xl sm:text-5xl mt-2 leading-tight break-words">Wholesale Portal</h1>
-          <p className="text-cream/70 mt-3">Factory-direct rates from Sadar Bazar. {products.length} designs live · {formatPaise(totalValue)} stock on hand. Approved retailers sign in to see trade prices and order.</p>
+          <p className="text-cream/70 mt-3">Factory-direct rates from Sadar Bazar. Approved retailers sign in to see trade prices and place orders.</p>
         </div>
       </section>
 
