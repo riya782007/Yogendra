@@ -123,7 +123,10 @@ export function AddInventoryClient({
     const per = pick.length ? Math.floor(total / pick.length) : 0;
     setRows((prev) => pick.map((v) => {
       const existing = prev.find((r) => (r[attr] || "").toLowerCase() === v.toLowerCase());
-      return existing ?? newRow({ [attr]: v, qty: per ? String(per) : "" } as Partial<Row>);
+      if (existing) return existing;
+      const seed: Partial<Row> = { qty: per ? String(per) : "" };
+      if (attr === "color") seed.color = v; else if (attr === "size") seed.size = v; else seed.polish = v;
+      return newRow(seed);
     }));
     toast(`Built ${pick.length} variant${pick.length === 1 ? "" : "s"} — set stock, price & publishing`);
   }
