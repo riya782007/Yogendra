@@ -5,8 +5,8 @@ import { formatPaise } from "@/lib/pricing";
 import { posSaleAction } from "@/app/actions/orders";
 import { QtyField } from "@/components/admin/QtyField";
 
-type P = { sku: string; name: string; price: number; wholesale: number; category: string; qty: number };
-type Line = { sku: string; name: string; price: number; wholesale: number; qty: number; stock: number; override: string; disc: string };
+type P = { sku: string; name: string; price: number; wholesale: number; mrp: number; category: string; qty: number };
+type Line = { sku: string; name: string; price: number; wholesale: number; mrp: number; qty: number; stock: number; override: string; disc: string };
 type Cust = { id: string; name: string; phone: string; type: string; gstin: string };
 
 // Owner shorthand for the two price lists (kept private from onlookers): R = retail, W = wholesale.
@@ -46,14 +46,18 @@ export function POSClient({ products, customers = [], methods = [] }: { products
   /** Tier base unit. WC uses the wholesale rate (falls back to retail if missing/zero so it
    *  never bills ₹0). The tier follows the selected customer. */
   const baseUnit = (l: Line | P) => (custType === "wholesale" && l.wholesale > 0 ? l.wholesale : l.price);
-  /** Effective unit (paise): manual price override → else per-line discount → else global discount → tier base. */
+  /** Effective unit (paise): manual price override → else per-line discount → else global discount → tier base.
+   *  IMPORTANT: an EMPTY line discount inherits the global %, but an explicit "0" means zero discount
+   *  (so clearing a line's 3% back to 0 restores full price — the bug the owner reported). */
   const effUnit = (l: Line) => {
     const ov = l.override.trim();
     if (ov !== "" && Number.isFinite(Number(ov)) && Number(ov) >= 0) return Math.round(Number(ov) * 100);
-    const d = pct(l.disc) || gDisc;
+    const d = l.disc.trim() !== "" ? pct(l.disc) : gDisc;
     const base = baseUnit(l);
     return d > 0 ? Math.round((base * (100 - d)) / 100) : base;
   };
+  /** Per-unit printed MRP (falls back to the tier base if a product has no MRP set). */
+  const mrpUnit = (l: Line) => Math.max(l.mrp || 0, effUnit(l));
 
   const [custQ, setCustQ] = useState("");
   const [custOpen, setCustOpen] = useState(false);
@@ -81,13 +85,15 @@ export function POSClient({ products, customers = [], methods = [] }: { products
 
   const toPaise = (v: string) => { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) : 0; };
   const chargesTotal = Math.max(0, toPaise(packing)) + Math.max(0, toPaise(courier)) + toPaise(adjustment);
-  const itemsTotal = lines.reduce((s, l) => s + effUnit(l) * l.qty, 0);
+  const itemsTotal = lines.reduce((s, l) => s + effUnit(l) * l.qty, 0);          // net the customer pays for items
+  const mrpTotal = lines.reduce((s, l) => s + mrpUnit(l) * l.qty, 0);            // printed MRP total
+  const discountTotal = Math.max(0, mrpTotal - itemsTotal);                      // saving vs MRP (what the customer sees)
   const total = itemsTotal + chargesTotal;
   const received = payLines.reduce((s, l) => s + (Number(l.amount) || 0) * 100, 0);
   const remaining = total - received;
   const addPayLine = () => setPayLines((p) => [...p, { methodId: methods[0]?.id ?? "", amount: "" }]);
   const setPayLine = (i: number, patch: Partial<PayLine>) => setPayLines((p) => p.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
-  function addLine(p: P) { setLines((prev) => { const ex = prev.find((l) => l.sku === p.sku); if (ex) return prev.map((l) => l.sku === p.sku ? { ...l, qty: l.qty + 1 } : l); return [...prev, { sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, qty: 1, stock: p.qty, override: "", disc: "" }]; }); setQ(""); }
+  function addLine(p: P) { setLines((prev) => { const ex = prev.find((l) => l.sku === p.sku); if (ex) return prev.map((l) => l.sku === p.sku ? { ...l, qty: l.qty + 1 } : l); return [...prev, { sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, mrp: p.mrp, qty: 1, stock: p.qty, override: "", disc: "" }]; }); setQ(""); }
   function setQty(sku: string, qty: number) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, qty: Math.max(1, Math.floor(qty || 1)) } : l)); }
   function setOverride(sku: string, val: string) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, override: val } : l)); }
   function setLineDisc(sku: string, val: string) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, disc: val } : l)); }
@@ -121,7 +127,7 @@ export function POSClient({ products, customers = [], methods = [] }: { products
         const ov = l.override.trim();
         const hasOv = ov !== "" && Number.isFinite(Number(ov)) && Number(ov) >= 0;
         if (hasOv) return { sku: l.sku, qty: l.qty, priceRupees: Number(ov) };
-        const d = pct(l.disc) || gDisc;
+        const d = l.disc.trim() !== "" ? pct(l.disc) : gDisc;
         if (d > 0) return { sku: l.sku, qty: l.qty, priceRupees: effUnit(l) / 100 };
         return { sku: l.sku, qty: l.qty };
       }),
@@ -175,6 +181,7 @@ export function POSClient({ products, customers = [], methods = [] }: { products
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-ink truncate">{l.name}</p>
                 <p className="text-xs text-muted">{l.sku} · <span className={l.qty > l.stock ? "text-rose font-medium" : "text-emerald"}>{l.stock} in stock</span>{l.qty > l.stock && <span className="text-rose"> — only {l.stock}!</span>}</p>
+                <p className="text-[11px] text-muted">MRP <span className="text-ink/70">{formatPaise(mrpUnit(l))}</span>{mrpUnit(l) > effUnit(l) && <span className="text-emerald-dark"> · saves {formatPaise(mrpUnit(l) - effUnit(l))}/pc</span>}</p>
               </div>
               {/* Editable unit price — placeholder is the live tier+discount price; type to override. */}
               <label className="inline-flex items-center gap-0.5 rounded-full border border-sand px-2 py-1 text-sm" title="Edit unit price">
@@ -301,8 +308,13 @@ export function POSClient({ products, customers = [], methods = [] }: { products
             )}
           </div>
         </div>
-        <div className="mt-5 border-t border-sand pt-4 flex justify-between items-baseline">
-          <span className="text-muted">Total</span><span className="text-3xl font-semibold text-ink">{formatPaise(total)}</span>
+        <div className="mt-5 border-t border-sand pt-4 space-y-1.5">
+          {/* MRP → discount → net, exactly as the cash memo reads. */}
+          <div className="flex justify-between text-sm"><span className="text-muted">Total MRP</span><span className="text-ink/80">{formatPaise(mrpTotal)}</span></div>
+          {discountTotal > 0 && <div className="flex justify-between text-sm"><span className="text-muted">Discount</span><span className="text-emerald-dark">− {formatPaise(discountTotal)}</span></div>}
+          <div className="flex justify-between text-sm"><span className="text-muted">Net (items)</span><span className="text-ink/80">{formatPaise(itemsTotal)}</span></div>
+          {chargesTotal !== 0 && <div className="flex justify-between text-sm"><span className="text-muted">Other charges</span><span className="text-ink/80">{chargesTotal > 0 ? "+ " : ""}{formatPaise(chargesTotal)}</span></div>}
+          <div className="flex justify-between items-baseline pt-1.5 border-t border-sand/60"><span className="text-muted">Amount payable</span><span className="text-3xl font-semibold text-ink">{formatPaise(total)}</span></div>
         </div>
         {received > 0 && (
           <p className={`text-xs mt-1 text-right ${remaining > 0 ? "text-rose" : "text-emerald-dark"}`}>
