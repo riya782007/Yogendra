@@ -102,14 +102,24 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
   // Attach a thumbnail (first real photo) per product so the catalogue list shows real images and
   // can flag drafts that still need one. Fetched separately so a bad embed can't blank the list.
   const ids = rows.map((r) => r.id);
+  for (const r of rows) r.variants = [];
   if (ids.length) {
-    const { data: imgs } = await sb.from("product_images").select("product_id,path,sort").in("product_id", ids).order("sort", { ascending: true });
+    const [{ data: imgs }, { data: vrows }] = await Promise.all([
+      sb.from("product_images").select("product_id,path,sort").in("product_id", ids).order("sort", { ascending: true }),
+      sb.from("variants").select("product_id,sku,color,qty").in("product_id", ids),
+    ]);
     const byP = new Map<string, string>();
     for (const im of ((imgs as any[]) ?? [])) {
       if (!im.path || !String(im.path).startsWith("http")) continue;
       if (!byP.has(im.product_id)) byP.set(im.product_id, im.path);
     }
-    for (const r of rows) r.image = byP.get(r.id) ?? null;
+    const vByP = new Map<string, { sku: string; color: string | null; qty: number }[]>();
+    for (const v of ((vrows as any[]) ?? [])) {
+      const a = vByP.get(v.product_id) ?? [];
+      a.push({ sku: v.sku, color: v.color ?? null, qty: v.qty ?? 0 });
+      vByP.set(v.product_id, a);
+    }
+    for (const r of rows) { r.image = byP.get(r.id) ?? null; r.variants = vByP.get(r.id) ?? []; }
   }
   return { rows, total: count ?? 0, page, pageSize };
 }
