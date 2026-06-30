@@ -503,6 +503,21 @@ export async function createSubcategoryAction(formData: FormData): Promise<void>
   revalidatePath("/admin/categories"); revalidatePath("/shop");
 }
 
+/** JSON-friendly subcategory create for inline use (Add Inventory). Returns the new row so the
+ *  client can select it immediately — mirrors createCategoryJsonAction. */
+export async function createSubcategoryJsonAction(name: string, categoryId: string): Promise<{ id: string; name: string; slug: string; categoryId: string } | null> {
+  if (!(await requirePerm("catalog.edit"))) return null;
+  const nm = (name ?? "").trim();
+  const cat = (categoryId ?? "").trim();
+  if (!nm || !cat) return null;
+  const sb = supabaseServer();
+  const { data, error } = await sb.from("subcategories").insert({ name: nm, slug: slugify(nm), category_id: cat }).select("id,name,slug,category_id").single();
+  if (error || !data) return null;
+  await logActivity({ action: "subcategory_created", ref: nm, detail: `Added subcategory “${nm}”.` });
+  revalidatePath("/admin/categories"); revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidatePath("/catalog");
+  return { id: (data as any).id, name: (data as any).name, slug: (data as any).slug, categoryId: (data as any).category_id };
+}
+
 /** Rename a subcategory. */
 export async function renameSubcategoryAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("catalog.edit"))) return;
@@ -684,4 +699,156 @@ export async function aiBulkUploadAction(categoryId: string, rawText: string): P
   }
   revalidatePath("/admin/catalogue"); revalidatePath("/shop");
   return { created: results.filter((r) => r.ok).length, results, usedAi };
+}
+
+// ===================== Enterprise "Add Inventory" workflow (mockup) =====================
+const STUDIO_BUCKET = "product-media";
+
+export type FullVariantInput = {
+  color?: string; size?: string; polish?: string; sku?: string; qty: number;
+  wholesaleRupees?: number | null; // null = same as parent
+  retailRupees?: number | null;    // null = same as parent
+  retailPublish: boolean; wholesalePublish: boolean;
+};
+export type CreateProductPayload = {
+  name: string; categoryId: string; subcategoryId?: string; basePriceRupees: number; initialStock: number;
+  manualSku?: string; type: "simple" | "configurable"; aiContent?: boolean;
+  retailPublish: boolean; wholesalePublish: boolean; // parent channels
+  variants?: FullVariantInput[];
+  mode: "draft" | "publish";
+  rawImageBase64?: string; rawImageMime?: string;
+};
+
+/** Create a complete product (parent + variants + independent retail/wholesale publish settings +
+ *  opening stock + a PIM details row + optional raw photo + optional AI content) in one call.
+ *  Everything the mockup collects persists; the storefront flags stay in sync. */
+export async function createProductFullAction(
+  payload: CreateProductPayload,
+): Promise<{ ok: boolean; productId?: string; sku?: string; error?: string }> {
+  if (!(await requirePerm("catalog.create"))) return { ok: false, error: "Your role can't add products." };
+  const sb = supabaseServer();
+
+  // ---- validation ----
+  const name = (payload.name ?? "").trim();
+  if (!name) return { ok: false, error: "Product name is required." };
+  if (!payload.categoryId) return { ok: false, error: "Category is required." };
+  const base = Number(payload.basePriceRupees);
+  if (!(base > 0)) return { ok: false, error: "Base wholesale price must be greater than 0." };
+  const initialStock = Math.max(0, Math.floor(Number(payload.initialStock) || 0));
+
+  const configurable = payload.type === "configurable";
+  const variants = configurable
+    ? (payload.variants ?? []).filter((v) => (v.color || v.size || v.polish))
+    : [];
+  if (configurable && variants.length === 0) return { ok: false, error: "Add at least one variant, or switch to a Simple product." };
+  for (const v of variants) if ((Number(v.qty) || 0) < 0) return { ok: false, error: "Variant stock cannot be negative." };
+
+  // ---- SKU ----
+  const skuNum = await nextSku(sb);
+  const manual = payload.manualSku?.trim().toUpperCase().replace(/\s+/g, "-");
+  const sku = manual || `BD${skuNum}`;
+  if (manual) {
+    const { data: dup } = await sb.from("products").select("id").eq("sku", manual).maybeSingle();
+    if (dup) return { ok: false, error: `SKU ${manual} already exists.` };
+  }
+
+  // ---- duplicate variant SKU guard ----
+  const colorCodes = await getColorCodeMap().catch(() => ({} as Record<string, string>));
+  const autoVar = (parts: { color?: string; size?: string; polish?: string }) => {
+    const code = parts.color ? (colorCodes[parts.color.toLowerCase()] ?? barcodeCodeForColor(parts.color)) : null;
+    const sizeCode = parts.size ? parts.size.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4) : null;
+    const polishCode = parts.polish ? parts.polish.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4) : null;
+    return `${sku}-${[code, sizeCode, polishCode].filter(Boolean).join("-") || "VAR"}`;
+  };
+  const resolved = variants.map((v) => ({
+    ...v,
+    skuFinal: (v.sku?.trim().toUpperCase().replace(/\s+/g, "-")) || autoVar({ color: v.color, size: v.size, polish: v.polish }),
+  }));
+  const skuSet = new Set<string>();
+  for (const v of resolved) {
+    if (skuSet.has(v.skuFinal)) return { ok: false, error: `Duplicate variant SKU ${v.skuFinal}.` };
+    skuSet.add(v.skuFinal);
+  }
+  if (skuSet.size) {
+    const { data: taken } = await sb.from("variants").select("sku").in("sku", [...skuSet]).limit(1);
+    if ((taken as any[])?.[0]?.sku) return { ok: false, error: `Variant SKU ${(taken as any)[0].sku} already exists.` };
+  }
+
+  const toPaise = (rs?: number | null) => (rs != null && Number.isFinite(Number(rs)) && Number(rs) > 0 ? Math.round(Number(rs) * 100) : null);
+  const productQty = configurable ? resolved.reduce((s, v) => s + Math.max(0, Math.floor(Number(v.qty) || 0)), 0) : initialStock;
+  const anyChannel = payload.retailPublish || payload.wholesalePublish;
+  const status = payload.mode === "publish" && anyChannel ? "published" : "draft";
+
+  // ---- parent product ----
+  const { data: prod, error } = await sb.from("products").insert({
+    category_id: payload.categoryId, subcategory_id: payload.subcategoryId || null, sku, name, type: payload.type,
+    base_wholesale: Math.round(base * 100), qty: productQty, status,
+    retail_only: payload.retailPublish && !payload.wholesalePublish,
+    wholesale_only: payload.wholesalePublish && !payload.retailPublish,
+    last_movement_at: new Date().toISOString(),
+  }).select("id").single();
+  if (error || !prod) return { ok: false, error: error?.message ?? "Could not create product." };
+  const productId = (prod as any).id as string;
+
+  // ---- variants + opening stock ----
+  const opening: any[] = [];
+  if (configurable) {
+    const rows = resolved.map((v) => ({
+      product_id: productId,
+      color: (v.color ?? "").trim() || null, size: (v.size ?? "").trim() || null, polish: (v.polish ?? "").trim() || null,
+      sku: v.skuFinal, qty: Math.max(0, Math.floor(Number(v.qty) || 0)),
+      retail_override: v.retailRupees == null ? null : toPaise(v.retailRupees),
+      wholesale_override: v.wholesaleRupees == null ? null : toPaise(v.wholesaleRupees),
+    }));
+    const { data: vs, error: vErr } = await sb.from("variants").insert(rows).select("id, qty");
+    if (vErr) { await sb.from("products").delete().eq("id", productId); return { ok: false, error: vErr.message }; }
+    const ids = (vs as any[]) ?? [];
+    // per-variant publish (independent retail/wholesale visibility)
+    const vcs: any[] = [];
+    ids.forEach((vrow, i) => {
+      const v = resolved[i];
+      vcs.push({ variant_id: vrow.id, channel: "retail", visible: !!v.retailPublish });
+      vcs.push({ variant_id: vrow.id, channel: "wholesale", visible: !!v.wholesalePublish });
+      if (vrow.qty > 0) opening.push({ product_id: productId, variant_id: vrow.id, delta: vrow.qty, kind: "opening", source: "create", reason: "Opening stock", created_by: "owner" });
+    });
+    await sb.from("variant_channel_settings").upsert(vcs, { onConflict: "variant_id,channel" }).catch(() => {});
+    // remember any new master values for autocomplete
+    const optRows: { kind: string; value: string }[] = [];
+    for (const v of resolved) { if (v.color) optRows.push({ kind: "color", value: v.color.trim() }); if (v.size) optRows.push({ kind: "size", value: v.size.trim() }); if (v.polish) optRows.push({ kind: "polish", value: v.polish.trim() }); }
+    if (optRows.length) await sb.from("variant_options").upsert(optRows, { onConflict: "kind,value", ignoreDuplicates: true }).catch(() => {});
+  } else if (productQty > 0) {
+    opening.push({ product_id: productId, delta: productQty, kind: "opening", source: "create", reason: "Opening stock", created_by: "owner" });
+  }
+  if (opening.length) await sb.from("stock_adjustments").insert(opening).catch(() => {});
+
+  // ---- independent parent channel settings + PIM details row ----
+  await sb.from("product_channel_settings").upsert([
+    { product_id: productId, channel: "retail", visible: !!payload.retailPublish },
+    { product_id: productId, channel: "wholesale", visible: !!payload.wholesalePublish },
+  ], { onConflict: "product_id,channel" }).catch(() => {});
+  await sb.from("product_details").upsert(
+    { product_id: productId, lifecycle: status === "published" ? "published" : "draft", updated_at: new Date().toISOString() },
+    { onConflict: "product_id" },
+  ).catch(() => {});
+
+  // ---- optional raw photo (kind 'source' — does NOT auto-publish a draft) ----
+  if (payload.rawImageBase64) {
+    try {
+      await sb.storage.createBucket(STUDIO_BUCKET, { public: true }).catch(() => {});
+      const mime = payload.rawImageMime ?? "image/jpeg";
+      const ext = mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg";
+      const path = `${sku}/source-${Date.now()}.${ext}`;
+      const up = await sb.storage.from(STUDIO_BUCKET).upload(path, Buffer.from(payload.rawImageBase64, "base64"), { contentType: mime, upsert: true });
+      if (!up.error) {
+        const { data: pub } = sb.storage.from(STUDIO_BUCKET).getPublicUrl(path);
+        await sb.from("product_images").insert({ product_id: productId, path: pub.publicUrl, kind: "source", sort: 0 });
+      }
+    } catch { /* photo is optional — never block product creation */ }
+  }
+
+  if (payload.aiContent) { try { await generateContentAction(sku); } catch { /* best-effort */ } }
+
+  await logActivity({ action: "product_created", ref: sku, detail: `${name} (${payload.type}, ${variants.length} variants)` });
+  revalidatePath("/admin/inventory"); revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidatePath("/trade");
+  return { ok: true, productId, sku };
 }

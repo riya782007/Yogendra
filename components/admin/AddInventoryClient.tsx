@@ -2,10 +2,12 @@
 import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useToast } from "@/components/ui/Toast";
-import { createProductFullAction, createCategoryJsonAction, type CreateProductPayload } from "@/app/actions/catalog";
+import { createProductFullAction, createCategoryJsonAction, createSubcategoryJsonAction, type CreateProductPayload } from "@/app/actions/catalog";
+import { getProductVariantsAction, addVariantImageAction } from "@/app/actions/variants";
 import { compressImage } from "@/lib/image";
 
 type Cat = { id: string; name: string };
+type Sub = { id: string; name: string; categoryId: string };
 type VariantOptions = { color: string[]; size: string[]; polish: string[] };
 type ColorCodeMap = Record<string, string>;
 type Attr = "color" | "size" | "polish";
@@ -17,6 +19,7 @@ type Row = {
   sku: string; qty: string;
   wholesale: string; wholesaleSame: boolean; wholesalePublish: boolean;
   retail: string; retailSame: boolean; retailPublish: boolean;
+  image: File | null; // optional per-variant photo, uploaded right after the product is created
 };
 
 const newRow = (seed: Partial<Row> = {}): Row => ({
@@ -25,6 +28,7 @@ const newRow = (seed: Partial<Row> = {}): Row => ({
   sku: "", qty: "",
   wholesale: "", wholesaleSame: false, wholesalePublish: true,
   retail: "", retailSame: false, retailPublish: true,
+  image: null,
   ...seed,
 });
 
@@ -40,10 +44,12 @@ function Toggle({ on, onClick, title }: { on: boolean; onClick: () => void; titl
 
 export function AddInventoryClient({
   categories,
+  subcategories = [],
   variantOptions = { color: [], size: [], polish: [] },
   colorCodes = {},
 }: {
   categories: Cat[];
+  subcategories?: Sub[];
   variantOptions?: VariantOptions;
   colorCodes?: ColorCodeMap;
 }) {
@@ -51,6 +57,11 @@ export function AddInventoryClient({
   const [cats, setCats] = useState<Cat[]>(categories);
   const [catId, setCatId] = useState("");
   const [newCat, setNewCat] = useState(""); const [showNewCat, setShowNewCat] = useState(false);
+  // Subcategory: filtered to the chosen category; owner can add a new one inline.
+  const [subs, setSubs] = useState<Sub[]>(subcategories);
+  const [subId, setSubId] = useState("");
+  const [newSub, setNewSub] = useState(""); const [showNewSub, setShowNewSub] = useState(false);
+  const subsForCat = subs.filter((s) => s.categoryId === catId);
 
   const [name, setName] = useState("");
   const [basePrice, setBasePrice] = useState("");
@@ -152,6 +163,7 @@ export function AddInventoryClient({
       const payload: CreateProductPayload = {
         name: name.trim(),
         categoryId: catId,
+        subcategoryId: subId || undefined,
         basePriceRupees: Number(basePrice),
         initialStock: Math.max(0, Number(initialStock) || 0),
         manualSku: sku.trim() || undefined,
@@ -182,9 +194,33 @@ export function AddInventoryClient({
 
       const res = await createProductFullAction(payload);
       if (!res.ok) { toast(res.error ?? "Could not create product", "error"); return; }
+
+      // Attach any per-variant photos: resolve the freshly-created variants by SKU, match each
+      // editor row by colour/size/polish, and upload its photo to that variant. Best-effort —
+      // a failed match just skips that photo (the owner can add it from the Variants tab).
+      if (type === "configurable" && res.sku) {
+        const withPhotos = real.filter((r) => r.image);
+        if (withPhotos.length) {
+          try {
+            const created = await getProductVariantsAction(res.sku);
+            const norm = (x?: string | null) => (x ?? "").trim().toLowerCase();
+            for (const row of withPhotos) {
+              const match = created.find((cv) => norm(cv.color) === norm(row.color) && norm(cv.size) === norm(row.size) && norm(cv.polish) === norm(row.polish));
+              if (!match || !row.image) continue;
+              const img = await compressImage(row.image);
+              const vfd = new FormData();
+              vfd.set("id", match.id);
+              vfd.set("product_sku", res.sku);
+              vfd.append("images", img);
+              await addVariantImageAction(vfd);
+            }
+          } catch { /* best-effort — never block on variant photos */ }
+        }
+      }
+
       toast(`${res.sku} ${mode === "publish" ? "created & published" : "saved as draft"} ✓`);
       // Save & continue → clear for the next product. Save draft → keep nothing lingering either.
-      setName(""); setBasePrice(""); setInitialStock(""); setSku(""); setType("simple");
+      setName(""); setBasePrice(""); setInitialStock(""); setSku(""); setType("simple"); setSubId("");
       setPick([]); setRows([]); setQ("");
       if (fileRef.current) fileRef.current.value = "";
     } catch (e) {
@@ -197,8 +233,19 @@ export function AddInventoryClient({
     setBusy(true);
     const res = await createCategoryJsonAction(nm);
     setBusy(false);
-    if (res) { setCats((c) => [...c, res]); setCatId(res.id); setNewCat(""); setShowNewCat(false); toast(`Category “${res.name}” created`); }
+    if (res) { setCats((c) => [...c, res]); setCatId(res.id); setSubId(""); setNewCat(""); setShowNewCat(false); toast(`Category “${res.name}” created`); }
     else toast("Couldn't create category", "error");
+  }
+
+  async function createSub() {
+    const nm = newSub.trim();
+    if (!nm) return;
+    if (!catId) { toast("Pick a category first", "error"); return; }
+    setBusy(true);
+    const res = await createSubcategoryJsonAction(nm, catId);
+    setBusy(false);
+    if (res) { setSubs((s) => [...s, res]); setSubId(res.id); setNewSub(""); setShowNewSub(false); toast(`Subcategory “${res.name}” created`); }
+    else toast("Couldn't create subcategory", "error");
   }
 
   const real = rows.filter((r) => r.color.trim() || r.size.trim() || r.polish.trim());
@@ -218,12 +265,30 @@ export function AddInventoryClient({
           <div>
             <label className="text-xs font-medium text-muted">Category <span className="text-rose">*</span></label>
             <div className="flex gap-1.5 mt-1">
-              <select className={input} value={catId} onChange={(e) => setCatId(e.target.value)}>
+              <select className={input} value={catId} onChange={(e) => { setCatId(e.target.value); setSubId(""); }}>
                 <option value="">Select…</option>
                 {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
               <button type="button" onClick={() => setShowNewCat((v) => !v)} className="px-3 rounded-xl border border-emerald text-emerald text-sm whitespace-nowrap hover:bg-emerald-mist">+ New</button>
             </div>
+            {/* Subcategory — filtered to the chosen category, with inline create (e.g. Bracelet → Kundan Bracelets). */}
+            {catId && (
+              <>
+                <div className="flex gap-1.5 mt-1.5">
+                  <select className={input} value={subId} onChange={(e) => setSubId(e.target.value)}>
+                    <option value="">No subcategory</option>
+                    {subsForCat.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                  <button type="button" onClick={() => setShowNewSub((v) => !v)} className="px-3 rounded-xl border border-emerald text-emerald text-sm whitespace-nowrap hover:bg-emerald-mist">+ Sub</button>
+                </div>
+                {showNewSub && (
+                  <div className="flex gap-1.5 mt-1.5">
+                    <input value={newSub} onChange={(e) => setNewSub(e.target.value)} placeholder="New subcategory name" className={input} />
+                    <button type="button" onClick={createSub} disabled={busy} className="px-3 rounded-xl bg-ink text-white text-sm whitespace-nowrap disabled:opacity-50">Create</button>
+                  </div>
+                )}
+              </>
+            )}
           </div>
           <div>
             <label className="text-xs font-medium text-muted">Base wholesale price (₹) <span className="text-rose">*</span></label>
@@ -346,7 +411,13 @@ export function AddInventoryClient({
                         <td className="px-2 py-2 w-24 border-l border-sand"><input className={`${cell} text-right`} type="number" min={0} step="0.01" placeholder={r.retailSame ? "parent" : "—"} value={r.retailSame ? "" : r.retail} disabled={r.retailSame} onChange={(e) => updateRow(i, { retail: e.target.value })} /></td>
                         <td className="px-2 py-2 text-center"><Toggle on={r.retailSame} onClick={() => updateRow(i, { retailSame: !r.retailSame })} title="Same as parent" /></td>
                         <td className="px-2 py-2 text-center"><Toggle on={r.retailPublish} onClick={() => updateRow(i, { retailPublish: !r.retailPublish })} title="Publish to retail" /></td>
-                        <td className="px-2 py-2 text-center"><button type="button" onClick={() => removeRow(i)} className="text-muted hover:text-rose" title="Remove">🗑</button></td>
+                        <td className="px-2 py-2 text-center whitespace-nowrap">
+                          <label className="cursor-pointer text-base mr-1.5 align-middle" title={r.image ? `Photo: ${r.image.name}` : "Add a photo for this variant (uploaded after save)"}>
+                            {r.image ? "🖼️" : "📷"}
+                            <input type="file" accept="image/*" className="hidden" onChange={(e) => updateRow(i, { image: e.target.files?.[0] ?? null })} />
+                          </label>
+                          <button type="button" onClick={() => removeRow(i)} className="text-muted hover:text-rose align-middle" title="Remove">🗑</button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
