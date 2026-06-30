@@ -19,6 +19,9 @@ export default async function Invoice({ params }: { params: { id: string } }) {
 
   const isCash = order.bill_type === "cash";
   const isProforma = order.doc_type === "proforma";
+  // GST Officer (billing.gst_only) may view only GST tax invoices — block cash memos. Owner exempt.
+  const _gs = getSession();
+  if (!_gs.isOwner && can(_gs, "billing.gst_only") && isCash) notFound();
   const total = order.total as number;
   const paid = order.amount_paid ?? 0;
   const buyerStateCode = order.buyer_state || stateCodeFromGstin(order.buyer_gstin);

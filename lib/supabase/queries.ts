@@ -293,13 +293,14 @@ export async function getSupplierCities() {
 // Sortable columns for the sales/invoice register (Pillar 1 — "A–Z order of invoice").
 // Token format is `<field>_<dir>`, e.g. "inv_asc". Default = newest first.
 const ORDERS_SORT: Record<string, string> = { inv: "invoice_no", name: "customer_name", date: "created_at", amount: "total" };
-export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?: string; channel?: string; from?: string; to?: string; sort?: string }) {
+export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?: string; channel?: string; from?: string; to?: string; sort?: string; billType?: string }) {
   const sb = supabaseServer();
   const pageSize = opts.pageSize ?? 25;
   const page = Math.max(1, opts.page ?? 1);
   let query = sb.from("orders").select("id,total,amount_paid,invoice_no,channel,status,payment_mode,bill_type,customer_name,customer_phone,source_tag,created_at", { count: "exact" });
   if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.or(`customer_name.ilike.%${s}%,customer_phone.ilike.%${s}%`); }
   if (opts.channel && opts.channel !== "all") query = query.eq("channel", opts.channel);
+  if (opts.billType) query = query.eq("bill_type", opts.billType);
   if (opts.from) query = query.gte("created_at", opts.from);
   if (opts.to) query = query.lte("created_at", opts.to);
   const [field, dir] = (opts.sort ?? "").split("_");

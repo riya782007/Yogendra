@@ -3,6 +3,7 @@ import Link from "next/link";
 import { getOrdersPage } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { Pager } from "@/components/admin/Pager";
+import { getSession, can } from "@/lib/auth";
 
 export const metadata = { title: "Owner Console · Sales Records" };
 const PAGE_SIZE = 25;
@@ -24,7 +25,9 @@ export default async function SalesRecords({ searchParams }: { searchParams: { p
   const from = searchParams.from ?? "";
   const to = searchParams.to ?? "";
   const sort = searchParams.sort ?? "";
-  const { rows, total } = await getOrdersPage({ page, pageSize: PAGE_SIZE, q, channel, from: from || undefined, to: to ? to + "T23:59:59" : undefined, sort });
+  const session = getSession();
+  const gstOnly = can(session, "billing.gst_only"); // GST Officer — restrict to GST tax invoices
+  const { rows, total } = await getOrdersPage({ page, pageSize: PAGE_SIZE, q, channel, from: from || undefined, to: to ? to + "T23:59:59" : undefined, sort, billType: gstOnly ? "gst" : undefined });
   const pageSum = rows.reduce((s: number, r: any) => s + (r.total ?? 0), 0);
   const sel = "rounded-xl border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-emerald";
 
@@ -48,6 +51,7 @@ export default async function SalesRecords({ searchParams }: { searchParams: { p
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
       <h1 className="font-display text-4xl text-ink mb-1">Sales Records</h1>
       <p className="text-sm text-muted mb-5">Every sale across all channels. Click an order to open its bill &amp; full detail.</p>
+      {gstOnly && <div className="mb-5 rounded-xl border border-emerald/30 bg-emerald-mist/40 px-4 py-2 text-sm text-emerald-dark">Compliance view — showing <b>GST tax invoices only</b>. Cash memos and estimates are hidden for this role.</div>}
 
       <form action="/admin/sales" className="flex flex-wrap gap-2 mb-4 items-center">
         <input name="q" defaultValue={q} placeholder="Search customer / phone…" className="rounded-xl border border-sand bg-white px-4 py-2 text-sm outline-none focus:border-emerald flex-1 min-w-[160px]" />
