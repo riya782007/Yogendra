@@ -1,20 +1,25 @@
 export const dynamic = "force-dynamic";
-import { getCategoryTree, getVariantOptions, getColorCodeMap } from "@/lib/supabase/queries";
+import { getCategoryTree, getVariantOptions } from "@/lib/supabase/queries";
+import { COLOR_CATALOG } from "@/lib/colors";
 import { AddInventoryTabs } from "@/components/admin/AddInventoryTabs";
 
 export const metadata = { title: "Owner Console · Upload" };
 
 export default async function UploadPage() {
-  // Same suggestion pool the Catalogue Variants tab uses — so an owner adding variants
-  // at upload time gets the same colour/size/polish autocomplete, and any new values
-  // they type are remembered for next time (variant_options auto-grows). Plus the
-  // colour-code map so the variant editor can preview the printed barcode live, and the
-  // full category tree so a product can be filed into a subcategory at creation time.
-  const [tree, variantOptions, colorCodes] = await Promise.all([
+  // Colours are FIXED from the master catalog (lib/colors.ts) — only approved colours appear, each
+  // carries its scanner barcode code, and the picker shows them alphabetically. Size/polish still
+  // come from the self-growing master; "Oxidised" is a POLISH/finish, never a colour. The category
+  // tree lets a product be filed into a subcategory at creation time.
+  const [tree, dbOpts] = await Promise.all([
     getCategoryTree(),
-    getVariantOptions().catch(() => ({ color: [], size: [], polish: [] })),
-    getColorCodeMap().catch(() => ({} as Record<string, string>)),
+    getVariantOptions().catch(() => ({ color: [] as string[], size: [] as string[], polish: [] as string[] })),
   ]);
+  const variantOptions = {
+    color: COLOR_CATALOG.map((c) => c.name),
+    size: dbOpts.size ?? [],
+    polish: Array.from(new Set([...(dbOpts.polish ?? []), "Oxidised"])).sort((a, b) => a.localeCompare(b)),
+  };
+  const colorCodes = Object.fromEntries(COLOR_CATALOG.map((c) => [c.name.toLowerCase(), c.code]));
   const categories = tree.map((c) => ({ id: c.id, name: c.name }));
   const subcategories = tree.flatMap((c) => (c.subcategories ?? []).map((s) => ({ id: s.id, name: s.name, categoryId: c.id })));
   return (
