@@ -181,6 +181,25 @@ export async function getCustomersDb(opts: { q?: string; type?: string }) {
   return (data as any[]) ?? [];
 }
 
+/** Creditors — customers who owe a balance, aggregated across all their bills (outstanding =
+ *  Σ bill total − amount paid). Important for wholesale credit tracking. */
+export async function getCreditors(): Promise<{ id: string | null; name: string; phone: string; outstanding: number; bills: number }[]> {
+  const sb = supabaseServer();
+  const { data } = await sb.from("orders").select("customer_id,customer_name,customer_phone,total,amount_paid");
+  const map = new Map<string, { id: string | null; name: string; phone: string; outstanding: number; bills: number }>();
+  for (const o of ((data as any[]) ?? [])) {
+    const due = (o.total ?? 0) - (o.amount_paid ?? 0);
+    if (due <= 0) continue;
+    const key = o.customer_id ? `id:${o.customer_id}` : o.customer_phone ? `ph:${o.customer_phone}` : o.customer_name ? `nm:${o.customer_name}` : null;
+    if (!key) continue;
+    const cur = map.get(key) ?? { id: o.customer_id ?? null, name: o.customer_name || "Walk-in", phone: o.customer_phone || "", outstanding: 0, bills: 0 };
+    cur.outstanding += due; cur.bills += 1;
+    if (!cur.id && o.customer_id) cur.id = o.customer_id;
+    map.set(key, cur);
+  }
+  return [...map.values()].sort((a, b) => b.outstanding - a.outstanding);
+}
+
 export async function getCustomerById(id: string) {
   const sb = supabaseServer();
   const { data: c } = await sb.from("customers").select("*").eq("id", id).maybeSingle();
