@@ -117,37 +117,56 @@ export type CatalogCard = {
 export async function getCatalogProducts(opts: { category?: string; subcategory?: string; q?: string; skus?: string[]; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean }): Promise<CatalogCard[]> {
   const sb = supabaseServer();
   const formula = await getPricingFormula();
-  let query = sb.from("products")
-    .select("id,sku,name,qty,base_wholesale,wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,generated_content,category:categories(name,slug),subcategory:subcategories(name,slug),images:product_images(path,kind,sort),product_labels(label_id,labels(name))")
-    .eq("status", "published").order("sku");
-  // Retail catalogue hides wholesale-only items; wholesale view + POS pass includeWholesaleOnly.
-  if (!opts.includeWholesaleOnly) query = query.eq("wholesale_only", false);
-  if (opts.excludeRetailOnly) query = query.eq("retail_only", false);
 
+  // Resolve category + subcategory filters up-front so the SAME filters apply to either select.
+  let catId: string | null = null;
   if (opts.category && opts.category !== "all") {
     const { data: cat } = await sb.from("categories").select("id").eq("slug", opts.category).maybeSingle();
-    if (cat) query = query.eq("category_id", (cat as any).id);
+    catId = (cat as any)?.id ?? null;
   }
-  // Filter to a specific subcategory via the many-to-many map (covers primary + extra subcats).
+  let subIds: string[] | null = null;
   if (opts.subcategory && opts.subcategory !== "all") {
     const { data: sub } = await sb.from("subcategories").select("id").eq("slug", opts.subcategory).maybeSingle();
     if (sub) {
       const { data: maps } = await sb.from("product_subcategory_map").select("product_id").eq("subcategory_id", (sub as any).id);
-      const ids = ((maps as any[]) ?? []).map((m) => m.product_id);
-      query = query.in("id", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"]);
+      subIds = ((maps as any[]) ?? []).map((m) => m.product_id);
+      if (subIds.length === 0) subIds = ["00000000-0000-0000-0000-000000000000"];
     }
   }
-  // Explicit selected products → exact catalogue.
-  if (opts.skus && opts.skus.length) {
-    query = query.in("sku", opts.skus.map((s) => s.trim().toUpperCase()).filter(Boolean));
-  }
-  // Keyword search across name / SKU.
-  if (opts.q && opts.q.trim()) {
-    const esc = opts.q.trim().replace(/[%,()]/g, " ");
-    query = query.or(`name.ilike.%${esc}%,sku.ilike.%${esc}%`);
-  }
 
-  const { data } = await query;
+  const build = (sel: string) => {
+    let q = sb.from("products").select(sel).eq("status", "published").order("sku");
+    if (!opts.includeWholesaleOnly) q = q.eq("wholesale_only", false); // retail hides wholesale-only
+    if (opts.excludeRetailOnly) q = q.eq("retail_only", false);        // wholesale hides retail-only
+    if (catId) q = q.eq("category_id", catId);
+    if (subIds) q = q.in("id", subIds);
+    if (opts.skus && opts.skus.length) q = q.in("sku", opts.skus.map((s) => s.trim().toUpperCase()).filter(Boolean));
+    if (opts.q && opts.q.trim()) { const esc = opts.q.trim().replace(/[%,()]/g, " "); q = q.or(`name.ilike.%${esc}%,sku.ilike.%${esc}%`); }
+    return q;
+  };
+
+  // RICH carries subcategory name + label chips. If ANY embedded relation is out of sync in the
+  // deployed DB, PostgREST fails the WHOLE query and returns null — which blanks the whole catalogue
+  // (the bug). So fall back to a BASIC select (core fields + category + images) that cannot fail.
+  // Same resilience pattern as getProductBySku.
+  const RICH = "id,sku,name,qty,base_wholesale,wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,generated_content,category:categories(name,slug),subcategory:subcategories(name,slug),images:product_images(path,kind,sort),product_labels(label_id,labels(name))";
+  const BASIC = "id,sku,name,qty,base_wholesale,wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,generated_content,category:categories(name,slug)";
+
+  let { data, error } = await build(RICH);
+  if (error || data == null) {
+    // Rich embed failed → fetch the proven-safe minimal set (core + category, exactly what the
+    // working storefront query uses), then attach images in a SEPARATE query so that no single
+    // embedded relation (subcategory / labels / images) can ever blank the whole catalogue.
+    ({ data } = await build(BASIC));
+    const rows = (data as any[]) ?? [];
+    const ids = rows.map((p) => (p as any).id);
+    if (ids.length) {
+      const { data: imgs } = await sb.from("product_images").select("product_id,path,sort").in("product_id", ids);
+      const byP = new Map<string, any[]>();
+      for (const im of ((imgs as any[]) ?? [])) { const a = byP.get(im.product_id) ?? []; a.push(im); byP.set(im.product_id, a); }
+      for (const p of rows) (p as any).images = byP.get((p as any).id) ?? [];
+    }
+  }
   return ((data as any[]) ?? []).map((p): CatalogCard => {
     const ov = overridesOf(p);
     const o = _liveOffer(p.base_wholesale, formula, ov);
