@@ -6,7 +6,7 @@ import { SearchBox } from "./SearchBox";
 import { WishlistWidget } from "@/components/wishlist/WishlistWidget";
 import { IconUser } from "./Icons";
 
-type Cat = { name: string; slug: string };
+type Cat = { name: string; slug: string; subcategories?: { name: string; slug: string }[] };
 
 export function Header({ categories }: { categories: Cat[] }) {
   return (
@@ -26,12 +26,24 @@ export function Header({ categories }: { categories: Cat[] }) {
             <div className="relative group">
               <button className="nav-link py-2">Shop by Category</button>
               <div className="absolute left-1/2 -translate-x-1/2 top-full pt-3 opacity-0 invisible translate-y-1 group-hover:opacity-100 group-hover:visible group-hover:translate-y-0 transition-all duration-200">
-                <div className="bg-white rounded-2xl shadow-luxe p-4 grid grid-cols-2 gap-1 w-[360px] border border-sand/60">
+                <div className="bg-white rounded-2xl shadow-luxe p-4 grid grid-cols-2 gap-x-5 gap-y-3 w-[460px] border border-sand/60 max-h-[70vh] overflow-y-auto">
                   {categories.map((c) => (
-                    <Link key={c.slug} href={`/shop/c/${c.slug}`}
-                      className="px-3 py-2 rounded-lg text-ink/80 hover:bg-emerald-mist hover:text-emerald transition-colors">
-                      {c.name}
-                    </Link>
+                    <div key={c.slug} className="min-w-0">
+                      <Link href={`/shop/c/${c.slug}`}
+                        className="block px-3 py-1.5 rounded-lg font-medium text-ink hover:bg-emerald-mist hover:text-emerald transition-colors truncate">
+                        {c.name}
+                      </Link>
+                      {c.subcategories && c.subcategories.length > 0 && (
+                        <div className="pl-3 mt-0.5 space-y-0.5">
+                          {c.subcategories.map((s) => (
+                            <Link key={s.slug} href={`/shop/c/${c.slug}?sub=${s.slug}`}
+                              className="block px-2 py-1 rounded text-xs text-muted hover:text-emerald hover:bg-cream transition-colors truncate">
+                              {s.name}
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   ))}
                   <Link href="/shop" className="px-3 py-2 rounded-lg text-gold-dark font-medium hover:bg-cream col-span-2">View all designs →</Link>
                 </div>
