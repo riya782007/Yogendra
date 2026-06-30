@@ -866,6 +866,71 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
 
 export type ProductLedger = NonNullable<Awaited<ReturnType<typeof getProductLedger>>>;
 
+// ---------- Product Management System (PIM) — full product aggregate by id ----------
+import { resolvePrices as pimResolve, overridesOf as pimOverrides } from "../pricing";
+
+/** Everything the /admin/products/[id] PIM page needs, in one call. Resilient to the 0029
+ *  extension tables not being deployed yet (each optional read is guarded). */
+export async function getProductForPim(id: string) {
+  if (!id) return null;
+  const sb = supabaseServer();
+  const { data: p } = await sb.from("products").select("*, category:categories(id,name,slug)").eq("id", id).maybeSingle();
+  if (!p) return null;
+  const prod = p as any;
+
+  const safe = async <T>(fn: () => Promise<T>, fallback: T): Promise<T> => { try { return await fn(); } catch { return fallback; } };
+
+  const [details, channelsRaw, variantsRaw, images, formula, reservations, categories, subcategories] = await Promise.all([
+    safe(async () => (await sb.from("product_details").select("*").eq("product_id", id).maybeSingle()).data, null as any),
+    safe(async () => (await sb.from("product_channel_settings").select("*").eq("product_id", id)).data ?? [], [] as any[]),
+    safe(async () => (await sb.from("variants").select("*").eq("product_id", id).order("sku")).data ?? [], [] as any[]),
+    safe(async () => (await sb.from("product_images").select("id,path,kind,sort").eq("product_id", id).order("sort")).data ?? [], [] as any[]),
+    getPricingFormula(),
+    getProductEstimateReservations(id),
+    getCategories(),
+    safe(async () => (await sb.from("subcategories").select("id,name,slug,category_id")).data ?? [], [] as any[]),
+  ]);
+
+  const vIds = (variantsRaw as any[]).map((v) => v.id);
+  const vcs = vIds.length
+    ? await safe(async () => (await sb.from("variant_channel_settings").select("*").in("variant_id", vIds)).data ?? [], [] as any[])
+    : [];
+
+  // recent audit/history for this product (matched on SKU, which logActivity stores as `ref`)
+  const audit = await safe(async () =>
+    (await sb.from("audit_log").select("at,actor,action,ref,detail").eq("ref", prod.sku).order("at", { ascending: false }).limit(50)).data ?? [],
+    [] as any[]);
+
+  const channels = channelsRaw as any[];
+  const reserved = (reservations as any[]).reduce((s, r) => s + (r.qty ?? 0), 0);
+  const prices = pimResolve(prod.base_wholesale, formula, pimOverrides(prod));
+
+  return {
+    product: prod,
+    details: details ?? null,
+    channels: {
+      retail: channels.find((c) => c.channel === "retail") ?? null,
+      wholesale: channels.find((c) => c.channel === "wholesale") ?? null,
+    },
+    variants: (variantsRaw as any[]).map((v) => ({
+      ...v,
+      retailVisible: (vcs as any[]).find((x) => x.variant_id === v.id && x.channel === "retail")?.visible ?? true,
+      wholesaleVisible: (vcs as any[]).find((x) => x.variant_id === v.id && x.channel === "wholesale")?.visible ?? true,
+      prices: pimResolve(prod.base_wholesale, formula, pimOverrides(v), pimOverrides(prod)),
+    })),
+    images,
+    formula,
+    prices,
+    reserved,
+    available: (prod.qty ?? 0) - reserved,
+    reservations,
+    categories,
+    subcategories,
+    audit,
+  };
+}
+export type ProductPim = NonNullable<Awaited<ReturnType<typeof getProductForPim>>>;
+
 // ---------- dashboard + inventory intelligence (Req 6, 7; yogendra.pdf §8) ----------
 import { classify, type InventoryRule, DEFAULT_RULE } from "../inventory";
 import { computePrices, type PricingFormula as PF } from "../pricing";
@@ -917,14 +982,14 @@ export async function getDashboardData(fromISO: string, toISO: string, rule: Inv
   };
 }
 
-export type ClassifiedRow = { sku: string; name: string; category: string; categorySlug: string; status: string; qty: number; lastMovementAt: string | null; cls: string };
+export type ClassifiedRow = { id: string; sku: string; name: string; category: string; categorySlug: string; status: string; qty: number; lastMovementAt: string | null; cls: string };
 
 export async function getInventoryClassified(rule: InventoryRule = DEFAULT_RULE): Promise<ClassifiedRow[]> {
   const sb = supabaseServer();
-  const { data } = await sb.from("products").select("sku,name,qty,status,last_movement_at,category:categories(name,slug)").order("sku");
+  const { data } = await sb.from("products").select("id,sku,name,qty,status,last_movement_at,category:categories(name,slug)").order("sku");
   const now = new Date();
   return ((data as any[]) ?? []).map((p) => ({
-    sku: p.sku, name: p.name, category: p.category?.name ?? "—", categorySlug: p.category?.slug ?? "all",
+    id: p.id, sku: p.sku, name: p.name, category: p.category?.name ?? "—", categorySlug: p.category?.slug ?? "all",
     status: p.status, qty: p.qty, lastMovementAt: p.last_movement_at,
     cls: classify({ qty: p.qty, lastMovementAt: p.last_movement_at }, rule, now),
   }));
