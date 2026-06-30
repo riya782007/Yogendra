@@ -228,7 +228,7 @@ export async function bulkUploadAction(categoryId: string, rows: Omit<NewProduct
 
 const BUCKET = "product-media";
 async function ensureMediaBucket(sb: ReturnType<typeof supabaseServer>) {
-  await sb.storage.createBucket(BUCKET, { public: true }).catch(() => {});
+  await sb.storage.createBucket(BUCKET, { public: true }).then(() => {}, () => {});
 }
 
 export async function createProductWithImageAction(formData: FormData): Promise<RowResult> {
@@ -811,30 +811,30 @@ export async function createProductFullAction(
       vcs.push({ variant_id: vrow.id, channel: "wholesale", visible: !!v.wholesalePublish });
       if (vrow.qty > 0) opening.push({ product_id: productId, variant_id: vrow.id, delta: vrow.qty, kind: "opening", source: "create", reason: "Opening stock", created_by: "owner" });
     });
-    await sb.from("variant_channel_settings").upsert(vcs, { onConflict: "variant_id,channel" }).catch(() => {});
+    await sb.from("variant_channel_settings").upsert(vcs, { onConflict: "variant_id,channel" }).then(() => {}, () => {});
     // remember any new master values for autocomplete
     const optRows: { kind: string; value: string }[] = [];
     for (const v of resolved) { if (v.color) optRows.push({ kind: "color", value: v.color.trim() }); if (v.size) optRows.push({ kind: "size", value: v.size.trim() }); if (v.polish) optRows.push({ kind: "polish", value: v.polish.trim() }); }
-    if (optRows.length) await sb.from("variant_options").upsert(optRows, { onConflict: "kind,value", ignoreDuplicates: true }).catch(() => {});
+    if (optRows.length) await sb.from("variant_options").upsert(optRows, { onConflict: "kind,value", ignoreDuplicates: true }).then(() => {}, () => {});
   } else if (productQty > 0) {
     opening.push({ product_id: productId, delta: productQty, kind: "opening", source: "create", reason: "Opening stock", created_by: "owner" });
   }
-  if (opening.length) await sb.from("stock_adjustments").insert(opening).catch(() => {});
+  if (opening.length) await sb.from("stock_adjustments").insert(opening).then(() => {}, () => {});
 
   // ---- independent parent channel settings + PIM details row ----
   await sb.from("product_channel_settings").upsert([
     { product_id: productId, channel: "retail", visible: !!payload.retailPublish },
     { product_id: productId, channel: "wholesale", visible: !!payload.wholesalePublish },
-  ], { onConflict: "product_id,channel" }).catch(() => {});
+  ], { onConflict: "product_id,channel" }).then(() => {}, () => {});
   await sb.from("product_details").upsert(
     { product_id: productId, lifecycle: status === "published" ? "published" : "draft", updated_at: new Date().toISOString() },
     { onConflict: "product_id" },
-  ).catch(() => {});
+  ).then(() => {}, () => {});
 
   // ---- optional raw photo (kind 'source' — does NOT auto-publish a draft) ----
   if (payload.rawImageBase64) {
     try {
-      await sb.storage.createBucket(STUDIO_BUCKET, { public: true }).catch(() => {});
+      await sb.storage.createBucket(STUDIO_BUCKET, { public: true }).then(() => {}, () => {});
       const mime = payload.rawImageMime ?? "image/jpeg";
       const ext = mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg";
       const path = `${sku}/source-${Date.now()}.${ext}`;
