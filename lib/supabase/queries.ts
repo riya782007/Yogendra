@@ -98,7 +98,20 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
   if (opts.status && opts.status !== "all") query = query.eq("status", opts.status);
   const fromIdx = (page - 1) * pageSize;
   const { data, count } = await query.order("sku").range(fromIdx, fromIdx + pageSize - 1);
-  return { rows: (data as any[]) ?? [], total: count ?? 0, page, pageSize };
+  const rows = (data as any[]) ?? [];
+  // Attach a thumbnail (first real photo) per product so the catalogue list shows real images and
+  // can flag drafts that still need one. Fetched separately so a bad embed can't blank the list.
+  const ids = rows.map((r) => r.id);
+  if (ids.length) {
+    const { data: imgs } = await sb.from("product_images").select("product_id,path,sort").in("product_id", ids).order("sort", { ascending: true });
+    const byP = new Map<string, string>();
+    for (const im of ((imgs as any[]) ?? [])) {
+      if (!im.path || !String(im.path).startsWith("http")) continue;
+      if (!byP.has(im.product_id)) byP.set(im.product_id, im.path);
+    }
+    for (const r of rows) r.image = byP.get(r.id) ?? null;
+  }
+  return { rows, total: count ?? 0, page, pageSize };
 }
 
 // ---------- shareable catalog ----------

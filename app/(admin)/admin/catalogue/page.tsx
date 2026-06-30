@@ -5,13 +5,13 @@ import { liveOffer } from "@/lib/offers";
 import { formatPaise } from "@/lib/pricing";
 import { geminiConfigured } from "@/lib/ai/gemini";
 import { aiProvidersStatus } from "@/lib/ai/listingAgent";
-import { ProductImage } from "@/components/Placeholder";
 import { generateContentAction, generateAllContentAction } from "@/app/actions/aiContent";
 import { GeneratePhotoButton } from "@/components/admin/GeneratePhotoButton";
 import { generateEmbeddingsAction } from "@/app/actions/embeddings";
 import { Pager } from "@/components/admin/Pager";
 import { getSession, can } from "@/lib/auth";
 import { DeleteProductButton } from "@/components/admin/DeleteProductButton";
+import { CatalogueRowActions } from "@/components/admin/CatalogueRowActions";
 
 export const metadata = { title: "Owner Console · Catalogue" };
 const PAGE_SIZE = 25;
@@ -32,6 +32,7 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
   const canEdit = can(session, "catalog.edit");
   const canAi = can(session, "catalog.ai");
   const canDelete = can(session, "catalog.delete");
+  const canPublish = can(session, "catalog.publish");
 
   async function genContent(fd: FormData) { "use server"; await generateContentAction(String(fd.get("sku"))); }
   async function genAllContent() { "use server"; await generateAllContentAction(); }
@@ -81,7 +82,7 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
         <table className="w-full text-sm">
           <thead className="bg-cream text-muted text-left">
             <tr>
-              <th className="p-3">Photo</th><th className="p-3">Product</th><th className="p-3">Category · No.</th>
+              <th className="p-3">Photo / Publish</th><th className="p-3">Product</th><th className="p-3">Category · No.</th>
               <th className="p-3">Stock</th><th className="p-3">Price (live)</th><th className="p-3">Edit</th><th className="p-3">View</th><th className="p-3">AI page</th><th className="p-3">AI photo</th><th className="p-3"></th>
             </tr>
           </thead>
@@ -92,7 +93,7 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
               const hasAi = !!(p.generated_content && p.generated_content.title);
               return (
                 <tr key={p.id} className="border-t border-sand/60 hover:bg-cream/40 transition-colors">
-                  <td className="p-2"><div className="w-11 h-13 rounded-lg overflow-hidden"><ProductImage name={p.name} /></div></td>
+                  <td className="p-2"><CatalogueRowActions sku={p.sku} status={p.status} image={p.image ?? null} canEdit={canEdit} canPublish={canPublish} /></td>
                   <td className="p-3 font-medium text-ink">{p.name}{p.status !== "published" && <span className="ml-1 text-[10px] uppercase text-gold-dark">· {p.status}</span>}</td>
                   <td className="p-3 text-muted">{p.category?.name} · {p.sku}</td>
                   <td className="p-3"><span className={p.qty <= 2 ? "text-rose font-medium" : "text-ink"}>{p.qty}</span></td>
