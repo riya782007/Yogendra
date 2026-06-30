@@ -700,7 +700,7 @@ export async function getStockMovements(opts: { page?: number; pageSize?: number
   const pageSize = opts.pageSize ?? 30;
   const page = Math.max(1, opts.page ?? 1);
   let query = sb.from("stock_adjustments")
-    .select("id,delta,kind,source,reason,ref_id,sku,created_at, product:products(sku,name), variant:variants(color)", { count: "exact" });
+    .select("id,product_id,delta,kind,source,reason,ref_id,sku,created_at, product:products(sku,name), variant:variants(color)", { count: "exact" });
   if (opts.kind && opts.kind !== "all") query = query.eq("kind", opts.kind);
   if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.ilike("sku", `%${s}%`); }
   if (opts.from) query = query.gte("created_at", opts.from);
@@ -740,6 +740,131 @@ export async function getOpenEstimateReservations(limit = 50) {
     qty: ((e.estimate_items as any[]) ?? []).reduce((s, li) => s + (li.qty ?? 0), 0),
   })).filter((e) => e.lines.length > 0);
 }
+
+// ---------- Product Stock Ledger (SAP/Zoho-style per-SKU inventory history) ----------
+// DERIVED from the existing stock_adjustments rows (no duplicate inventory table). Computes a
+// running balance, pulls open-estimate reservations, resolves related documents, and rolls up
+// analytics — for the drawer opened by clicking any Stock Movement row.
+export type LedgerMovement = {
+  id: string; kind: string; delta: number; runningBalance: number;
+  source: string | null; reason: string | null; created_by: string | null;
+  ref_id: string | null; created_at: string; invoice_no?: string | null;
+  doc: { href: string; label: string } | null;
+};
+
+export async function getProductLedger(productId: string, opts: { offset?: number; limit?: number } = {}) {
+  if (!productId) return null;
+  const sb = supabaseServer();
+  const limit = opts.limit ?? 50;
+  const offset = Math.max(0, opts.offset ?? 0);
+
+  // --- product header ---
+  const { data: p } = await sb.from("products")
+    .select("id,sku,name,qty,reorder_level,last_movement_at, category:categories(name), images:product_images(path,sort)")
+    .eq("id", productId).maybeSingle();
+  if (!p) return null;
+  const prod = p as any;
+  const image = ((prod.images ?? []).filter((i: any) => typeof i.path === "string" && i.path.startsWith("http"))
+    .sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0))[0]?.path) ?? null;
+
+  // --- ALL movements (ascending) to compute the running balance. Resilient to a deployed DB
+  //     that hasn't added ref_id / created_by yet (falls back to the always-present columns). ---
+  let allRows: any[] = [];
+  const rich = await sb.from("stock_adjustments")
+    .select("id,delta,kind,source,reason,ref_id,created_by,created_at")
+    .eq("product_id", productId).order("created_at", { ascending: true }).order("id", { ascending: true });
+  if (rich.error) {
+    const basic = await sb.from("stock_adjustments")
+      .select("id,delta,kind,source,reason,created_at")
+      .eq("product_id", productId).order("created_at", { ascending: true });
+    allRows = (basic.data as any[]) ?? [];
+  } else allRows = (rich.data as any[]) ?? [];
+
+  let bal = 0;
+  for (const r of allRows) { bal += r.delta ?? 0; r.runningBalance = bal; }
+  const totalMovements = allRows.length;
+
+  // --- related documents (batch lookups) ---
+  const saleRefs = [...new Set(allRows.filter((r) => r.kind === "sale" && r.ref_id).map((r) => r.ref_id))];
+  const purchaseRefs = [...new Set(allRows.filter((r) => r.kind === "purchase" && r.ref_id).map((r) => r.ref_id))];
+  const invoiceBy = new Map<string, string>();
+  const billBy = new Map<string, string>();
+  if (saleRefs.length) { const { data } = await sb.from("orders").select("id,invoice_no").in("id", saleRefs as string[]); for (const o of (data as any[]) ?? []) invoiceBy.set(o.id, o.invoice_no); }
+  if (purchaseRefs.length) { const { data } = await sb.from("purchases").select("id,bill_no").in("id", purchaseRefs as string[]); for (const o of (data as any[]) ?? []) billBy.set(o.id, o.bill_no); }
+
+  const docFor = (r: any): { href: string; label: string } | null => {
+    if (!r.ref_id) return null;
+    if (r.kind === "sale") return { href: `/admin/invoice/${r.ref_id}`, label: "Open invoice →" };
+    if (r.kind === "purchase") return { href: `/admin/purchase/${r.ref_id}`, label: "Open purchase →" };
+    if (r.kind === "estimate") return { href: `/admin/estimate/${r.ref_id}`, label: "Open estimate →" };
+    if (r.kind === "return" || r.kind === "purchase_return") return { href: `/admin/returns`, label: "Open return →" };
+    return null;
+  };
+
+  // newest-first for display, sliced for lazy pagination
+  const desc = [...allRows].reverse();
+  const movements: LedgerMovement[] = desc.slice(offset, offset + limit).map((r) => ({
+    id: r.id, kind: r.kind ?? "adjustment", delta: r.delta ?? 0, runningBalance: r.runningBalance ?? 0,
+    source: r.source ?? null, reason: r.reason ?? null, created_by: r.created_by ?? r.source ?? null,
+    ref_id: r.ref_id ?? null, created_at: r.created_at,
+    invoice_no: r.kind === "sale" ? (invoiceBy.get(r.ref_id) ?? null) : r.kind === "purchase" ? (billBy.get(r.ref_id) ?? null) : null,
+    doc: docFor(r),
+  }));
+
+  // --- reservations (open estimates = soft holds, not in the ledger) ---
+  const { data: resv } = await sb.from("estimate_items")
+    .select("qty, estimate:estimates(id,customer_name,status,created_at)")
+    .eq("product_id", productId);
+  const reservations = ((resv as any[]) ?? [])
+    .filter((r) => r.estimate && r.estimate.status === "open")
+    .map((r) => ({ id: r.estimate.id as string, customer: (r.estimate.customer_name as string) ?? "Walk-in", qty: (r.qty as number) ?? 0, status: r.estimate.status as string, created_at: r.estimate.created_at as string }))
+    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  const reserved = reservations.reduce((s, r) => s + r.qty, 0);
+
+  // --- supplier + cost from purchase history ---
+  const { data: pis } = await sb.from("purchase_items")
+    .select("qty,unit_cost, purchase:purchases(created_at, supplier:suppliers(name))")
+    .eq("mapped_product_id", productId);
+  const piList = ((pis as any[]) ?? [])
+    .map((r) => ({ qty: r.qty ?? 0, cost: r.unit_cost ?? 0, at: r.purchase?.created_at ?? null, supplier: r.purchase?.supplier?.name ?? null }))
+    .sort((a, b) => ((a.at ?? "") < (b.at ?? "") ? 1 : -1));
+  const lastPurchaseCost = piList[0]?.cost ?? null;
+  const supplier = piList.find((p2) => p2.supplier)?.supplier ?? null;
+  const totQty = piList.reduce((s, p2) => s + p2.qty, 0);
+  const avgCost = totQty > 0 ? Math.round(piList.reduce((s, p2) => s + p2.cost * p2.qty, 0) / totQty) : (lastPurchaseCost ?? null);
+
+  const lastSale = [...allRows].filter((r) => r.kind === "sale").slice(-1)[0]?.created_at ?? null;
+  const lastPurchaseDate = [...allRows].filter((r) => r.kind === "purchase").slice(-1)[0]?.created_at ?? piList[0]?.at ?? null;
+
+  // --- analytics roll-up ---
+  const opening = allRows.filter((r) => r.kind === "opening").reduce((s, r) => s + (r.delta ?? 0), 0);
+  const purchased = allRows.filter((r) => r.kind === "purchase").reduce((s, r) => s + Math.max(0, r.delta ?? 0), 0);
+  const sold = allRows.filter((r) => r.kind === "sale").reduce((s, r) => s + Math.abs(Math.min(0, r.delta ?? 0)), 0);
+  const returned = allRows.filter((r) => ["return", "purchase_return"].includes(r.kind)).reduce((s, r) => s + Math.abs(r.delta ?? 0), 0);
+  const adjusted = allRows.filter((r) => ["adjustment", "damage", "correction"].includes(r.kind)).reduce((s, r) => s + (r.delta ?? 0), 0);
+  const currentStock = prod.qty ?? bal;
+  const available = currentStock - reserved;
+  const daysSinceLastSale = lastSale ? Math.floor((Date.now() - new Date(lastSale).getTime()) / 86400000) : null;
+  const firstAt = allRows[0]?.created_at ? new Date(allRows[0].created_at) : null;
+  const monthsActive = firstAt ? Math.max(1, (Date.now() - firstAt.getTime()) / (86400000 * 30)) : 1;
+  const avgMonthlySales = Math.round(sold / monthsActive);
+  const turnover = currentStock > 0 ? Math.round((sold / currentStock) * 100) / 100 : sold;
+
+  return {
+    header: {
+      id: prod.id, sku: prod.sku, name: prod.name, image, category: prod.category?.name ?? null,
+      supplier, currentStock, reserved, available, reorderLevel: prod.reorder_level ?? null,
+      avgCost, lastPurchaseCost, lastSaleDate: lastSale, lastPurchaseDate,
+    },
+    analytics: { opening, purchased, sold, returned, adjusted, reserved, available, currentStock, daysSinceLastSale, turnover, avgMonthlySales },
+    reservations,
+    movements,
+    totalMovements,
+    nextOffset: offset + limit < totalMovements ? offset + limit : null,
+  };
+}
+
+export type ProductLedger = NonNullable<Awaited<ReturnType<typeof getProductLedger>>>;
 
 // ---------- dashboard + inventory intelligence (Req 6, 7; yogendra.pdf §8) ----------
 import { classify, type InventoryRule, DEFAULT_RULE } from "../inventory";
