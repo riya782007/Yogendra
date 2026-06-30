@@ -242,13 +242,102 @@ export async function getNotifyRequests(): Promise<{ sku: string; name: string; 
 }
 
 /** Owner-managed bank / payment methods. Resilient: returns [] until migration 0025 runs. */
-export async function getPaymentMethods(opts: { activeOnly?: boolean } = {}): Promise<{ id: string; name: string; kind: string; active: boolean }[]> {
+export type PaymentMethod = {
+  id: string; name: string; kind: string; active: boolean; archived: boolean;
+  is_default: boolean; sort: number;
+  bank_name: string | null; account_name: string | null; account_number: string | null;
+  upi_id: string | null; qr_code_url: string | null; branch: string | null;
+  opening_balance: number; color: string | null; icon: string | null; notes: string | null;
+  created_by: string | null; created_at: string | null;
+};
+
+const PM_COLS =
+  "id,name,kind,active,archived,is_default,sort,bank_name,account_name,account_number,upi_id,qr_code_url,branch,opening_balance,color,icon,notes,created_by,created_at";
+
+/** Master payment-method registry (single source of truth). Active, non-archived, default-first
+ *  by default — that's exactly the list every billing screen should render. */
+export async function getPaymentMethods(
+  opts: { activeOnly?: boolean; includeArchived?: boolean } = {},
+): Promise<PaymentMethod[]> {
   const sb = supabaseServer();
-  let q = sb.from("payment_methods").select("id,name,kind,active").order("sort").order("name");
+  // Resilient: if the v2 columns aren't deployed yet (migration 0027 not run), fall back to the
+  // basic 0025 shape so billing never breaks.
+  let q = sb.from("payment_methods").select(PM_COLS).order("is_default", { ascending: false }).order("sort").order("name");
   if (opts.activeOnly) q = q.eq("active", true);
-  const { data, error } = await q;
-  if (error) return [];
+  if (!opts.includeArchived) q = q.eq("archived", false);
+  let { data, error } = await q;
+  if (error) {
+    const basic = await sb.from("payment_methods").select("id,name,kind,active").order("sort").order("name");
+    return ((basic.data as any[]) ?? []).map((m) => ({
+      ...m, archived: false, is_default: false, sort: 0, bank_name: null, account_name: null,
+      account_number: null, upi_id: null, qr_code_url: null, branch: null, opening_balance: 0,
+      color: null, icon: null, notes: null, created_by: null, created_at: null,
+    }));
+  }
   return (data as any[]) ?? [];
+}
+
+export type MethodBalance = PaymentMethod & {
+  current_balance: number; total_in: number; total_out: number; today_in: number; today_out: number;
+};
+
+/** Every method enriched with its derived balance (from the payment_method_balances view) plus
+ *  today's in/out totals. Used by the Bank & Payment Methods manager and the dashboard. */
+export async function getPaymentMethodsWithBalances(
+  opts: { includeArchived?: boolean } = {},
+): Promise<MethodBalance[]> {
+  const sb = supabaseServer();
+  const methods = await getPaymentMethods({ includeArchived: opts.includeArchived });
+  const [{ data: bals }, { data: today }] = await Promise.all([
+    sb.from("payment_method_balances").select("method_id,current_balance,total_in,total_out"),
+    sb.from("payment_method_transactions").select("method_id,direction,amount,occurred_at")
+      .gte("occurred_at", new Date(new Date().setHours(0, 0, 0, 0)).toISOString()),
+  ]);
+  const balBy = new Map<string, any>();
+  for (const b of ((bals as any[]) ?? [])) balBy.set(b.method_id, b);
+  const todayBy = new Map<string, { in: number; out: number }>();
+  for (const t of ((today as any[]) ?? [])) {
+    const e = todayBy.get(t.method_id) ?? { in: 0, out: 0 };
+    if (t.direction === "in") e.in += t.amount ?? 0; else e.out += t.amount ?? 0;
+    todayBy.set(t.method_id, e);
+  }
+  return methods.map((m) => {
+    const b = balBy.get(m.id) ?? {};
+    const td = todayBy.get(m.id) ?? { in: 0, out: 0 };
+    return {
+      ...m,
+      current_balance: Number(b.current_balance ?? m.opening_balance ?? 0),
+      total_in: Number(b.total_in ?? 0), total_out: Number(b.total_out ?? 0),
+      today_in: td.in, today_out: td.out,
+    };
+  });
+}
+
+/** Top-card aggregates for the Bank & Payment Methods dashboard. Balances come from the new
+ *  per-method ledger; "today's payments" still reads the legacy supplier_payments so the figure
+ *  is real until money-out flows are migrated to the ledger (Phase 2). */
+export async function getPaymentDashboard() {
+  const sb = supabaseServer();
+  const methods = await getPaymentMethodsWithBalances();
+  const byKind = (kinds: string[]) =>
+    methods.filter((m) => kinds.includes((m.kind ?? "").toLowerCase())).reduce((s, m) => s + m.current_balance, 0);
+  const cashBalance = byKind(["cash"]);
+  const upiBalance = byKind(["upi", "wallet"]);
+  const bankBalance = byKind(["bank", "card", "cheque", "razorpay", "other"]);
+  const totalAcross = methods.reduce((s, m) => s + m.current_balance, 0);
+  const todayCollections = methods.reduce((s, m) => s + m.today_in, 0);
+
+  // Legacy money-out (supplier payments today) — keeps the card accurate pre-Phase-2.
+  const startOfDay = new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
+  const { data: pays } = await sb.from("supplier_payments").select("amount,created_at").gte("created_at", startOfDay);
+  const ledgerOutToday = methods.reduce((s, m) => s + m.today_out, 0);
+  const supplierOutToday = ((pays as any[]) ?? []).reduce((s, p) => s + (p.amount ?? 0), 0);
+  const todayPayments = ledgerOutToday + supplierOutToday;
+
+  return {
+    cashBalance, bankBalance, upiBalance, totalAcross, todayCollections, todayPayments,
+    netPosition: todayCollections - todayPayments, methodCount: methods.length,
+  };
 }
 
 /** Bank/UPI collected, grouped by the payment method that received it (Bank & Cash breakdown). */

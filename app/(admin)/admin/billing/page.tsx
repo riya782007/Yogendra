@@ -42,7 +42,7 @@ export default async function Billing() {
     <main className="p-8 bg-cream/40 min-h-screen">
       <h1 className="font-display text-4xl text-ink mb-1">Billing · Point of Sale</h1>
       <p className="text-sm text-muted mb-6">Ring up a counter sale. Stock and books update the instant you complete it.</p>
-      <POSClient products={list} customers={custList} methods={methods.map((m) => m.name)} />
+      <POSClient products={list} customers={custList} methods={methods.map((m) => ({ id: m.id, name: m.name, kind: m.kind }))} />
     </main>
   );
 }

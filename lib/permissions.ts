@@ -51,6 +51,15 @@ export const PERMISSION_GROUPS: PermGroup[] = [
     { key: "reels.manage", label: "Manage reels" },
     { key: "marketing.manage", label: "Run marketing / abandoned carts" },
   ]},
+  { key: "payments", label: "Payments & Accounts", perms: [
+    { key: "payments.view", label: "View payment methods" },
+    { key: "payments.balances", label: "View account balances" },
+    { key: "payments.create", label: "Create payment method" },
+    { key: "payments.edit", label: "Edit payment method" },
+    { key: "payments.delete", label: "Delete payment method" },
+    { key: "payments.opening", label: "Edit opening balance", desc: "the sensitive one" },
+    { key: "payments.transfer", label: "Transfer funds between accounts" },
+  ]},
   { key: "control", label: "Control (sensitive)", perms: [
     { key: "approvals.approve", label: "Approve via OTP" },
     { key: "roles.manage", label: "Manage roles & staff" },

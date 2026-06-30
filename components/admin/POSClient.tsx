@@ -13,7 +13,10 @@ type Cust = { id: string; name: string; phone: string; type: string; gstin: stri
 // Per the client: the tier is NOT chosen manually — it comes from the selected customer.
 const TIER_LABEL: Record<string, string> = { retail: "R", wholesale: "W" };
 
-export function POSClient({ products, customers = [], methods = [] }: { products: P[]; customers?: Cust[]; methods?: string[] }) {
+type Method = { id: string; name: string; kind: string };
+type PayLine = { methodId: string; amount: string };
+
+export function POSClient({ products, customers = [], methods = [] }: { products: P[]; customers?: Cust[]; methods?: Method[] }) {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [scan, setScan] = useState("");
@@ -29,9 +32,10 @@ export function POSClient({ products, customers = [], methods = [] }: { products
   const [packing, setPacking] = useState("");
   const [courier, setCourier] = useState("");
   const [adjustment, setAdjustment] = useState(""); // ± round-off / concession
-  const [payCash, setPayCash] = useState("");
-  const [payBank, setPayBank] = useState("");
-  const [payMethod, setPayMethod] = useState(""); // which bank/UPI account received the non-cash portion
+  // Centralized payment methods — true multi-split. Each row picks an ACTIVE method + amount.
+  // Empty list = paid in full (cash), matching the previous default behaviour.
+  const cashMethod = methods.find((m) => m.kind?.toLowerCase() === "cash");
+  const [payLines, setPayLines] = useState<PayLine[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [allowBackorder, setAllowBackorder] = useState(false);
@@ -79,6 +83,10 @@ export function POSClient({ products, customers = [], methods = [] }: { products
   const chargesTotal = Math.max(0, toPaise(packing)) + Math.max(0, toPaise(courier)) + toPaise(adjustment);
   const itemsTotal = lines.reduce((s, l) => s + effUnit(l) * l.qty, 0);
   const total = itemsTotal + chargesTotal;
+  const received = payLines.reduce((s, l) => s + (Number(l.amount) || 0) * 100, 0);
+  const remaining = total - received;
+  const addPayLine = () => setPayLines((p) => [...p, { methodId: methods[0]?.id ?? "", amount: "" }]);
+  const setPayLine = (i: number, patch: Partial<PayLine>) => setPayLines((p) => p.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
   function addLine(p: P) { setLines((prev) => { const ex = prev.find((l) => l.sku === p.sku); if (ex) return prev.map((l) => l.sku === p.sku ? { ...l, qty: l.qty + 1 } : l); return [...prev, { sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, qty: 1, stock: p.qty, override: "", disc: "" }]; }); setQ(""); }
   function setQty(sku: string, qty: number) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, qty: Math.max(1, Math.floor(qty || 1)) } : l)); }
   function setOverride(sku: string, val: string) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, override: val } : l)); }
@@ -102,10 +110,10 @@ export function POSClient({ products, customers = [], methods = [] }: { products
 
   async function complete() {
     setBusy(true); setErr("");
-    const cTxt = payCash.trim(), bTxt = payBank.trim();
-    const anySplit = cTxt !== "" || bTxt !== "";
-    const c = Number(cTxt) || 0, b = Number(bTxt) || 0;
-    const mode = anySplit ? (c > 0 && b > 0 ? "split" : b > 0 ? "upi" : "cash") : "cash";
+    // Tenders from the centralized payment-method picker (multi-split). Empty = paid-in-full cash.
+    const validPays = payLines
+      .filter((l) => l.methodId && (Number(l.amount) || 0) > 0)
+      .map((l) => ({ methodId: l.methodId, amount: Number(l.amount) || 0 }));
     const res = await posSaleAction({
       // Lines the owner hand-edited (price override) or that carry a discount send an explicit
       // unit; the rest are priced by the server at the customer's tier (DC/WC) via p_tier.
@@ -117,10 +125,9 @@ export function POSClient({ products, customers = [], methods = [] }: { products
         if (d > 0) return { sku: l.sku, qty: l.qty, priceRupees: effUnit(l) / 100 };
         return { sku: l.sku, qty: l.qty };
       }),
-      customer: cust, payment: mode,
+      customer: cust, payment: "cash", // mode is derived server-side from payments[]
       billType, buyerGstin: billType === "gst" ? gstin : "", buyerAddress: addr,
-      ...(anySplit ? { payCashRupees: c, payBankRupees: b } : {}),
-      ...(payMethod ? { paymentMethod: payMethod } : {}),
+      ...(validPays.length ? { payments: validPays } : {}),
       allowOversell: allowBackorder, tier: custType,
       backorder: allowBackorder && lines.some((l) => l.qty > l.stock),
       packingRupees: Number(packing) || 0, courierRupees: Number(courier) || 0, adjustmentRupees: Number(adjustment) || 0,
@@ -266,24 +273,30 @@ export function POSClient({ products, customers = [], methods = [] }: { products
               <textarea className={input} rows={2} placeholder="Buyer billing address (optional)" value={addr} onChange={(e) => setAddr(e.target.value)} />
             </>
           )}
-          {/* Split tender */}
+          {/* Payment received — centralized multi-split. Methods come from Bank & Payment Methods. */}
           <div>
-            <p className="text-xs text-muted mb-1">Payment received <span className="text-muted/70">— leave blank for paid-in-full (cash)</span></p>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="text-[11px] text-muted">Cash ₹<input value={payCash} onChange={(e) => setPayCash(e.target.value)} inputMode="numeric" placeholder="0" className={`${input} mt-0.5`} /></label>
-              <label className="text-[11px] text-muted">UPI / Card ₹<input value={payBank} onChange={(e) => setPayBank(e.target.value)} inputMode="numeric" placeholder="0" className={`${input} mt-0.5`} /></label>
-            </div>
-            <div className="flex gap-2 mt-1.5">
-              <button onClick={() => { setPayCash(String(Math.round(total / 100))); setPayBank(""); }} className="text-[11px] px-2 py-1 rounded-full border border-sand text-muted hover:border-emerald">All cash</button>
-              <button onClick={() => { setPayBank(String(Math.round(total / 100))); setPayCash(""); }} className="text-[11px] px-2 py-1 rounded-full border border-sand text-muted hover:border-emerald">All UPI</button>
-            </div>
-            {methods.length > 0 && Number(payBank) > 0 && (
-              <div className="mt-2">
-                <p className="text-[11px] text-muted mb-1">Received in (bank / UPI account)</p>
-                <select value={payMethod} onChange={(e) => setPayMethod(e.target.value)} className={input}>
-                  <option value="">Select account…</option>
-                  {methods.map((m) => <option key={m} value={m}>{m}</option>)}
-                </select>
+            <p className="text-xs text-muted mb-1.5">Payment received in <span className="text-muted/70">— leave empty for paid-in-full (cash)</span></p>
+            {methods.length === 0 ? (
+              <p className="text-[11px] text-muted bg-cream/60 rounded-lg px-3 py-2">No payment methods yet — add them in <b>Bank &amp; Payment Methods</b>.</p>
+            ) : (
+              <div className="space-y-2">
+                {payLines.map((l, idx) => (
+                  <div key={idx} className="flex gap-2">
+                    <select value={l.methodId} onChange={(e) => setPayLine(idx, { methodId: e.target.value })} className={`${input} flex-1`}>
+                      <option value="">Select method…</option>
+                      {methods.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    </select>
+                    <input value={l.amount} onChange={(e) => setPayLine(idx, { amount: e.target.value })} inputMode="numeric" placeholder="₹0" className={`${input} w-28`} />
+                    <button type="button" onClick={() => setPayLines((p) => p.filter((_, i) => i !== idx))} className="px-2 text-muted hover:text-rose" title="Remove payment">✕</button>
+                  </div>
+                ))}
+                <div className="flex flex-wrap gap-2 pt-0.5">
+                  <button type="button" onClick={addPayLine} className="text-[11px] px-3 py-1.5 rounded-full border border-sand text-ink hover:border-emerald">+ Add Another Payment</button>
+                  {cashMethod && <button type="button" onClick={() => setPayLines([{ methodId: cashMethod.id, amount: String(Math.round(total / 100)) }])} className="text-[11px] px-3 py-1.5 rounded-full border border-sand text-muted hover:border-emerald">All cash</button>}
+                  {payLines.length > 0 && remaining > 0 && (
+                    <button type="button" onClick={() => setPayLine(payLines.length - 1, { amount: String((((Number(payLines[payLines.length - 1].amount) || 0) * 100 + remaining) / 100)) })} className="text-[11px] px-3 py-1.5 rounded-full border border-sand text-muted hover:border-emerald">Fill remaining {formatPaise(remaining)}</button>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -291,16 +304,11 @@ export function POSClient({ products, customers = [], methods = [] }: { products
         <div className="mt-5 border-t border-sand pt-4 flex justify-between items-baseline">
           <span className="text-muted">Total</span><span className="text-3xl font-semibold text-ink">{formatPaise(total)}</span>
         </div>
-        {(() => {
-          const recv = (Number(payCash) || 0) * 100 + (Number(payBank) || 0) * 100;
-          if (recv === 0) return null;
-          const bal = total - recv;
-          return (
-            <p className={`text-xs mt-1 text-right ${bal > 0 ? "text-rose" : "text-emerald-dark"}`}>
-              Received {formatPaise(recv)}{bal > 0 ? ` · balance due ${formatPaise(bal)}` : bal < 0 ? ` · change ${formatPaise(-bal)}` : " · settled"}
-            </p>
-          );
-        })()}
+        {received > 0 && (
+          <p className={`text-xs mt-1 text-right ${remaining > 0 ? "text-rose" : "text-emerald-dark"}`}>
+            Received {formatPaise(received)}{remaining > 0 ? ` · balance due ${formatPaise(remaining)}` : remaining < 0 ? ` · change ${formatPaise(-remaining)}` : " · settled"}
+          </p>
+        )}
         {lines.some((l) => l.qty > l.stock) && (
           <label className="mt-3 flex items-start gap-2 rounded-xl border border-gold/60 bg-gold/10 px-3 py-2 text-xs text-ink cursor-pointer">
             <input type="checkbox" checked={allowBackorder} onChange={(e) => setAllowBackorder(e.target.checked)} className="mt-0.5" />
