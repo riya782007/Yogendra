@@ -13,7 +13,7 @@ type Cust = { id: string; name: string; phone: string; type: string; gstin: stri
 // Per the client: the tier is NOT chosen manually — it comes from the selected customer.
 const TIER_LABEL: Record<string, string> = { retail: "R", wholesale: "W" };
 
-export function POSClient({ products, customers = [] }: { products: P[]; customers?: Cust[] }) {
+export function POSClient({ products, customers = [], methods = [] }: { products: P[]; customers?: Cust[]; methods?: string[] }) {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [scan, setScan] = useState("");
@@ -31,6 +31,7 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
   const [adjustment, setAdjustment] = useState(""); // ± round-off / concession
   const [payCash, setPayCash] = useState("");
   const [payBank, setPayBank] = useState("");
+  const [payMethod, setPayMethod] = useState(""); // which bank/UPI account received the non-cash portion
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [allowBackorder, setAllowBackorder] = useState(false);
@@ -119,6 +120,7 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
       customer: cust, payment: mode,
       billType, buyerGstin: billType === "gst" ? gstin : "", buyerAddress: addr,
       ...(anySplit ? { payCashRupees: c, payBankRupees: b } : {}),
+      ...(payMethod ? { paymentMethod: payMethod } : {}),
       allowOversell: allowBackorder, tier: custType,
       backorder: allowBackorder && lines.some((l) => l.qty > l.stock),
       packingRupees: Number(packing) || 0, courierRupees: Number(courier) || 0, adjustmentRupees: Number(adjustment) || 0,
@@ -275,6 +277,15 @@ export function POSClient({ products, customers = [] }: { products: P[]; custome
               <button onClick={() => { setPayCash(String(Math.round(total / 100))); setPayBank(""); }} className="text-[11px] px-2 py-1 rounded-full border border-sand text-muted hover:border-emerald">All cash</button>
               <button onClick={() => { setPayBank(String(Math.round(total / 100))); setPayCash(""); }} className="text-[11px] px-2 py-1 rounded-full border border-sand text-muted hover:border-emerald">All UPI</button>
             </div>
+            {methods.length > 0 && Number(payBank) > 0 && (
+              <div className="mt-2">
+                <p className="text-[11px] text-muted mb-1">Received in (bank / UPI account)</p>
+                <select value={payMethod} onChange={(e) => setPayMethod(e.target.value)} className={input}>
+                  <option value="">Select account…</option>
+                  {methods.map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+            )}
           </div>
         </div>
         <div className="mt-5 border-t border-sand pt-4 flex justify-between items-baseline">

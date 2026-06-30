@@ -48,6 +48,7 @@ export async function posSaleAction(input: {
   packingRupees?: number; // extra charge — packing (GST-applicable)
   courierRupees?: number; // extra charge — courier / shipping (GST-applicable)
   adjustmentRupees?: number; // ± adjustment / round-off (GST-applicable)
+  paymentMethod?: string; // which bank/UPI account received the non-cash portion (#10)
 }): Promise<{ ok: boolean; orderId?: string; total?: number; error?: string }> {
   if (!(await requirePerm("billing.sell"))) return { ok: false, error: "Your role can't ring up POS sales." };
   if (!input.items?.length) return { ok: false, error: "Add at least one item" };
@@ -159,6 +160,12 @@ export async function posSaleAction(input: {
   if (xCharges !== 0) {
     const { error: chErr } = await sb.from("orders").update({ extra_packing: xPacking, extra_courier: xCourier, extra_adjustment: xAdjust }).eq("id", orderId);
     if (chErr) console.warn("charge breakdown not saved — apply migration 0021_billing_charges.sql:", chErr.message);
+  }
+
+  // Record which bank/UPI account received the money — best-effort; needs migration 0025.
+  if (input.paymentMethod) {
+    const { error: pmErr } = await sb.from("orders").update({ payment_method: input.paymentMethod }).eq("id", orderId);
+    if (pmErr) console.warn("payment_method not saved — apply migration 0025_payment_methods.sql:", pmErr.message);
   }
   await sb.rpc("assign_invoice_no", { p_order: orderId });
 

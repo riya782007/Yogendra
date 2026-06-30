@@ -216,6 +216,31 @@ export async function getNotifyRequests(): Promise<{ sku: string; name: string; 
   return [...map.values()].sort((a, b) => b.count - a.count);
 }
 
+/** Owner-managed bank / payment methods. Resilient: returns [] until migration 0025 runs. */
+export async function getPaymentMethods(opts: { activeOnly?: boolean } = {}): Promise<{ id: string; name: string; kind: string; active: boolean }[]> {
+  const sb = supabaseServer();
+  let q = sb.from("payment_methods").select("id,name,kind,active").order("sort").order("name");
+  if (opts.activeOnly) q = q.eq("active", true);
+  const { data, error } = await q;
+  if (error) return [];
+  return (data as any[]) ?? [];
+}
+
+/** Bank/UPI collected, grouped by the payment method that received it (Bank & Cash breakdown). */
+export async function getBankMethodTotals(): Promise<{ method: string; total: number }[]> {
+  const sb = supabaseServer();
+  const { data, error } = await sb.from("orders").select("payment_method,pay_bank");
+  if (error) return [];
+  const map = new Map<string, number>();
+  for (const o of ((data as any[]) ?? [])) {
+    const amt = o.pay_bank ?? 0;
+    if (amt <= 0) continue;
+    const m = (o.payment_method && String(o.payment_method).trim()) || "Unassigned";
+    map.set(m, (map.get(m) ?? 0) + amt);
+  }
+  return [...map.entries()].map(([method, total]) => ({ method, total })).sort((a, b) => b.total - a.total);
+}
+
 export async function getCustomerById(id: string) {
   const sb = supabaseServer();
   const { data: c } = await sb.from("customers").select("*").eq("id", id).maybeSingle();

@@ -1,15 +1,16 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
-import { getCashBankBook } from "@/lib/supabase/queries";
+import { getCashBankBook, getPaymentMethods, getBankMethodTotals } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { setCashBankOpeningAction } from "@/app/actions/payments";
+import { addPaymentMethodAction, deletePaymentMethodAction } from "@/app/actions/paymentMethods";
 
 export const metadata = { title: "Owner Console · Bank & Cash" };
 const card = "bg-white rounded-2xl border border-sand p-5 shadow-card";
 const inp = "rounded-xl border border-sand px-3 py-2 text-sm bg-white outline-none focus:border-emerald";
 
 export default async function CashBook() {
-  const b = await getCashBankBook();
+  const [b, methods, methodTotals] = await Promise.all([getCashBankBook(), getPaymentMethods(), getBankMethodTotals()]);
 
   return (
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
@@ -37,6 +38,44 @@ export default async function CashBook() {
         <label className="text-[11px] text-muted">Opening bank ₹<input name="opening_bank" type="number" min={0} step="0.01" defaultValue={b.opening_bank ? (b.opening_bank / 100).toFixed(2) : ""} placeholder="0" className={`${inp} w-32 block mt-0.5`} /></label>
         <button className="px-3 py-2 rounded-xl bg-ink/5 text-ink text-sm hover:bg-ink/10">Save</button>
       </form>
+
+      {/* Bank / payment methods — the accounts you collect into; picked at billing. */}
+      <div className={`${card} mb-5`}>
+        <p className="text-sm font-medium text-ink mb-1">Bank &amp; payment methods</p>
+        <p className="text-xs text-muted mb-3">Add the banks / UPI handles you collect into. At billing, the cashier marks which one received the money, and the bank total below splits per method.</p>
+        <form action={addPaymentMethodAction} className="flex flex-wrap items-end gap-2 mb-3">
+          <input name="name" placeholder="e.g. R.SBI · Yogendra Industries · vardhman jewellers…" className={`${inp} flex-1 min-w-[220px]`} />
+          <select name="kind" defaultValue="bank" className={inp}>
+            <option value="bank">Bank</option>
+            <option value="upi">UPI</option>
+            <option value="wallet">Wallet</option>
+          </select>
+          <button className="px-4 py-2 rounded-xl bg-ink text-white text-sm">+ Add method</button>
+        </form>
+        {methods.length === 0 ? (
+          <p className="text-sm text-muted">No methods yet — add your banks / UPI above.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {methods.map((m) => {
+              const total = methodTotals.find((t) => t.method === m.name)?.total ?? 0;
+              return (
+                <div key={m.id} className="inline-flex items-center gap-2 rounded-full border border-sand bg-white px-3 py-1.5 text-sm">
+                  <span className="text-ink font-medium">{m.name}</span>
+                  <span className="text-[10px] uppercase text-muted">{m.kind}</span>
+                  {total > 0 && <span className="text-emerald-dark text-xs">{formatPaise(total)}</span>}
+                  <form action={deletePaymentMethodAction}><input type="hidden" name="id" value={m.id} /><button className="text-muted hover:text-rose text-xs" title="Remove method">✕</button></form>
+                </div>
+              );
+            })}
+            {methodTotals.find((t) => t.method === "Unassigned") && (
+              <div className="inline-flex items-center gap-2 rounded-full border border-gold/40 bg-gold/5 px-3 py-1.5 text-sm">
+                <span className="text-ink">Unassigned</span>
+                <span className="text-gold-dark text-xs">{formatPaise(methodTotals.find((t) => t.method === "Unassigned")!.total)}</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className="overflow-x-auto rounded-2xl border border-sand bg-white shadow-card">
         <table className="w-full text-sm">
