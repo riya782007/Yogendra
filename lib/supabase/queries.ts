@@ -201,6 +201,21 @@ export async function getCreditors(): Promise<{ id: string | null; name: string;
   return [...map.values()].sort((a, b) => b.outstanding - a.outstanding);
 }
 
+/** Notify-Me — pending restock demand grouped by product (most-wanted first). */
+export async function getNotifyRequests(): Promise<{ sku: string; name: string; qty: number; count: number; latest: string; people: { name: string; phone: string }[] }[]> {
+  const sb = supabaseServer();
+  const { data } = await sb.from("notify_requests").select("sku,customer_name,customer_phone,created_at,product:products(name,qty)").order("created_at", { ascending: false }).limit(1000);
+  const map = new Map<string, { sku: string; name: string; qty: number; count: number; latest: string; people: { name: string; phone: string }[] }>();
+  for (const r of ((data as any[]) ?? [])) {
+    const sku = r.sku || "—";
+    const cur = map.get(sku) ?? { sku, name: r.product?.name ?? sku, qty: r.product?.qty ?? 0, count: 0, latest: r.created_at, people: [] };
+    cur.count++;
+    if (cur.people.length < 12) cur.people.push({ name: r.customer_name || "—", phone: r.customer_phone || "" });
+    map.set(sku, cur);
+  }
+  return [...map.values()].sort((a, b) => b.count - a.count);
+}
+
 export async function getCustomerById(id: string) {
   const sb = supabaseServer();
   const { data: c } = await sb.from("customers").select("*").eq("id", id).maybeSingle();

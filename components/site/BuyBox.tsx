@@ -4,13 +4,14 @@ import { useRouter } from "next/navigation";
 import { useCart } from "@/components/cart/CartContext";
 import { useToast } from "@/components/ui/Toast";
 import { formatPaise } from "@/lib/pricing";
+import { requestNotifyAction } from "@/app/actions/notify";
 
 export type BuyVariant = { sku: string; label: string; image: string | null; price: number; qty: number };
 
 export function BuyBox({ variants = [], waHref, item }: {
   variants?: BuyVariant[];
   waText: string; waHref: string;
-  item: { sku: string; name: string; price: number; category: string };
+  item: { sku: string; name: string; price: number; category: string; qty?: number };
 }) {
   const { add } = useCart();
   const { toast } = useToast();
@@ -22,7 +23,7 @@ export function BuyBox({ variants = [], waHref, item }: {
 
   const sel = hasVariants ? variants[Math.min(vi, variants.length - 1)] : null;
   const price = sel ? sel.price : item.price;
-  const outOfStock = sel ? sel.qty <= 0 : false;
+  const outOfStock = sel ? sel.qty <= 0 : (item.qty != null && item.qty <= 0);
 
   // The exact line that goes into the cart for this product/variant + chosen qty.
   const cartLine = () => ({ sku: item.sku, name: item.name, price, category: item.category, color: sel?.label });
@@ -43,6 +44,22 @@ export function BuyBox({ variants = [], waHref, item }: {
     add(cartLine(), qty);
     router.push(`/checkout?pay=${method}`);
   };
+
+  // Notify Me — capture demand when the (selected) item is out of stock.
+  const [nOpen, setNOpen] = useState(false);
+  const [nName, setNName] = useState("");
+  const [nPhone, setNPhone] = useState("");
+  const [nDone, setNDone] = useState(false);
+  const [nErr, setNErr] = useState("");
+  const [nBusy, setNBusy] = useState(false);
+  async function submitNotify() {
+    setNBusy(true); setNErr("");
+    const fd = new FormData();
+    fd.set("sku", sel?.sku || item.sku); fd.set("name", nName); fd.set("phone", nPhone);
+    const res = await requestNotifyAction(fd);
+    setNBusy(false);
+    if (res.ok) setNDone(true); else setNErr(res.error ?? "Couldn't save — try again.");
+  }
 
   return (
     <div className="mt-6">
@@ -91,6 +108,23 @@ export function BuyBox({ variants = [], waHref, item }: {
         </button>
         <a href={waHref} target="_blank" rel="noreferrer" className="px-5 py-3 rounded-full bg-[#25D366] text-white text-sm font-medium transition-transform hover:-translate-y-0.5 active:scale-95">WhatsApp</a>
       </div>
+      {outOfStock && (
+        <div className="mt-3 rounded-2xl border border-gold/40 bg-gold/5 p-4">
+          {nDone ? (
+            <p className="text-sm text-emerald-dark">✓ Done — we&apos;ll text you on {nPhone} the moment it&apos;s back in stock.</p>
+          ) : !nOpen ? (
+            <button onClick={() => setNOpen(true)} className="w-full py-3 rounded-full bg-ink text-white text-sm font-medium">🔔 Notify me when it&apos;s back</button>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-ink">Get a text when it&apos;s restocked</p>
+              <input value={nName} onChange={(e) => setNName(e.target.value)} placeholder="Your name (optional)" className="w-full rounded-xl border border-sand px-4 py-2.5 text-sm outline-none focus:border-emerald" />
+              <input value={nPhone} onChange={(e) => setNPhone(e.target.value)} placeholder="Phone number" inputMode="tel" className="w-full rounded-xl border border-sand px-4 py-2.5 text-sm outline-none focus:border-emerald" />
+              {nErr && <p className="text-xs text-rose">{nErr}</p>}
+              <button onClick={submitNotify} disabled={nBusy} className="w-full py-2.5 rounded-full bg-emerald text-white text-sm font-medium disabled:opacity-50">{nBusy ? "Saving…" : "Notify me"}</button>
+            </div>
+          )}
+        </div>
+      )}
       <p className="text-xs text-muted mt-3 flex flex-wrap items-center gap-x-4 gap-y-1"><span>✓ COD available</span><span>✓ Free shipping over ₹999</span><span>✓ 7-day returns</span></p>
     </div>
   );

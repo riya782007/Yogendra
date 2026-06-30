@@ -93,7 +93,7 @@ export default async function ProductPage({ params }: Params) {
           </div>
           <p className="text-xs text-muted mt-1">Inclusive of all taxes · You save {formatPaise(o.savings)}</p>
 
-          <BuyBox variants={variantsForBuy} waText={waText} waHref={waHref} item={{ sku: p.sku, name: p.name, price: o.price, category: catSlug }} />
+          <BuyBox variants={variantsForBuy} waText={waText} waHref={waHref} item={{ sku: p.sku, name: p.name, price: o.price, category: catSlug, qty: (p as any).qty }} />
 
           <div className="mt-7 border-t border-sand pt-5">
             <p className="text-ink/80 leading-relaxed">{content.description}</p>
