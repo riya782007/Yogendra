@@ -90,12 +90,12 @@ export type ShotType =
   | "enhance_shadows" | "enhance_sparkle" | "remove_bg" | "upscale";
 
 export const SHOT_META: Record<ShotType, { label: string; frame: string; aspect: ImageAspect; productOnly?: boolean; extra?: string }> = {
-  hero:          { label: "Hero", frame: "a full editorial HERO of a model wearing the piece, jewellery the unmistakable hero", aspect: "4:5" },
-  model:         { label: "Model Shot", frame: "a three-quarter model portrait wearing the piece", aspect: "4:5" },
+  hero:          { label: "Hero", frame: "a close, tightly-cropped editorial beauty shot of the worn piece filling the frame as the unmistakable hero — the model's face cropped out or reduced to a soft out-of-focus edge", aspect: "4:5" },
+  model:         { label: "Model Shot", frame: "a close cropped shot of the piece worn on the body, the jewellery large and dominant in the frame, the model's face mostly out of frame", aspect: "4:5" },
   closeup:       { label: "Close-up", frame: "an extreme macro close-up of the jewellery on the skin, every stone tack-sharp", aspect: "1:1" },
-  lifestyle:     { label: "Lifestyle", frame: "an aspirational lifestyle scene — model in a soft real environment, the jewellery emphasised", aspect: "4:5" },
-  side:          { label: "Side View", frame: "a side-profile of the model showing the piece from the side", aspect: "4:5" },
-  angle45:       { label: "45°", frame: "a 45-degree three-quarter angle of the model and the piece", aspect: "4:5" },
+  lifestyle:     { label: "Lifestyle", frame: "an aspirational close lifestyle crop in a soft real environment, the worn jewellery filling the frame, the face incidental and out of focus", aspect: "4:5" },
+  side:          { label: "Side View", frame: "a close side-on crop of the worn piece from the side, jewellery dominant and tack-sharp, face cropped", aspect: "4:5" },
+  angle45:       { label: "45°", frame: "a close 45-degree crop of the worn piece, jewellery large and tack-sharp, face minimal/cropped", aspect: "4:5" },
   back:          { label: "Back View", frame: "a back view showing the clasp / nape drape of the piece", aspect: "4:5" },
   detail:        { label: "Detail Shot", frame: "a detail shot isolating the craftsmanship — clasp, motif and stone setting", aspect: "1:1" },
   catalog_white: { label: "Catalog White", frame: "a clean catalog product shot of the jewellery ALONE on a pure white seamless background", aspect: "1:1", productOnly: true },
@@ -115,6 +115,13 @@ export type StudioSettings = {
 
 const FIDELITY = `This is a REAL, manufactured jewellery product the customer will physically receive — the design in your output MUST be a pixel-faithful reproduction of the attached reference image. Same metal colour & finish, same gemstone cut/colour/size/placement, same engravings, links, clasps and proportions. Do NOT redesign, restyle, embellish or "improve" the piece.`;
 const NO_TEXT = `ABSOLUTELY NO TEXT of any kind anywhere — no words, letters, numbers, captions, labels, logos, watermarks, price tags or UI. Every surface must be free of writing.`;
+
+// The client's #1 art-direction rule: shoot CLOSE, crop tight on the piece, the model's face is
+// NOT the subject. This block is injected into every model (worn) prompt so the jewellery — not the
+// face — fills the frame, the way a real jewellery advertisement is shot.
+const FRAMING = `FRAMING & CROP — THE MOST IMPORTANT RULE:
+Shoot CLOSE and TIGHT on the exact body area where the piece is worn, as if using a macro / 100mm product-beauty lens. The jewellery must fill roughly 50–70% of the frame, large, dominant and edge-to-edge, with EVERY stone, bead, link, motif and clasp clearly visible so the buyer sees the complete piece authentically — nothing cut off, nothing tiny or far away. DO NOT shoot from a distance and DO NOT make a full-body or head-and-shoulders portrait.
+The model is only a stand to display the jewellery: her FACE IS NOT THE SUBJECT. Crop the face out of frame, or show at most a small, soft, out-of-focus sliver at the very edge — never centre, feature, or sharply render the face, eyes or expression. Show only the minimum skin/body needed to present the piece naturally (e.g. just the wrist & hand for a bracelet, the neckline & collarbone for a necklace, the earlobe & jaw for earrings). The piece is the single hero, tack-sharp and brilliantly lit.`;
 
 function settingsBlock(s: StudioSettings): string {
   const lines: string[] = [];
@@ -148,8 +155,9 @@ export function buildStudioPrompt(opts: {
     : "";
   const subjectBlock = meta.productOnly
     ? `PRESENTATION: the jewellery laid out / standing cleanly as the single hero, sharply in focus, on ${background}. No model, no hands.`
-    : `SUBJECT: ${subject}.${western ? " Polished international look." : " The model MUST look clearly Indian/South Asian."} Skin bright, luminous, well-exposed.
-SHOT TYPE: ${meta.frame} — worn at ${shot}, framed so the jewellery is the clear hero and tack-sharp.
+    : `SUBJECT (a display stand for the jewellery — keep her minimal, face not featured): ${subject}.${western ? " Polished international look." : " Clearly Indian/South Asian."} Skin bright, luminous, well-exposed.
+SHOT TYPE: ${meta.frame} — worn at ${shot}.
+${FRAMING}
 BACKGROUND & MOOD: ${background}. ${s.mood?.trim() || "Calm, aspirational, luxury Indian brand feel."}`;
 
   const prompt = `${FIDELITY}
@@ -200,8 +208,10 @@ The jewelry in the output must be IDENTICAL to the reference image — same meta
 NON-NEGOTIABLE — ABSOLUTELY NO TEXT:
 The image must contain ZERO text of any kind. No words, no letters, no numbers, no captions, no labels, no logos, no watermarks, no brand names, no price tags, no signatures, no stamps, no UI elements, no borders with writing. The background, clothing, jewelry, and every surface must be completely free of any written or typographic elements. If any text would normally appear, leave that area clean and blank.
 
-SUBJECT: ${subject}.${western ? " A polished international look suits this western/fusion style." : " The model MUST look clearly Indian/South Asian."} Her skin must be bright, luminous and well-exposed — never dark, dull, or muddy.
-SHOT TYPE: ${shot} — framed so the jewelry is the clear hero and sharply in focus.
+SUBJECT (a display stand for the jewellery only — her face is NOT the subject and must not be featured): ${subject}.${western ? " A polished international look suits this western/fusion style." : " The model MUST look clearly Indian/South Asian."} Her skin must be bright, luminous and well-exposed — never dark, dull, or muddy.
+SHOT TYPE: ${shot}.
+
+${FRAMING}
 
 THE JEWELLERY IS THE HERO (CRITICAL):
 The piece must be the brightest, sharpest, most eye-catching element in the entire frame — prominent, large in the composition, and tack-sharp. Expose and light specifically FOR the jewellery so the metal gleams with crisp specular highlights and every stone/bead sparkles and reads vivid and true. The piece must visibly POP against the skin and clothing with clear contrast and separation — it should be the first thing the eye lands on. Do not let the model, hair, or background draw attention away from the jewellery.
