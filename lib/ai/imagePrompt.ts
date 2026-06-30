@@ -55,6 +55,17 @@ export function shotTypeFor(category: string): string {
   return SHOT_BY_CATEGORY[category.toLowerCase()] ?? "the piece worn naturally, jewelry as the clear hero";
 }
 
+/** Plain-English statement of WHAT the piece is and WHERE it's worn — injected into every
+ *  generation prompt so Gemini frames a necklace as a necklace, a kanchain on the hair, etc.,
+ *  using the product's real category instead of guessing from the reference alone. */
+export function categoryIdentity(category: string, subcategory?: string): string {
+  const sub = (subcategory ?? "").trim();
+  const cat = (category ?? "").trim();
+  const where = SHOT_BY_CATEGORY[sub.toLowerCase()] ?? SHOT_BY_CATEGORY[cat.toLowerCase()];
+  const label = (sub || cat || "piece of jewellery").trim();
+  return where ? `It is a ${label}, worn at ${where}` : `It is a ${label}`;
+}
+
 /**
  * Build the prompt for a single COLOUR VARIANT image. Reuses the same fidelity + no-text
  * rules, but produces a clean product-only studio shot of the EXACT piece re-rendered in the
@@ -62,18 +73,20 @@ export function shotTypeFor(category: string): string {
  *
  * The reference image (passed alongside) carries the design; we change ONLY the colour.
  */
-export function buildVariantImagePrompt(opts: { category: string; color: string; aspect?: ImageAspect }): string {
+export function buildVariantImagePrompt(opts: { category: string; color: string; productName?: string; subcategory?: string; aspect?: ImageAspect }): string {
   const color = opts.color.trim();
   const aspect = opts.aspect ?? "1:1";
+  const identity = categoryIdentity(opts.category, opts.subcategory);
+  const productLine = opts.productName?.trim() ? `"${opts.productName.trim()}"` : "this piece";
   const aspectNote =
     aspect === "4:5"
       ? "a VERTICAL PORTRAIT 4:5 aspect ratio (taller than wide, e.g. 1080x1350)"
       : "a SQUARE 1:1 aspect ratio (equal width and height, e.g. 1024x1024), suitable for a product/colour-swatch thumbnail";
 
-  return `This is a REAL, manufactured artificial-jewellery product. Use the attached image as the EXACT product reference for the design. Generate a clean, professional e-commerce PRODUCT photograph (the jewellery by itself, no model) of THIS exact piece rendered in a "${color}" colourway.
+  return `This is a REAL, manufactured artificial-jewellery product (${productLine}, a ${opts.subcategory || opts.category}). ${identity}. Use the attached image as the EXACT product reference for the design. Generate a clean, professional e-commerce PRODUCT photograph (the jewellery by itself, no model) of THIS exact piece rendered in a "${color}" colourway.
 
-NON-NEGOTIABLE — SAME DESIGN, ONLY THE COLOUR CHANGES:
-The shape, layout, stone/bead placement, motifs, links, clasps, engraving and overall design must be IDENTICAL to the reference. Change ONLY the colour: re-render the coloured elements (enamel / meenakari work / stones / beads / thread) in "${color}" and its natural complementary shades, keeping the metal finish and craftsmanship the same. Do not redesign, restyle, add, or remove anything. It must look like the very same product offered in the "${color}" colour option.
+NON-NEGOTIABLE — SAME DESIGN, ONLY THE COLOUR CHANGES (this is a COLOUR SWATCH):
+The shape, layout, stone/bead placement, motifs, links, clasps, engraving and overall design must be IDENTICAL to the reference. Change ONLY the colour: re-render the coloured elements (enamel / meenakari work / stones / beads / thread) clearly in "${color}" and its natural complementary shades, keeping the metal finish and craftsmanship the same. The "${color}" colour MUST be obvious and distinct — a customer comparing swatches must instantly recognise this as the ${color} version, visibly different from other colourways. Do not redesign, restyle, add, or remove anything. It must look like the very same product offered in the "${color}" colour option.
 
 NON-NEGOTIABLE — ABSOLUTELY NO TEXT:
 Zero text of any kind — no words, letters, numbers, captions, labels, logos, watermarks, price tags, stamps, or UI. Every surface must be free of writing.
@@ -185,15 +198,22 @@ export function buildImagePrompt(opts: {
   aspect?: ImageAspect;
   /** Explicit per-subcategory choice (Pillar 12). 'auto'/undefined falls back to name detection. */
   style?: "auto" | "indian" | "western";
+  /** The product's real name, e.g. "Kundan Necklace" — anchors Gemini on the right piece. */
+  productName?: string;
+  /** Extra known specs (colours, material, tags) pulled from the product to guide the render. */
+  details?: string[];
 }): string {
   const i = opts.index ?? 0;
-  const styleHint = `${opts.category} ${opts.subcategory ?? ""}`;
+  const styleHint = `${opts.category} ${opts.subcategory ?? ""} ${opts.productName ?? ""}`;
   const western = opts.style === "western" ? true : opts.style === "indian" ? false : isWesternStyle(styleHint);
   const pool = western ? WESTERN_SUBJECTS : SUBJECTS;
   const subject = pool[i % pool.length];
   const background = BACKGROUNDS[i % BACKGROUNDS.length];
-  // Prefer the subcategory for framing (more specific: "kanchain", "maang tikka", …).
+  // Frame by the most specific known type (subcategory → category).
   const shot = shotTypeFor(opts.subcategory || opts.category);
+  const identity = categoryIdentity(opts.category, opts.subcategory);
+  const productLine = opts.productName?.trim() ? `"${opts.productName.trim()}"` : "this piece";
+  const detailLine = opts.details && opts.details.length ? ` Known specifications: ${opts.details.slice(0, 8).join(", ")}.` : "";
   const aspect = opts.aspect ?? "4:5";
   const aspectNote =
     aspect === "1:1"
@@ -201,6 +221,8 @@ export function buildImagePrompt(opts: {
       : "a VERTICAL PORTRAIT 4:5 aspect ratio (taller than it is wide, e.g. 1080 wide by 1350 tall), suitable for a product-page hero — compose the model and jewelry centered with comfortable margins so nothing important is cropped at the edges";
 
   return `This is a REAL, manufactured jewellery product that a customer will physically receive — the design in your output MUST be a pixel-faithful reproduction of the reference image. Use the attached image as the EXACT product reference. Generate a professional, editorial-grade e-commerce photograph of a model wearing this exact piece of jewelry.
+
+PRODUCT IDENTITY (use this to frame the shot correctly): The piece is ${productLine}, categorised as ${opts.subcategory || opts.category}. ${identity}. Photograph and style it AS a ${opts.subcategory || opts.category} — worn and framed in the correct place for that jewellery type, never as a different category of jewellery.${detailLine}
 
 NON-NEGOTIABLE — PRODUCT FIDELITY:
 The jewelry in the output must be IDENTICAL to the reference image — same metal color and finish, same gemstone cut, color, size, and placement, same engravings, links, clasps, and proportions. Do not redesign, restyle, embellish, or "improve" the piece. Treat it as a real product that must match what the customer will receive.

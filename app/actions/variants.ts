@@ -210,11 +210,13 @@ export async function generateVariantImageAction(variantId: string): Promise<Var
 
   const { data: prod } = await sb
     .from("products")
-    .select("id, sku, categories(slug)")
+    .select("id, sku, name, categories(name,slug)")
     .eq("id", (v as any).product_id)
     .maybeSingle();
   const productSku = String((prod as any)?.sku ?? "");
   const categorySlug = String((prod as any)?.categories?.slug ?? "necklace");
+  const categoryName = String((prod as any)?.categories?.name ?? categorySlug);
+  const productName = String((prod as any)?.name ?? "");
 
   if (!geminiConfigured()) return { ok: false, reason: "no_key" };
 
@@ -241,7 +243,7 @@ export async function generateVariantImageAction(variantId: string): Promise<Var
     return { ok: false, reason: "no_source" };
   }
 
-  const prompt = buildVariantImagePrompt({ category: categorySlug, color: color || size || polish, aspect: "1:1" });
+  const prompt = buildVariantImagePrompt({ category: categoryName, productName, color: color || size || polish, aspect: "1:1" });
   const result = await generateImage({ prompt, referenceBase64, referenceMime, aspectRatio: "1:1" });
   if (!result.ok) return { ok: false, reason: result.reason, error: result.error };
 
