@@ -551,6 +551,57 @@ export async function getCashBankBook() {
   };
 }
 
+/** Date-filterable cash & bank ledger for the cashbook page. Returns each money movement
+ *  (collections from orders, payments to suppliers) tagged with cash/bank amounts and which
+ *  bank/method, so the page can: filter to cash-only or bank-only, group day-wise, and break the
+ *  bank total down by account. payment_method may not exist in every DB → falls back gracefully. */
+export async function getCashBankLedger(opts: { from?: string; to?: string } = {}): Promise<{
+  moves: { date: string; label: string; link: string | null; cash: number; bank: number; method: string | null }[];
+}> {
+  const sb = supabaseServer();
+  const applyRange = (q: any) => {
+    let x = q;
+    if (opts.from) x = x.gte("created_at", opts.from);
+    if (opts.to) x = x.lte("created_at", opts.to);
+    return x;
+  };
+
+  const RICH = "id,invoice_no,customer_name,pay_cash,pay_bank,payment_method,created_at";
+  const BASIC = "id,invoice_no,customer_name,pay_cash,pay_bank,created_at";
+  let ores = await applyRange(sb.from("orders").select(RICH).or("pay_cash.gt.0,pay_bank.gt.0").order("created_at", { ascending: false }).limit(3000));
+  if (ores.error) ores = await applyRange(sb.from("orders").select(BASIC).or("pay_cash.gt.0,pay_bank.gt.0").order("created_at", { ascending: false }).limit(3000));
+  const orders = (ores.data as any[]) ?? [];
+
+  const pres = await applyRange(sb.from("supplier_payments").select("id,supplier_id,amount,mode,note,created_at, supplier:suppliers(name)").order("created_at", { ascending: false }).limit(3000));
+  const pays = (pres.data as any[]) ?? [];
+
+  const moves: { date: string; label: string; link: string | null; cash: number; bank: number; method: string | null }[] = [];
+  for (const o of orders) {
+    const bank = o.pay_bank ?? 0;
+    moves.push({
+      date: o.created_at,
+      label: `Collection · ${o.invoice_no || String(o.id).slice(0, 6).toUpperCase()}${o.customer_name ? ` · ${o.customer_name}` : ""}`,
+      link: `/admin/invoice/${o.id}`,
+      cash: o.pay_cash ?? 0,
+      bank,
+      method: bank > 0 ? (o.payment_method || "Bank / UPI") : null,
+    });
+  }
+  for (const p of pays) {
+    const isCash = p.mode === "cash";
+    moves.push({
+      date: p.created_at,
+      label: `Paid supplier · ${p.supplier?.name ?? ""}${p.note ? ` — ${p.note}` : ""}`,
+      link: `/admin/supplier/${p.supplier_id}`,
+      cash: isCash ? -(p.amount ?? 0) : 0,
+      bank: isCash ? 0 : -(p.amount ?? 0),
+      method: isCash ? null : (p.mode || "Bank / UPI"),
+    });
+  }
+  moves.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  return { moves };
+}
+
 /** Self-growing master lists for variant attributes (colour / size / polish). */
 export async function getVariantOptions(): Promise<{ color: string[]; size: string[]; polish: string[] }> {
   const sb = supabaseServer();
