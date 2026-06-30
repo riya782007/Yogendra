@@ -227,7 +227,7 @@ export async function getNotifyRequests(): Promise<{ sku: string; name: string; 
   const map = new Map<string, { sku: string; name: string; qty: number; count: number; latest: string; people: { name: string; phone: string }[] }>();
   for (const r of ((data as any[]) ?? [])) {
     const sku = r.sku || "—";
-    const cur = map.get(sku) ?? { sku, name: r.product?.name ?? sku, qty: r.product?.qty ?? 0, count: 0, latest: r.created_at, people: [] };
+    const cur = map.get(sku) ?? { sku, name: r.product?.name ?? sku, qty: r.product?.qty ?? 0, count: 0, latest: r.created_at, people: [] as { name: string; phone: string }[] };
     cur.count++;
     if (cur.people.length < 12) cur.people.push({ name: r.customer_name || "—", phone: r.customer_phone || "" });
     map.set(sku, cur);
