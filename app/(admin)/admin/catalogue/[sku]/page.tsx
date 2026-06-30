@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import {
   getProductBySku, getCategories, getPricingFormula, getSubcategories,
-  getProductSalesStats, getStockHistory, getVariantOptions, getLabels, getColorCodeMap,
+  getProductSalesStats, getStockHistory, getProductEstimateReservations, getVariantOptions, getLabels, getColorCodeMap,
 } from "@/lib/supabase/queries";
 import { ProductEditor, type EditorProduct } from "@/components/admin/ProductEditor";
 import { ProductWorkspace, type WorkspaceTab, type TabKey } from "@/components/admin/ProductWorkspace";
@@ -44,13 +44,14 @@ export default async function ProductPage({ params, searchParams }: { params: { 
   ]);
   if (!p) notFound();
 
-  const [subcategories, stats, history, vopts, allLabels, colorCodes] = await Promise.all([
+  const [subcategories, stats, history, vopts, allLabels, colorCodes, estReservations] = await Promise.all([
     getSubcategories({ categoryId: p.category?.id }),
     getProductSalesStats(p.sku).catch(() => null),
     getStockHistory(p.id).catch(() => []),
     getVariantOptions().catch(() => ({ color: [], size: [], polish: [] })),
     getLabels().catch(() => []),
     getColorCodeMap().catch(() => ({} as Record<string, string>)),
+    getProductEstimateReservations(p.id).catch(() => []),
   ]);
   const labelIds = new Set((((p as any).product_labels as any[]) ?? []).map((x) => x.label_id));
 
@@ -398,6 +399,22 @@ export default async function ProductPage({ params, searchParams }: { params: { 
           </ul>
         )}
       </div>
+      {estReservations.length > 0 && (
+        <div className={card}>
+          <h3 className="font-medium text-ink mb-1">🔖 Reserved by open estimates</h3>
+          <p className="text-xs text-muted mb-3">Soft holds — this stock only moves when the estimate is billed.</p>
+          <ul className="divide-y divide-sand/60">
+            {estReservations.map((e) => (
+              <li key={e.id} className="py-2 flex items-center justify-between gap-3 text-sm">
+                <Link href={`/admin/estimate/${e.id}`} className="text-emerald nav-link">EST-{String(e.id).slice(0, 8).toUpperCase()} →</Link>
+                <span className="flex-1 text-muted truncate">{e.customer || "Walk-in"}</span>
+                <span className="text-gold-dark font-semibold whitespace-nowrap">{e.qty} pcs held</span>
+                <span className="text-muted whitespace-nowrap">{timeAgo(e.created_at)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 

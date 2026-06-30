@@ -538,6 +538,21 @@ export async function getStockHistory(productId: string, limit = 25): Promise<{ 
   return (data as any[]) ?? [];
 }
 
+/** Open estimates that reserve this product (soft holds — not yet billed, so not in the
+ *  stock ledger). Shown alongside the product's stock movements (Meeting 2 §2). */
+export async function getProductEstimateReservations(productId: string): Promise<{ id: string; customer: string | null; qty: number; created_at: string }[]> {
+  if (!productId) return [];
+  const sb = supabaseServer();
+  const { data } = await sb
+    .from("estimate_items")
+    .select("qty, estimate:estimates(id,customer_name,status,created_at)")
+    .eq("product_id", productId);
+  return ((data as any[]) ?? [])
+    .filter((r) => r.estimate && r.estimate.status === "open")
+    .map((r) => ({ id: r.estimate.id as string, customer: r.estimate.customer_name as string | null, qty: r.qty as number, created_at: r.estimate.created_at as string }))
+    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+}
+
 // Pillar 5 — the single Stock Movement History register: every in/out across all products,
 // each row carrying ref_id so its purchase/sale bill opens straight from here.
 export async function getStockMovements(opts: { page?: number; pageSize?: number; kind?: string; q?: string; from?: string; to?: string }) {
