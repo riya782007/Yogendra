@@ -627,6 +627,7 @@ export async function savePricingFormulaAction(formData: FormData): Promise<void
     retail_multiplier: num("retail_multiplier", 2.2),
     mrp_multiplier: num("mrp_multiplier", 2.75),
     round_to: Math.max(1, Math.round(num("round_to", 100))),
+    wholesale_min_order: Math.max(0, Math.round(num("wholesale_min_order_rupees", 3000) * 100)), // ₹ → paise
   };
   const sb = supabaseServer();
   const { data: row } = await sb.from("pricing_settings").select("id").limit(1).maybeSingle();

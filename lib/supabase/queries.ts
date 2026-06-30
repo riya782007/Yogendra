@@ -39,6 +39,7 @@ export async function getPricingFormula(): Promise<PricingFormula> {
     resellerPct: Number(data?.reseller_pct ?? 15),
     customerDiscountPct: Number(data?.customer_discount_pct ?? 5),
     mrpPct: Number(data?.mrp_pct ?? 25),
+    wholesaleMinOrder: Number(data?.wholesale_min_order ?? 300000),
   };
 }
 

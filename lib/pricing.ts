@@ -24,6 +24,8 @@ export type PricingFormula = {
   resellerPct?: number;
   customerDiscountPct?: number;
   mrpPct?: number;
+  /** Minimum wholesale order value in paise (gate on the wholesale cart). */
+  wholesaleMinOrder?: number;
 };
 
 export type PriceSet = {

@@ -149,6 +149,13 @@ export default function PricingFormulaEditor({ initial, action }: Props) {
         </div>
       </details>
 
+      <div className="rounded-2xl border border-sand bg-white p-4 mb-4">
+        <label className="text-sm font-medium text-ink">Minimum wholesale order (₹)</label>
+        <p className="text-[11px] text-muted mb-2">Wholesale carts below this value can&apos;t check out.</p>
+        <input name="wholesale_min_order_rupees" type="number" min={0} step={1} defaultValue={Math.round((initial.wholesaleMinOrder ?? 300000) / 100)}
+          className="w-40 rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald" />
+      </div>
+
       <div className="flex items-center gap-3">
         <button
           type="submit"

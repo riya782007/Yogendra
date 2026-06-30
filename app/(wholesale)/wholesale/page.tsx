@@ -14,6 +14,8 @@ const WHOLESALE_MIN = 300000; // ₹3,000 in paise (#27)
 export default async function Wholesale({ searchParams }: { searchParams: { error?: string } }) {
   const session = await getWholesaleSession();
   const { products, formula } = await getStorefront({ includeWholesaleOnly: true, excludeRetailOnly: true });
+  const minOrder = formula.wholesaleMinOrder ?? WHOLESALE_MIN; // configurable in /admin/pricing
+  const minRupees = Math.round(minOrder / 100).toLocaleString("en-IN");
 
   // Logged in & approved → real wholesale catalog with ordering.
   if (session) {
@@ -37,8 +39,8 @@ export default async function Wholesale({ searchParams }: { searchParams: { erro
       <div className="max-w-7xl mx-auto px-5 py-8">
         <div className="mb-4"><Back label="Back to store" /></div>
         <h1 className="font-display text-4xl text-ink mb-1">Wholesale Catalogue</h1>
-        <p className="text-sm text-muted mb-6">Factory-direct trade rates. Enter quantities and place your order — ₹3,000 minimum. Your margin vs MRP is shown on every line.</p>
-        <WholesaleCatalog products={list} customerName={session.name} minOrder={WHOLESALE_MIN} history={history} />
+        <p className="text-sm text-muted mb-6">Factory-direct trade rates. Enter quantities and place your order — ₹{minRupees} minimum. Your margin vs MRP is shown on every line.</p>
+        <WholesaleCatalog products={list} customerName={session.name} minOrder={minOrder} history={history} />
 
         {/* Trade partners can offer their own designs for us to stock. */}
         <section className="mt-12 border-t border-sand pt-8">
