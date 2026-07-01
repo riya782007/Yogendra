@@ -17,6 +17,7 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
   const [openIdx, setOpenIdx] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const [confirmDup, setConfirmDup] = useState(false);
 
   const input = "rounded-xl border border-sand px-3 py-2 text-sm bg-white outline-none focus:border-emerald";
   const set = (i: number, patch: Partial<Line>) => setLines((p) => p.map((l, idx) => idx === i ? { ...l, ...patch } : l));
@@ -32,7 +33,7 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
   const suggest = (q: string) => q.trim() ? products.filter((p) => (p.name + p.sku).toLowerCase().includes(q.toLowerCase())).slice(0, 6) : [];
   const total = lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.cost) || 0), 0);
 
-  async function submit() {
+  async function submit(force = false) {
     // A mapped product that HAS colours must be bought as a specific colour — never the parent.
     const missing = lines.find((l) => {
       if (!l.mappedProductId || !(Number(l.qty) > 0)) return false;
@@ -40,14 +41,14 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
       return hasVariants && !l.variantId;
     });
     if (missing) { setMsg(`✕ Pick a colour for "${missing.mappedName}" — products with colours are bought per colour, not as the whole product.`); return; }
-    setBusy(true); setMsg("");
+    setBusy(true); setMsg(""); if (!force) setConfirmDup(false);
     const res = await recordPurchaseAction({
-      supplierId, billNo,
+      supplierId, billNo, force,
       items: lines.map((l) => ({ supplierSku: l.supplierSku, mappedProductId: l.mappedProductId, variantId: l.variantId, qty: Number(l.qty) || 0, unitCostRupees: Number(l.cost) || 0 })),
     });
     setBusy(false);
-    if (res.ok) { setMsg(`✓ Purchase recorded (${formatPaise(res.total ?? 0)}) — mapped items added to stock.`); setLines([{ supplierSku: "", mappedProductId: "", mappedName: "", variantId: "", qty: "", cost: "" }]); setBillNo(""); }
-    else setMsg(`✕ ${res.error}`);
+    if (res.ok) { setMsg(`✓ Purchase recorded (${formatPaise(res.total ?? 0)}) — mapped items added to stock.`); setLines([{ supplierSku: "", mappedProductId: "", mappedName: "", variantId: "", qty: "", cost: "" }]); setBillNo(""); setConfirmDup(false); }
+    else { setMsg(`✕ ${res.error}`); setConfirmDup(!!res.duplicateBillNo); }
   }
 
   return (
@@ -117,9 +118,14 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
 
       <div className="flex items-center justify-between mt-5 border-t border-sand pt-4">
         <span className="text-lg font-semibold text-ink">Total: {formatPaise(total * 100)}</span>
-        <button onClick={submit} disabled={busy} className="btn-primary px-6 py-2.5 text-sm font-medium disabled:opacity-50">{busy ? "Recording…" : "Record purchase"}</button>
+        <div className="flex items-center gap-2">
+          {confirmDup && (
+            <button onClick={() => submit(true)} disabled={busy} className="px-4 py-2.5 rounded-xl border border-rose text-rose text-sm font-medium hover:bg-rose/10 disabled:opacity-50">Record anyway</button>
+          )}
+          <button onClick={() => submit(false)} disabled={busy} className="btn-primary px-6 py-2.5 text-sm font-medium disabled:opacity-50">{busy ? "Recording…" : "Record purchase"}</button>
+        </div>
       </div>
-      {msg && <p className="text-sm mt-2 text-ink">{msg}</p>}
+      {msg && <p className={`text-sm mt-2 ${confirmDup ? "text-rose" : "text-ink"}`}>{msg}</p>}
     </div>
   );
 }

@@ -51,12 +51,25 @@ export async function requestPurchaseDeletionAction(formData: FormData): Promise
 
 export type PurchaseLine = { supplierSku: string; mappedProductId: string; variantId?: string; qty: number; unitCostRupees: number };
 
-export async function recordPurchaseAction(input: { supplierId: string; billNo: string; items: PurchaseLine[] }): Promise<{ ok: boolean; total?: number; error?: string }> {
+export async function recordPurchaseAction(input: { supplierId: string; billNo: string; items: PurchaseLine[]; force?: boolean }): Promise<{ ok: boolean; total?: number; error?: string; duplicateBillNo?: boolean }> {
   if (!input.supplierId) return { ok: false, error: "Choose a supplier" };
   const items = (input.items ?? []).filter((l) => l.qty > 0 && l.unitCostRupees > 0);
   if (!items.length) return { ok: false, error: "Add at least one line with qty and cost" };
+
+  const sb = supabaseServer();
+  const billNo = (input.billNo ?? "").trim();
+  // Warn (don't hard-block — bills do get corrected/re-entered) if this supplier already has
+  // a purchase under the same bill number, so the same invoice isn't double-booked by mistake.
+  if (billNo && !input.force) {
+    const { data: dup } = await sb.from("purchases").select("id, created_at").eq("supplier_id", input.supplierId).eq("bill_no", billNo).limit(1).maybeSingle();
+    if (dup) {
+      const when = dup.created_at ? new Date(dup.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "earlier";
+      return { ok: false, duplicateBillNo: true, error: `Bill "${billNo}" was already recorded for this supplier on ${when}. Record it again anyway?` };
+    }
+  }
+
   const payload = items.map((l) => ({ supplier_sku: l.supplierSku, mapped_product_id: l.mappedProductId || "", variant_id: l.variantId || "", qty: l.qty, unit_cost: Math.round(l.unitCostRupees * 100) }));
-  const { data, error } = await supabaseServer().rpc("record_purchase", { p_supplier_id: input.supplierId, p_bill_no: input.billNo || null, p_items: payload });
+  const { data, error } = await sb.rpc("record_purchase", { p_supplier_id: input.supplierId, p_bill_no: billNo || null, p_items: payload });
   if (error) return { ok: false, error: error.message };
   revalidatePath("/admin/purchases"); revalidatePath("/admin/dashboard");
   return { ok: true, total: (data as any)?.total };
