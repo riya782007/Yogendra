@@ -28,6 +28,7 @@ export default async function AdminReels() {
       </div>
 
       <div className="space-y-3">
+        {reels.length === 0 && <p className="text-sm text-muted bg-white rounded-2xl p-5 shadow-card">No reels yet — add one above to feature a shoppable video on the storefront.</p>}
         {reels.map((r: any) => (
           <div key={r.id} className="bg-white rounded-2xl p-5 shadow-card flex items-center justify-between gap-4">
             <div className="min-w-0">

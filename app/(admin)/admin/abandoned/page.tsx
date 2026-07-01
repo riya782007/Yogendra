@@ -32,11 +32,12 @@ export default async function Abandoned() {
         {carts.length === 0 && <p className="text-sm text-muted">No abandoned carts.</p>}
         {carts.map((c: any) => {
           const items = (c.items ?? []) as { sku?: string; name: string; qty: number; price: number }[];
+          const totalQty = items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
           const wa = c.phone ? `https://wa.me/${String(c.phone).replace(/\D/g, "")}?text=${encodeURIComponent(`Hi ${c.customer_name || "there"}! You left some beautiful pieces in your Blythe Diva bag. Complete your order and enjoy 20% off ✨`)}` : null;
           return (
             <div key={c.id} className="bg-white rounded-2xl p-5 shadow-card">
               <div className="flex items-start justify-between gap-4 mb-3">
-                <p className="font-medium text-ink">{c.customer_name || "Anonymous visitor"} <span className="text-xs text-muted">· {ago(c.created_at)} · {items.length} item{items.length === 1 ? "" : "s"}</span></p>
+                <p className="font-medium text-ink">{c.customer_name || "Anonymous visitor"} <span className="text-xs text-muted">· {ago(c.created_at)} · {totalQty} item{totalQty === 1 ? "" : "s"}</span></p>
                 <div className="text-right shrink-0">
                   <p className="font-semibold text-ink">{formatPaise(c.total)}</p>
                   {wa ? <a href={wa} target="_blank" rel="noreferrer" className="text-xs text-emerald nav-link">WhatsApp nudge →</a> : <span className="text-xs text-muted">no contact</span>}
