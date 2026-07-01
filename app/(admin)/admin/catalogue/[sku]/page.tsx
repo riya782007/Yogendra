@@ -178,9 +178,13 @@ export default async function ProductPage({ params, searchParams }: { params: { 
 
   const inventory = (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        <div className={card}><p className="text-xs uppercase tracking-wide text-muted">In stock</p><p className={`text-2xl font-semibold mt-1 ${p.qty <= 2 ? "text-rose" : "text-ink"}`}>{p.qty}</p></div>
-        <div className={card}><p className="text-xs uppercase tracking-wide text-muted">Variant stock</p><p className="text-2xl font-semibold text-ink mt-1">{variantStock}</p></div>
+      <div className="grid grid-cols-2 gap-3">
+        {/* One stock figure only: for a product WITH variants the total IS the sum of its variants,
+            so we show a single "Total stock" card instead of the confusing duplicate (owner's note). */}
+        <div className={card}>
+          <p className="text-xs uppercase tracking-wide text-muted">{variants.length > 0 ? "Total stock (all variants)" : "In stock"}</p>
+          <p className={`text-2xl font-semibold mt-1 ${(variants.length > 0 ? variantStock : p.qty) <= 2 ? "text-rose" : "text-ink"}`}>{variants.length > 0 ? variantStock : p.qty}</p>
+        </div>
         <div className={card}><p className="text-xs uppercase tracking-wide text-muted">Status</p><p className={`text-lg font-semibold mt-1 ${published ? "text-emerald-dark" : "text-gold-dark"}`}>{published ? "Visible" : "Hidden"}</p></div>
       </div>
       {can(session, "inventory.add") || can(session, "inventory.remove")

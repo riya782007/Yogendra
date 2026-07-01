@@ -76,12 +76,9 @@ export function computePrices(baseWholesalePaise: number, formula: PricingFormul
   //      → +customer_discount% (retail) → +mrp% (MRP).
   if (formula.useBuildup) {
     const p = (n?: number) => 1 + (Number(n) || 0) / 100;
-    const packingFlat = Math.max(0, Number(formula.packingFlat) || 0);       // paise, flat
-    const promotionFlat = Math.max(0, Number(formula.promotionFlat) || 0);   // paise, flat
-    // cost → +shipping% → +packing(₹) → +promotion(₹) (landed) → +reseller% (wholesale)
-    //      → +customer% then round retail to end in 9 → +mrp% then round MRP to nearest 5.
-    const landed = base * p(formula.shippingPct) + packingFlat + promotionFlat;
-    const wholesale = landed * p(formula.resellerPct);
+    // The entered base IS the WHOLESALE rate (owner's rule: "the cost is the wholesale price").
+    // Retail = wholesale + customer step %, rounded to end in ₹9. MRP = retail + markup %, to ₹5.
+    const wholesale = base;
     const retail = wholesale * p(formula.customerDiscountPct);
     const printedMrp = retail * p(formula.mrpPct);
     return {
@@ -105,16 +102,11 @@ export function computePrices(baseWholesalePaise: number, formula: PricingFormul
 export function buildupBreakdown(baseWholesalePaise: number, formula: PricingFormula) {
   const base = Number.isFinite(baseWholesalePaise) ? baseWholesalePaise : 0;
   const p = (n?: number) => 1 + (Number(n) || 0) / 100;
-  const packingFlat = Math.max(0, Number(formula.packingFlat) || 0);
-  const promotionFlat = Math.max(0, Number(formula.promotionFlat) || 0);
-  const afterShipping = base * p(formula.shippingPct);
-  const afterPacking = afterShipping + packingFlat;
-  const afterPromotion = afterPacking + promotionFlat;
-  const wholesale = afterPromotion * p(formula.resellerPct);
+  const wholesale = base;   // the entered cost IS the wholesale rate
   const retailRaw = wholesale * p(formula.customerDiscountPct);
   const retail = roundTo9Paise(retailRaw);
   const mrp = roundTo5Paise(retailRaw * p(formula.mrpPct));
-  return { base, afterShipping, afterPacking, afterPromotion, wholesale, retail, mrp };
+  return { base, wholesale, retail, mrp };
 }
 
 /**
