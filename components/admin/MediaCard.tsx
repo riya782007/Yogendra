@@ -18,6 +18,7 @@ export function MediaCard({ p, geminiReady }: { p: P; geminiReady: boolean }) {
   const router = useRouter();
   const { toast } = useToast();
   const [busy, setBusy] = useState("");
+  const [kw, setKw] = useState(""); // owner's optional 1–2 keywords to guide the AI (jewellery details)
   const rawRef = useRef<HTMLInputElement>(null);
   const angleRef = useRef<HTMLInputElement>(null);
 
@@ -40,7 +41,7 @@ export function MediaCard({ p, geminiReady }: { p: P; geminiReady: boolean }) {
   }
   async function generate() {
     setBusy("gen");
-    const res = await generateOneAction(p.sku);
+    const res = await generateOneAction(p.sku, kw);
     setBusy("");
     if (res.ok) { toast(`Model photo generated for ${p.sku} ✓`); router.refresh(); }
     else {
@@ -80,6 +81,9 @@ export function MediaCard({ p, geminiReady }: { p: P; geminiReady: boolean }) {
         <input ref={rawRef} type="file" accept="image/*" className="hidden" onChange={(e) => upload(e.target.files?.[0], "flatlay")} />
         <button onClick={() => rawRef.current?.click()} disabled={busy === "flatlay"} className="px-3 py-1.5 rounded-full border border-sand text-ink text-xs font-medium hover:border-emerald transition-colors disabled:opacity-50">{busy === "flatlay" ? "Uploading…" : hasRaw ? "Replace raw photo" : "Upload raw photo"}</button>
 
+        <input value={kw} onChange={(e) => setKw(e.target.value)} placeholder="+ details (e.g. polki, peacock motif)" maxLength={120}
+          title="Optional: add 1–2 keywords to guide the AI on important jewellery details" aria-label="Extra keywords for AI"
+          className="rounded-full border border-sand px-3 py-1.5 text-xs outline-none focus:border-emerald w-52" />
         <button onClick={generate} disabled={busy === "gen" || !hasRaw} title={!geminiReady ? "Add GEMINI_API_KEY to enable" : !hasRaw ? "Upload a raw photo first" : ""}
           className="px-3 py-1.5 rounded-full bg-gold/15 text-gold-dark text-xs font-medium hover:bg-gold/25 transition-colors disabled:opacity-50">{busy === "gen" ? "Generating…" : "✨ Generate model photo"}</button>
 

@@ -16,7 +16,7 @@ const BUCKET = "product-media";
 
 export type GenResult = { ok: boolean; sku: string; reason?: string; error?: string; url?: string; prompt?: string };
 
-export async function generateOneAction(sku: string): Promise<GenResult> {
+export async function generateOneAction(sku: string, keywords?: string): Promise<GenResult> {
   if (!(await requirePerm("catalog.ai"))) return { ok: false, sku, reason: "not_permitted" };
   const p = await getProductBySku(sku);
   if (!p) return { ok: false, sku, reason: "not_found" };
@@ -36,6 +36,7 @@ export async function generateOneAction(sku: string): Promise<GenResult> {
     subcategory: (p as any).subcategory?.name ?? "",
     productName: p.name,
     details,
+    keywords: (keywords ?? "").trim().slice(0, 120) || undefined,
     style: (p as any).subcategory?.image_style as ("auto" | "indian" | "western" | undefined),
     index,
     aspect: "4:5",

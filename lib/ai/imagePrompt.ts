@@ -91,7 +91,7 @@ The shape, layout, stone/bead placement, motifs, links, clasps, engraving and ov
 NON-NEGOTIABLE — ABSOLUTELY NO TEXT:
 Zero text of any kind — no words, letters, numbers, captions, labels, logos, watermarks, price tags, stamps, or UI. Every surface must be free of writing.
 
-PRESENTATION: the piece laid out or standing cleanly as the single hero, sharply in focus, on a plain off-white / soft neutral seamless studio background. Soft diffused studio lighting with gentle highlights so metal catches light and stones read true and vivid. Photorealistic, high resolution, accurate colour grading, no harsh shadows.
+PRESENTATION: the piece laid out or standing cleanly as the single hero, sharply in focus, on a plain off-white / soft neutral seamless studio background. Soft diffused studio lighting with gentle highlights so metal catches light and stones read true and vivid. Photorealistic, high resolution, accurate colour grading, no harsh shadows. MAXIMUM SHARPNESS — every stone, bead, cut and facet must be tack-sharp and clearly defined (each cut visible), like a high-end macro product photo, with no blur or softening of detail.
 OUTPUT FRAMING: Render the final image in ${aspectNote}, the jewellery centered with comfortable margins so nothing is cropped.
 OUTPUT: A clean product photograph with NO text, NO watermark, NO logo and NO graphic overlays anywhere.`;
 }
@@ -202,6 +202,8 @@ export function buildImagePrompt(opts: {
   productName?: string;
   /** Extra known specs (colours, material, tags) pulled from the product to guide the render. */
   details?: string[];
+  /** Owner's own 1–2 keywords typed at generation time (e.g. "polki, peacock motif") — highest priority. */
+  keywords?: string;
 }): string {
   const i = opts.index ?? 0;
   const styleHint = `${opts.category} ${opts.subcategory ?? ""} ${opts.productName ?? ""}`;
@@ -214,6 +216,7 @@ export function buildImagePrompt(opts: {
   const identity = categoryIdentity(opts.category, opts.subcategory);
   const productLine = opts.productName?.trim() ? `"${opts.productName.trim()}"` : "this piece";
   const detailLine = opts.details && opts.details.length ? ` Known specifications: ${opts.details.slice(0, 8).join(", ")}.` : "";
+  const keywordLine = opts.keywords?.trim() ? ` OWNER-SPECIFIED DETAILS (must be accurately shown): ${opts.keywords.trim()}.` : "";
   const aspect = opts.aspect ?? "4:5";
   const aspectNote =
     aspect === "1:1"
@@ -222,10 +225,13 @@ export function buildImagePrompt(opts: {
 
   return `This is a REAL, manufactured jewellery product that a customer will physically receive — the design in your output MUST be a pixel-faithful reproduction of the reference image. Use the attached image as the EXACT product reference. Generate a professional, editorial-grade e-commerce photograph of a model wearing this exact piece of jewelry.
 
-PRODUCT IDENTITY (use this to frame the shot correctly): The piece is ${productLine}, categorised as ${opts.subcategory || opts.category}. ${identity}. Photograph and style it AS a ${opts.subcategory || opts.category} — worn and framed in the correct place for that jewellery type, never as a different category of jewellery.${detailLine}
+PRODUCT IDENTITY (use this to frame the shot correctly): The piece is ${productLine}, categorised as ${opts.subcategory || opts.category}. ${identity}. Photograph and style it AS a ${opts.subcategory || opts.category} — worn and framed in the correct place for that jewellery type, never as a different category of jewellery.${detailLine}${keywordLine}
 
-NON-NEGOTIABLE — PRODUCT FIDELITY:
-The jewelry in the output must be IDENTICAL to the reference image — same metal color and finish, same gemstone cut, color, size, and placement, same engravings, links, clasps, and proportions. Do not redesign, restyle, embellish, or "improve" the piece. Treat it as a real product that must match what the customer will receive.
+NON-NEGOTIABLE — PRODUCT FIDELITY (the owner's #1 rule — CHANGE AS LITTLE AS POSSIBLE):
+The jewellery in the output must be IDENTICAL to the reference image — same shape, same metal colour and finish, same gemstone/bead CUT, colour, size and exact placement, same enamel/meenakari, engravings, links, tassels, drops, clasps and proportions. Keep EVERY stone, bead, cut and facet exactly as in the reference — do NOT add, remove, resize, restyle, rearrange, or RECOLOUR anything, and do not "improve" the piece. If in doubt, copy the reference exactly. It must match what the customer physically receives.
+
+MAXIMUM SHARPNESS & DETAIL (critical — the owner wants every cut visible):
+Render the jewellery ultra-sharp, crisp and high-resolution so EACH individual stone, bead, facet, cut and engraving is clearly defined and separated — tack-sharp, no blur, no softening, no smudging or melting of detail on the piece. Fine details must read crisply, like a high-end macro product photograph.
 
 NON-NEGOTIABLE — ABSOLUTELY NO TEXT:
 The image must contain ZERO text of any kind. No words, no letters, no numbers, no captions, no labels, no logos, no watermarks, no brand names, no price tags, no signatures, no stamps, no UI elements, no borders with writing. The background, clothing, jewelry, and every surface must be completely free of any written or typographic elements. If any text would normally appear, leave that area clean and blank.
