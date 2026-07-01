@@ -13,13 +13,8 @@ export default function PricingFormulaEditor({ initial, action }: Props) {
   const [useBuildup, setUseBuildup] = useState(Boolean(initial.useBuildup));
   const [sampleRupees, setSampleRupees] = useState(200);
 
-  // Full cost-sheet build-up: shipping % → packing ₹ (flat) → promotion ₹ (flat) → reseller %
-  // → customer % → MRP %. Packing & promotion are flat rupee amounts (owner's sheet).
-  const [bu, setBu] = useState({
-    shippingPct: initial.shippingPct ?? 10,
-    packingRupees: Math.round((initial.packingFlat ?? 2500) / 100),
-    promotionRupees: Math.round((initial.promotionFlat ?? 2500) / 100),
-    resellerPct: initial.resellerPct ?? 15,
+  // The value entered on a product IS the wholesale billing price. Only these two steps build on it.
+  const [pct, setPct] = useState({
     customerDiscountPct: initial.customerDiscountPct ?? 5,
     mrpPct: initial.mrpPct ?? 25,
   });
@@ -31,24 +26,14 @@ export default function PricingFormulaEditor({ initial, action }: Props) {
   });
 
   const formula: PricingFormula = useMemo(
-    () => ({
-      ...mult,
-      roundToPaise: mult.roundToPaise,
-      useBuildup,
-      shippingPct: bu.shippingPct,
-      packingFlat: Math.round(bu.packingRupees * 100),
-      promotionFlat: Math.round(bu.promotionRupees * 100),
-      resellerPct: bu.resellerPct,
-      customerDiscountPct: bu.customerDiscountPct,
-      mrpPct: bu.mrpPct,
-    }),
-    [mult, bu, useBuildup],
+    () => ({ ...mult, ...pct, roundToPaise: mult.roundToPaise, useBuildup }),
+    [mult, pct, useBuildup],
   );
 
   const basePaise = Math.round((Number(sampleRupees) || 0) * 100);
   const bd = useMemo(() => buildupBreakdown(basePaise, formula), [basePaise, formula]);
   const finalPrices = useMemo(() => computePrices(basePaise, formula), [basePaise, formula]);
-  const setB = (k: keyof typeof bu, v: number) => setBu((s) => ({ ...s, [k]: v }));
+  const setP = (k: keyof typeof pct, v: number) => setPct((s) => ({ ...s, [k]: v }));
 
   return (
     <form action={action} className="space-y-6">
@@ -56,10 +41,10 @@ export default function PricingFormulaEditor({ initial, action }: Props) {
       <label className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 cursor-pointer">
         <input type="checkbox" name="use_buildup" checked={useBuildup} onChange={(e) => setUseBuildup(e.target.checked)} className="mt-1 h-5 w-5 accent-amber-600" />
         <span>
-          <span className="font-semibold text-stone-800">Use the % cost build-up (Yogendra&apos;s sheet)</span>
+          <span className="font-semibold text-stone-800">Use the % build-up</span>
           <span className="block text-sm text-stone-500">
-            When ON, every price is derived from the item&apos;s wholesale price through the chain below. When OFF, the old
-            multipliers are used. Changing this re-prices the whole catalogue.
+            When ON, the price you enter on a product is the <b>wholesale price</b>, and Retail &amp; MRP are derived
+            from it. When OFF, the old multipliers are used. Changing this re-prices the whole catalogue.
           </span>
         </span>
       </label>
@@ -70,16 +55,12 @@ export default function PricingFormulaEditor({ initial, action }: Props) {
           <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-stone-500">Build-up percentages</h3>
           <p className="mb-3 text-xs text-stone-400">The price you enter on a product is the <b>wholesale price</b>. Retail &amp; MRP build on top of it.</p>
           <div className="space-y-3">
-            <PctRow label="Shipping %" hint="wholesale → +freight" name="shipping_pct" unit="%" value={bu.shippingPct} onChange={(v) => setB("shippingPct", v)} />
-            <PctRow label="Packing (₹)" hint="flat packing charge per piece" name="packing_flat_rupees" unit="₹" value={bu.packingRupees} onChange={(v) => setB("packingRupees", v)} />
-            <PctRow label="Promotion (₹)" hint="flat promotion charge → landed cost" name="promotion_flat_rupees" unit="₹" value={bu.promotionRupees} onChange={(v) => setB("promotionRupees", v)} />
-            <PctRow label="Reseller %" hint="landed → wholesale rate" name="reseller_pct" unit="%" value={bu.resellerPct} onChange={(v) => setB("resellerPct", v)} />
-            <PctRow label="Customer step %" hint="wholesale → retail (rounds to end in ₹9)" name="customer_discount_pct" unit="%" value={bu.customerDiscountPct} onChange={(v) => setB("customerDiscountPct", v)} />
-            <PctRow label="MRP markup %" hint="retail → printed MRP (rounds to nearest ₹5)" name="mrp_pct" unit="%" value={bu.mrpPct} onChange={(v) => setB("mrpPct", v)} />
+            <PctRow label="Customer step %" hint="wholesale → retail (rounds to end in ₹9)" name="customer_discount_pct" value={pct.customerDiscountPct} onChange={(v) => setP("customerDiscountPct", v)} />
+            <PctRow label="MRP markup %" hint="retail → printed MRP (rounds to nearest ₹5)" name="mrp_pct" value={pct.mrpPct} onChange={(v) => setP("mrpPct", v)} />
           </div>
         </div>
 
-        {/* Live preview — matches the owner's costing sheet exactly */}
+        {/* Live preview */}
         <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-700">Live preview</h3>
@@ -91,13 +72,9 @@ export default function PricingFormulaEditor({ initial, action }: Props) {
           {useBuildup ? (
             <table className="w-full text-sm">
               <tbody className="divide-y divide-emerald-100">
-                <Row label="Wholesale (what you enter)" value={bd.base} strong />
-                <Row label={`+ Shipping (${bu.shippingPct}%)`} value={bd.shipped} />
-                <Row label={`+ Packing (₹${bu.packingRupees})`} value={bd.packed} />
-                <Row label={`+ Promotion (₹${bu.promotionRupees})`} sub="landed cost" value={bd.landed} />
-                <Row label={`+ Reseller (${bu.resellerPct}%)`} value={bd.wholesale} strong tag="WHOLESALE" />
-                <Row label={`+ Customer (${bu.customerDiscountPct}%) → ₹9`} value={bd.retail} strong tag="RETAIL" />
-                <Row label={`+ MRP markup (${bu.mrpPct}%) → ₹5`} value={bd.mrp} strong tag="MRP" />
+                <Row label="Wholesale (what you enter)" value={bd.wholesale} strong tag="WHOLESALE" />
+                <Row label={`+ Customer (${pct.customerDiscountPct}%) → ₹9`} value={bd.retail} strong tag="RETAIL" />
+                <Row label={`+ MRP markup (${pct.mrpPct}%) → ₹5`} value={bd.mrp} strong tag="MRP" />
               </tbody>
             </table>
           ) : (
@@ -135,7 +112,7 @@ export default function PricingFormulaEditor({ initial, action }: Props) {
   );
 }
 
-function PctRow({ label, hint, name, unit, value, onChange }: { label: string; hint: string; name: string; unit: string; value: number; onChange: (v: number) => void }) {
+function PctRow({ label, hint, name, value, onChange }: { label: string; hint: string; name: string; value: number; onChange: (v: number) => void }) {
   return (
     <div className="flex items-center gap-3">
       <label className="flex-1">
@@ -144,7 +121,7 @@ function PctRow({ label, hint, name, unit, value, onChange }: { label: string; h
       </label>
       <div className="relative">
         <input type="number" step="0.01" name={name} value={value} onChange={(e) => onChange(Number(e.target.value))} className="w-24 rounded-lg border border-stone-300 px-3 py-1.5 text-right tabular-nums" />
-        <span className="pointer-events-none absolute right-3 top-1.5 text-stone-400">{unit}</span>
+        <span className="pointer-events-none absolute right-3 top-1.5 text-stone-400">%</span>
       </div>
     </div>
   );
