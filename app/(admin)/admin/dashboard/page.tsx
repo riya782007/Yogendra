@@ -129,11 +129,12 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
         </div>
       </div>
 
-      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+      <div className="grid md:grid-cols-3 lg:grid-cols-5 gap-4 mb-5">
         <Tile label="Total Products" sub={`${d.newProducts} new`}><AnimatedNumber value={d.totalProducts} /></Tile>
         <Tile label="Categories"><AnimatedNumber value={d.categories} /></Tile>
-        <Tile label="Dead Stock" accent={d.dead ? "text-rose" : undefined} sub="capital tied up"><AnimatedNumber value={d.dead} /></Tile>
-        <Tile label="Low Stock" accent={d.low ? "text-gold-dark" : undefined} sub={`${d.inactive} inactive`}><AnimatedNumber value={d.low} /></Tile>
+        <Tile label="Dead Stock" accent={d.dead ? "text-rose" : undefined} sub="no movement · capital tied up"><AnimatedNumber value={d.dead} /></Tile>
+        <Tile label="Low Stock" accent={d.low ? "text-gold-dark" : undefined} sub="at/under reorder level"><AnimatedNumber value={d.low} /></Tile>
+        <Tile label="Inactive" accent={d.inactive ? "text-muted" : undefined} sub="never sold"><AnimatedNumber value={d.inactive} /></Tile>
       </div>
 
       <div className="grid md:grid-cols-3 gap-4">
