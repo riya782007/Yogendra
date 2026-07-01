@@ -518,6 +518,55 @@ export async function createSubcategoryJsonAction(name: string, categoryId: stri
   return { id: (data as any).id, name: (data as any).name, slug: (data as any).slug, categoryId: (data as any).category_id };
 }
 
+// ---------------------------------------------------------------------------
+// STYLES — a second taxonomy dimension (Choker, Long Necklace, Round Neck Set…),
+// separate from the "type" subcategory. Requires migration 0032 (styles table).
+// ---------------------------------------------------------------------------
+
+/** Create a style under a category (Categories page form). */
+export async function createStyleAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("catalog.edit"))) return;
+  const name = String(formData.get("name") ?? "").trim();
+  const categoryId = String(formData.get("category_id") ?? "").trim() || null;
+  if (!name || !categoryId) return;
+  await supabaseServer().from("styles").insert({ name, slug: slugify(name), category_id: categoryId });
+  await logActivity({ action: "style_created", ref: name, detail: `Added style “${name}”.` });
+  revalidatePath("/admin/categories"); revalidatePath("/shop"); revalidatePath("/catalog");
+}
+
+/** JSON-friendly style create for inline use (Add Inventory). Returns the new row to select it. */
+export async function createStyleJsonAction(name: string, categoryId: string): Promise<{ id: string; name: string; slug: string; categoryId: string } | null> {
+  if (!(await requirePerm("catalog.edit"))) return null;
+  const nm = (name ?? "").trim();
+  const cat = (categoryId ?? "").trim();
+  if (!nm || !cat) return null;
+  const sb = supabaseServer();
+  const { data, error } = await sb.from("styles").insert({ name: nm, slug: slugify(nm), category_id: cat }).select("id,name,slug,category_id").single();
+  if (error || !data) return null;
+  await logActivity({ action: "style_created", ref: nm, detail: `Added style “${nm}”.` });
+  revalidatePath("/admin/categories"); revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidatePath("/catalog");
+  return { id: (data as any).id, name: (data as any).name, slug: (data as any).slug, categoryId: (data as any).category_id };
+}
+
+/** Delete a style (products fall back to no style; FK is set null). */
+export async function deleteStyleAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("catalog.edit"))) return;
+  const id = String(formData.get("id") ?? "").trim();
+  if (!id) return;
+  await supabaseServer().from("styles").delete().eq("id", id);
+  revalidatePath("/admin/categories"); revalidatePath("/shop"); revalidatePath("/catalog");
+}
+
+/** Assign a product's style (or clear it with an empty value). */
+export async function moveProductToStyleAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("catalog.edit"))) return;
+  const sku = String(formData.get("sku") ?? "").trim();
+  const styleId = String(formData.get("style_id") ?? "").trim() || null;
+  if (!sku) return;
+  await supabaseServer().from("products").update({ style_id: styleId }).eq("sku", sku);
+  revalidatePath("/admin/catalogue"); revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidatePath("/catalog");
+}
+
 /** Rename a subcategory. */
 export async function renameSubcategoryAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("catalog.edit"))) return;
@@ -711,7 +760,7 @@ export type FullVariantInput = {
   retailPublish: boolean; wholesalePublish: boolean;
 };
 export type CreateProductPayload = {
-  name: string; categoryId: string; subcategoryId?: string; basePriceRupees: number; initialStock: number;
+  name: string; categoryId: string; subcategoryId?: string; styleId?: string; basePriceRupees: number; initialStock: number;
   manualSku?: string; type: "simple" | "configurable"; aiContent?: boolean;
   retailPublish: boolean; wholesalePublish: boolean; // parent channels
   variants?: FullVariantInput[];
@@ -781,7 +830,7 @@ export async function createProductFullAction(
 
   // ---- parent product ----
   const { data: prod, error } = await sb.from("products").insert({
-    category_id: payload.categoryId, subcategory_id: payload.subcategoryId || null, sku, name, type: payload.type,
+    category_id: payload.categoryId, subcategory_id: payload.subcategoryId || null, style_id: payload.styleId || null, sku, name, type: payload.type,
     base_wholesale: Math.round(base * 100), qty: productQty, status,
     retail_only: payload.retailPublish && !payload.wholesalePublish,
     wholesale_only: payload.wholesalePublish && !payload.retailPublish,

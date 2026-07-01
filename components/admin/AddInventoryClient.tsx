@@ -2,7 +2,7 @@
 import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useToast } from "@/components/ui/Toast";
-import { createProductFullAction, createCategoryJsonAction, createSubcategoryJsonAction, type CreateProductPayload } from "@/app/actions/catalog";
+import { createProductFullAction, createCategoryJsonAction, createSubcategoryJsonAction, createStyleJsonAction, type CreateProductPayload } from "@/app/actions/catalog";
 import { getProductVariantsAction, addVariantImageAction } from "@/app/actions/variants";
 import { compressImage } from "@/lib/image";
 
@@ -45,11 +45,13 @@ function Toggle({ on, onClick, title }: { on: boolean; onClick: () => void; titl
 export function AddInventoryClient({
   categories,
   subcategories = [],
+  styles = [],
   variantOptions = { color: [], size: [], polish: [] },
   colorCodes = {},
 }: {
   categories: Cat[];
   subcategories?: Sub[];
+  styles?: Sub[];
   variantOptions?: VariantOptions;
   colorCodes?: ColorCodeMap;
 }) {
@@ -57,11 +59,16 @@ export function AddInventoryClient({
   const [cats, setCats] = useState<Cat[]>(categories);
   const [catId, setCatId] = useState("");
   const [newCat, setNewCat] = useState(""); const [showNewCat, setShowNewCat] = useState(false);
-  // Subcategory: filtered to the chosen category; owner can add a new one inline.
+  // Subcategory (= "type"): filtered to the chosen category; owner can add a new one inline.
   const [subs, setSubs] = useState<Sub[]>(subcategories);
   const [subId, setSubId] = useState("");
   const [newSub, setNewSub] = useState(""); const [showNewSub, setShowNewSub] = useState(false);
   const subsForCat = subs.filter((s) => s.categoryId === catId);
+  // Style (= second filter dimension: Choker, Long Necklace…): also per-category, inline-creatable.
+  const [styleList, setStyleList] = useState<Sub[]>(styles);
+  const [styleId, setStyleId] = useState("");
+  const [newStyle, setNewStyle] = useState(""); const [showNewStyle, setShowNewStyle] = useState(false);
+  const stylesForCat = styleList.filter((s) => s.categoryId === catId);
 
   const [name, setName] = useState("");
   const [basePrice, setBasePrice] = useState("");
@@ -167,6 +174,7 @@ export function AddInventoryClient({
         name: name.trim(),
         categoryId: catId,
         subcategoryId: subId || undefined,
+        styleId: styleId || undefined,
         basePriceRupees: Number(basePrice),
         initialStock: Math.max(0, Number(initialStock) || 0),
         manualSku: sku.trim() || undefined,
@@ -223,7 +231,7 @@ export function AddInventoryClient({
 
       toast(`${res.sku} ${mode === "publish" ? "created & published" : "saved as draft"} ✓`);
       // Save & continue → clear for the next product. Save draft → keep nothing lingering either.
-      setName(""); setBasePrice(""); setInitialStock(""); setSku(""); setType("simple"); setSubId("");
+      setName(""); setBasePrice(""); setInitialStock(""); setSku(""); setType("simple"); setSubId(""); setStyleId("");
       setPick([]); setRows([]); setQ("");
       if (fileRef.current) fileRef.current.value = "";
     } catch (e) {
@@ -236,7 +244,7 @@ export function AddInventoryClient({
     setBusy(true);
     const res = await createCategoryJsonAction(nm);
     setBusy(false);
-    if (res) { setCats((c) => [...c, res]); setCatId(res.id); setSubId(""); setNewCat(""); setShowNewCat(false); toast(`Category “${res.name}” created`); }
+    if (res) { setCats((c) => [...c, res]); setCatId(res.id); setSubId(""); setStyleId(""); setNewCat(""); setShowNewCat(false); toast(`Category “${res.name}” created`); }
     else toast("Couldn't create category", "error");
   }
 
@@ -249,6 +257,17 @@ export function AddInventoryClient({
     setBusy(false);
     if (res) { setSubs((s) => [...s, res]); setSubId(res.id); setNewSub(""); setShowNewSub(false); toast(`Subcategory “${res.name}” created`); }
     else toast("Couldn't create subcategory", "error");
+  }
+
+  async function createStyle() {
+    const nm = newStyle.trim();
+    if (!nm) return;
+    if (!catId) { toast("Pick a category first", "error"); return; }
+    setBusy(true);
+    const res = await createStyleJsonAction(nm, catId);
+    setBusy(false);
+    if (res) { setStyleList((s) => [...s, res]); setStyleId(res.id); setNewStyle(""); setShowNewStyle(false); toast(`Style “${res.name}” created`); }
+    else toast("Couldn't create style", "error");
   }
 
   const real = rows.filter((r) => r.color.trim() || r.size.trim() || r.polish.trim());
@@ -268,7 +287,7 @@ export function AddInventoryClient({
           <div>
             <label className="text-xs font-medium text-muted">Category <span className="text-rose">*</span></label>
             <div className="flex gap-1.5 mt-1">
-              <select className={input} value={catId} onChange={(e) => { setCatId(e.target.value); setSubId(""); }}>
+              <select className={input} value={catId} onChange={(e) => { setCatId(e.target.value); setSubId(""); setStyleId(""); }}>
                 <option value="">Select…</option>
                 {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
@@ -288,6 +307,20 @@ export function AddInventoryClient({
                   <div className="flex gap-1.5 mt-1.5">
                     <input value={newSub} onChange={(e) => setNewSub(e.target.value)} placeholder="New subcategory name" className={input} />
                     <button type="button" onClick={createSub} disabled={busy} className="px-3 rounded-xl bg-ink text-white text-sm whitespace-nowrap disabled:opacity-50">Create</button>
+                  </div>
+                )}
+                {/* Style — the 2nd filter dimension (Choker, Long Necklace, Round Neck Set…), inline-creatable. */}
+                <div className="flex gap-1.5 mt-1.5">
+                  <select className={input} value={styleId} onChange={(e) => setStyleId(e.target.value)} title="Style (e.g. Choker, Long Necklace)">
+                    <option value="">No style</option>
+                    {stylesForCat.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                  <button type="button" onClick={() => setShowNewStyle((v) => !v)} className="px-3 rounded-xl border border-emerald text-emerald text-sm whitespace-nowrap hover:bg-emerald-mist">+ Style</button>
+                </div>
+                {showNewStyle && (
+                  <div className="flex gap-1.5 mt-1.5">
+                    <input value={newStyle} onChange={(e) => setNewStyle(e.target.value)} placeholder="New style (e.g. Choker)" className={input} />
+                    <button type="button" onClick={createStyle} disabled={busy} className="px-3 rounded-xl bg-ink text-white text-sm whitespace-nowrap disabled:opacity-50">Create</button>
                   </div>
                 )}
               </>

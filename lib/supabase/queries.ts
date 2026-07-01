@@ -84,6 +84,17 @@ export async function getSubcategories(opts: { categoryId?: string; categorySlug
   return (data as DbSubcategory[]) ?? [];
 }
 
+/** Styles = the second taxonomy dimension (Choker, Long Necklace…). Resilient: returns [] until
+ *  migration 0032 creates the table, so callers never break before it's applied. */
+export async function getStyles(opts: { categoryId?: string } = {}): Promise<{ id: string; name: string; slug: string; category_id: string | null }[]> {
+  const sb = supabaseServer();
+  let q = sb.from("styles").select("id,name,slug,category_id,sort").order("sort").order("name");
+  if (opts.categoryId) q = q.eq("category_id", opts.categoryId);
+  const { data, error } = await q;
+  if (error) return [];
+  return ((data as any[]) ?? []).map((s) => ({ id: s.id, name: s.name, slug: s.slug, category_id: s.category_id ?? null }));
+}
+
 // ---------- efficient, paginated lists (for 10k+ SKUs) ----------
 export async function getProductsPage(opts: { page?: number; pageSize?: number; q?: string; category?: string; status?: string }) {
   const sb = supabaseServer();
