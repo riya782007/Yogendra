@@ -99,7 +99,7 @@ OUTPUT: A clean product photograph with NO text, NO watermark, NO logo and NO gr
 // ===================== AI Photography Studio (Product Photos) =====================
 export type ShotType =
   | "hero" | "model" | "closeup" | "lifestyle" | "side" | "angle45" | "back" | "detail"
-  | "catalog_white" | "transparent" | "social_crop"
+  | "catalog_white" | "transparent" | "social_crop" | "branded_stand"
   | "enhance_shadows" | "enhance_sparkle" | "remove_bg" | "upscale";
 
 export const SHOT_META: Record<ShotType, { label: string; frame: string; aspect: ImageAspect; productOnly?: boolean; extra?: string }> = {
@@ -111,6 +111,7 @@ export const SHOT_META: Record<ShotType, { label: string; frame: string; aspect:
   angle45:       { label: "45°", frame: "a close 45-degree crop of the worn piece, jewellery large and tack-sharp, face minimal/cropped", aspect: "4:5" },
   back:          { label: "Back View", frame: "a back view showing the clasp / nape drape of the piece", aspect: "4:5" },
   detail:        { label: "Detail Shot", frame: "a detail shot isolating the craftsmanship — clasp, motif and stone setting", aspect: "1:1" },
+  branded_stand: { label: "On Stand", frame: "the jewellery displayed ALONE on an elegant matte jewellery display stand / bust (a necklace draped on a neck bust, earrings on an ear stand, a bangle on a T-bar, a ring on a ring cone), premium boutique presentation on a soft neutral studio backdrop, tasteful soft shadow", aspect: "1:1", productOnly: true, extra: "Leave a clean, empty margin of space at the BOTTOM of the frame (no jewellery there) so a brand wordmark can be placed under the piece afterwards." },
   catalog_white: { label: "Catalog White", frame: "a clean catalog product shot of the jewellery ALONE on a pure white seamless background", aspect: "1:1", productOnly: true },
   transparent:   { label: "Transparent PNG", frame: "the jewellery ALONE perfectly isolated on a flat pure-white background with crisp clean edges, ready to cut out", aspect: "1:1", productOnly: true },
   social_crop:   { label: "Social Crop", frame: "a square social-media crop, model and jewellery centred with comfortable breathing room", aspect: "1:1" },

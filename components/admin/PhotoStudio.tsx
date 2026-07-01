@@ -9,14 +9,16 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   generateStudioImageAction, setGenerationStatusAction, publishGenerationAction, detectJewelleryAction,
+  uploadBrandedImageAction,
 } from "@/app/actions/studio";
 
-type Gen = { id: string; output_path: string | null; shot_type: string; version: number; status: string; provider: string | null; settings: any; created_at: string };
+type Gen = { id: string; output_path: string | null; shot_type: string; version: number; status: string; provider: string | null; settings: any; created_at: string; variant_id?: string | null };
 type Data = {
   product: { id: string; sku: string; name: string; category?: { name?: string } };
   raw: { id: string; path: string } | null;
   images: { id: string; path: string; sort: number }[];
   generations: Gen[];
+  variants?: { id: string; sku: string; color: string | null; image: string | null }[];
   detected: { category?: string; material?: string; style?: string; attributes?: string[] } | null;
 };
 
@@ -65,15 +67,48 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
   const hero = heroCandidates.find((g) => g.status === "published") ?? heroCandidates.find((g) => g.status === "favorite") ?? heroCandidates[0] ?? null;
   const heroUrl = hero?.output_path ?? data.images[0]?.path ?? data.raw?.path ?? null;
 
-  function gen(shotType: string, key: string) {
+  const variants = data.variants ?? [];
+
+  function gen(shotType: string, key: string, variantId?: string) {
     if (!ready) { setErr("Add GEMINI_API_KEY or OPENAI_API_KEY to enable generation."); return; }
-    if (!data.raw && data.images.length === 0) { setErr("Upload a raw photo first (Manage media)."); return; }
+    if (!data.raw && data.images.length === 0 && !variants.some((v) => v.image)) { setErr("Upload a raw photo first (Manage media)."); return; }
     setErr(""); setBusyKey(key);
     start(async () => {
-      const r = await generateStudioImageAction({ productId: p.id, shotType: shotType as any, settings: settings(), style: styleParam });
+      const r = await generateStudioImageAction({ productId: p.id, shotType: shotType as any, settings: settings(), style: styleParam, variantId });
       setBusyKey(null);
       if (!r.ok) setErr(r.error || r.reason || "Generation failed."); else router.refresh();
     });
+  }
+
+  /** Draw the "blythediva" wordmark onto a generated stand shot (client canvas), then publish it. */
+  async function brandAndPublish(imageUrl: string, variantId: string | null, key: string) {
+    setErr(""); setBusyKey(key);
+    try {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = () => rej(new Error("load")); img.src = imageUrl; });
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(img, 0, 0);
+      // Wordmark in the bottom margin.
+      const w = canvas.width, h = canvas.height;
+      ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+      ctx.fillStyle = "rgba(20,18,16,0.92)";
+      ctx.font = `600 ${Math.round(w * 0.055)}px Georgia, 'Times New Roman', serif`;
+      ctx.fillText("blythediva", w / 2, h - Math.round(h * 0.045));
+      ctx.fillStyle = "rgba(160,130,60,0.9)";
+      ctx.font = `${Math.round(w * 0.02)}px Georgia, serif`;
+      ctx.fillText("A R T I F I C I A L   J E W E L L E R Y", w / 2, h - Math.round(h * 0.02));
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+      const base64 = dataUrl.split(",")[1];
+      const r = await uploadBrandedImageAction({ productId: p.id, variantId, base64, mime: "image/jpeg", shotType: "branded_stand" });
+      if (!r.ok) setErr(r.error || r.reason || "Could not brand & publish."); else router.refresh();
+    } catch (e) {
+      setErr("Couldn't process the image (cross-origin). Try re-generating.");
+    } finally {
+      setBusyKey(null);
+    }
   }
 
   function redetect() {
@@ -192,6 +227,51 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
               })}
             </div>
           </div>
+
+          {/* Variant AI photos — 1 model shot + 1 branded on-stand shot per colour */}
+          {variants.length > 0 && (
+            <div className="mt-6">
+              <p className="text-sm font-medium text-ink mb-1">Variant photos <span className="text-muted font-normal">· model + branded stand per colour</span></p>
+              <p className="text-[11px] text-muted mb-2">Generates from each colour&apos;s own photo. The stand shot gets the <b>blythediva</b> wordmark on publish.</p>
+              <div className="space-y-2">
+                {variants.map((v) => {
+                  const vModel = data.generations.find((g) => g.variant_id === v.id && g.shot_type === "model" && g.output_path && g.status !== "rejected" && g.status !== "archived");
+                  const vStand = data.generations.find((g) => g.variant_id === v.id && g.shot_type === "branded_stand" && g.output_path && g.status !== "rejected" && g.status !== "archived");
+                  return (
+                    <div key={v.id} className="flex items-center gap-3 rounded-xl border border-sand p-2.5">
+                      <div className="w-10 h-12 rounded-lg overflow-hidden bg-cream shrink-0">
+                        {v.image ? <img src={v.image} alt={v.color ?? v.sku} className="w-full h-full object-cover" /> : null}
+                      </div>
+                      <div className="min-w-[110px]">
+                        <p className="text-sm text-ink">{v.color ?? v.sku}</p>
+                        <p className="text-[10px] text-muted font-mono">{v.sku}</p>
+                      </div>
+                      {/* Model */}
+                      <div className="text-center">
+                        {vModel?.output_path
+                          ? <img src={vModel.output_path} alt="model" className="w-10 h-12 rounded object-cover inline-block" />
+                          : <div className="w-10 h-12 rounded bg-cream inline-grid place-items-center text-[9px] text-muted">model</div>}
+                        <button onClick={() => gen("model", `vm-${v.id}`, v.id)} disabled={pending} className="block text-[10px] text-gold-dark hover:underline mt-0.5 w-full">{busyKey === `vm-${v.id}` && pending ? "…" : (vModel ? "⟳ Model" : "＋ Model")}</button>
+                      </div>
+                      {/* Branded stand */}
+                      <div className="text-center">
+                        {vStand?.output_path
+                          ? <img src={vStand.output_path} alt="stand" className="w-10 h-12 rounded object-cover inline-block" />
+                          : <div className="w-10 h-12 rounded bg-cream inline-grid place-items-center text-[9px] text-muted">stand</div>}
+                        <button onClick={() => gen("branded_stand", `vs-${v.id}`, v.id)} disabled={pending} className="block text-[10px] text-gold-dark hover:underline mt-0.5 w-full">{busyKey === `vs-${v.id}` && pending ? "…" : (vStand ? "⟳ Stand" : "＋ Stand")}</button>
+                      </div>
+                      {vStand?.output_path && vStand.status !== "published" && (
+                        <button onClick={() => brandAndPublish(vStand.output_path!, v.id, `br-${v.id}`)} disabled={pending} className="ml-auto px-2.5 py-1.5 rounded-lg bg-emerald text-white text-[11px] disabled:opacity-50">
+                          {busyKey === `br-${v.id}` && pending ? "Branding…" : "Brand & Publish"}
+                        </button>
+                      )}
+                      {vStand?.status === "published" && <span className="ml-auto text-[11px] text-emerald-dark">✓ Branded</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* AI enhancement options */}
           <div className="mt-6">

@@ -39,23 +39,34 @@ export async function generateStudioImageAction(input: {
   if (!p) return { ok: false, reason: "not_found" };
   const prod = p as any;
 
-  // Reference = the raw upload (source/flatlay), else any existing http image.
-  const { data: imgs } = await sb.from("product_images").select("id,path,kind").eq("product_id", productId);
-  const all = ((imgs as any[]) ?? []).filter((i) => typeof i.path === "string" && i.path.startsWith("http"));
-  const ref = all.find((i) => i.kind === "source" || i.kind === "flatlay") ?? all[0];
-  if (!ref) return { ok: false, reason: "no_source" };
+  // When a variant is chosen, prefer THAT colour's own photo as the reference so the AI reproduces
+  // the exact colourway. Fall back to the product's raw upload / any product image otherwise.
+  let variantColor: string | null = null;
+  let refUrl: string | null = null;
+  if (input.variantId) {
+    const { data: v } = await sb.from("variants").select("color,image_paths").eq("id", input.variantId).maybeSingle();
+    variantColor = (v as any)?.color ?? null;
+    const vImgs = (v as any)?.image_paths;
+    refUrl = (Array.isArray(vImgs) ? vImgs.find((x: string) => typeof x === "string" && x.startsWith("http")) : null) ?? null;
+  }
+  if (!refUrl) {
+    const { data: imgs } = await sb.from("product_images").select("id,path,kind").eq("product_id", productId);
+    const all = ((imgs as any[]) ?? []).filter((i) => typeof i.path === "string" && i.path.startsWith("http"));
+    refUrl = (all.find((i) => i.kind === "source" || i.kind === "flatlay") ?? all[0])?.path ?? null;
+  }
+  if (!refUrl) return { ok: false, reason: "no_source" };
 
   if (!geminiConfigured()) return { ok: false, reason: "no_key" };
 
   // Auto-detect the piece (Gemini vision → keyword fallback) to choose the strategy.
-  const hint = [prod.name, prod.category?.name].filter(Boolean).join(" ");
-  const detected = await detectJewellery({ imageUrl: ref.path, hint });
+  const hint = [prod.name, prod.category?.name, variantColor].filter(Boolean).join(" ");
+  const detected = await detectJewellery({ imageUrl: refUrl, hint });
 
   const { prompt, aspect } = buildStudioPrompt({
     category: prod.category?.name ?? "necklace", subcategory: hint, shotType, settings: input.settings, detected, style: input.style,
   });
 
-  const refImg = await fetchAsBase64(ref.path);
+  const refImg = await fetchAsBase64(refUrl);
   const result = await generateImage({ prompt, referenceBase64: refImg?.base64, referenceMime: refImg?.mime, aspectRatio: aspect });
   if (!result.ok) return { ok: false, reason: result.reason, error: result.error };
 
@@ -72,7 +83,7 @@ export async function generateStudioImageAction(input: {
   const version = (count ?? 0) + 1;
 
   const { data: row } = await sb.from("image_generations").insert({
-    product_id: productId, variant_id: input.variantId ?? null, raw_image_path: ref.path, output_path: pub.publicUrl,
+    product_id: productId, variant_id: input.variantId ?? null, raw_image_path: refUrl, output_path: pub.publicUrl,
     shot_type: shotType, prompt, settings: input.settings ?? {}, detected, provider: result.model, version,
     status: "candidate", created_by: "owner",
   }).select("id").maybeSingle();
@@ -126,6 +137,49 @@ export async function publishGenerationAction(formData: FormData): Promise<void>
   revalidatePath(`/admin/media/${gen.product_id}`);
   revalidatePath("/admin/catalogue"); revalidatePath("/admin/products"); revalidatePath("/shop");
   if (sku) { revalidatePath(`/shop/${slug}/${sku}`); revalidatePath(`/admin/products/${gen.product_id}`); }
+}
+
+/** Store a client-composited BRANDED image (the "blythediva" wordmark was drawn onto the
+ *  AI stand shot in the browser) and publish it — attached to the variant if given. */
+export async function uploadBrandedImageAction(input: {
+  productId: string; variantId?: string | null; base64: string; mime?: string; shotType?: string;
+}): Promise<GenOut> {
+  if (!(await requirePerm("catalog.ai"))) return { ok: false, reason: "not_permitted" };
+  const { productId } = input;
+  if (!productId || !input.base64) return { ok: false, reason: "bad_input" };
+  const sb = supabaseServer();
+  const { data: p } = await sb.from("products").select("id,sku, category:categories(slug)").eq("id", productId).maybeSingle();
+  if (!p) return { ok: false, reason: "not_found" };
+  const prod = p as any;
+  const mime = input.mime ?? "image/png";
+  const ext = mime.includes("png") ? "png" : "jpg";
+  const shot = input.shotType || "branded_stand";
+
+  await sb.storage.createBucket(BUCKET, { public: true }).catch(() => {});
+  const path = `${prod.sku}/${shot}-branded-${Date.now()}.${ext}`;
+  const up = await sb.storage.from(BUCKET).upload(path, Buffer.from(input.base64, "base64"), { contentType: mime, upsert: true });
+  if (up.error) return { ok: false, reason: "upload_failed", error: up.error.message };
+  const { data: pub } = sb.storage.from(BUCKET).getPublicUrl(path);
+  const url = pub.publicUrl;
+
+  const { count } = await sb.from("image_generations").select("id", { count: "exact", head: true }).eq("product_id", productId).eq("shot_type", shot);
+  const { data: row } = await sb.from("image_generations").insert({
+    product_id: productId, variant_id: input.variantId ?? null, output_path: url, shot_type: shot,
+    settings: { branded: true }, provider: "overlay", version: (count ?? 0) + 1, status: "published", created_by: "owner",
+  }).select("id").maybeSingle();
+
+  // Publish to the storefront: product image + (if a variant) append to that variant's gallery.
+  await sb.from("product_images").insert({ product_id: productId, variant_id: input.variantId ?? null, path: url, kind: "angle", generation_id: (row as any)?.id ?? null, sort: 1, metadata: { shot_type: shot, branded: true } });
+  if (input.variantId) {
+    const { data: v } = await sb.from("variants").select("image_paths").eq("id", input.variantId).maybeSingle();
+    const paths = Array.isArray((v as any)?.image_paths) ? (v as any).image_paths : [];
+    await sb.from("variants").update({ image_paths: [url, ...paths] }).eq("id", input.variantId);
+  }
+
+  await logActivity({ action: "photo_published", ref: prod.sku, detail: `${shot} (branded)` });
+  revalidatePath(`/admin/media/${productId}`); revalidatePath("/shop"); revalidatePath("/admin/catalogue");
+  if (prod.sku) revalidatePath(`/shop/${prod.category?.slug ?? "all"}/${prod.sku}`);
+  return { ok: true, id: (row as any)?.id, url };
 }
 
 /** Auto-detect + persist the piece classification (the studio's "AI inspect" step). */

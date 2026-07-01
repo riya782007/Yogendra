@@ -8,6 +8,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { ProductCard } from "@/components/site/ProductCard";
 import { Reveal } from "@/components/site/Reveal";
 import { Back } from "@/components/site/Back";
+import { FiltersPanel } from "@/components/site/FiltersPanel";
 import { liveOffer } from "@/lib/offers";
 
 export async function generateMetadata({ params }: { params: { slug: string } }): Promise<Metadata> {
@@ -114,6 +115,17 @@ export default async function CategoryPage({ params, searchParams }: { params: {
     return `px-3.5 py-1.5 rounded-full text-sm border transition-colors ${active ? on : "border-sand text-muted hover:border-emerald"}`;
   };
   const anyFilter = !!(activeSub || activeStyle || activeColor || activeLabel || searchParams.min || searchParams.max || inStockOnly || minDisc || minRating || searchParams.sort);
+  // Active filters shown as removable chips beside the Filters button (visible even when collapsed).
+  const activeChips: { label: string; href: string }[] = [];
+  if (activeSub) activeChips.push({ label: subs.find((s) => s.slug === activeSub)?.name ?? "Type", href: qs({ sub: undefined }) });
+  if (activeStyle) activeChips.push({ label: styles.find((s) => s.slug === activeStyle)?.name ?? "Style", href: qs({ style: undefined }) });
+  if (activeColor) activeChips.push({ label: activeColor, href: qs({ color: undefined }) });
+  if (activeLabel) activeChips.push({ label: activeLabel, href: qs({ label: undefined }) });
+  if (minDisc) activeChips.push({ label: `${minDisc}%+ off`, href: qs({ disc: undefined }) });
+  if (minRating) activeChips.push({ label: `${minRating}★ & up`, href: qs({ rating: undefined }) });
+  if (inStockOnly) activeChips.push({ label: "In stock", href: qs({ stock: undefined }) });
+  if (searchParams.min || searchParams.max) activeChips.push({ label: `₹${searchParams.min || 0}–${searchParams.max || "∞"}`, href: qs({ min: undefined, max: undefined }) });
+  if (searchParams.sort) activeChips.push({ label: "Sorted", href: qs({ sort: undefined }) });
   const Row = ({ label, children }: { label: string; children: ReactNode }) => (
     <div className="flex flex-wrap items-center gap-2">
       <span className="text-[11px] uppercase tracking-wide text-muted w-16 shrink-0">{label}</span>
@@ -135,13 +147,8 @@ export default async function CategoryPage({ params, searchParams }: { params: {
         </header>
       </Reveal>
 
-      {/* ================= FILTERS ================= */}
-      <div className="bg-white rounded-2xl shadow-card p-4 sm:p-5 mb-6 space-y-3">
-        <div className="flex items-center justify-between">
-          <p className="font-medium text-ink text-sm">Filters</p>
-          {anyFilter && <Link href={`/shop/c/${params.slug}`} className="text-xs text-rose hover:underline">Clear all</Link>}
-        </div>
-
+      {/* ================= FILTERS (collapsed behind one button) ================= */}
+      <FiltersPanel activeCount={activeChips.length} activeChips={activeChips} clearHref={`/shop/c/${params.slug}`}>
         {/* Quick filters (labels) */}
         {labels.length > 0 && (
           <Row label="Quick">
@@ -200,7 +207,7 @@ export default async function CategoryPage({ params, searchParams }: { params: {
             ))}
           </div>
         </div>
-      </div>
+      </FiltersPanel>
 
       {items.length === 0 ? (
         noneAtAll ? (

@@ -1035,13 +1035,18 @@ export async function getStudioData(productId: string) {
   if (!p) return null;
   const prod = p as any;
   const { data: imgs } = await sb.from("product_images").select("id,path,kind,sort,generation_id").eq("product_id", productId).order("sort");
+  const { data: vars } = await sb.from("variants").select("id,sku,color,image_paths").eq("product_id", productId).order("sku");
   let generations: any[] = [];
   try { generations = (await sb.from("image_generations").select("*").eq("product_id", productId).order("created_at", { ascending: false })).data ?? []; } catch { generations = []; }
   const images = ((imgs as any[]) ?? []).filter((i) => typeof i.path === "string");
   const raw = images.find((i) => i.kind === "source" || i.kind === "flatlay") ?? null;
   const published = images.filter((i) => i.path.startsWith("http")).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0));
   const detected = generations.find((g) => g.detected)?.detected ?? null;
-  return { product: prod, raw, images: published, generations, detected };
+  const variants = ((vars as any[]) ?? []).map((v) => ({
+    id: v.id, sku: v.sku, color: v.color ?? null,
+    image: (Array.isArray(v.image_paths) ? v.image_paths.find((x: string) => typeof x === "string" && x.startsWith("http")) : null) ?? null,
+  }));
+  return { product: prod, raw, images: published, generations, variants, detected };
 }
 export type StudioData = NonNullable<Awaited<ReturnType<typeof getStudioData>>>;
 
