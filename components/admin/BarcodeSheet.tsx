@@ -69,7 +69,13 @@ export function BarcodeSheet({ products }: { products: P[] }) {
     if (!s) return "";
     return opts.currency ? `₹${s}` : s;
   };
-  const priceLine = (r: Row) => [opts.price && money(r.price), opts.special && money(r.special), opts.wholesale && money(r.wholesale)]
+  // Wholesale / cost is printed as a private code (7·price·7) so a customer glancing at the
+  // tag can't read the trade price — staff decode it at a glance. e.g. ₹40 -> "7407".
+  const codeWholesale = (v: string) => {
+    const n = Math.round(Number((v ?? "").trim()));
+    return Number.isFinite(n) && n > 0 ? `7${n}7` : "";
+  };
+  const priceLine = (r: Row) => [opts.price && money(r.price), opts.special && money(r.special), opts.wholesale && codeWholesale(r.wholesale)]
     .filter((x) => x && x !== "").join("  ");
 
   return (
@@ -152,7 +158,7 @@ export function BarcodeSheet({ products }: { products: P[] }) {
           <div>
             <p className="text-xs font-medium text-muted mb-1">Barcode Options</p>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
-              {([["sku", "Show SKU"], ["name", "Show Product Name"], ["price", "Show Price"], ["special", "Show Special Price"], ["wholesale", "Show Wholesale Price"], ["currency", "Show Currency"]] as const).map(([k, label]) => (
+              {([["sku", "Show SKU"], ["name", "Show Product Name"], ["price", "Show Price"], ["special", "Show Special Price"], ["wholesale", "Show cost code (7·x·7)"], ["currency", "Show Currency"]] as const).map(([k, label]) => (
                 <label key={k} className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={(opts as any)[k]} onChange={(e) => setOpts((o) => ({ ...o, [k]: e.target.checked }))} className="accent-emerald" />
                   {label}
