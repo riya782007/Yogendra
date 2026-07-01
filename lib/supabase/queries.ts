@@ -152,7 +152,7 @@ export type CatalogCard = {
   wholesaleOnly: boolean;
 };
 
-export async function getCatalogProducts(opts: { category?: string; subcategory?: string; q?: string; skus?: string[]; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean; includeWholesalePricing?: boolean }): Promise<CatalogCard[]> {
+export async function getCatalogProducts(opts: { category?: string; subcategory?: string; style?: string; q?: string; skus?: string[]; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean; includeWholesalePricing?: boolean }): Promise<CatalogCard[]> {
   const sb = supabaseServer();
   const formula = await getPricingFormula();
 
@@ -171,6 +171,14 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       if (subIds.length === 0) subIds = ["00000000-0000-0000-0000-000000000000"];
     }
   }
+  // Style filter (2nd dimension). Resilient: if the styles table isn't there yet, skip silently.
+  let styleId: string | null = null;
+  if (opts.style && opts.style !== "all") {
+    let sq = sb.from("styles").select("id").eq("slug", opts.style);
+    if (catId) sq = sq.eq("category_id", catId);
+    const { data: st, error: se } = await sq.maybeSingle();
+    if (!se) styleId = (st as any)?.id ?? "00000000-0000-0000-0000-000000000000";
+  }
 
   const build = (sel: string) => {
     let q = sb.from("products").select(sel).eq("status", "published").order("sku");
@@ -178,6 +186,7 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
     if (opts.excludeRetailOnly) q = q.eq("retail_only", false);        // wholesale hides retail-only
     if (catId) q = q.eq("category_id", catId);
     if (subIds) q = q.in("id", subIds);
+    if (styleId) q = q.eq("style_id", styleId);
     if (opts.skus && opts.skus.length) q = q.in("sku", opts.skus.map((s) => s.trim().toUpperCase()).filter(Boolean));
     if (opts.q && opts.q.trim()) { const esc = opts.q.trim().replace(/[%,()]/g, " "); q = q.or(`name.ilike.%${esc}%,sku.ilike.%${esc}%`); }
     return q;

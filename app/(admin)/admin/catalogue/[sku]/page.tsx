@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import {
-  getProductBySku, getCategories, getPricingFormula, getSubcategories,
+  getProductBySku, getCategories, getPricingFormula, getSubcategories, getStyles,
   getProductSalesStats, getStockHistory, getProductEstimateReservations, getVariantOptions, getLabels, getColorCodeMap,
 } from "@/lib/supabase/queries";
 import { ProductEditor, type EditorProduct } from "@/components/admin/ProductEditor";
@@ -13,7 +13,7 @@ import VariantAiPhoto from "@/components/admin/VariantAiPhoto";
 import { requirePerm, getSession, can } from "@/lib/auth";
 import { addVariantAction, updateVariantAction, deleteVariantAction } from "@/app/actions/variants";
 import { VariantPhotos } from "@/components/admin/VariantPhotos";
-import { setProductVisibilityAction, moveProductToSubcategoryAction, savePricingAction, setWholesaleOnlyAction, toggleProductLabelAction } from "@/app/actions/catalog";
+import { setProductVisibilityAction, moveProductToSubcategoryAction, moveProductToStyleAction, savePricingAction, setWholesaleOnlyAction, toggleProductLabelAction } from "@/app/actions/catalog";
 
 const LABEL_CHIP: Record<string, string> = {
   emerald: "bg-emerald-mist text-emerald-dark", gold: "bg-gold/15 text-gold-dark",
@@ -44,8 +44,9 @@ export default async function ProductPage({ params, searchParams }: { params: { 
   ]);
   if (!p) notFound();
 
-  const [subcategories, stats, history, vopts, allLabels, colorCodes, estReservations] = await Promise.all([
+  const [subcategories, styles, stats, history, vopts, allLabels, colorCodes, estReservations] = await Promise.all([
     getSubcategories({ categoryId: p.category?.id }),
+    getStyles({ categoryId: p.category?.id }).catch(() => []),
     getProductSalesStats(p.sku).catch(() => null),
     getStockHistory(p.id).catch(() => []),
     getVariantOptions().catch(() => ({ color: [], size: [], polish: [] })),
@@ -318,12 +319,24 @@ export default async function ProductPage({ params, searchParams }: { params: { 
         <p className="text-xs text-muted mb-3">Parent: <b className="text-ink">{p.category?.name ?? "—"}</b>. Assign a subcategory so it shows in nested filters and subcategory catalogues.</p>
         <form action={moveProductToSubcategoryAction} className="flex flex-wrap items-center gap-2">
           <input type="hidden" name="sku" value={p.sku} />
+          <span className="text-xs text-muted">Type</span>
           <select name="subcategory_id" defaultValue={(p as any).subcategory_id ?? ""} className="rounded-xl border border-sand px-3 py-2 text-sm bg-white outline-none focus:border-emerald">
             <option value="">— None (parent only) —</option>
             {subcategories.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
           <button className="px-4 py-2 rounded-xl bg-ink/5 text-ink text-sm hover:bg-ink/10">Save</button>
           {subcategories.length === 0 && <span className="text-xs text-muted">No subcategories under {p.category?.name ?? "this category"} yet — add some in Categories.</span>}
+        </form>
+        {/* Style — the 2nd filter dimension (Choker, Long Necklace…). */}
+        <form action={moveProductToStyleAction} className="flex flex-wrap items-center gap-2 mt-2">
+          <input type="hidden" name="sku" value={p.sku} />
+          <span className="text-xs text-muted">Style</span>
+          <select name="style_id" defaultValue={(p as any).style_id ?? ""} className="rounded-xl border border-sand px-3 py-2 text-sm bg-white outline-none focus:border-emerald">
+            <option value="">— No style —</option>
+            {styles.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <button className="px-4 py-2 rounded-xl bg-ink/5 text-ink text-sm hover:bg-ink/10">Save</button>
+          {styles.length === 0 && <span className="text-xs text-muted">No styles under {p.category?.name ?? "this category"} yet — add some in Categories.</span>}
         </form>
       </div>
 
