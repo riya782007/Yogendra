@@ -76,9 +76,11 @@ export function computePrices(baseWholesalePaise: number, formula: PricingFormul
   //      → +customer_discount% (retail) → +mrp% (MRP).
   if (formula.useBuildup) {
     const p = (n?: number) => 1 + (Number(n) || 0) / 100;
-    // The entered base IS the WHOLESALE rate (owner's rule: "the cost is the wholesale price").
-    // Retail = wholesale + customer step %, rounded to end in ₹9. MRP = retail + markup %, to ₹5.
-    const wholesale = base;
+    // The value entered on a product is the WHOLESALE base. The owner's cost sheet builds up on it:
+    //   +shipping% → +packing(flat ₹) → +promotion(flat ₹) = landed
+    //   → +reseller% = wholesale rate → +customer% = retail (ends ₹9) → +mrp% = MRP (nearest ₹5).
+    const landed = base * p(formula.shippingPct) + (formula.packingFlat ?? 0) + (formula.promotionFlat ?? 0);
+    const wholesale = landed * p(formula.resellerPct);
     const retail = wholesale * p(formula.customerDiscountPct);
     const printedMrp = retail * p(formula.mrpPct);
     return {
@@ -102,11 +104,15 @@ export function computePrices(baseWholesalePaise: number, formula: PricingFormul
 export function buildupBreakdown(baseWholesalePaise: number, formula: PricingFormula) {
   const base = Number.isFinite(baseWholesalePaise) ? baseWholesalePaise : 0;
   const p = (n?: number) => 1 + (Number(n) || 0) / 100;
-  const wholesale = base;   // the entered cost IS the wholesale rate
+  // Full cost-sheet build-up (matches the owner's sheet + the DB bd_price() exactly).
+  const shipped = base * p(formula.shippingPct);                 // + shipping %
+  const packed = shipped + (formula.packingFlat ?? 0);           // + packing (flat ₹)
+  const landed = packed + (formula.promotionFlat ?? 0);          // + promotion (flat ₹) = landed cost
+  const wholesale = landed * p(formula.resellerPct);             // + reseller % = WHOLESALE (shown raw, e.g. ₹310.5)
   const retailRaw = wholesale * p(formula.customerDiscountPct);
-  const retail = roundTo9Paise(retailRaw);
-  const mrp = roundTo5Paise(retailRaw * p(formula.mrpPct));
-  return { base, wholesale, retail, mrp };
+  const retail = roundTo9Paise(retailRaw);                       // + customer % = RETAIL (ends ₹9)
+  const mrp = roundTo5Paise(retailRaw * p(formula.mrpPct));      // + mrp % = MRP (nearest ₹5)
+  return { base, shipped, packed, landed, wholesale, retail, mrp };
 }
 
 /**
