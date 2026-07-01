@@ -1290,7 +1290,13 @@ export async function getOrder(id: string) {
   const sb = supabaseServer();
   const { data: order } = await sb.from("orders").select("*").eq("id", id).maybeSingle();
   if (!order) return null;
-  const { data: items } = await sb.from("order_items").select("qty,unit_price,line_total,product:products(name,sku)").eq("order_id", id);
+  // Join the VARIANT too (sku + colour) so the printed bill shows exactly what was sold — e.g.
+  // "…Necklace Set – Navy Blue" with SKU KN5441-NBlue (the "green not showing" issue). Resilient:
+  // if the variant embed can't resolve, fall back to product-only so the invoice never blanks.
+  const RICH = "qty,unit_price,line_total,product:products(name,sku),variant:variants(sku,color)";
+  const BASIC = "qty,unit_price,line_total,product:products(name,sku)";
+  let { data: items, error } = await sb.from("order_items").select(RICH).eq("order_id", id);
+  if (error || items == null) ({ data: items } = await sb.from("order_items").select(BASIC).eq("order_id", id));
   return { order, items: (items as any[]) ?? [] };
 }
 

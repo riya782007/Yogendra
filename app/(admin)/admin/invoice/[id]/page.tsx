@@ -15,7 +15,7 @@ export default async function Invoice({ params }: { params: { id: string } }) {
   if (!data) notFound();
   const { order } = data;
   // #4/#35: list bill lines in A–Z SKU order so picking/checking is predictable.
-  const items = [...data.items].sort((a: any, b: any) => String(a.product?.sku ?? "").localeCompare(String(b.product?.sku ?? "")));
+  const items = [...data.items].sort((a: any, b: any) => String(a.variant?.sku ?? a.product?.sku ?? "").localeCompare(String(b.variant?.sku ?? b.product?.sku ?? "")));
 
   const isCash = order.bill_type === "cash";
   const isProforma = order.doc_type === "proforma";
@@ -126,7 +126,7 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                 return (
                   <tr key={i} className="border-b border-sand/60">
                     <td className={`${td} text-muted`}>{i + 1}</td>
-                    <td className={`${td} text-ink`}>{it.product?.name} <span className="font-mono font-semibold text-ink bg-cream border border-sand rounded px-1.5 py-0.5 text-[11px] whitespace-nowrap">{it.product?.sku}</span></td>
+                    <td className={`${td} text-ink`}>{it.product?.name}{it.variant?.color ? ` – ${it.variant.color}` : ""} <span className="font-mono font-semibold text-ink bg-cream border border-sand rounded px-1.5 py-0.5 text-[11px] whitespace-nowrap">{it.variant?.sku ?? it.product?.sku}</span></td>
                     {!isCash && <td className={`${td} text-center text-muted`}>{HSN_JEWELLERY}</td>}
                     <td className={`${td} text-right`}>{it.qty}</td>
                     <td className={`${td} text-right`}>{formatPaise(unit)}</td>
