@@ -92,7 +92,7 @@ export const COLOR_CATALOG: readonly ColorEntry[] = [
   { name: "Light Golden",    code: "LGOLD",   sort: 70 },
   { name: "Feroji",          code: "FEROJI",  sort: 71 },
   { name: "Black and White", code: "BWHITE",  sort: 72 },
-  { name: "Rumi Mint",       code: "RMINT",   sort: 73 },
+  { name: "Ruby Mint",       code: "RMINT",   sort: 73 },
   { name: "Ruby 2",          code: "RUBY2",   sort: 74 },
   { name: "Green Mint",      code: "GMINT",   sort: 75 },
 ] as const;

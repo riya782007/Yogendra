@@ -565,7 +565,7 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
           const col = tier === "retail" ? "retail_override" : tier === "mrp" ? "mrp_override" : "wholesale_override";
           const { error } = await sb.from("products").update({ [col]: paise }).eq("id", (p as any).id);
           if (error) return { ok: false, message: `${error.message} (the price-override columns need migration 0003 applied).` };
-          revalidatePath("/admin/catalogue"); revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidatePath("/wholesale");
+          revalidatePath("/admin/catalogue"); revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidatePath("/trade");
           return { ok: true, message: `Set ${(p as any).name} (${sku}) ${tier} price to ${formatPaise(paise)}.` };
         }
         // No tier → set the base wholesale cost and re-derive retail/MRP from the formula.
@@ -573,7 +573,7 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         const prices = computePrices(paise, formula);
         if (!isValidPriceSet(prices)) return { ok: false, message: "That base price produces an invalid price set." };
         await sb.from("products").update({ base_wholesale: paise }).eq("id", (p as any).id);
-        revalidatePath("/admin/catalogue"); revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidatePath("/wholesale");
+        revalidatePath("/admin/catalogue"); revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidatePath("/trade");
         return { ok: true, message: `Set ${(p as any).name} (${sku}) base/wholesale to ${formatPaise(paise)}. Retail ${formatPaise(prices.retailPrice)} · MRP ${formatPaise(prices.mrp)}.` };
       }
       case "rename_sku": {

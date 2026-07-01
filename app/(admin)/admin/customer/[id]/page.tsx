@@ -48,7 +48,7 @@ export default async function CustomerDetail({ params }: { params: { id: string 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="font-medium text-ink">Wholesale portal access</h2>
-              <p className="text-xs text-muted">{c.wholesale_approved ? "Approved — this retailer can sign in at /wholesale and see trade prices." : "Not approved yet — approve to issue an access code."}</p>
+              <p className="text-xs text-muted">{c.wholesale_approved ? "Approved — this dealer can sign in at /trade/login and see trade prices." : "Not approved yet — approve to issue an access code."}</p>
               {c.wholesale_approved && (
                 <p className="text-sm mt-2">Login: <b>{c.phone || "set a phone first"}</b> · Access code: <span className="font-mono tracking-widest bg-ink/5 px-2 py-0.5 rounded">{c.login_code ?? "—"}</span></p>
               )}

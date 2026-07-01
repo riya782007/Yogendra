@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import {
-  getProductBySku, getCategories, getPricingFormula, getSubcategories,
+  getProductBySku, getCategories, getPricingFormula, getSubcategories, getStyles,
   getProductSalesStats, getStockHistory, getProductEstimateReservations, getVariantOptions, getLabels, getColorCodeMap,
 } from "@/lib/supabase/queries";
 import { ProductEditor, type EditorProduct } from "@/components/admin/ProductEditor";
@@ -13,7 +13,7 @@ import VariantAiPhoto from "@/components/admin/VariantAiPhoto";
 import { requirePerm, getSession, can } from "@/lib/auth";
 import { addVariantAction, updateVariantAction, deleteVariantAction } from "@/app/actions/variants";
 import { VariantPhotos } from "@/components/admin/VariantPhotos";
-import { setProductVisibilityAction, moveProductToSubcategoryAction, savePricingAction, setWholesaleOnlyAction, toggleProductLabelAction } from "@/app/actions/catalog";
+import { setProductVisibilityAction, moveProductToSubcategoryAction, moveProductToStyleAction, savePricingAction, setWholesaleOnlyAction, toggleProductLabelAction } from "@/app/actions/catalog";
 
 const LABEL_CHIP: Record<string, string> = {
   emerald: "bg-emerald-mist text-emerald-dark", gold: "bg-gold/15 text-gold-dark",
@@ -44,8 +44,9 @@ export default async function ProductPage({ params, searchParams }: { params: { 
   ]);
   if (!p) notFound();
 
-  const [subcategories, stats, history, vopts, allLabels, colorCodes, estReservations] = await Promise.all([
+  const [subcategories, styles, stats, history, vopts, allLabels, colorCodes, estReservations] = await Promise.all([
     getSubcategories({ categoryId: p.category?.id }),
+    getStyles({ categoryId: p.category?.id }).catch(() => []),
     getProductSalesStats(p.sku).catch(() => null),
     getStockHistory(p.id).catch(() => []),
     getVariantOptions().catch(() => ({ color: [], size: [], polish: [] })),
@@ -177,9 +178,13 @@ export default async function ProductPage({ params, searchParams }: { params: { 
 
   const inventory = (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        <div className={card}><p className="text-xs uppercase tracking-wide text-muted">In stock</p><p className={`text-2xl font-semibold mt-1 ${p.qty <= 2 ? "text-rose" : "text-ink"}`}>{p.qty}</p></div>
-        <div className={card}><p className="text-xs uppercase tracking-wide text-muted">Variant stock</p><p className="text-2xl font-semibold text-ink mt-1">{variantStock}</p></div>
+      <div className="grid grid-cols-2 gap-3">
+        {/* One stock figure only: for a product WITH variants the total IS the sum of its variants,
+            so we show a single "Total stock" card instead of the confusing duplicate (owner's note). */}
+        <div className={card}>
+          <p className="text-xs uppercase tracking-wide text-muted">{variants.length > 0 ? "Total stock (all variants)" : "In stock"}</p>
+          <p className={`text-2xl font-semibold mt-1 ${(variants.length > 0 ? variantStock : p.qty) <= 2 ? "text-rose" : "text-ink"}`}>{variants.length > 0 ? variantStock : p.qty}</p>
+        </div>
         <div className={card}><p className="text-xs uppercase tracking-wide text-muted">Status</p><p className={`text-lg font-semibold mt-1 ${published ? "text-emerald-dark" : "text-gold-dark"}`}>{published ? "Visible" : "Hidden"}</p></div>
       </div>
       {can(session, "inventory.add") || can(session, "inventory.remove")
@@ -218,8 +223,13 @@ export default async function ProductPage({ params, searchParams }: { params: { 
       <datalist id="opt-size">{vopts.size.map((o) => <option key={o} value={o} />)}</datalist>
       <datalist id="opt-polish">{vopts.polish.map((o) => <option key={o} value={o} />)}</datalist>
 
-      <h3 className="font-medium text-ink mb-1">Variants</h3>
-      <p className="text-xs text-muted mb-4">Each variant has its own <b>colour, size &amp; polish</b>, SKU, stock and photos. Variant stock total: <b className="text-ink">{variantStock}</b> pcs. SKUs auto-generate as <code className="bg-cream px-1 rounded">{`${p.sku}-{colourCode}`}</code> — see your <Link href="/admin/colours" className="text-emerald nav-link">Colours master</Link> for the codes. Type a brand-new value and it joins the list automatically.</p>
+      <div className="flex items-center justify-between gap-3 mb-1">
+        <h3 className="font-medium text-ink">Variants</h3>
+        {can(session, "catalog.ai") && (
+          <Link href={`/admin/media/${(p as any).id}`} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-ink text-white text-xs hover:bg-ink/90">✦ Open AI Studio</Link>
+        )}
+      </div>
+      <p className="text-xs text-muted mb-4">Each variant has its own <b>colour, size &amp; polish</b>, SKU, stock and photos. Variant stock total: <b className="text-ink">{variantStock}</b> pcs. Generate a <b>model photo + a branded on-stand photo per colour</b> in the <Link href={`/admin/media/${(p as any).id}`} className="text-emerald nav-link">AI Studio →</Link>. SKUs auto-generate as <code className="bg-cream px-1 rounded">{`${p.sku}-{colourCode}`}</code> — see your <Link href="/admin/colours" className="text-emerald nav-link">Colours master</Link> for the codes.</p>
 
       <div className="space-y-4 mb-4">
         {variants.length === 0 && <p className="text-sm text-muted">No variants yet — this is a simple product.</p>}
@@ -318,12 +328,24 @@ export default async function ProductPage({ params, searchParams }: { params: { 
         <p className="text-xs text-muted mb-3">Parent: <b className="text-ink">{p.category?.name ?? "—"}</b>. Assign a subcategory so it shows in nested filters and subcategory catalogues.</p>
         <form action={moveProductToSubcategoryAction} className="flex flex-wrap items-center gap-2">
           <input type="hidden" name="sku" value={p.sku} />
+          <span className="text-xs text-muted">Type</span>
           <select name="subcategory_id" defaultValue={(p as any).subcategory_id ?? ""} className="rounded-xl border border-sand px-3 py-2 text-sm bg-white outline-none focus:border-emerald">
             <option value="">— None (parent only) —</option>
             {subcategories.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
           <button className="px-4 py-2 rounded-xl bg-ink/5 text-ink text-sm hover:bg-ink/10">Save</button>
           {subcategories.length === 0 && <span className="text-xs text-muted">No subcategories under {p.category?.name ?? "this category"} yet — add some in Categories.</span>}
+        </form>
+        {/* Style — the 2nd filter dimension (Choker, Long Necklace…). */}
+        <form action={moveProductToStyleAction} className="flex flex-wrap items-center gap-2 mt-2">
+          <input type="hidden" name="sku" value={p.sku} />
+          <span className="text-xs text-muted">Style</span>
+          <select name="style_id" defaultValue={(p as any).style_id ?? ""} className="rounded-xl border border-sand px-3 py-2 text-sm bg-white outline-none focus:border-emerald">
+            <option value="">— No style —</option>
+            {styles.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <button className="px-4 py-2 rounded-xl bg-ink/5 text-ink text-sm hover:bg-ink/10">Save</button>
+          {styles.length === 0 && <span className="text-xs text-muted">No styles under {p.category?.name ?? "this category"} yet — add some in Categories.</span>}
         </form>
       </div>
 

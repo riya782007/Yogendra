@@ -143,7 +143,7 @@ export async function updateProductAction(formData: FormData): Promise<UpdateRes
   revalidatePath(`/shop/c/${slug}`);
   revalidatePath("/shop");
   revalidatePath("/catalog");
-  revalidatePath("/wholesale");
+  revalidatePath("/trade");
   revalidatePath("/admin/catalogue");
   revalidatePath("/admin/media");
   return { ok: true };

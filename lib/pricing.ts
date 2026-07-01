@@ -19,8 +19,12 @@ export type PricingFormula = {
   /** Module 4 — when true, derive prices via the %-build-up chain instead of the multipliers. */
   useBuildup?: boolean;
   shippingPct?: number;
-  packingPct?: number;
-  promotionPct?: number;
+  /** flat packing charge in PAISE (owner bills packing as a ₹ amount, not a %). */
+  packingFlat?: number;
+  /** flat promotion / marketing charge in PAISE. */
+  promotionFlat?: number;
+  packingPct?: number;    // legacy — build-up now adds packingFlat instead
+  promotionPct?: number;  // legacy — build-up now adds promotionFlat instead
   resellerPct?: number;
   customerDiscountPct?: number;
   mrpPct?: number;
@@ -48,6 +52,16 @@ function roundToNearest(valuePaise: number, stepPaise: number): number {
   if (!stepPaise || stepPaise <= 0) return Math.round(valuePaise);
   return Math.round(valuePaise / stepPaise) * stepPaise;
 }
+/** Round to the nearest price ENDING IN 9 rupees (e.g. 326 → 329) — the owner's retail rule. */
+function roundTo9Paise(paise: number): number {
+  const r = paise / 100;
+  return Math.max(9, Math.round((r - 9) / 10) * 10 + 9) * 100;
+}
+/** Round to the nearest multiple of 5 rupees (e.g. 407.5 → 410) — the owner's MRP rule. */
+function roundTo5Paise(paise: number): number {
+  const r = paise / 100;
+  return Math.max(5, Math.round(r / 5) * 5) * 100;
+}
 
 /**
  * Compute the full price set from a base wholesale cost (in paise) and a formula.
@@ -62,14 +76,15 @@ export function computePrices(baseWholesalePaise: number, formula: PricingFormul
   //      → +customer_discount% (retail) → +mrp% (MRP).
   if (formula.useBuildup) {
     const p = (n?: number) => 1 + (Number(n) || 0) / 100;
-    const landed = base * p(formula.shippingPct) * p(formula.packingPct) * p(formula.promotionPct);
-    const wholesale = landed * p(formula.resellerPct);
+    // Owner's rule (final): the value entered on a product IS the wholesale billing price.
+    // Retail = wholesale + customer step % (ends ₹9). MRP = retail + markup % (nearest ₹5).
+    const wholesale = base;
     const retail = wholesale * p(formula.customerDiscountPct);
     const printedMrp = retail * p(formula.mrpPct);
     return {
       wholesaleRate: roundToNearest(wholesale, formula.roundToPaise),
-      retailPrice: roundToNearest(retail, formula.roundToPaise),
-      mrp: roundToNearest(printedMrp, formula.roundToPaise),
+      retailPrice: roundTo9Paise(retail),
+      mrp: roundTo5Paise(printedMrp),
     };
   }
 
@@ -87,13 +102,12 @@ export function computePrices(baseWholesalePaise: number, formula: PricingFormul
 export function buildupBreakdown(baseWholesalePaise: number, formula: PricingFormula) {
   const base = Number.isFinite(baseWholesalePaise) ? baseWholesalePaise : 0;
   const p = (n?: number) => 1 + (Number(n) || 0) / 100;
-  const afterShipping = base * p(formula.shippingPct);
-  const afterPacking = afterShipping * p(formula.packingPct);
-  const afterPromotion = afterPacking * p(formula.promotionPct);
-  const wholesale = afterPromotion * p(formula.resellerPct);
-  const retail = wholesale * p(formula.customerDiscountPct);
-  const mrp = retail * p(formula.mrpPct);
-  return { base, afterShipping, afterPacking, afterPromotion, wholesale, retail, mrp };
+  // The entered value IS the wholesale billing price. Retail & MRP build on top.
+  const wholesale = base;
+  const retailRaw = wholesale * p(formula.customerDiscountPct);
+  const retail = roundTo9Paise(retailRaw);            // + customer % = RETAIL (ends ₹9)
+  const mrp = roundTo5Paise(retailRaw * p(formula.mrpPct)); // + mrp % = MRP (nearest ₹5)
+  return { base, wholesale, retail, mrp };
 }
 
 /**

@@ -210,11 +210,13 @@ export async function generateVariantImageAction(variantId: string): Promise<Var
 
   const { data: prod } = await sb
     .from("products")
-    .select("id, sku, categories(slug)")
+    .select("id, sku, name, categories(name,slug)")
     .eq("id", (v as any).product_id)
     .maybeSingle();
   const productSku = String((prod as any)?.sku ?? "");
   const categorySlug = String((prod as any)?.categories?.slug ?? "necklace");
+  const categoryName = String((prod as any)?.categories?.name ?? categorySlug);
+  const productName = String((prod as any)?.name ?? "");
 
   if (!geminiConfigured()) return { ok: false, reason: "no_key" };
 
@@ -226,10 +228,14 @@ export async function generateVariantImageAction(variantId: string): Promise<Var
     .eq("product_id", (v as any).product_id)
     .order("sort", { ascending: true });
   const productImgs = ((pimgs as any[]) ?? []).filter((i) => String(i.path).startsWith("http"));
+  // Prefer the VARIANT'S OWN uploaded photo as the reference so the AI reproduces THAT exact photo
+  // (real colour + details) instead of recolouring the parent. Falls back to the parent only when
+  // the variant has no photo of its own. (Owner: "colour uthake khud na generate kare".)
+  const variantOwn = (((v as any).image_paths as string[]) ?? []).find((u) => typeof u === "string" && u.startsWith("http"));
   const refUrl =
+    variantOwn ??
     productImgs.find((i) => i.kind === "model")?.path ??
-    productImgs[0]?.path ??
-    (((v as any).image_paths as string[]) ?? []).find((u) => u.startsWith("http"));
+    productImgs[0]?.path;
   if (!refUrl) return { ok: false, reason: "no_source" };
 
   let referenceBase64: string, referenceMime = "image/jpeg";
@@ -241,7 +247,7 @@ export async function generateVariantImageAction(variantId: string): Promise<Var
     return { ok: false, reason: "no_source" };
   }
 
-  const prompt = buildVariantImagePrompt({ category: categorySlug, color: color || size || polish, aspect: "1:1" });
+  const prompt = buildVariantImagePrompt({ category: categoryName, productName, color: color || size || polish, aspect: "1:1" });
   const result = await generateImage({ prompt, referenceBase64, referenceMime, aspectRatio: "1:1" });
   if (!result.ok) return { ok: false, reason: result.reason, error: result.error };
 
@@ -258,7 +264,7 @@ export async function generateVariantImageAction(variantId: string): Promise<Var
   await sb.from("variants").update({ image_paths: next }).eq("id", variantId);
 
   if (productSku) reval(productSku);
-  revalidatePath("/wholesale");
+  revalidatePath("/trade");
   revalidatePath("/admin/inventory");
   return { ok: true, url };
 }

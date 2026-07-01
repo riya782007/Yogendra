@@ -51,7 +51,7 @@ const GROUPS: { title: string; links: L[] }[] = [
 ];
 const EXTERNAL: L[] = [
   { href: "/shop", label: "Retail store", icon: "🛍" },
-  { href: "/wholesale", label: "Wholesale", icon: "📦" },
+  { href: "/trade", label: "Trade Portal", icon: "📦" },
   { href: "/catalog", label: "Share Catalogue", icon: "📤" },
 ];
 

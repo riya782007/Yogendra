@@ -67,7 +67,7 @@ export default async function Inventory({ searchParams }: { searchParams: { dead
             {shown.length === 0 && <tr><td colSpan={7} className="p-4 text-muted">No items match.</td></tr>}
             {shown.map((r) => (
               <tr key={r.sku} className="border-t border-sand/60 hover:bg-cream/40 align-middle">
-                <td className="p-3 text-ink">{r.name} <span className="text-muted">· {r.sku}</span></td>
+                <td className="p-3 text-ink"><Link href={`/admin/products/${r.id}`} className="hover:text-emerald font-medium" title="Open product management">{r.name}</Link> <span className="text-muted">· {r.sku}</span></td>
                 <td className="p-3 text-muted">{r.category}</td>
                 <td className="p-3"><span className={r.qty <= lowQty ? "text-rose font-medium" : ""}>{r.qty}</span></td>
                 <td className="p-3 text-muted">{daysSince(r.lastMovementAt)}</td>
@@ -75,6 +75,7 @@ export default async function Inventory({ searchParams }: { searchParams: { dead
                 <td className="p-3"><span className={`text-xs ${r.status === "published" ? "text-emerald-dark" : "text-gold-dark"}`}>{r.status === "published" ? "Visible" : "Hidden"}</span></td>
                 <td className="p-3">
                   <div className="flex flex-wrap gap-1.5 justify-end items-center">
+                    <Link href={`/admin/products/${r.id}`} className="px-2.5 py-1 rounded-full bg-ink text-white text-xs hover:bg-ink/90">Manage</Link>
                     <Link href={`/admin/product/${r.sku}`} className="px-2.5 py-1 rounded-full bg-ink/5 text-ink text-xs hover:bg-ink/10">360°</Link>
                     <Link href={`/shop/${r.categorySlug}/${r.sku}`} target="_blank" className="text-xs text-emerald nav-link">view ↗</Link>
                     {can(session, "catalog.publish") && (

@@ -43,12 +43,16 @@ export async function posSaleAction(input: {
   allowOversell?: boolean; // owner opt-in to bill beyond stock (backorder)
   backorder?: boolean; // this sale was billed beyond available stock (surfaces in /admin/backorders)
   tier?: "retail" | "wholesale"; // price list to bill at (#16)
-  payCashRupees?: number; // split tender — cash portion (#14/#37)
-  payBankRupees?: number; // split tender — UPI/card/bank portion (#14/#37)
+  payCashRupees?: number; // split tender — cash portion (#14/#37) [legacy]
+  payBankRupees?: number; // split tender — UPI/card/bank portion (#14/#37) [legacy]
   packingRupees?: number; // extra charge — packing (GST-applicable)
   courierRupees?: number; // extra charge — courier / shipping (GST-applicable)
   adjustmentRupees?: number; // ± adjustment / round-off (GST-applicable)
-  paymentMethod?: string; // which bank/UPI account received the non-cash portion (#10)
+  paymentMethod?: string; // which bank/UPI account received the non-cash portion (#10) [legacy]
+  // Centralized Payment Methods (Phase 1): one row per tender, referencing payment_methods.id.
+  // When supplied this is the source of truth — it drives the per-method ledger AND back-fills
+  // the legacy pay_cash / pay_bank / payment_method fields so existing reports keep working.
+  payments?: { methodId: string; amount: number }[]; // amount in rupees
 }): Promise<{ ok: boolean; orderId?: string; total?: number; error?: string }> {
   if (!(await requirePerm("billing.sell"))) return { ok: false, error: "Your role can't ring up POS sales." };
   if (!input.items?.length) return { ok: false, error: "Add at least one item" };
@@ -107,6 +111,11 @@ export async function posSaleAction(input: {
   // Persist B2B bill metadata on the order so the invoice/cash-memo renders correctly.
   const billType = input.billType === "cash" ? "cash" : "gst";
   const buyerState = input.buyerGstin && /^\d{2}/.test(input.buyerGstin.trim()) ? input.buyerGstin.trim().slice(0, 2) : null;
+  // A GST tax invoice is exclusive → the customer pays total + GST. Cap/allow the recorded payment
+  // up to this GRAND total (not the pre-tax total), so a fully-paid GST bill records the tax-
+  // inclusive amount and the printed invoice shows no phantom balance for the tax.
+  const GST_RATE = 3;
+  const grandTotalPaise = billType === "gst" ? (total as number) + Math.round(((total as number) * GST_RATE) / 100) : (total as number);
 
   // Upsert into the customer directory (by phone) and link the order to it.
   let customerId: string | null = null;
@@ -125,23 +134,50 @@ export async function posSaleAction(input: {
     }
   }
 
-  // Split tender (#14/#37): cash vs bank (UPI/card). If a split is supplied it drives
-  // the amount paid; otherwise fall back to a single "amount received" at one mode.
-  const splitGiven = input.payCashRupees != null || input.payBankRupees != null;
-  let payCash = Math.max(0, Math.round((input.payCashRupees ?? 0) * 100));
-  let payBank = Math.max(0, Math.round((input.payBankRupees ?? 0) * 100));
-  const amountPaid = splitGiven
-    ? Math.min(total as number, payCash + payBank)
+  // ---- Tender resolution -----------------------------------------------------------------
+  // Centralized Payment Methods (Phase 1) take priority: each line references payment_methods.id.
+  // We resolve their kind to split into the legacy cash vs bank buckets (so old reports keep
+  // working) AND, after the order is saved, write one ledger row per tender into
+  // payment_method_transactions (so per-method balances update). Falls back to the legacy
+  // cash/bank split, then to a single-mode receipt, when no payments[] is supplied.
+  const payLinesIn = (input.payments ?? []).filter((p) => p.methodId && Number(p.amount) > 0);
+  let pmResolved: { id: string; name: string; kind: string; paise: number }[] = [];
+  if (payLinesIn.length) {
+    const ids = [...new Set(payLinesIn.map((p) => p.methodId))];
+    const { data: pms } = await sb.from("payment_methods").select("id,name,kind").in("id", ids);
+    const byId = new Map<string, any>(((pms as any[]) ?? []).map((m) => [m.id, m]));
+    pmResolved = payLinesIn
+      .map((p) => {
+        const m = byId.get(p.methodId);
+        return { id: p.methodId, name: m?.name ?? "", kind: String(m?.kind ?? "bank").toLowerCase(), paise: Math.max(0, Math.round(Number(p.amount) * 100)) };
+      })
+      .filter((p) => p.name && p.paise > 0);
+  }
+  const methodsGiven = pmResolved.length > 0;
+
+  const splitGiven = !methodsGiven && (input.payCashRupees != null || input.payBankRupees != null);
+  let payCash = methodsGiven
+    ? pmResolved.filter((p) => p.kind === "cash").reduce((s, p) => s + p.paise, 0)
+    : Math.max(0, Math.round((input.payCashRupees ?? 0) * 100));
+  let payBank = methodsGiven
+    ? pmResolved.filter((p) => p.kind !== "cash").reduce((s, p) => s + p.paise, 0)
+    : Math.max(0, Math.round((input.payBankRupees ?? 0) * 100));
+  const amountPaid = (methodsGiven || splitGiven)
+    ? Math.min(grandTotalPaise, payCash + payBank)
     : (input.amountPaidRupees != null
-        ? Math.min(total as number, Math.max(0, Math.round(input.amountPaidRupees * 100)))
-        : (total as number));
+        ? Math.min(grandTotalPaise, Math.max(0, Math.round(input.amountPaidRupees * 100)))
+        : grandTotalPaise);
   // For a single-mode sale, attribute the whole receipt to the right bucket.
-  if (!splitGiven) {
+  if (!methodsGiven && !splitGiven) {
     if ((input.payment || "cash") === "cash") payCash = amountPaid; else payBank = amountPaid;
   }
-  const payMode = splitGiven
+  const payMode = (methodsGiven || splitGiven)
     ? (payCash > 0 && payBank > 0 ? "split" : payBank > 0 ? "upi" : "cash")
     : (input.payment || "cash");
+  // Legacy single-method label = first non-cash method (else first method) for the Bank & Cash breakdown.
+  const legacyMethodName = methodsGiven
+    ? (pmResolved.find((p) => p.kind !== "cash")?.name ?? pmResolved[0]?.name ?? null)
+    : (input.paymentMethod ?? null);
 
   await sb.from("orders").update({
     bill_type: billType,
@@ -163,10 +199,26 @@ export async function posSaleAction(input: {
   }
 
   // Record which bank/UPI account received the money — best-effort; needs migration 0025.
-  if (input.paymentMethod) {
-    const { error: pmErr } = await sb.from("orders").update({ payment_method: input.paymentMethod }).eq("id", orderId);
+  if (legacyMethodName) {
+    const { error: pmErr } = await sb.from("orders").update({ payment_method: legacyMethodName }).eq("id", orderId);
     if (pmErr) console.warn("payment_method not saved — apply migration 0025_payment_methods.sql:", pmErr.message);
   }
+
+  // NEW (Phase 1): per-method ledger so Bank & Payment Methods balances update automatically.
+  // Best-effort — needs migration 0027. A failure here never breaks the sale.
+  if (methodsGiven) {
+    try {
+      const rows = pmResolved.map((p) => ({
+        method_id: p.id, txn_type: "sale", direction: "in", amount: p.paise,
+        ref_type: "order", ref_id: orderId, note: "POS sale", created_by: "owner",
+      }));
+      const { error: ledErr } = await sb.from("payment_method_transactions").insert(rows);
+      if (ledErr) console.warn("payment ledger not written — apply migration 0027_payment_methods_v2.sql:", ledErr.message);
+    } catch (e) {
+      console.warn("payment ledger insert failed:", (e as any)?.message);
+    }
+  }
+
   await sb.rpc("assign_invoice_no", { p_order: orderId });
 
   // Backorder flag — best-effort so it can never break a sale. When the owner billed

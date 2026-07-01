@@ -18,10 +18,13 @@ const schema = z.object({
 
 function prompt(p: ProductLike) {
   const colors = (p.colors ?? []).join(", ");
+  const sub = (p as any).subcategoryName ? ` Sub-category (type): ${(p as any).subcategoryName}.` : "";
   return [
     `You are a senior e-commerce copywriter for "Blythe Diva", a premium artificial-jewellery brand in Sadar Bazar, Rui Mandi, Delhi (retail + wholesale).`,
     `Write a high-converting product page as STRICT JSON with keys: title, description, specs (object of label->value), tags (array), seo (object: metaTitle, metaDescription, keywords array).`,
-    `Product name: ${p.name}. SKU: ${p.sku}. Category: ${p.categoryName ?? "Jewellery"}.${colors ? ` Available colours: ${colors}.` : ""}`,
+    `Product name: ${p.name}. SKU: ${p.sku}. Category: ${p.categoryName ?? "Jewellery"}.${sub}${colors ? ` Available colours: ${colors}.` : ""}`,
+    // TITLE is the owner's #1 complaint — the AI must NOT invent brands/names or unrelated attributes.
+    `TITLE RULES (STRICT — the shop owner's house style): the "title" must be built ONLY from the real Product name above (its actual material/style/type words like Kundan, Meenakari, Temple, Polki, Pearl, Oxidised, Gold, Bracelet, Necklace, Jhumka…), the Category and the Sub-category. Clean it into a short proper product name and ALWAYS append " – ${p.sku}" at the end, exactly like "Kundan Gold Bracelet – WBR1003" or "Meenakari Peacock Jhumka – EE1024". DO NOT invent or add: brand names, any person's name, made-up model names, or descriptors (e.g. "Daily Wear", "Minimal", "Anti Tarnish") that are NOT present in the product name/category. If the name is sparse, keep the title simple and factual from the category. Title MUST be under 60 characters and end with " – ${p.sku}".`,
     `Rules: description 70-110 words, warm and aspirational; naturally weave in Google-friendly search terms (the category, the style e.g. Kundan/Meenakari/Temple/Polki/Pearl/Oxidised if applicable, occasions like wedding/festive/party/daily wear, and location terms "Sadar Bazar", "Delhi", "artificial jewellery online India"). Mention craftsmanship, brass alloy + anti-tarnish plating, lightweight comfort, COD and easy returns.`,
     `specs (object) MUST include: SKU, Category, Material, Plating, Work/Style, Occasion, Care (and Colours if provided).`,
     `tags: 8-12 short search tags mixing category, style, occasion, material.`,

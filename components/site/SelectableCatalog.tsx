@@ -16,7 +16,7 @@ export type CatalogItem = {
   sku: string; name: string;
   category: string; categorySlug: string;
   subcategory: string | null; subcategorySlug: string | null;
-  qty: number; wholesale: number; price: number; mrp: number; offerPct: number; hasOffer: boolean;
+  qty: number; wholesale?: number; price: number; mrp: number; offerPct: number; hasOffer: boolean;
   image: string | null; tags: string[]; keywords: string[]; labels: string[]; wholesaleOnly: boolean;
 };
 
@@ -61,7 +61,7 @@ export function SelectableCatalog({ products, view, brand, phone }: { products: 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
           {products.map((p) => {
             const on = sel.has(p.sku);
-            const showPrice = view === "wholesale" ? p.wholesale : p.price;
+            const showPrice = view === "wholesale" ? (p.wholesale ?? p.price) : p.price;
             const chips = [...new Set([...(p.tags ?? []), ...(p.keywords ?? [])])].slice(0, 4);
             return (
               <div key={p.sku}

@@ -16,17 +16,27 @@ const BUCKET = "product-media";
 
 export type GenResult = { ok: boolean; sku: string; reason?: string; error?: string; url?: string; prompt?: string };
 
-export async function generateOneAction(sku: string): Promise<GenResult> {
+export async function generateOneAction(sku: string, keywords?: string): Promise<GenResult> {
   if (!(await requirePerm("catalog.ai"))) return { ok: false, sku, reason: "not_permitted" };
   const p = await getProductBySku(sku);
   if (!p) return { ok: false, sku, reason: "not_found" };
   const index = parseInt(sku.replace(/\D/g, ""), 10) || 0;
-  // Pass category + a style hint (subcategory + product name) so the prompt picks the right
-  // shot (kanchain vs necklace …) and the right model (western/fusion → Western, else Indian).
-  const styleHint = [(p as any).subcategory?.name, (p as any).category?.name, p.name].filter(Boolean).join(" ");
+  // Pull the product's REAL details into the prompt so Gemini frames the right jewellery type
+  // (a necklace as a necklace, etc.) and knows the piece's name, colours and material — instead
+  // of guessing from the reference alone. Category drives the worn-location; subcategory refines it.
+  const gc = (p.generated_content as any) ?? {};
+  const colours = ((p as any).variants ?? []).map((v: any) => v.color).filter(Boolean);
+  const details = [
+    ...(Array.isArray(gc.tags) ? gc.tags : []),
+    ...(Array.isArray(gc.seo?.keywords) ? gc.seo.keywords : []),
+    ...colours,
+  ].filter(Boolean).slice(0, 8);
   const prompt = buildImagePrompt({
     category: (p as any).category?.name ?? p.category?.slug ?? "necklace",
-    subcategory: styleHint,
+    subcategory: (p as any).subcategory?.name ?? "",
+    productName: p.name,
+    details,
+    keywords: (keywords ?? "").trim().slice(0, 120) || undefined,
     style: (p as any).subcategory?.image_style as ("auto" | "indian" | "western" | undefined),
     index,
     aspect: "4:5",

@@ -3,7 +3,6 @@ const MESSAGES = [
   "✦ Free shipping over ₹999",
   "✦ Cash on Delivery available",
   "✦ Handcrafted in Sadar Bazar, Delhi",
-  "✦ Wholesale rates for retailers",
 ];
 export function PromoBar() {
   const strip = [...MESSAGES, ...MESSAGES];

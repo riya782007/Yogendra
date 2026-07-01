@@ -24,8 +24,6 @@ export function MobileMenu({ categories }: { categories: { name: string; slug: s
               <Link href="/reels" onClick={() => setOpen(false)} className="block py-2 text-ink/80">Reels</Link>
               <Link href="/wishlist" onClick={() => setOpen(false)} className="block py-2 text-ink/80">My Wishlist</Link>
               <Link href="/account" onClick={() => setOpen(false)} className="block py-2 text-ink/80">Track my order</Link>
-              <Link href="/wholesale" onClick={() => setOpen(false)} className="block py-2 text-emerald font-medium">Wholesale</Link>
-              <Link href="/admin/dashboard" onClick={() => setOpen(false)} className="block py-2 text-muted">Owner Console</Link>
             </nav>
           </div>
         </div>

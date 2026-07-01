@@ -3,9 +3,10 @@ import { supabaseServer } from "@/lib/supabase/server";
 import {
   createCategoryAction, deleteCategoryAction,
   createSubcategoryAction, deleteSubcategoryAction, setSubcategoryStyleAction,
+  createStyleAction, deleteStyleAction,
   createLabelAction, deleteLabelAction,
 } from "@/app/actions/catalog";
-import { getCategoryTree, getLabels } from "@/lib/supabase/queries";
+import { getCategoryTree, getLabels, getStyles } from "@/lib/supabase/queries";
 import { getSession, can } from "@/lib/auth";
 import { CollapsibleCategory } from "@/components/admin/CollapsibleCategory";
 
@@ -19,13 +20,16 @@ const LABEL_CHIP: Record<string, string> = {
 
 export default async function Categories({ searchParams }: { searchParams: { q?: string } }) {
   const sb = supabaseServer();
-  const [tree, labels, { data: prods }] = await Promise.all([
+  const [tree, labels, { data: prods }, styleRows] = await Promise.all([
     getCategoryTree(),
     getLabels(),
     sb.from("products").select("category_id"),
+    getStyles().catch(() => []),
   ]);
   const counts = new Map<string, number>();
   for (const p of (prods as any[]) ?? []) counts.set(p.category_id, (counts.get(p.category_id) ?? 0) + 1);
+  const stylesByCat = new Map<string, { id: string; name: string }[]>();
+  for (const s of styleRows) { const a = stylesByCat.get(s.category_id ?? "") ?? []; a.push({ id: s.id, name: s.name }); stylesByCat.set(s.category_id ?? "", a); }
   const canEdit = can(getSession(), "catalog.edit");
 
   // Filter: match a parent name OR any of its subcategory names, so searching "kundan"
@@ -115,6 +119,29 @@ export default async function Categories({ searchParams }: { searchParams: { q?:
                 <button className="px-4 py-2 rounded-lg border border-emerald text-emerald text-sm font-medium hover:bg-emerald-mist/40">+ Subcategory</button>
               </form>
             )}
+
+            {/* Styles — the 2nd filter dimension (Choker, Long Necklace, Round Neck Set…). */}
+            <div className="mt-4 pt-3 border-t border-sand/50">
+              <p className="text-[11px] uppercase tracking-wide text-muted mb-1.5">Styles <span className="normal-case text-muted/70">— second filter (e.g. Choker, Long Necklace)</span></p>
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {(stylesByCat.get(c.id) ?? []).length === 0 && <span className="text-xs text-muted italic">No styles yet.</span>}
+                {(stylesByCat.get(c.id) ?? []).map((st) => (
+                  <span key={st.id} className="inline-flex items-center gap-1 rounded-full bg-gold/15 text-gold-dark text-xs px-3 py-1.5">
+                    {st.name}
+                    {canEdit && (
+                      <form action={deleteStyleAction} className="inline"><input type="hidden" name="id" value={st.id} /><button title="Remove style" className="opacity-60 hover:text-rose leading-none px-0.5">×</button></form>
+                    )}
+                  </span>
+                ))}
+              </div>
+              {canEdit && (
+                <form action={createStyleAction} className="flex gap-2">
+                  <input type="hidden" name="category_id" value={c.id} />
+                  <input name="name" placeholder={`Add style to ${c.name} (e.g. Choker)`} className="flex-1 rounded-lg border border-sand px-3 py-2 text-sm bg-white outline-none focus:border-emerald" />
+                  <button className="px-4 py-2 rounded-lg border border-gold text-gold-dark text-sm font-medium hover:bg-gold/10">+ Style</button>
+                </form>
+              )}
+            </div>
           </CollapsibleCategory>
         ))}
       </div>

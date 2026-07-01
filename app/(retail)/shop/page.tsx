@@ -10,7 +10,7 @@ import { ReelsSection } from "@/components/site/ReelsSection";
 
 export const metadata = {
   title: "Premium Artificial Jewellery — Kundan, Meena, Temple",
-  description: "Shop handcrafted artificial jewellery from Blythe Diva, Sadar Bazar Delhi. Necklaces, earrings, bracelets, anklets & rings at retail and wholesale.",
+  description: "Shop handcrafted artificial jewellery from Blythe Diva, Sadar Bazar Delhi. Necklaces, earrings, bracelets, anklets & rings with COD and free shipping over ₹999.",
 };
 
 export default async function Shop() {
@@ -30,11 +30,10 @@ export default async function Shop() {
               Adorn your <span className="text-gold-gradient">every</span> moment.
             </h1>
             <p className="text-muted mt-5 max-w-md leading-relaxed">
-              Handcrafted Kundan, Meenakari & Temple jewellery — premium anti-tarnish finish, trend-ready, and priced for both retail and wholesale.
+              Handcrafted Kundan, Meenakari & Temple jewellery — premium anti-tarnish finish and trend-ready designs.
             </p>
             <div className="flex gap-3 mt-7">
               <Link href="#bestsellers" className="btn-primary px-7 py-3 text-sm font-medium">Shop the collection</Link>
-              <Link href="/wholesale" className="px-7 py-3 text-sm font-medium rounded-full border border-ink/15 text-ink hover:border-emerald hover:text-emerald transition-colors">Wholesale enquiry</Link>
             </div>
             <div className="flex items-center gap-6 mt-8 text-sm text-muted">
               <span>★ 4.8 avg rating</span><span>·</span><span>50,000+ customers</span><span>·</span><span>24 designs live</span>

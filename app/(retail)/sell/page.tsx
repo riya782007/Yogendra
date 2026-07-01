@@ -1,6 +1,5 @@
 export const dynamic = "force-dynamic";
 import type { Metadata } from "next";
-import Link from "next/link";
 import { getCategories } from "@/lib/supabase/queries";
 import { Back } from "@/components/site/Back";
 import { SellForm } from "@/components/site/SellForm";
@@ -46,10 +45,6 @@ export default async function SellPage() {
       <div className="bg-white rounded-2xl shadow-card p-6 sm:p-8 border border-sand">
         <SellForm categories={categories} channel="retail" />
       </div>
-
-      <p className="text-sm text-muted text-center mt-6">
-        Are you a retailer with a catalogue to offer? <Link href="/wholesale" className="text-emerald nav-link">Sign in to the trade portal →</Link>
-      </p>
     </div>
   );
 }
