@@ -228,10 +228,14 @@ export async function generateVariantImageAction(variantId: string): Promise<Var
     .eq("product_id", (v as any).product_id)
     .order("sort", { ascending: true });
   const productImgs = ((pimgs as any[]) ?? []).filter((i) => String(i.path).startsWith("http"));
+  // Prefer the VARIANT'S OWN uploaded photo as the reference so the AI reproduces THAT exact photo
+  // (real colour + details) instead of recolouring the parent. Falls back to the parent only when
+  // the variant has no photo of its own. (Owner: "colour uthake khud na generate kare".)
+  const variantOwn = (((v as any).image_paths as string[]) ?? []).find((u) => typeof u === "string" && u.startsWith("http"));
   const refUrl =
+    variantOwn ??
     productImgs.find((i) => i.kind === "model")?.path ??
-    productImgs[0]?.path ??
-    (((v as any).image_paths as string[]) ?? []).find((u) => u.startsWith("http"));
+    productImgs[0]?.path;
   if (!refUrl) return { ok: false, reason: "no_source" };
 
   let referenceBase64: string, referenceMime = "image/jpeg";

@@ -89,8 +89,13 @@ export function POSClient({ products, customers = [], methods = [] }: { products
   const mrpTotal = lines.reduce((s, l) => s + mrpUnit(l) * l.qty, 0);            // printed MRP total
   const discountTotal = Math.max(0, mrpTotal - itemsTotal);                      // saving vs MRP (what the customer sees)
   const total = itemsTotal + chargesTotal;
+  // GST tax invoice is exclusive: add GST (CGST+SGST) ON TOP so the counter collects the full
+  // tax-inclusive amount and it matches the printed invoice's Grand Total (no phantom balance).
+  const GST_RATE = 3;
+  const gstOnBill = billType === "gst" ? Math.round((total * GST_RATE) / 100) : 0;
+  const grandTotal = total + gstOnBill;
   const received = payLines.reduce((s, l) => s + (Number(l.amount) || 0) * 100, 0);
-  const remaining = total - received;
+  const remaining = grandTotal - received;
   const addPayLine = () => setPayLines((p) => [...p, { methodId: methods[0]?.id ?? "", amount: "" }]);
   const setPayLine = (i: number, patch: Partial<PayLine>) => setPayLines((p) => p.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
   function addLine(p: P) { setLines((prev) => { const ex = prev.find((l) => l.sku === p.sku); if (ex) return prev.map((l) => l.sku === p.sku ? { ...l, qty: l.qty + 1 } : l); return [...prev, { sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, mrp: p.mrp, qty: 1, stock: p.qty, override: "", disc: "" }]; }); setQ(""); }
@@ -299,7 +304,7 @@ export function POSClient({ products, customers = [], methods = [] }: { products
                 ))}
                 <div className="flex flex-wrap gap-2 pt-0.5">
                   <button type="button" onClick={addPayLine} className="text-[11px] px-3 py-1.5 rounded-full border border-sand text-ink hover:border-emerald">+ Add Another Payment</button>
-                  {cashMethod && <button type="button" onClick={() => setPayLines([{ methodId: cashMethod.id, amount: String(Math.round(total / 100)) }])} className="text-[11px] px-3 py-1.5 rounded-full border border-sand text-muted hover:border-emerald">All cash</button>}
+                  {cashMethod && <button type="button" onClick={() => setPayLines([{ methodId: cashMethod.id, amount: String(Math.round(grandTotal / 100)) }])} className="text-[11px] px-3 py-1.5 rounded-full border border-sand text-muted hover:border-emerald">All cash</button>}
                   {payLines.length > 0 && remaining > 0 && (
                     <button type="button" onClick={() => setPayLine(payLines.length - 1, { amount: String((((Number(payLines[payLines.length - 1].amount) || 0) * 100 + remaining) / 100)) })} className="text-[11px] px-3 py-1.5 rounded-full border border-sand text-muted hover:border-emerald">Fill remaining {formatPaise(remaining)}</button>
                   )}
@@ -314,7 +319,8 @@ export function POSClient({ products, customers = [], methods = [] }: { products
           {discountTotal > 0 && <div className="flex justify-between text-sm"><span className="text-muted">Discount</span><span className="text-emerald-dark">− {formatPaise(discountTotal)}</span></div>}
           <div className="flex justify-between text-sm"><span className="text-muted">Net (items)</span><span className="text-ink/80">{formatPaise(itemsTotal)}</span></div>
           {chargesTotal !== 0 && <div className="flex justify-between text-sm"><span className="text-muted">Other charges</span><span className="text-ink/80">{chargesTotal > 0 ? "+ " : ""}{formatPaise(chargesTotal)}</span></div>}
-          <div className="flex justify-between items-baseline pt-1.5 border-t border-sand/60"><span className="text-muted">Amount payable</span><span className="text-3xl font-semibold text-ink">{formatPaise(total)}</span></div>
+          {gstOnBill > 0 && <div className="flex justify-between text-sm"><span className="text-muted">GST @{GST_RATE}% <span className="text-muted/70">(added on tax invoice)</span></span><span className="text-ink/80">+ {formatPaise(gstOnBill)}</span></div>}
+          <div className="flex justify-between items-baseline pt-1.5 border-t border-sand/60"><span className="text-muted">Amount payable</span><span className="text-3xl font-semibold text-ink">{formatPaise(grandTotal)}</span></div>
         </div>
         {received > 0 && (
           <p className={`text-xs mt-1 text-right ${remaining > 0 ? "text-rose" : "text-emerald-dark"}`}>

@@ -25,10 +25,10 @@ export default async function Invoice({ params }: { params: { id: string } }) {
   const total = order.total as number;
   const paid = order.amount_paid ?? 0;
   const buyerStateCode = order.buyer_state || stateCodeFromGstin(order.buyer_gstin);
-  // #3: a TAX INVOICE is GST-EXCLUSIVE — the rate shown is pre-tax and CGST/SGST is added on
-  // top (the storefront/D2C shelf price stays tax-inclusive, but the printed tax invoice is
-  // exclusive). So every GST invoice defaults to exclusive; the owner can still pin a specific
-  // bill to inclusive via gst_mode ('exclusive' | 'inclusive').
+  // GST TAX INVOICE is EXCLUSIVE by default: the rate is pre-tax and CGST/SGST is added on top,
+  // so Grand Total = taxable + GST. The POS collects this tax-inclusive Grand Total (it adds the
+  // GST at billing time), so amount paid matches and there is no phantom balance. The owner can
+  // still pin a specific bill to inclusive via gst_mode = 'inclusive'.
   const gstMode = (order.gst_mode as "inclusive" | "exclusive" | null | undefined) ?? null;
   const gstExclusive = !isCash && (gstMode ? gstMode === "exclusive" : true);
   const g = gstExclusive ? gstSplitExclusive(total, buyerStateCode) : gstSplit(total, buyerStateCode);
@@ -42,10 +42,12 @@ export default async function Invoice({ params }: { params: { id: string } }) {
   const itemsTaxable = (isCash || gstExclusive) ? itemsTotal : Math.round(itemsTotal / (1 + GST_RATE / 100));
   // What the customer actually owes: inclusive total (or pre-tax + GST when exclusive).
   const payable = isCash ? total : gstExclusive ? total + g.tax : total;
-  const balanceDue = Math.max(0, payable - paid);
-  const payStatus = paid <= 0 ? "Unpaid" : paid >= payable ? "Paid" : "Partial";
   const roundedTotal = Math.round(payable / 100) * 100;
   const roundOff = roundedTotal - payable;
+  // Compare paid against the ROUNDED grand total the customer actually pays — so collecting the
+  // shown amount settles the bill exactly (no 5–10 paise phantom balance from GST rounding).
+  const balanceDue = Math.max(0, roundedTotal - paid);
+  const payStatus = paid <= 0 ? "Unpaid" : paid >= roundedTotal ? "Paid" : "Partial";
 
   const docTitle = isCash ? "CASH MEMO" : isProforma ? "PROFORMA INVOICE" : "TAX INVOICE";
   const invNo = order.invoice_no || ((isCash ? "CM-" : "INV-") + String(order.id).slice(0, 8).toUpperCase());

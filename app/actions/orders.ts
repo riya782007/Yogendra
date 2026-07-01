@@ -111,6 +111,11 @@ export async function posSaleAction(input: {
   // Persist B2B bill metadata on the order so the invoice/cash-memo renders correctly.
   const billType = input.billType === "cash" ? "cash" : "gst";
   const buyerState = input.buyerGstin && /^\d{2}/.test(input.buyerGstin.trim()) ? input.buyerGstin.trim().slice(0, 2) : null;
+  // A GST tax invoice is exclusive → the customer pays total + GST. Cap/allow the recorded payment
+  // up to this GRAND total (not the pre-tax total), so a fully-paid GST bill records the tax-
+  // inclusive amount and the printed invoice shows no phantom balance for the tax.
+  const GST_RATE = 3;
+  const grandTotalPaise = billType === "gst" ? (total as number) + Math.round(((total as number) * GST_RATE) / 100) : (total as number);
 
   // Upsert into the customer directory (by phone) and link the order to it.
   let customerId: string | null = null;
@@ -158,10 +163,10 @@ export async function posSaleAction(input: {
     ? pmResolved.filter((p) => p.kind !== "cash").reduce((s, p) => s + p.paise, 0)
     : Math.max(0, Math.round((input.payBankRupees ?? 0) * 100));
   const amountPaid = (methodsGiven || splitGiven)
-    ? Math.min(total as number, payCash + payBank)
+    ? Math.min(grandTotalPaise, payCash + payBank)
     : (input.amountPaidRupees != null
-        ? Math.min(total as number, Math.max(0, Math.round(input.amountPaidRupees * 100)))
-        : (total as number));
+        ? Math.min(grandTotalPaise, Math.max(0, Math.round(input.amountPaidRupees * 100)))
+        : grandTotalPaise);
   // For a single-mode sale, attribute the whole receipt to the right bucket.
   if (!methodsGiven && !splitGiven) {
     if ((input.payment || "cash") === "cash") payCash = amountPaid; else payBank = amountPaid;

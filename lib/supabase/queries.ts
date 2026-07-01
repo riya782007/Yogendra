@@ -36,6 +36,8 @@ export async function getPricingFormula(): Promise<PricingFormula> {
     shippingPct: Number(data?.shipping_pct ?? 10),
     packingPct: Number(data?.packing_pct ?? 11.36),
     promotionPct: Number(data?.promotion_pct ?? 10.2),
+    packingFlat: Number(data?.packing_flat ?? 2500),      // paise, flat ₹25 default
+    promotionFlat: Number(data?.promotion_flat ?? 2500),  // paise, flat ₹25 default
     resellerPct: Number(data?.reseller_pct ?? 15),
     customerDiscountPct: Number(data?.customer_discount_pct ?? 5),
     mrpPct: Number(data?.mrp_pct ?? 25),

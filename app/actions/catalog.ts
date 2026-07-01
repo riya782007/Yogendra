@@ -682,8 +682,8 @@ export async function savePricingFormulaAction(formData: FormData): Promise<void
   const patch = {
     use_buildup: String(formData.get("use_buildup") ?? "") === "on",
     shipping_pct: num("shipping_pct", 10),
-    packing_pct: num("packing_pct", 11.36),
-    promotion_pct: num("promotion_pct", 10.2),
+    packing_flat: Math.max(0, Math.round(num("packing_flat_rupees", 25) * 100)),     // ₹ → paise (flat)
+    promotion_flat: Math.max(0, Math.round(num("promotion_flat_rupees", 25) * 100)), // ₹ → paise (flat)
     reseller_pct: num("reseller_pct", 15),
     customer_discount_pct: num("customer_discount_pct", 5),
     mrp_pct: num("mrp_pct", 25),

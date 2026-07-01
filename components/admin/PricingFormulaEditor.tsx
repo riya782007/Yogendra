@@ -9,13 +9,14 @@ type Props = {
   action: (formData: FormData) => void | Promise<void>;
 };
 
-const PCT_FIELDS: { key: keyof PricingFormula; name: string; label: string; hint: string }[] = [
+type PctField = { key: keyof PricingFormula; name: string; label: string; hint: string };
+const PCT_HEAD: PctField[] = [
   { key: "shippingPct", name: "shipping_pct", label: "Shipping %", hint: "freight / transport on cost" },
-  { key: "packingPct", name: "packing_pct", label: "Packing %", hint: "boxes, pouches, labour" },
-  { key: "promotionPct", name: "promotion_pct", label: "Promotion %", hint: "marketing / overhead" },
+];
+const PCT_TAIL: PctField[] = [
   { key: "resellerPct", name: "reseller_pct", label: "Reseller margin %", hint: "→ wholesale price" },
-  { key: "customerDiscountPct", name: "customer_discount_pct", label: "Customer step %", hint: "wholesale → retail" },
-  { key: "mrpPct", name: "mrp_pct", label: "MRP markup %", hint: "retail → printed MRP" },
+  { key: "customerDiscountPct", name: "customer_discount_pct", label: "Customer step %", hint: "→ retail (rounds to end in ₹9)" },
+  { key: "mrpPct", name: "mrp_pct", label: "MRP markup %", hint: "→ printed MRP (rounds to nearest ₹5)" },
 ];
 
 export default function PricingFormulaEditor({ initial, action }: Props) {
@@ -23,11 +24,14 @@ export default function PricingFormulaEditor({ initial, action }: Props) {
   const [sampleRupees, setSampleRupees] = useState(200);
   const [pct, setPct] = useState({
     shippingPct: initial.shippingPct ?? 10,
-    packingPct: initial.packingPct ?? 11.36,
-    promotionPct: initial.promotionPct ?? 10.2,
     resellerPct: initial.resellerPct ?? 15,
     customerDiscountPct: initial.customerDiscountPct ?? 5,
     mrpPct: initial.mrpPct ?? 25,
+  });
+  // Packing & Promotion are FLAT ₹ amounts (owner's rule), held in rupees for the inputs.
+  const [flat, setFlat] = useState({
+    packing: (initial.packingFlat ?? 2500) / 100,
+    promotion: (initial.promotionFlat ?? 2500) / 100,
   });
   const [mult, setMult] = useState({
     wholesaleMarkupPct: initial.wholesaleMarkupPct,
@@ -37,8 +41,8 @@ export default function PricingFormulaEditor({ initial, action }: Props) {
   });
 
   const formula: PricingFormula = useMemo(
-    () => ({ ...mult, ...pct, roundToPaise: mult.roundToPaise, useBuildup }),
-    [mult, pct, useBuildup],
+    () => ({ ...mult, ...pct, packingFlat: Math.round((Number(flat.packing) || 0) * 100), promotionFlat: Math.round((Number(flat.promotion) || 0) * 100), roundToPaise: mult.roundToPaise, useBuildup }),
+    [mult, pct, flat, useBuildup],
   );
 
   const basePaise = Math.round((Number(sampleRupees) || 0) * 100);
@@ -72,23 +76,40 @@ export default function PricingFormulaEditor({ initial, action }: Props) {
         <div className={`rounded-xl border p-4 ${useBuildup ? "border-stone-200" : "border-stone-200 opacity-50"}`}>
           <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-stone-500">Build-up percentages</h3>
           <div className="space-y-3">
-            {PCT_FIELDS.map((f) => (
-              <div key={f.name} className="flex items-center gap-3">
-                <label className="flex-1">
-                  <span className="block text-sm font-medium text-stone-700">{f.label}</span>
-                  <span className="block text-xs text-stone-400">{f.hint}</span>
-                </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    step="0.01"
-                    name={f.name}
-                    value={(pct as any)[f.key]}
-                    onChange={(e) => setP(f.key as keyof typeof pct, Number(e.target.value))}
-                    className="w-24 rounded-lg border border-stone-300 px-3 py-1.5 text-right tabular-nums"
-                  />
-                  <span className="pointer-events-none absolute right-3 top-1.5 text-stone-400">%</span>
+            {[...PCT_HEAD, ...PCT_TAIL].map((f, idx) => (
+              <div key={f.name}>
+                <div className="flex items-center gap-3">
+                  <label className="flex-1">
+                    <span className="block text-sm font-medium text-stone-700">{f.label}</span>
+                    <span className="block text-xs text-stone-400">{f.hint}</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      step="0.01"
+                      name={f.name}
+                      value={(pct as any)[f.key]}
+                      onChange={(e) => setP(f.key as keyof typeof pct, Number(e.target.value))}
+                      className="w-24 rounded-lg border border-stone-300 px-3 py-1.5 text-right tabular-nums"
+                    />
+                    <span className="pointer-events-none absolute right-3 top-1.5 text-stone-400">%</span>
+                  </div>
                 </div>
+                {/* After Shipping (idx 0), inject the two FLAT ₹ charges (Packing, Promotion). */}
+                {idx === 0 && ([["packing", "Packing", "boxes, pouches, labour", "packing_flat_rupees"], ["promotion", "Promotion", "marketing / overhead", "promotion_flat_rupees"]] as const).map(([k, label, hint, name]) => (
+                  <div key={name} className="flex items-center gap-3 mt-3">
+                    <label className="flex-1">
+                      <span className="block text-sm font-medium text-stone-700">{label} ₹ <span className="text-stone-400 font-normal">(flat)</span></span>
+                      <span className="block text-xs text-stone-400">{hint} — fixed ₹ amount</span>
+                    </label>
+                    <div className="relative">
+                      <input type="number" step="1" min={0} name={name} value={flat[k]}
+                        onChange={(e) => setFlat((s) => ({ ...s, [k]: Number(e.target.value) }))}
+                        className="w-24 rounded-lg border border-stone-300 pl-6 pr-3 py-1.5 text-right tabular-nums" />
+                      <span className="pointer-events-none absolute left-3 top-1.5 text-stone-400">₹</span>
+                    </div>
+                  </div>
+                ))}
               </div>
             ))}
           </div>
@@ -113,11 +134,11 @@ export default function PricingFormulaEditor({ initial, action }: Props) {
               <tbody className="divide-y divide-emerald-100">
                 <Row label="Cost" value={bd.base} />
                 <Row label={`+ Shipping (${pct.shippingPct}%)`} value={bd.afterShipping} />
-                <Row label={`+ Packing (${pct.packingPct}%)`} value={bd.afterPacking} />
-                <Row label={`+ Promotion (${pct.promotionPct}%)`} value={bd.afterPromotion} sub="landed cost" />
+                <Row label={`+ Packing (₹${flat.packing})`} value={bd.afterPacking} />
+                <Row label={`+ Promotion (₹${flat.promotion})`} value={bd.afterPromotion} sub="landed cost" />
                 <Row label={`+ Reseller (${pct.resellerPct}%)`} value={bd.wholesale} strong tag="WHOLESALE" />
-                <Row label={`+ Customer (${pct.customerDiscountPct}%)`} value={bd.retail} strong tag="RETAIL" />
-                <Row label={`+ MRP markup (${pct.mrpPct}%)`} value={bd.mrp} strong tag="MRP" />
+                <Row label={`+ Customer (${pct.customerDiscountPct}%) → ₹9`} value={bd.retail} strong tag="RETAIL" />
+                <Row label={`+ MRP markup (${pct.mrpPct}%) → ₹5`} value={bd.mrp} strong tag="MRP" />
               </tbody>
             </table>
           ) : (
