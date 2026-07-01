@@ -223,8 +223,13 @@ export default async function ProductPage({ params, searchParams }: { params: { 
       <datalist id="opt-size">{vopts.size.map((o) => <option key={o} value={o} />)}</datalist>
       <datalist id="opt-polish">{vopts.polish.map((o) => <option key={o} value={o} />)}</datalist>
 
-      <h3 className="font-medium text-ink mb-1">Variants</h3>
-      <p className="text-xs text-muted mb-4">Each variant has its own <b>colour, size &amp; polish</b>, SKU, stock and photos. Variant stock total: <b className="text-ink">{variantStock}</b> pcs. SKUs auto-generate as <code className="bg-cream px-1 rounded">{`${p.sku}-{colourCode}`}</code> — see your <Link href="/admin/colours" className="text-emerald nav-link">Colours master</Link> for the codes. Type a brand-new value and it joins the list automatically.</p>
+      <div className="flex items-center justify-between gap-3 mb-1">
+        <h3 className="font-medium text-ink">Variants</h3>
+        {can(session, "catalog.ai") && (
+          <Link href={`/admin/media/${(p as any).id}`} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-ink text-white text-xs hover:bg-ink/90">✦ Open AI Studio</Link>
+        )}
+      </div>
+      <p className="text-xs text-muted mb-4">Each variant has its own <b>colour, size &amp; polish</b>, SKU, stock and photos. Variant stock total: <b className="text-ink">{variantStock}</b> pcs. Generate a <b>model photo + a branded on-stand photo per colour</b> in the <Link href={`/admin/media/${(p as any).id}`} className="text-emerald nav-link">AI Studio →</Link>. SKUs auto-generate as <code className="bg-cream px-1 rounded">{`${p.sku}-{colourCode}`}</code> — see your <Link href="/admin/colours" className="text-emerald nav-link">Colours master</Link> for the codes.</p>
 
       <div className="space-y-4 mb-4">
         {variants.length === 0 && <p className="text-sm text-muted">No variants yet — this is a simple product.</p>}
