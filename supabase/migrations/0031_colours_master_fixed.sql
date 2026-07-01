@@ -4,6 +4,9 @@
 
 begin;
 
+-- 0) Ensure the barcode_code column exists (some environments never applied the 0015 column add).
+alter table public.variant_options add column if not exists barcode_code text;
+
 -- 1) Oxidised (either spelling) must never be a colour; it is a polish.
 delete from public.variant_options where kind = 'color' and lower(value) in ('oxidised','oxidized');
 insert into public.variant_options (kind, value) values ('polish', 'Oxidised')

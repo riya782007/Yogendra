@@ -1295,9 +1295,13 @@ export async function getOrder(id: string) {
   // if the variant embed can't resolve, fall back to product-only so the invoice never blanks.
   const RICH = "qty,unit_price,line_total,product:products(name,sku),variant:variants(sku,color)";
   const BASIC = "qty,unit_price,line_total,product:products(name,sku)";
-  let { data: items, error } = await sb.from("order_items").select(RICH).eq("order_id", id);
-  if (error || items == null) ({ data: items } = await sb.from("order_items").select(BASIC).eq("order_id", id));
-  return { order, items: (items as any[]) ?? [] };
+  const rich = await sb.from("order_items").select(RICH).eq("order_id", id);
+  let items: any[] | null = (rich.data as any) ?? null;
+  if (rich.error || items == null) {
+    const basic = await sb.from("order_items").select(BASIC).eq("order_id", id);
+    items = (basic.data as any) ?? null;
+  }
+  return { order, items: items ?? [] };
 }
 
 // ---------- estimates + returns ----------
