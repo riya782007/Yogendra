@@ -35,7 +35,9 @@ export async function generateStudioImageAction(input: {
   if (!productId || !shotType) return { ok: false, reason: "bad_input" };
   const sb = supabaseServer();
 
-  const { data: p } = await sb.from("products").select("id,sku,name, category:categories(name,slug)").eq("id", productId).maybeSingle();
+  const { data: p } = await sb.from("products")
+    .select("id,sku,name, category:categories(name,slug), subcategory:subcategories(name,slug,image_style)")
+    .eq("id", productId).maybeSingle();
   if (!p) return { ok: false, reason: "not_found" };
   const prod = p as any;
 
@@ -58,12 +60,23 @@ export async function generateStudioImageAction(input: {
 
   if (!geminiConfigured()) return { ok: false, reason: "no_key" };
 
-  // Auto-detect the piece (Gemini vision → keyword fallback) to choose the strategy.
-  const hint = [prod.name, prod.category?.name, variantColor].filter(Boolean).join(" ");
-  const detected = await detectJewellery({ imageUrl: refUrl, hint });
+  // Auto-detect the piece (Gemini vision → keyword fallback). NOTE: `hint` is ONLY used to help
+  // the detector — it is never passed as the authoritative category/subcategory (that comes from
+  // the product record below), so a mis-detection can never turn a necklace into a bangle.
+  const hint = [prod.name, prod.category?.name, prod.subcategory?.name, variantColor].filter(Boolean).join(" ");
+  const detected = await detectJewellery({ imageUrl: refUrl, hint, knownCategory: prod.subcategory?.name || prod.category?.name });
 
+  // The product's OWN category/subcategory/name/style is the ground truth for how the piece must be
+  // framed and worn — Gemini's vision guess (`detected`) may only add material/style flavour, never
+  // override where the piece sits on the body.
   const { prompt, aspect } = buildStudioPrompt({
-    category: prod.category?.name ?? "necklace", subcategory: hint, shotType, settings: input.settings, detected, style: input.style,
+    category: prod.category?.name ?? "necklace",
+    subcategory: prod.subcategory?.name ?? "",
+    productName: prod.name,
+    shotType,
+    settings: input.settings,
+    detected,
+    style: (input.style ?? (prod.subcategory?.image_style as ("auto" | "indian" | "western" | undefined))),
   });
 
   const refImg = await fetchAsBase64(refUrl);

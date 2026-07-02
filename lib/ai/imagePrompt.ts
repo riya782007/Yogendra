@@ -149,7 +149,7 @@ function settingsBlock(s: StudioSettings): string {
 
 /** Build a studio prompt for a specific SHOT TYPE with art-direction overrides + detected attrs. */
 export function buildStudioPrompt(opts: {
-  category: string; subcategory?: string; shotType: ShotType; settings?: StudioSettings;
+  category: string; subcategory?: string; productName?: string; shotType: ShotType; settings?: StudioSettings;
   detected?: { category?: string; material?: string; style?: string; attributes?: string[] } | null;
   index?: number; style?: "auto" | "indian" | "western";
 }): { prompt: string; aspect: ImageAspect } {
@@ -160,22 +160,31 @@ export function buildStudioPrompt(opts: {
   const western = opts.style === "western" ? true : opts.style === "indian" ? false : isWesternStyle(styleHint);
   const subject = (western ? WESTERN_SUBJECTS : SUBJECTS)[i % 2];
   const background = s.background?.trim() || BACKGROUNDS[i % BACKGROUNDS.length];
+  // Where the piece is worn is decided by the product's OWN category/subcategory only.
   const shot = shotTypeFor(opts.subcategory || opts.category);
+  const identity = categoryIdentity(opts.category, opts.subcategory);
+  const typeLabel = (opts.subcategory || opts.category || "piece of jewellery").trim();
+  const productLine = opts.productName?.trim() ? `"${opts.productName.trim()}"` : "this piece";
   const aspectNote = meta.aspect === "1:1"
     ? "a SQUARE 1:1 aspect ratio (e.g. 1024x1024)"
     : "a VERTICAL PORTRAIT 4:5 aspect ratio (e.g. 1080x1350), comfortable margins so nothing is cropped";
-  const detectedNote = opts.detected
-    ? `\nDETECTED PIECE: ${[opts.detected.category, opts.detected.material, opts.detected.style, ...(opts.detected.attributes ?? [])].filter(Boolean).join(", ")}.`
-    : "";
+  // PRODUCT IDENTITY — the single most important instruction: this fixes what the piece IS and where
+  // it sits on the body, from the owner's own catalogue data, so a necklace is shot as a necklace.
+  const identityBlock = `PRODUCT IDENTITY (highest priority — obey exactly): The piece is ${productLine}, a ${typeLabel}. ${identity}. You MUST photograph, place and frame it AS a ${typeLabel}, worn in the correct location for that jewellery type — NEVER on a different body part and NEVER as a different category of jewellery (e.g. do not render a necklace as a bracelet/bangle, or earrings as a ring). If any detected/reference cue disagrees with this, IGNORE it and follow this identity.`;
+  // Only material/style/attribute FLAVOUR from vision detection is surfaced — the detected CATEGORY is
+  // deliberately dropped so a vision mis-read can never override the identity above.
+  const flavour = [opts.detected?.material, opts.detected?.style, ...(opts.detected?.attributes ?? [])].filter(Boolean).join(", ");
+  const detectedNote = flavour ? `\nSURFACE QUALITIES (material/style flavour only — do NOT change the piece's type): ${flavour}.` : "";
   const subjectBlock = meta.productOnly
-    ? `PRESENTATION: the jewellery laid out / standing cleanly as the single hero, sharply in focus, on ${background}. No model, no hands.`
+    ? `PRESENTATION: the ${typeLabel} laid out / standing cleanly as the single hero, sharply in focus, on ${background}. No model, no hands.`
     : `SUBJECT (a display stand for the jewellery — keep her minimal, face not featured): ${subject}.${western ? " Polished international look." : " Clearly Indian/South Asian."} Skin bright, luminous, well-exposed.
-SHOT TYPE: ${meta.frame} — worn at ${shot}.
+SHOT TYPE: ${meta.frame} — worn at ${shot} (this is a ${typeLabel}).
 ${FRAMING}
 BACKGROUND & MOOD: ${background}. ${s.mood?.trim() || "Calm, aspirational, luxury Indian brand feel."}`;
 
   const prompt = `${FIDELITY}
-${detectedNote}
+
+${identityBlock}${detectedNote}
 
 ${subjectBlock}
 
