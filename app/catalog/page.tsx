@@ -1,7 +1,6 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { getCatalogProducts, getCategoryTree, getCatalogSuggestions, getStyles } from "@/lib/supabase/queries";
-import { CatalogShareBar } from "@/components/site/CatalogShareBar";
 import { CatalogSearch } from "@/components/site/CatalogSearch";
 import { SelectableCatalog } from "@/components/site/SelectableCatalog";
 import { BUSINESS } from "@/lib/business";
@@ -50,7 +49,6 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
     : activeCat ? activeCat.name
     : q ? `“${q}”`
     : "Full Collection";
-  const shareText = `${BUSINESS.brand} — ${scopeName}${view === "wholesale" ? " (wholesale)" : ""} catalogue`;
 
   // Helpers to build chip links that preserve the view + the OTHER active filter (2-basis filter).
   const viewQ = view === "wholesale" ? "&view=wholesale" : "";
@@ -79,7 +77,6 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
                 <Link href={{ pathname: "/catalog", query: cleanQuery({ category, subcategory, style, q, skus: searchParams.skus, view: "wholesale" }) }} className={`px-3 py-1 rounded-full ${view === "wholesale" ? "bg-gold text-ink" : "text-cream/80"}`}>Wholesale</Link>
               </div>
             )}
-            <CatalogShareBar shareText={shareText} />
           </div>
         </div>
       </div>

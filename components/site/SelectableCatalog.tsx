@@ -25,32 +25,39 @@ export type CatalogItem = {
 export function SelectableCatalog({ products, view, brand, phone }: { products: CatalogItem[]; view: "retail" | "wholesale"; brand: string; phone: string }) {
   const [picking, setPicking] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
+  const [copied, setCopied] = useState(false);
 
   const toggle = (sku: string) =>
     setSel((s) => { const n = new Set(s); n.has(sku) ? n.delete(sku) : n.add(sku); return n; });
 
+  // A shareable link. With a selection → a clean /catalog?skus=… link that shows ONLY those pieces
+  // (never the whole inventory). With nothing selected → the current filtered view.
   const shareUrl = useMemo(() => {
-    if (typeof window === "undefined" || sel.size === 0) return "";
+    if (typeof window === "undefined") return "";
+    if (sel.size === 0) return window.location.href;
     const u = new URL("/catalog", window.location.origin);
     u.searchParams.set("skus", [...sel].join(","));
     if (view === "wholesale") u.searchParams.set("view", "wholesale");
     return u.toString();
   }, [sel, view]);
 
-  const copy = () => { if (shareUrl) navigator.clipboard?.writeText(shareUrl).catch(() => {}); };
-  const whatsapp = () => { if (shareUrl) window.open(`https://wa.me/?text=${encodeURIComponent(`${brand} — ${sel.size} pieces\n${shareUrl}`)}`, "_blank"); };
+  const copy = () => { if (shareUrl) navigator.clipboard?.writeText(shareUrl).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600); }).catch(() => {}); };
+  const whatsapp = () => {
+    if (!shareUrl) return;
+    const label = sel.size ? `${brand} — ${sel.size} pieces` : `${brand} — catalogue`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(`${label}\n${shareUrl}`)}`, "_blank");
+  };
 
   const selectAll = () => setSel(new Set(products.map((p) => p.sku)));
   const clearAll = () => setSel(new Set());
   const allSelected = products.length > 0 && sel.size === products.length;
 
-  /** Build a clean, print-ready catalogue in a new window and trigger the browser's Save-as-PDF.
+  /** Build a clean, print-ready catalogue in a hidden IFRAME and trigger the browser's Save-as-PDF.
+   *  An iframe is used instead of window.open so pop-up blockers can't silently stop the download.
    *  Uses the selected pieces (or the whole visible catalogue if nothing is selected). */
   function savePdf() {
     const chosen = sel.size ? products.filter((p) => sel.has(p.sku)) : products;
     if (!chosen.length) return;
-    const w = window.open("", "_blank", "noopener,width=900,height=1000");
-    if (!w) { alert("Please allow pop-ups to save the catalogue as PDF."); return; }
     const priceOf = (p: CatalogItem) => formatPaise(view === "wholesale" ? (p.wholesale ?? p.price) : p.price);
     const today = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" });
     const cards = chosen.map((p) => `
@@ -93,21 +100,28 @@ export function SelectableCatalog({ products, view, brand, phone }: { products: 
   </div>
   <div class="grid">${cards}</div>
   <div class="foot">${esc(brand)}${phone ? ` · ${esc(phone)}` : ""} — prices ${view === "wholesale" ? "wholesale" : "retail"}, subject to availability.</div>
-  <script>
-    (function(){ var imgs = Array.prototype.slice.call(document.images), left = imgs.length;
-      function go(){ setTimeout(function(){ window.focus(); window.print(); }, 250); }
-      if(!left) return go();
-      imgs.forEach(function(im){ if(im.complete) tick(); else { im.onload = tick; im.onerror = tick; } });
-      function tick(){ if(--left <= 0) go(); }
-    })();
-  </script>
 </body></html>`;
-    w.document.open(); w.document.write(html); w.document.close();
+    // Render into a hidden iframe, wait for all images, then print just the iframe.
+    const iframe = document.createElement("iframe");
+    iframe.setAttribute("aria-hidden", "true");
+    iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;";
+    document.body.appendChild(iframe);
+    const doc = iframe.contentWindow?.document;
+    if (!doc) { iframe.remove(); return; }
+    doc.open(); doc.write(html); doc.close();
+    const cleanup = () => setTimeout(() => iframe.remove(), 1000);
+    const go = () => { try { iframe.contentWindow?.focus(); iframe.contentWindow?.print(); } finally { cleanup(); } };
+    const imgs = Array.from(doc.images);
+    let left = imgs.length;
+    if (!left) { setTimeout(go, 150); return; }
+    const tick = () => { if (--left <= 0) setTimeout(go, 200); };
+    imgs.forEach((im) => { if (im.complete) tick(); else { im.onload = tick; im.onerror = tick; } });
   }
 
   return (
     <div>
-      {/* Toolbar */}
+      {/* Toolbar — sharing is selection-aware: with pieces selected, Copy link / WhatsApp / PDF use
+          ONLY those pieces; with nothing selected they use the current filtered view. */}
       <div className="no-print flex flex-wrap items-center gap-2 mb-4">
         <button onClick={() => { setPicking((p) => !p); setSel(new Set()); }}
           className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${picking ? "bg-ink text-white" : "bg-white border border-sand text-ink hover:border-gold"}`}>
@@ -120,14 +134,17 @@ export function SelectableCatalog({ products, view, brand, phone }: { products: 
               {allSelected ? "✕ Clear all" : `✓ Select all (${products.length})`}
             </button>
             <span className="text-sm text-muted">{sel.size} selected</span>
-            <button disabled={sel.size === 0} onClick={copy} className="px-4 py-2 rounded-full bg-ink/5 text-ink text-sm hover:bg-ink/10 disabled:opacity-40">🔗 Copy link</button>
-            <button disabled={sel.size === 0} onClick={whatsapp} className="px-4 py-2 rounded-full bg-emerald text-white text-sm hover:bg-emerald-dark disabled:opacity-40">Share {sel.size > 0 ? `${sel.size} ` : ""}on WhatsApp</button>
           </>
         )}
-        {/* Save as PDF — uses the selected pieces, or the whole visible catalogue if none picked. */}
+        <button onClick={copy} className="px-4 py-2 rounded-full bg-ink/5 text-ink text-sm hover:bg-ink/10">
+          {copied ? "Link copied ✓" : sel.size ? `🔗 Copy link (${sel.size})` : "🔗 Copy link"}
+        </button>
+        <button onClick={whatsapp} className="px-4 py-2 rounded-full bg-emerald text-white text-sm hover:bg-emerald-dark">
+          {sel.size ? `Share ${sel.size} on WhatsApp` : "Share on WhatsApp"}
+        </button>
         <button onClick={savePdf} disabled={products.length === 0}
-          className="px-4 py-2 rounded-full bg-white border border-sand text-ink text-sm hover:border-gold disabled:opacity-40">
-          ⬇ Save as PDF{picking && sel.size > 0 ? ` (${sel.size})` : ""}
+          className="px-4 py-2 rounded-full bg-gold text-ink text-sm font-medium hover:opacity-90 disabled:opacity-40">
+          ⬇ Save as PDF{sel.size ? ` (${sel.size})` : ""}
         </button>
       </div>
 

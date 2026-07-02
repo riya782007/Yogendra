@@ -41,11 +41,16 @@ const PALETTE: { name: string; rgb: [number, number, number] }[] = [
   { name: "green", rgb: [45, 140, 80] }, { name: "orange", rgb: [225, 140, 50] },
   { name: "yellow", rgb: [225, 205, 70] }, { name: "brown", rgb: [120, 80, 50] },
 ];
-function nearestColour(r: number, g: number, b: number): string {
+/** Nearest palette colour + its squared distance (lower = more confident). */
+function nearestColour(r: number, g: number, b: number): { name: string; dist: number } {
   let best = "", bd = Infinity;
   for (const c of PALETTE) { const d = (c.rgb[0] - r) ** 2 + (c.rgb[1] - g) ** 2 + (c.rgb[2] - b) ** 2; if (d < bd) { bd = d; best = c.name; } }
-  return best;
+  return { name: best, dist: bd };
 }
+// Collapse near-neighbour colours so we never false-warn across an ambiguous boundary
+// (baby-pink reading as magenta/purple, maroon as red, etc.).
+const COLLAPSE: Record<string, string> = { magenta: "pink", maroon: "red", purple: "pink", orange: "red" };
+const fold = (c: string) => COLLAPSE[c] ?? c;
 /** Map a free-text variant colour label to one of the coarse families above (or "" if neutral/metal). */
 function labelFamily(label: string): string {
   const t = (label || "").toLowerCase();
@@ -119,12 +124,17 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
         ctx.drawImage(im, im.naturalWidth * 0.2, im.naturalHeight * 0.2, im.naturalWidth * 0.6, im.naturalHeight * 0.6, 0, 0, S, S);
         const d = ctx.getImageData(0, 0, S, S).data;
         let r = 0, g = 0, b = 0, n = 0;
+        const total = (S * S);
         for (let i = 0; i < d.length; i += 4) {
           const R = d[i], G = d[i + 1], B = d[i + 2], mx = Math.max(R, G, B), mn = Math.min(R, G, B);
-          if (mx - mn > 45) { r += R; g += G; b += B; n++; } // saturated → a coloured stone, not metal/bg
+          if (mx - mn > 70) { r += R; g += G; b += B; n++; } // STRONGLY saturated → a coloured stone
         }
-        if (n < 10) return; // not enough colour to judge
-        setGuess((x) => ({ ...x, [variantId]: nearestColour(r / n, g / n, b / n) }));
+        // Only judge when a clear majority of the centre is a vivid colour (avoids metal/neutral noise),
+        // AND the average is confidently close to a known colour. Otherwise stay silent (no warning).
+        if (n < total * 0.18) return;
+        const { name, dist } = nearestColour(r / n, g / n, b / n);
+        if (dist > 3500) return; // ambiguous → don't guess
+        setGuess((x) => ({ ...x, [variantId]: name }));
       } catch { /* tainted canvas / CORS — skip */ }
     };
     im.src = url;
@@ -405,7 +415,8 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
                   const vModelUrl = results[slot("model", v.id)] ?? vModel?.output_path;
                   const vStandUrl = results[slot("branded_stand", v.id)] ?? vStand?.output_path;
                   const fam = labelFamily(v.color ?? "");
-                  const mismatch = !!guess[v.id] && !!fam && fam !== guess[v.id] && !dismissed.has(v.id);
+                  // Only a CONFIDENT, clearly-different colour warns (near-neighbours are folded together).
+                  const mismatch = !!guess[v.id] && !!fam && fold(fam) !== fold(guess[v.id]) && !dismissed.has(v.id);
                   return (
                     <div key={v.id} className="rounded-xl border border-sand p-2.5">
                       <div className="flex items-center gap-3">
