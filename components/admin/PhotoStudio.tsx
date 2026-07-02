@@ -7,10 +7,24 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useToast } from "@/components/ui/Toast";
 import {
   generateStudioImageAction, setGenerationStatusAction, publishGenerationAction, detectJewelleryAction,
   uploadBrandedImageAction,
 } from "@/app/actions/studio";
+
+// Human-readable reasons so a failed click never looks like "nothing happened".
+const REASON_MSG: Record<string, string> = {
+  no_key: "Add GEMINI_API_KEY or OPENAI_API_KEY to enable generation.",
+  no_source: "Upload a raw photo first (Replace / manage).",
+  no_image: "The AI returned no image — try again.",
+  not_permitted: "You don't have permission to generate images.",
+  bad_input: "Something's missing — reload and try again.",
+  not_found: "Product not found — reload the page.",
+  upload_failed: "Generated, but saving the image failed. Try again.",
+  api_error: "The image service is busy or timed out. Try again in a moment.",
+};
+const reasonText = (r?: string, e?: string) => e || (r ? REASON_MSG[r] ?? `Generation failed (${r}).` : "Generation failed.");
 
 type Gen = { id: string; output_path: string | null; shot_type: string; version: number; status: string; provider: string | null; settings: any; created_at: string; variant_id?: string | null };
 type Data = {
@@ -43,6 +57,7 @@ const sel = "w-full rounded-xl border border-sand bg-white px-3 py-2 text-sm out
 
 export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
   const router = useRouter();
+  const { toast } = useToast();
   const p = data.product;
   const [pending, start] = useTransition();
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -70,13 +85,15 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
   const variants = data.variants ?? [];
 
   function gen(shotType: string, key: string, variantId?: string) {
-    if (!ready) { setErr("Add GEMINI_API_KEY or OPENAI_API_KEY to enable generation."); return; }
-    if (!data.raw && data.images.length === 0 && !variants.some((v) => v.image)) { setErr("Upload a raw photo first (Manage media)."); return; }
+    if (!ready) { const m = REASON_MSG.no_key; setErr(m); toast(m, "error"); return; }
+    if (!data.raw && data.images.length === 0 && !variants.some((v) => v.image)) { const m = REASON_MSG.no_source; setErr(m); toast(m, "error"); return; }
     setErr(""); setBusyKey(key);
+    toast("Generating image… this can take 20–40s", "info");
     start(async () => {
       const r = await generateStudioImageAction({ productId: p.id, shotType: shotType as any, settings: settings(), style: styleParam, variantId });
       setBusyKey(null);
-      if (!r.ok) setErr(r.error || r.reason || "Generation failed."); else router.refresh();
+      if (!r.ok) { const m = reasonText(r.reason, r.error); setErr(m); toast(m, "error"); }
+      else { toast("Image generated ✓", "success"); router.refresh(); }
     });
   }
 
@@ -103,9 +120,11 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
       const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
       const base64 = dataUrl.split(",")[1];
       const r = await uploadBrandedImageAction({ productId: p.id, variantId, base64, mime: "image/jpeg", shotType: "branded_stand" });
-      if (!r.ok) setErr(r.error || r.reason || "Could not brand & publish."); else router.refresh();
+      if (!r.ok) { const m = reasonText(r.reason, r.error) || "Could not brand & publish."; setErr(m); toast(m, "error"); }
+      else { toast("Branded & published ✓", "success"); router.refresh(); }
     } catch (e) {
-      setErr("Couldn't process the image (cross-origin). Try re-generating.");
+      const m = "Couldn't process the image (cross-origin). Try re-generating.";
+      setErr(m); toast(m, "error");
     } finally {
       setBusyKey(null);
     }
@@ -113,7 +132,8 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
 
   function redetect() {
     setBusyKey("detect");
-    start(async () => { await detectJewelleryAction(p.id); setBusyKey(null); router.refresh(); });
+    toast("Re-checking the piece…", "info");
+    start(async () => { await detectJewelleryAction(p.id); setBusyKey(null); toast("Re-detected ✓", "success"); router.refresh(); });
   }
 
   return (
@@ -130,8 +150,20 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
         </div>
         {err && <div className="rounded-xl px-4 py-2 mb-4 text-sm bg-rose/10 text-rose">{err}</div>}
 
+        {/* Sticky section nav — jump around this long page without endless scrolling. */}
+        <nav className="sticky top-2 z-20 mb-4 flex flex-wrap gap-1.5 rounded-full border border-sand bg-white/90 backdrop-blur px-2 py-1.5 shadow-card text-xs">
+          {[
+            { href: "#studio-hero", label: "Hero" },
+            { href: "#studio-angles", label: "Angles" },
+            ...(variants.length ? [{ href: "#studio-variants", label: "Variant photos" }] : []),
+            { href: "#studio-enhance", label: "Enhance" },
+          ].map((t) => (
+            <a key={t.href} href={t.href} className="px-3 py-1 rounded-full text-muted hover:bg-cream hover:text-ink transition-colors">{t.label}</a>
+          ))}
+        </nav>
+
         {/* Main studio card */}
-        <div className="bg-white rounded-2xl border border-sand shadow-card p-5">
+        <div id="studio-hero" className="scroll-mt-16 bg-white rounded-2xl border border-sand shadow-card p-5">
           <div className="flex items-start gap-2 mb-3">
             <div>
               <p className="font-medium text-ink">{p.name}</p>
@@ -206,7 +238,7 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
           </div>
 
           {/* Additional angles */}
-          <div className="mt-6">
+          <div id="studio-angles" className="scroll-mt-16 mt-6">
             <p className="text-sm font-medium text-ink mb-2">Additional angles</p>
             <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-8 gap-2">
               {ANGLES.map((a) => {
@@ -230,7 +262,7 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
 
           {/* Variant AI photos — 1 model shot + 1 branded on-stand shot per colour */}
           {variants.length > 0 && (
-            <div className="mt-6">
+            <div id="studio-variants" className="scroll-mt-16 mt-6">
               <p className="text-sm font-medium text-ink mb-1">Variant photos <span className="text-muted font-normal">· model + branded stand per colour</span></p>
               <p className="text-[11px] text-muted mb-2">Generates from each colour&apos;s own photo. The stand shot gets the <b>blythediva</b> wordmark on publish.</p>
               <div className="space-y-2">
@@ -274,7 +306,7 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
           )}
 
           {/* AI enhancement options */}
-          <div className="mt-6">
+          <div id="studio-enhance" className="scroll-mt-16 mt-6">
             <p className="text-sm font-medium text-ink mb-2">AI enhancement options</p>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               {ENHANCERS.map((e) => (

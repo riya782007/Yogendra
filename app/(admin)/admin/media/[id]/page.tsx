@@ -1,4 +1,7 @@
 export const dynamic = "force-dynamic";
+// AI image generation (Gemini/OpenAI) routinely takes 15–40s; without this the Vercel function is
+// killed at the default 10s and the "Generate/＋Model/＋Stand" click dies silently with no image.
+export const maxDuration = 60;
 import { notFound, redirect } from "next/navigation";
 import { getStudioData } from "@/lib/supabase/queries";
 import { geminiConfigured } from "@/lib/ai/gemini";

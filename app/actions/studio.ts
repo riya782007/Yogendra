@@ -199,11 +199,15 @@ export async function uploadBrandedImageAction(input: {
 export async function detectJewelleryAction(productId: string): Promise<{ ok: boolean; detected?: any }> {
   if (!(await requirePerm("catalog.ai"))) return { ok: false };
   const sb = supabaseServer();
-  const { data: p } = await sb.from("products").select("id,name, category:categories(name), images:product_images(path,kind)").eq("id", productId).maybeSingle();
+  const { data: p } = await sb.from("products").select("id,name, category:categories(name), subcategory:subcategories(name), images:product_images(path,kind)").eq("id", productId).maybeSingle();
   if (!p) return { ok: false };
   const prod = p as any;
   const ref = (prod.images ?? []).find((i: any) => typeof i.path === "string" && i.path.startsWith("http"));
-  const detected = await detectJewellery({ imageUrl: ref?.path, hint: [prod.name, prod.category?.name].filter(Boolean).join(" ") });
+  const detected = await detectJewellery({
+    imageUrl: ref?.path,
+    hint: [prod.name, prod.category?.name, prod.subcategory?.name].filter(Boolean).join(" "),
+    knownCategory: prod.subcategory?.name || prod.category?.name,
+  });
   revalidatePath(`/admin/media/${productId}`);
   return { ok: true, detected };
 }
