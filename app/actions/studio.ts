@@ -29,6 +29,8 @@ async function fetchAsBase64(url: string): Promise<{ base64: string; mime: strin
 export async function generateStudioImageAction(input: {
   productId: string; shotType: ShotType; settings?: StudioSettings; variantId?: string;
   style?: "auto" | "indian" | "western";
+  /** true = recolour the piece to the variant's colour NAME; default/false = trust the raw photo. */
+  matchColorName?: boolean;
 }): Promise<GenOut> {
   if (!(await requirePerm("catalog.ai"))) return { ok: false, reason: "not_permitted" };
   const { productId, shotType } = input;
@@ -91,6 +93,7 @@ export async function generateStudioImageAction(input: {
     subcategory: prod.subcategory?.name ?? "",
     productName: prod.name,
     variantColor: variantColor ?? undefined,
+    forceColour: input.matchColorName === true,
     shotType,
     settings: input.settings,
     detected,

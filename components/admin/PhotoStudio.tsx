@@ -8,7 +8,7 @@
  * operator can fire several at once — click ＋Model on five colours and they all run in parallel,
  * or hit "Generate all" to enqueue every variant. Each button only disables ITSELF while it runs.
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
@@ -30,6 +30,37 @@ const REASON_MSG: Record<string, string> = {
   api_error: "The image service is busy or timed out. Try again in a moment.",
 };
 const reasonText = (r?: string, e?: string) => e || (r ? REASON_MSG[r] ?? `Generation failed (${r}).` : "Generation failed.");
+
+// ---- Photo-vs-label colour sanity check (client-side, best-effort) ---------------------------
+// A coarse palette used to guess the dominant STONE colour of a variant's photo and compare it to
+// the colour NAME on the variant, so we can warn "photo looks green but label says Black".
+const PALETTE: { name: string; rgb: [number, number, number] }[] = [
+  { name: "red", rgb: [190, 40, 40] }, { name: "maroon", rgb: [110, 30, 40] },
+  { name: "pink", rgb: [235, 150, 185] }, { name: "magenta", rgb: [190, 40, 120] },
+  { name: "purple", rgb: [110, 60, 150] }, { name: "blue", rgb: [50, 80, 185] },
+  { name: "green", rgb: [45, 140, 80] }, { name: "orange", rgb: [225, 140, 50] },
+  { name: "yellow", rgb: [225, 205, 70] }, { name: "brown", rgb: [120, 80, 50] },
+];
+function nearestColour(r: number, g: number, b: number): string {
+  let best = "", bd = Infinity;
+  for (const c of PALETTE) { const d = (c.rgb[0] - r) ** 2 + (c.rgb[1] - g) ** 2 + (c.rgb[2] - b) ** 2; if (d < bd) { bd = d; best = c.name; } }
+  return best;
+}
+/** Map a free-text variant colour label to one of the coarse families above (or "" if neutral/metal). */
+function labelFamily(label: string): string {
+  const t = (label || "").toLowerCase();
+  if (/rani|magenta|fuchsia/.test(t)) return "magenta";
+  if (/baby ?pink|pink|blush|peach|rose/.test(t)) return "pink";
+  if (/maroon|wine|burgundy/.test(t)) return "maroon";
+  if (/red|scarlet|ruby/.test(t)) return "red";
+  if (/green|emerald|olive|mint|mehendi/.test(t)) return "green";
+  if (/blue|navy|teal|sky|firozi|turquoise/.test(t)) return "blue";
+  if (/purple|violet|lavender|mauve|wine/.test(t)) return "purple";
+  if (/brown|coffee|tan|bronze/.test(t)) return "brown";
+  if (/orange|rust/.test(t)) return "orange";
+  if (/yellow|lemon|mustard/.test(t)) return "yellow";
+  return ""; // black / white / gold / silver / grey → metal-ish, not judged from stones
+}
 
 type Gen = { id: string; output_path: string | null; shot_type: string; version: number; status: string; provider: string | null; settings: any; created_at: string; variant_id?: string | null };
 type Data = {
@@ -68,11 +99,48 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [err, setErr] = useState("");
   const [more, setMore] = useState(false);
+  // Per-variant "recolour to the colour NAME" toggle (default off = the uploaded photo wins).
+  const [recolor, setRecolor] = useState<Record<string, boolean>>({});
+  // Guessed dominant stone colour per variant + dismissed mismatch warnings.
+  const [guess, setGuess] = useState<Record<string, string>>({});
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+
+  /** Best-effort: load the variant photo cross-origin, sample its centre, and guess the dominant
+   *  STONE colour (ignoring near-neutral metal/background pixels). Used only to warn on a
+   *  photo-vs-label mismatch; silently skips if the image can't be read (CORS) or is too neutral. */
+  function checkColour(variantId: string, url: string) {
+    if (guess[variantId] || !url) return;
+    const im = new Image();
+    im.crossOrigin = "anonymous";
+    im.onload = () => {
+      try {
+        const S = 28; const c = document.createElement("canvas"); c.width = S; c.height = S;
+        const ctx = c.getContext("2d"); if (!ctx) return;
+        ctx.drawImage(im, im.naturalWidth * 0.2, im.naturalHeight * 0.2, im.naturalWidth * 0.6, im.naturalHeight * 0.6, 0, 0, S, S);
+        const d = ctx.getImageData(0, 0, S, S).data;
+        let r = 0, g = 0, b = 0, n = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          const R = d[i], G = d[i + 1], B = d[i + 2], mx = Math.max(R, G, B), mn = Math.min(R, G, B);
+          if (mx - mn > 45) { r += R; g += G; b += B; n++; } // saturated → a coloured stone, not metal/bg
+        }
+        if (n < 10) return; // not enough colour to judge
+        setGuess((x) => ({ ...x, [variantId]: nearestColour(r / n, g / n, b / n) }));
+      } catch { /* tainted canvas / CORS — skip */ }
+    };
+    im.src = url;
+  }
 
   const isBusy = (key: string) => busy.has(key);
   const anyBusy = busy.size > 0;
   const addBusy = (key: string) => setBusy((b) => { const n = new Set(b); n.add(key); return n; });
   const dropBusy = (key: string) => setBusy((b) => { const n = new Set(b); n.delete(key); return n; });
+
+  // Optimistic results — the URL returned by each generation, shown INSTANTLY so display never
+  // depends on a router.refresh() that could cancel other in-flight generations.
+  const [results, setResults] = useState<Record<string, string>>({});
+  const slot = (shotType: string, variantId?: string) => `${shotType}:${variantId ?? "_"}`;
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleRefresh = () => { if (refreshTimer.current) clearTimeout(refreshTimer.current); refreshTimer.current = setTimeout(() => router.refresh(), 1500); };
 
   // Art-direction settings.
   const [lighting, setLighting] = useState(LIGHTING[0]);
@@ -90,21 +158,24 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
   const candidatesOf = (shot: string) => data.generations.filter((g) => g.shot_type === shot && g.output_path && g.status !== "rejected" && g.status !== "archived");
   const heroCandidates = candidatesOf("hero");
   const hero = heroCandidates.find((g) => g.status === "published") ?? heroCandidates.find((g) => g.status === "favorite") ?? heroCandidates[0] ?? null;
-  const heroUrl = hero?.output_path ?? data.images[0]?.path ?? data.raw?.path ?? null;
+  const heroUrl = results[slot("hero")] ?? hero?.output_path ?? data.images[0]?.path ?? data.raw?.path ?? null;
 
   const variants = data.variants ?? [];
 
   /** Fire one generation. Concurrency-safe: adds its own key to `busy`, so other buttons stay live
    *  and the operator can queue several at once. Returns true on success (used by "Generate all"). */
-  async function gen(shotType: string, key: string, variantId?: string): Promise<boolean> {
+  async function gen(shotType: string, key: string, variantId?: string, opts?: { matchColorName?: boolean; silent?: boolean }): Promise<boolean> {
     if (!ready) { const m = REASON_MSG.no_key; setErr(m); toast(m, "error"); return false; }
     if (!data.raw && data.images.length === 0 && !variants.some((v) => v.image)) { const m = REASON_MSG.no_source; setErr(m); toast(m, "error"); return false; }
     if (isBusy(key)) return false; // already running this exact shot
     setErr(""); addBusy(key);
     try {
-      const r = await generateStudioImageAction({ productId: p.id, shotType: shotType as any, settings: settings(), style: styleParam, variantId });
+      const r = await generateStudioImageAction({ productId: p.id, shotType: shotType as any, settings: settings(), style: styleParam, variantId, matchColorName: opts?.matchColorName });
       if (!r.ok) { const m = reasonText(r.reason, r.error); setErr(m); toast(m, "error"); return false; }
-      toast("Image generated ✓", "success"); router.refresh(); return true;
+      if (r.url) setResults((x) => ({ ...x, [slot(shotType, variantId)]: r.url! })); // show instantly
+      if (!opts?.silent) toast("Image generated ✓", "success");
+      scheduleRefresh(); // sync DB status/candidates shortly, without cancelling other in-flight gens
+      return true;
     } catch {
       const m = "Network error — try again."; setErr(m); toast(m, "error"); return false;
     } finally {
@@ -112,13 +183,21 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
     }
   }
 
-  /** Bulk: enqueue a shot for EVERY variant at once (all run in parallel). */
+  /** Bulk: run a shot for EVERY variant, ONE AT A TIME. Server Actions are serialized by Next.js and
+   *  a mid-batch refresh cancels queued ones — so we await each fully, then refresh once at the end.
+   *  Every colour reliably gets its image (slower, but nothing is dropped). */
   async function genAllVariants(shotType: "model" | "branded_stand") {
     if (!ready) { const m = REASON_MSG.no_key; setErr(m); toast(m, "error"); return; }
     if (!variants.length) return;
-    toast(`Queued ${variants.length} ${shotType === "model" ? "model" : "stand"} shots — they'll fill in as they finish`, "info");
-    await Promise.all(variants.map((v) => gen(shotType, `${shotType === "model" ? "vm" : "vs"}-${v.id}`, v.id)));
-    toast("Bulk generation finished ✓", "success");
+    const prefix = shotType === "model" ? "vm" : "vs";
+    toast(`Generating ${variants.length} ${shotType === "model" ? "model" : "stand"} shots one by one…`, "info");
+    let done = 0;
+    for (const v of variants) {
+      const ok = await gen(shotType, `${prefix}-${v.id}`, v.id, { matchColorName: !!recolor[v.id], silent: true });
+      if (ok) done++; // each result shows instantly via optimistic state; no mid-loop refresh to cancel others
+    }
+    toast(`Bulk done — ${done}/${variants.length} generated ✓`, done === variants.length ? "success" : "info");
+    scheduleRefresh();
   }
 
   /** Upload a real raw reference photo for ONE colour, so generation uses the true piece — not an
@@ -288,10 +367,11 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
               {ANGLES.map((a) => {
                 const cand = candidatesOf(a.key);
                 const top = cand.find((g) => g.status === "published") ?? cand[0];
+                const angleUrl = results[slot(a.key)] ?? top?.output_path;
                 return (
                   <div key={a.key}>
                     <div className="aspect-[4/5] rounded-lg bg-cream border border-sand overflow-hidden relative">
-                      {top?.output_path ? <img src={top.output_path} alt={a.label} className="w-full h-full object-cover" /> : <div className="w-full h-full grid place-items-center text-[9px] text-muted text-center">{a.label}</div>}
+                      {angleUrl ? <img src={angleUrl} alt={a.label} className="w-full h-full object-cover" /> : <div className="w-full h-full grid place-items-center text-[9px] text-muted text-center">{a.label}</div>}
                       {isBusy(a.key) && <div className="absolute inset-0 bg-ink/40 grid place-items-center text-cream text-[10px]">…</div>}
                     </div>
                     <div className="flex items-center justify-between mt-0.5">
@@ -322,41 +402,60 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
                   const vModel = data.generations.find((g) => g.variant_id === v.id && g.shot_type === "model" && g.output_path && g.status !== "rejected" && g.status !== "archived");
                   const vStand = data.generations.find((g) => g.variant_id === v.id && g.shot_type === "branded_stand" && g.output_path && g.status !== "rejected" && g.status !== "archived");
                   const upKey = `up-${v.id}`;
+                  const vModelUrl = results[slot("model", v.id)] ?? vModel?.output_path;
+                  const vStandUrl = results[slot("branded_stand", v.id)] ?? vStand?.output_path;
+                  const fam = labelFamily(v.color ?? "");
+                  const mismatch = !!guess[v.id] && !!fam && fam !== guess[v.id] && !dismissed.has(v.id);
                   return (
-                    <div key={v.id} className="flex items-center gap-3 rounded-xl border border-sand p-2.5">
-                      <div className="w-10 h-12 rounded-lg overflow-hidden bg-cream shrink-0 relative">
-                        {v.image ? <img src={v.image} alt={v.color ?? v.sku} className="w-full h-full object-cover" /> : <div className="w-full h-full grid place-items-center text-[8px] text-muted text-center">no raw</div>}
+                    <div key={v.id} className="rounded-xl border border-sand p-2.5">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-12 rounded-lg overflow-hidden bg-cream shrink-0 relative">
+                          {v.image ? <img src={v.image} alt={v.color ?? v.sku} onLoad={() => checkColour(v.id, v.image!)} className="w-full h-full object-cover" /> : <div className="w-full h-full grid place-items-center text-[8px] text-muted text-center">no raw</div>}
+                        </div>
+                        <div className="min-w-[110px]">
+                          <p className="text-sm text-ink">{v.color ?? v.sku}</p>
+                          <p className="text-[10px] text-muted font-mono">{v.sku}</p>
+                          {/* Upload the true raw reference for this colour */}
+                          <label className={`inline-block mt-0.5 text-[10px] cursor-pointer ${isBusy(upKey) ? "text-muted" : "text-emerald hover:underline"}`}>
+                            {isBusy(upKey) ? "Uploading…" : (v.image ? "↺ Replace raw" : "⬆ Upload raw")}
+                            <input type="file" accept="image/*" multiple className="hidden" disabled={isBusy(upKey)}
+                              onChange={(e) => { uploadRaw(v.id, e.target.files); e.currentTarget.value = ""; }} />
+                          </label>
+                        </div>
+                        {/* Model */}
+                        <div className="text-center">
+                          {vModelUrl
+                            ? <img src={vModelUrl} alt="model" className="w-10 h-12 rounded object-cover inline-block" />
+                            : <div className="w-10 h-12 rounded bg-cream inline-grid place-items-center text-[9px] text-muted relative">{isBusy(`vm-${v.id}`) && <span className="absolute inset-0 grid place-items-center bg-ink/30 text-cream text-[9px]">…</span>}model</div>}
+                          <button onClick={() => gen("model", `vm-${v.id}`, v.id, { matchColorName: !!recolor[v.id] })} disabled={isBusy(`vm-${v.id}`)} className="block text-[10px] text-gold-dark hover:underline mt-0.5 w-full disabled:opacity-50">{isBusy(`vm-${v.id}`) ? "…" : (vModelUrl ? "⟳ Model" : "＋ Model")}</button>
+                        </div>
+                        {/* Branded stand */}
+                        <div className="text-center">
+                          {vStandUrl
+                            ? <img src={vStandUrl} alt="stand" className="w-10 h-12 rounded object-cover inline-block" />
+                            : <div className="w-10 h-12 rounded bg-cream inline-grid place-items-center text-[9px] text-muted relative">{isBusy(`vs-${v.id}`) && <span className="absolute inset-0 grid place-items-center bg-ink/30 text-cream text-[9px]">…</span>}stand</div>}
+                          <button onClick={() => gen("branded_stand", `vs-${v.id}`, v.id, { matchColorName: !!recolor[v.id] })} disabled={isBusy(`vs-${v.id}`)} className="block text-[10px] text-gold-dark hover:underline mt-0.5 w-full disabled:opacity-50">{isBusy(`vs-${v.id}`) ? "…" : (vStandUrl ? "⟳ Stand" : "＋ Stand")}</button>
+                        </div>
+                        {vStandUrl && vStand?.status !== "published" && (
+                          <button onClick={() => brandAndPublish(vStandUrl, v.id, `br-${v.id}`)} disabled={isBusy(`br-${v.id}`)} className="ml-auto px-2.5 py-1.5 rounded-lg bg-emerald text-white text-[11px] disabled:opacity-50">
+                            {isBusy(`br-${v.id}`) ? "Branding…" : "Brand & Publish"}
+                          </button>
+                        )}
+                        {vStand?.status === "published" && <span className="ml-auto text-[11px] text-emerald-dark">✓ Branded</span>}
                       </div>
-                      <div className="min-w-[110px]">
-                        <p className="text-sm text-ink">{v.color ?? v.sku}</p>
-                        <p className="text-[10px] text-muted font-mono">{v.sku}</p>
-                        {/* Upload the true raw reference for this colour */}
-                        <label className={`inline-block mt-0.5 text-[10px] cursor-pointer ${isBusy(upKey) ? "text-muted" : "text-emerald hover:underline"}`}>
-                          {isBusy(upKey) ? "Uploading…" : (v.image ? "↺ Replace raw" : "⬆ Upload raw")}
-                          <input type="file" accept="image/*" multiple className="hidden" disabled={isBusy(upKey)}
-                            onChange={(e) => { uploadRaw(v.id, e.target.files); e.currentTarget.value = ""; }} />
+                      {/* Colour handling: photo wins by default; toggle to force-recolour to the label. */}
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 pl-1 text-[11px]">
+                        <label className="flex items-center gap-1.5 text-muted cursor-pointer">
+                          <input type="checkbox" checked={!!recolor[v.id]} onChange={(e) => setRecolor((x) => ({ ...x, [v.id]: e.target.checked }))} className="accent-emerald" />
+                          Recolour to “{v.color ?? "label"}” (ignore the photo&apos;s colour)
                         </label>
+                        {mismatch && (
+                          <span className="flex items-center gap-1.5 text-gold-dark bg-gold/10 rounded-full px-2.5 py-0.5">
+                            ⚠ Photo looks <b>{guess[v.id]}</b>, label says <b>{v.color}</b> — {recolor[v.id] ? `will recolour to ${v.color}` : "using the photo as-is"}.
+                            <button onClick={() => setDismissed((s) => new Set(s).add(v.id))} className="ml-1 hover:text-ink" title="Dismiss">✕</button>
+                          </span>
+                        )}
                       </div>
-                      {/* Model */}
-                      <div className="text-center">
-                        {vModel?.output_path
-                          ? <img src={vModel.output_path} alt="model" className="w-10 h-12 rounded object-cover inline-block" />
-                          : <div className="w-10 h-12 rounded bg-cream inline-grid place-items-center text-[9px] text-muted">model</div>}
-                        <button onClick={() => gen("model", `vm-${v.id}`, v.id)} disabled={isBusy(`vm-${v.id}`)} className="block text-[10px] text-gold-dark hover:underline mt-0.5 w-full disabled:opacity-50">{isBusy(`vm-${v.id}`) ? "…" : (vModel ? "⟳ Model" : "＋ Model")}</button>
-                      </div>
-                      {/* Branded stand */}
-                      <div className="text-center">
-                        {vStand?.output_path
-                          ? <img src={vStand.output_path} alt="stand" className="w-10 h-12 rounded object-cover inline-block" />
-                          : <div className="w-10 h-12 rounded bg-cream inline-grid place-items-center text-[9px] text-muted">stand</div>}
-                        <button onClick={() => gen("branded_stand", `vs-${v.id}`, v.id)} disabled={isBusy(`vs-${v.id}`)} className="block text-[10px] text-gold-dark hover:underline mt-0.5 w-full disabled:opacity-50">{isBusy(`vs-${v.id}`) ? "…" : (vStand ? "⟳ Stand" : "＋ Stand")}</button>
-                      </div>
-                      {vStand?.output_path && vStand.status !== "published" && (
-                        <button onClick={() => brandAndPublish(vStand.output_path!, v.id, `br-${v.id}`)} disabled={isBusy(`br-${v.id}`)} className="ml-auto px-2.5 py-1.5 rounded-lg bg-emerald text-white text-[11px] disabled:opacity-50">
-                          {isBusy(`br-${v.id}`) ? "Branding…" : "Brand & Publish"}
-                        </button>
-                      )}
-                      {vStand?.status === "published" && <span className="ml-auto text-[11px] text-emerald-dark">✓ Branded</span>}
                     </div>
                   );
                 })}

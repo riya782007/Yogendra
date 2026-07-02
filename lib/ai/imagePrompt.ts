@@ -152,6 +152,9 @@ export function buildStudioPrompt(opts: {
   category: string; subcategory?: string; productName?: string; variantColor?: string; shotType: ShotType; settings?: StudioSettings;
   detected?: { category?: string; material?: string; style?: string; attributes?: string[] } | null;
   index?: number; style?: "auto" | "indian" | "western";
+  /** When true, recolour the piece to the variant's colour NAME. Default false = the reference PHOTO
+   *  wins (reproduce its true colour), so a green photo stays green even if the label says "Black". */
+  forceColour?: boolean;
 }): { prompt: string; aspect: ImageAspect } {
   const meta = SHOT_META[opts.shotType] ?? SHOT_META.hero;
   const i = opts.index ?? 0;
@@ -176,11 +179,13 @@ export function buildStudioPrompt(opts: {
   const identityBlock = worn
     ? `PRODUCT IDENTITY (highest priority — obey exactly): The piece is ${productLine}, a ${typeLabel}. ${identity}. You MUST photograph, place and frame it AS a ${typeLabel}, worn in the correct location for that jewellery type — NEVER on a different body part and NEVER as a different category of jewellery (e.g. do not render a necklace as a bracelet/bangle, or earrings as a ring). If any detected/reference cue disagrees with this, IGNORE it and follow this identity.`
     : `PRODUCT IDENTITY (highest priority — obey exactly): The piece is ${productLine}, a ${typeLabel}. This is a PRODUCT-ONLY shot: show the jewellery BY ITSELF — absolutely NO model, NO person, NO hands, NO body parts, and NOT worn. Present it on an appropriate display prop for a ${typeLabel} (a necklace on a neck bust/stand, earrings on an ear stand, a bangle/bracelet on a T-bar, a ring on a ring cone) or laid flat, whichever suits a ${typeLabel}. Keep it unmistakably a ${typeLabel}.`;
-  // Variant colourway: the whole point of a variant shot is to show THIS colour. The design stays
-  // identical to the reference, but the COLOUR must match the named variant even if the reference
-  // photo shows a different colour.
+  // Variant colourway. Default: the reference PHOTO is the source of truth — reproduce its actual
+  // colour exactly (a green photo stays green even if the label says "Black"). Only when the owner
+  // explicitly asks to recolour (forceColour) do we repaint the piece to the colour NAME.
   const colourBlock = colour
-    ? `\nVARIANT COLOURWAY (critical): This is the "${colour}" colour option. Render the piece's colour AS ${colour} — the metal tone, stones, beads and enamel must read clearly as ${colour}. Keep the EXACT same design, shape, stone layout and proportions as the reference, but if the reference photo shows a different colour, RECOLOUR it faithfully to ${colour}. The finished piece must look like the ${colour} version of this exact design.`
+    ? (opts.forceColour
+        ? `\nVARIANT COLOURWAY (recolour requested): This is the "${colour}" option. Repaint the piece's colour to ${colour} — the metal tone, stones, beads and enamel must read clearly as ${colour} — while keeping the EXACT same design, shape, stone layout and proportions as the reference.`
+        : `\nVARIANT COLOURWAY: This is the "${colour}" option, but the REFERENCE PHOTO is the source of truth — reproduce the piece's colour EXACTLY as it appears in the reference. Do NOT recolour to match the label; if the photo and the "${colour}" label disagree, follow the PHOTO.`)
     : "";
   // Only material/style/attribute FLAVOUR from vision detection is surfaced — the detected CATEGORY is
   // deliberately dropped so a vision mis-read can never override the identity above.
