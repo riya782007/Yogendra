@@ -87,6 +87,7 @@ export async function generateStudioImageAction(input: {
     category: prod.category?.name ?? "necklace",
     subcategory: prod.subcategory?.name ?? "",
     productName: prod.name,
+    variantColor: variantColor ?? undefined,
     shotType,
     settings: input.settings,
     detected,

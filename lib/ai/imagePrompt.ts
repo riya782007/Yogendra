@@ -149,7 +149,7 @@ function settingsBlock(s: StudioSettings): string {
 
 /** Build a studio prompt for a specific SHOT TYPE with art-direction overrides + detected attrs. */
 export function buildStudioPrompt(opts: {
-  category: string; subcategory?: string; productName?: string; shotType: ShotType; settings?: StudioSettings;
+  category: string; subcategory?: string; productName?: string; variantColor?: string; shotType: ShotType; settings?: StudioSettings;
   detected?: { category?: string; material?: string; style?: string; attributes?: string[] } | null;
   index?: number; style?: "auto" | "indian" | "western";
 }): { prompt: string; aspect: ImageAspect } {
@@ -165,18 +165,29 @@ export function buildStudioPrompt(opts: {
   const identity = categoryIdentity(opts.category, opts.subcategory);
   const typeLabel = (opts.subcategory || opts.category || "piece of jewellery").trim();
   const productLine = opts.productName?.trim() ? `"${opts.productName.trim()}"` : "this piece";
+  const worn = !meta.productOnly; // stand / catalog / transparent / remove_bg = product-only, NEVER on a person
+  const colour = opts.variantColor?.trim();
   const aspectNote = meta.aspect === "1:1"
     ? "a SQUARE 1:1 aspect ratio (e.g. 1024x1024)"
     : "a VERTICAL PORTRAIT 4:5 aspect ratio (e.g. 1080x1350), comfortable margins so nothing is cropped";
-  // PRODUCT IDENTITY — the single most important instruction: this fixes what the piece IS and where
-  // it sits on the body, from the owner's own catalogue data, so a necklace is shot as a necklace.
-  const identityBlock = `PRODUCT IDENTITY (highest priority — obey exactly): The piece is ${productLine}, a ${typeLabel}. ${identity}. You MUST photograph, place and frame it AS a ${typeLabel}, worn in the correct location for that jewellery type — NEVER on a different body part and NEVER as a different category of jewellery (e.g. do not render a necklace as a bracelet/bangle, or earrings as a ring). If any detected/reference cue disagrees with this, IGNORE it and follow this identity.`;
+  // PRODUCT IDENTITY — the single most important instruction. It fixes WHAT the piece is and, per shot
+  // type, whether it is worn (model shots) or shown alone on a stand (product-only shots) — so a
+  // necklace is a necklace, and a "stand" shot is never rendered on a human.
+  const identityBlock = worn
+    ? `PRODUCT IDENTITY (highest priority — obey exactly): The piece is ${productLine}, a ${typeLabel}. ${identity}. You MUST photograph, place and frame it AS a ${typeLabel}, worn in the correct location for that jewellery type — NEVER on a different body part and NEVER as a different category of jewellery (e.g. do not render a necklace as a bracelet/bangle, or earrings as a ring). If any detected/reference cue disagrees with this, IGNORE it and follow this identity.`
+    : `PRODUCT IDENTITY (highest priority — obey exactly): The piece is ${productLine}, a ${typeLabel}. This is a PRODUCT-ONLY shot: show the jewellery BY ITSELF — absolutely NO model, NO person, NO hands, NO body parts, and NOT worn. Present it on an appropriate display prop for a ${typeLabel} (a necklace on a neck bust/stand, earrings on an ear stand, a bangle/bracelet on a T-bar, a ring on a ring cone) or laid flat, whichever suits a ${typeLabel}. Keep it unmistakably a ${typeLabel}.`;
+  // Variant colourway: the whole point of a variant shot is to show THIS colour. The design stays
+  // identical to the reference, but the COLOUR must match the named variant even if the reference
+  // photo shows a different colour.
+  const colourBlock = colour
+    ? `\nVARIANT COLOURWAY (critical): This is the "${colour}" colour option. Render the piece's colour AS ${colour} — the metal tone, stones, beads and enamel must read clearly as ${colour}. Keep the EXACT same design, shape, stone layout and proportions as the reference, but if the reference photo shows a different colour, RECOLOUR it faithfully to ${colour}. The finished piece must look like the ${colour} version of this exact design.`
+    : "";
   // Only material/style/attribute FLAVOUR from vision detection is surfaced — the detected CATEGORY is
   // deliberately dropped so a vision mis-read can never override the identity above.
   const flavour = [opts.detected?.material, opts.detected?.style, ...(opts.detected?.attributes ?? [])].filter(Boolean).join(", ");
   const detectedNote = flavour ? `\nSURFACE QUALITIES (material/style flavour only — do NOT change the piece's type): ${flavour}.` : "";
   const subjectBlock = meta.productOnly
-    ? `PRESENTATION: the ${typeLabel} laid out / standing cleanly as the single hero, sharply in focus, on ${background}. No model, no hands.`
+    ? `PRESENTATION: ${meta.frame}. The ${typeLabel} is the single hero, sharply in focus, on ${background}. NO model, NO person, NO hands — product only.`
     : `SUBJECT (a display stand for the jewellery — keep her minimal, face not featured): ${subject}.${western ? " Polished international look." : " Clearly Indian/South Asian."} Skin bright, luminous, well-exposed.
 SHOT TYPE: ${meta.frame} — worn at ${shot} (this is a ${typeLabel}).
 ${FRAMING}
@@ -184,7 +195,7 @@ BACKGROUND & MOOD: ${background}. ${s.mood?.trim() || "Calm, aspirational, luxur
 
   const prompt = `${FIDELITY}
 
-${identityBlock}${detectedNote}
+${identityBlock}${colourBlock}${detectedNote}
 
 ${subjectBlock}
 
