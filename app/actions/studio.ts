@@ -35,11 +35,25 @@ export async function generateStudioImageAction(input: {
   if (!productId || !shotType) return { ok: false, reason: "bad_input" };
   const sb = supabaseServer();
 
+  // Keep the product fetch MINIMAL and robust — do NOT embed subcategories here: if that relation
+  // is even slightly out of sync in the deployed DB, the whole query returns null and generation
+  // wrongly reports "Product not found". Subcategory is loaded separately & guarded below.
   const { data: p } = await sb.from("products")
-    .select("id,sku,name, category:categories(name,slug), subcategory:subcategories(name,slug,image_style)")
+    .select("id,sku,name,subcategory_id, category:categories(name,slug)")
     .eq("id", productId).maybeSingle();
   if (!p) return { ok: false, reason: "not_found" };
   const prod = p as any;
+
+  // Best-effort subcategory (name + AI model style). Wrapped so any failure leaves generation working,
+  // just falling back to the parent category for framing.
+  let sub: { name?: string; image_style?: string } = {};
+  if (prod.subcategory_id) {
+    try {
+      const { data: sc } = await sb.from("subcategories").select("name,image_style").eq("id", prod.subcategory_id).maybeSingle();
+      if (sc) sub = sc as any;
+    } catch { /* ignore — category framing still applies */ }
+  }
+  prod.subcategory = sub;
 
   // When a variant is chosen, prefer THAT colour's own photo as the reference so the AI reproduces
   // the exact colourway. Fall back to the product's raw upload / any product image otherwise.
@@ -199,14 +213,20 @@ export async function uploadBrandedImageAction(input: {
 export async function detectJewelleryAction(productId: string): Promise<{ ok: boolean; detected?: any }> {
   if (!(await requirePerm("catalog.ai"))) return { ok: false };
   const sb = supabaseServer();
-  const { data: p } = await sb.from("products").select("id,name, category:categories(name), subcategory:subcategories(name), images:product_images(path,kind)").eq("id", productId).maybeSingle();
+  // No subcategory embed here — products→subcategories is ambiguous for PostgREST (direct FK AND
+  // product_subcategory_map), which would error the whole query. Look it up separately & guarded.
+  const { data: p } = await sb.from("products").select("id,name,subcategory_id, category:categories(name), images:product_images(path,kind)").eq("id", productId).maybeSingle();
   if (!p) return { ok: false };
   const prod = p as any;
+  let subName: string | null = null;
+  if (prod.subcategory_id) {
+    try { const { data: sc } = await sb.from("subcategories").select("name").eq("id", prod.subcategory_id).maybeSingle(); subName = (sc as any)?.name ?? null; } catch { /* category framing still applies */ }
+  }
   const ref = (prod.images ?? []).find((i: any) => typeof i.path === "string" && i.path.startsWith("http"));
   const detected = await detectJewellery({
     imageUrl: ref?.path,
-    hint: [prod.name, prod.category?.name, prod.subcategory?.name].filter(Boolean).join(" "),
-    knownCategory: prod.subcategory?.name || prod.category?.name,
+    hint: [prod.name, prod.category?.name, subName].filter(Boolean).join(" "),
+    knownCategory: subName || prod.category?.name,
   });
   revalidatePath(`/admin/media/${productId}`);
   return { ok: true, detected };
