@@ -3,8 +3,12 @@
  * PhotoStudio — the AI Jewellery Photography Studio (mockup-faithful, fully wired).
  * Upload a raw shot → AI inspects it → generate a professional hero + angles → regenerate with
  * art-direction settings (never overwrites) → Accept / Reject / Compare / Publish.
+ *
+ * Concurrency: generations are tracked per-key in a `busy` Set (NOT one global lock), so the
+ * operator can fire several at once — click ＋Model on five colours and they all run in parallel,
+ * or hit "Generate all" to enqueue every variant. Each button only disables ITSELF while it runs.
  */
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
@@ -12,11 +16,12 @@ import {
   generateStudioImageAction, setGenerationStatusAction, publishGenerationAction, detectJewelleryAction,
   uploadBrandedImageAction,
 } from "@/app/actions/studio";
+import { addVariantImageAction } from "@/app/actions/variants";
 
 // Human-readable reasons so a failed click never looks like "nothing happened".
 const REASON_MSG: Record<string, string> = {
   no_key: "Add GEMINI_API_KEY or OPENAI_API_KEY to enable generation.",
-  no_source: "Upload a raw photo first (Replace / manage).",
+  no_source: "Upload a raw photo first (Replace / manage, or Upload raw on the colour).",
   no_image: "The AI returned no image — try again.",
   not_permitted: "You don't have permission to generate images.",
   bad_input: "Something's missing — reload and try again.",
@@ -59,10 +64,15 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
   const router = useRouter();
   const { toast } = useToast();
   const p = data.product;
-  const [pending, start] = useTransition();
-  const [busyKey, setBusyKey] = useState<string | null>(null);
+  // Per-key busy set — multiple generations can be in flight at once (queued by the operator).
+  const [busy, setBusy] = useState<Set<string>>(new Set());
   const [err, setErr] = useState("");
   const [more, setMore] = useState(false);
+
+  const isBusy = (key: string) => busy.has(key);
+  const anyBusy = busy.size > 0;
+  const addBusy = (key: string) => setBusy((b) => { const n = new Set(b); n.add(key); return n; });
+  const dropBusy = (key: string) => setBusy((b) => { const n = new Set(b); n.delete(key); return n; });
 
   // Art-direction settings.
   const [lighting, setLighting] = useState(LIGHTING[0]);
@@ -84,22 +94,57 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
 
   const variants = data.variants ?? [];
 
-  function gen(shotType: string, key: string, variantId?: string) {
-    if (!ready) { const m = REASON_MSG.no_key; setErr(m); toast(m, "error"); return; }
-    if (!data.raw && data.images.length === 0 && !variants.some((v) => v.image)) { const m = REASON_MSG.no_source; setErr(m); toast(m, "error"); return; }
-    setErr(""); setBusyKey(key);
-    toast("Generating image… this can take 20–40s", "info");
-    start(async () => {
+  /** Fire one generation. Concurrency-safe: adds its own key to `busy`, so other buttons stay live
+   *  and the operator can queue several at once. Returns true on success (used by "Generate all"). */
+  async function gen(shotType: string, key: string, variantId?: string): Promise<boolean> {
+    if (!ready) { const m = REASON_MSG.no_key; setErr(m); toast(m, "error"); return false; }
+    if (!data.raw && data.images.length === 0 && !variants.some((v) => v.image)) { const m = REASON_MSG.no_source; setErr(m); toast(m, "error"); return false; }
+    if (isBusy(key)) return false; // already running this exact shot
+    setErr(""); addBusy(key);
+    try {
       const r = await generateStudioImageAction({ productId: p.id, shotType: shotType as any, settings: settings(), style: styleParam, variantId });
-      setBusyKey(null);
-      if (!r.ok) { const m = reasonText(r.reason, r.error); setErr(m); toast(m, "error"); }
-      else { toast("Image generated ✓", "success"); router.refresh(); }
-    });
+      if (!r.ok) { const m = reasonText(r.reason, r.error); setErr(m); toast(m, "error"); return false; }
+      toast("Image generated ✓", "success"); router.refresh(); return true;
+    } catch {
+      const m = "Network error — try again."; setErr(m); toast(m, "error"); return false;
+    } finally {
+      dropBusy(key);
+    }
+  }
+
+  /** Bulk: enqueue a shot for EVERY variant at once (all run in parallel). */
+  async function genAllVariants(shotType: "model" | "branded_stand") {
+    if (!ready) { const m = REASON_MSG.no_key; setErr(m); toast(m, "error"); return; }
+    if (!variants.length) return;
+    toast(`Queued ${variants.length} ${shotType === "model" ? "model" : "stand"} shots — they'll fill in as they finish`, "info");
+    await Promise.all(variants.map((v) => gen(shotType, `${shotType === "model" ? "vm" : "vs"}-${v.id}`, v.id)));
+    toast("Bulk generation finished ✓", "success");
+  }
+
+  /** Upload a real raw reference photo for ONE colour, so generation uses the true piece — not an
+   *  AI-assumed colourway. Stored on the variant's own image_paths (what generation reads first). */
+  async function uploadRaw(variantId: string, files: FileList | null) {
+    if (!files || !files.length) return;
+    const key = `up-${variantId}`;
+    addBusy(key); setErr("");
+    try {
+      const fd = new FormData();
+      fd.set("id", variantId);
+      fd.set("product_sku", p.sku);
+      Array.from(files).forEach((f) => fd.append("images", f));
+      const r = await addVariantImageAction(fd);
+      if (!r.ok) { const m = r.error || "Upload failed."; setErr(m); toast(m, "error"); }
+      else { toast("Raw photo added — generate now uses it ✓", "success"); router.refresh(); }
+    } catch {
+      const m = "Upload failed — try again."; setErr(m); toast(m, "error");
+    } finally {
+      dropBusy(key);
+    }
   }
 
   /** Draw the "blythediva" wordmark onto a generated stand shot (client canvas), then publish it. */
   async function brandAndPublish(imageUrl: string, variantId: string | null, key: string) {
-    setErr(""); setBusyKey(key);
+    setErr(""); addBusy(key);
     try {
       const img = new Image();
       img.crossOrigin = "anonymous";
@@ -108,7 +153,6 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
       canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
       const ctx = canvas.getContext("2d")!;
       ctx.drawImage(img, 0, 0);
-      // Wordmark in the bottom margin.
       const w = canvas.width, h = canvas.height;
       ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
       ctx.fillStyle = "rgba(20,18,16,0.92)";
@@ -122,18 +166,17 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
       const r = await uploadBrandedImageAction({ productId: p.id, variantId, base64, mime: "image/jpeg", shotType: "branded_stand" });
       if (!r.ok) { const m = reasonText(r.reason, r.error) || "Could not brand & publish."; setErr(m); toast(m, "error"); }
       else { toast("Branded & published ✓", "success"); router.refresh(); }
-    } catch (e) {
-      const m = "Couldn't process the image (cross-origin). Try re-generating.";
-      setErr(m); toast(m, "error");
+    } catch {
+      const m = "Couldn't process the image (cross-origin). Try re-generating."; setErr(m); toast(m, "error");
     } finally {
-      setBusyKey(null);
+      dropBusy(key);
     }
   }
 
   function redetect() {
-    setBusyKey("detect");
+    const key = "detect"; addBusy(key);
     toast("Re-checking the piece…", "info");
-    start(async () => { await detectJewelleryAction(p.id); setBusyKey(null); toast("Re-detected ✓", "success"); router.refresh(); });
+    (async () => { try { await detectJewelleryAction(p.id); toast("Re-detected ✓", "success"); router.refresh(); } finally { dropBusy(key); } })();
   }
 
   return (
@@ -149,6 +192,7 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
           {ready ? "● AI photo generation connected — Gemini, with OpenAI fallback." : "○ Not connected — add GEMINI_API_KEY or OPENAI_API_KEY to generate. You can still upload raw photos."}
         </div>
         {err && <div className="rounded-xl px-4 py-2 mb-4 text-sm bg-rose/10 text-rose">{err}</div>}
+        {anyBusy && <div className="rounded-xl px-4 py-2 mb-4 text-sm bg-ink/5 text-ink flex items-center gap-2"><span className="inline-block h-2 w-2 rounded-full bg-emerald animate-pulse" />{busy.size} generation{busy.size === 1 ? "" : "s"} running — you can keep queuing more.</div>}
 
         {/* Sticky section nav — jump around this long page without endless scrolling. */}
         <nav className="sticky top-2 z-20 mb-4 flex flex-wrap gap-1.5 rounded-full border border-sand bg-white/90 backdrop-blur px-2 py-1.5 shadow-card text-xs">
@@ -189,12 +233,12 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
               </div>
               <div className="aspect-[4/5] rounded-xl bg-cream border border-sand overflow-hidden relative">
                 {heroUrl ? <img src={heroUrl} alt="hero" className="w-full h-full object-cover" /> : <div className="w-full h-full grid place-items-center text-xs text-muted">Generate a hero →</div>}
-                {pending && busyKey === "hero" && <div className="absolute inset-0 bg-ink/40 grid place-items-center text-cream text-sm">Generating…</div>}
+                {isBusy("hero") && <div className="absolute inset-0 bg-ink/40 grid place-items-center text-cream text-sm">Generating…</div>}
               </div>
               <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px]">
                 {heroUrl && <a href={heroUrl} target="_blank" className="px-2 py-1 rounded-lg bg-ink/5 hover:bg-ink/10">View</a>}
                 {heroUrl && <a href={heroUrl} download className="px-2 py-1 rounded-lg bg-ink/5 hover:bg-ink/10">⬇ Download</a>}
-                <button onClick={() => gen("hero", "hero")} disabled={pending} className="px-2 py-1 rounded-lg bg-gold/15 text-gold-dark hover:bg-gold/25">⟳ Regenerate</button>
+                <button onClick={() => gen("hero", "hero")} disabled={isBusy("hero")} className="px-2 py-1 rounded-lg bg-gold/15 text-gold-dark hover:bg-gold/25 disabled:opacity-50">{isBusy("hero") ? "…" : "⟳ Regenerate"}</button>
                 {hero && hero.status !== "published" && (
                   <form action={publishGenerationAction}><input type="hidden" name="id" value={hero.id} /><button className="px-2 py-1 rounded-lg bg-emerald text-white">Publish</button></form>
                 )}
@@ -233,7 +277,7 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
                   <input value={mood} onChange={(e) => setMood(e.target.value)} placeholder="Mood" className={sel} />
                 </div>
               )}
-              <button onClick={() => gen("hero", "hero")} disabled={pending} className="w-full mt-2 px-3 py-2 rounded-xl bg-ink text-white text-sm disabled:opacity-50">✦ Regenerate image</button>
+              <button onClick={() => gen("hero", "hero")} disabled={isBusy("hero")} className="w-full mt-2 px-3 py-2 rounded-xl bg-ink text-white text-sm disabled:opacity-50">{isBusy("hero") ? "Generating…" : "✦ Regenerate image"}</button>
             </div>
           </div>
 
@@ -248,10 +292,10 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
                   <div key={a.key}>
                     <div className="aspect-[4/5] rounded-lg bg-cream border border-sand overflow-hidden relative">
                       {top?.output_path ? <img src={top.output_path} alt={a.label} className="w-full h-full object-cover" /> : <div className="w-full h-full grid place-items-center text-[9px] text-muted text-center">{a.label}</div>}
-                      {pending && busyKey === a.key && <div className="absolute inset-0 bg-ink/40 grid place-items-center text-cream text-[10px]">…</div>}
+                      {isBusy(a.key) && <div className="absolute inset-0 bg-ink/40 grid place-items-center text-cream text-[10px]">…</div>}
                     </div>
                     <div className="flex items-center justify-between mt-0.5">
-                      <button onClick={() => gen(a.key, a.key)} disabled={pending} className="text-[10px] text-gold-dark hover:underline">⟳ {cand.length ? "Regen" : "Make"}</button>
+                      <button onClick={() => gen(a.key, a.key)} disabled={isBusy(a.key)} className="text-[10px] text-gold-dark hover:underline disabled:opacity-50">{isBusy(a.key) ? "…" : (cand.length ? "⟳ Regen" : "Make")}</button>
                       {top && top.status !== "published" && <form action={publishGenerationAction}><input type="hidden" name="id" value={top.id} /><button className="text-[10px] text-emerald">Pub</button></form>}
                     </div>
                   </div>
@@ -263,38 +307,53 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
           {/* Variant AI photos — 1 model shot + 1 branded on-stand shot per colour */}
           {variants.length > 0 && (
             <div id="studio-variants" className="scroll-mt-16 mt-6">
-              <p className="text-sm font-medium text-ink mb-1">Variant photos <span className="text-muted font-normal">· model + branded stand per colour</span></p>
-              <p className="text-[11px] text-muted mb-2">Generates from each colour&apos;s own photo. The stand shot gets the <b>blythediva</b> wordmark on publish.</p>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                <p className="text-sm font-medium text-ink">Variant photos <span className="text-muted font-normal">· model + branded stand per colour</span></p>
+                {/* Bulk: enqueue every colour at once. */}
+                <div className="flex items-center gap-1.5 text-[11px]">
+                  <span className="text-muted">Bulk:</span>
+                  <button onClick={() => genAllVariants("model")} disabled={!ready} className="px-2.5 py-1 rounded-full bg-ink text-white disabled:opacity-40">Generate all — Model</button>
+                  <button onClick={() => genAllVariants("branded_stand")} disabled={!ready} className="px-2.5 py-1 rounded-full bg-ink/80 text-white disabled:opacity-40">Generate all — Stand</button>
+                </div>
+              </div>
+              <p className="text-[11px] text-muted mb-2">Generates from each colour&apos;s own photo. <b>Tip:</b> use <b>Upload raw</b> on a colour to give the AI the true photo instead of letting it assume the colourway. The stand shot gets the <b>blythediva</b> wordmark on publish. You can queue several at once.</p>
               <div className="space-y-2">
                 {variants.map((v) => {
                   const vModel = data.generations.find((g) => g.variant_id === v.id && g.shot_type === "model" && g.output_path && g.status !== "rejected" && g.status !== "archived");
                   const vStand = data.generations.find((g) => g.variant_id === v.id && g.shot_type === "branded_stand" && g.output_path && g.status !== "rejected" && g.status !== "archived");
+                  const upKey = `up-${v.id}`;
                   return (
                     <div key={v.id} className="flex items-center gap-3 rounded-xl border border-sand p-2.5">
-                      <div className="w-10 h-12 rounded-lg overflow-hidden bg-cream shrink-0">
-                        {v.image ? <img src={v.image} alt={v.color ?? v.sku} className="w-full h-full object-cover" /> : null}
+                      <div className="w-10 h-12 rounded-lg overflow-hidden bg-cream shrink-0 relative">
+                        {v.image ? <img src={v.image} alt={v.color ?? v.sku} className="w-full h-full object-cover" /> : <div className="w-full h-full grid place-items-center text-[8px] text-muted text-center">no raw</div>}
                       </div>
                       <div className="min-w-[110px]">
                         <p className="text-sm text-ink">{v.color ?? v.sku}</p>
                         <p className="text-[10px] text-muted font-mono">{v.sku}</p>
+                        {/* Upload the true raw reference for this colour */}
+                        <label className={`inline-block mt-0.5 text-[10px] cursor-pointer ${isBusy(upKey) ? "text-muted" : "text-emerald hover:underline"}`}>
+                          {isBusy(upKey) ? "Uploading…" : (v.image ? "↺ Replace raw" : "⬆ Upload raw")}
+                          <input type="file" accept="image/*" multiple className="hidden" disabled={isBusy(upKey)}
+                            onChange={(e) => { uploadRaw(v.id, e.target.files); e.currentTarget.value = ""; }} />
+                        </label>
                       </div>
                       {/* Model */}
                       <div className="text-center">
                         {vModel?.output_path
                           ? <img src={vModel.output_path} alt="model" className="w-10 h-12 rounded object-cover inline-block" />
                           : <div className="w-10 h-12 rounded bg-cream inline-grid place-items-center text-[9px] text-muted">model</div>}
-                        <button onClick={() => gen("model", `vm-${v.id}`, v.id)} disabled={pending} className="block text-[10px] text-gold-dark hover:underline mt-0.5 w-full">{busyKey === `vm-${v.id}` && pending ? "…" : (vModel ? "⟳ Model" : "＋ Model")}</button>
+                        <button onClick={() => gen("model", `vm-${v.id}`, v.id)} disabled={isBusy(`vm-${v.id}`)} className="block text-[10px] text-gold-dark hover:underline mt-0.5 w-full disabled:opacity-50">{isBusy(`vm-${v.id}`) ? "…" : (vModel ? "⟳ Model" : "＋ Model")}</button>
                       </div>
                       {/* Branded stand */}
                       <div className="text-center">
                         {vStand?.output_path
                           ? <img src={vStand.output_path} alt="stand" className="w-10 h-12 rounded object-cover inline-block" />
                           : <div className="w-10 h-12 rounded bg-cream inline-grid place-items-center text-[9px] text-muted">stand</div>}
-                        <button onClick={() => gen("branded_stand", `vs-${v.id}`, v.id)} disabled={pending} className="block text-[10px] text-gold-dark hover:underline mt-0.5 w-full">{busyKey === `vs-${v.id}` && pending ? "…" : (vStand ? "⟳ Stand" : "＋ Stand")}</button>
+                        <button onClick={() => gen("branded_stand", `vs-${v.id}`, v.id)} disabled={isBusy(`vs-${v.id}`)} className="block text-[10px] text-gold-dark hover:underline mt-0.5 w-full disabled:opacity-50">{isBusy(`vs-${v.id}`) ? "…" : (vStand ? "⟳ Stand" : "＋ Stand")}</button>
                       </div>
                       {vStand?.output_path && vStand.status !== "published" && (
-                        <button onClick={() => brandAndPublish(vStand.output_path!, v.id, `br-${v.id}`)} disabled={pending} className="ml-auto px-2.5 py-1.5 rounded-lg bg-emerald text-white text-[11px] disabled:opacity-50">
-                          {busyKey === `br-${v.id}` && pending ? "Branding…" : "Brand & Publish"}
+                        <button onClick={() => brandAndPublish(vStand.output_path!, v.id, `br-${v.id}`)} disabled={isBusy(`br-${v.id}`)} className="ml-auto px-2.5 py-1.5 rounded-lg bg-emerald text-white text-[11px] disabled:opacity-50">
+                          {isBusy(`br-${v.id}`) ? "Branding…" : "Brand & Publish"}
                         </button>
                       )}
                       {vStand?.status === "published" && <span className="ml-auto text-[11px] text-emerald-dark">✓ Branded</span>}
@@ -310,9 +369,9 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
             <p className="text-sm font-medium text-ink mb-2">AI enhancement options</p>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               {ENHANCERS.map((e) => (
-                <button key={e.key} onClick={() => gen(e.key, e.key)} disabled={pending}
+                <button key={e.key} onClick={() => gen(e.key, e.key)} disabled={isBusy(e.key)}
                   className="text-left rounded-xl border border-sand bg-white p-3 hover:border-emerald disabled:opacity-50">
-                  <p className="text-sm text-ink">{busyKey === e.key && pending ? "Generating…" : e.label}</p>
+                  <p className="text-sm text-ink">{isBusy(e.key) ? "Generating…" : e.label}</p>
                   <p className="text-[11px] text-muted">{e.desc}</p>
                 </button>
               ))}

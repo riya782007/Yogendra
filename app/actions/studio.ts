@@ -63,7 +63,10 @@ export async function generateStudioImageAction(input: {
     const { data: v } = await sb.from("variants").select("color,image_paths").eq("id", input.variantId).maybeSingle();
     variantColor = (v as any)?.color ?? null;
     const vImgs = (v as any)?.image_paths;
-    refUrl = (Array.isArray(vImgs) ? vImgs.find((x: string) => typeof x === "string" && x.startsWith("http")) : null) ?? null;
+    // Prefer the MOST RECENTLY uploaded variant photo, so an "Upload raw" the owner just added is
+    // the one the AI works from (uploads append to the end of image_paths).
+    const httpImgs = Array.isArray(vImgs) ? vImgs.filter((x: string) => typeof x === "string" && x.startsWith("http")) : [];
+    refUrl = httpImgs.length ? httpImgs[httpImgs.length - 1] : null;
   }
   if (!refUrl) {
     const { data: imgs } = await sb.from("product_images").select("id,path,kind").eq("product_id", productId);
