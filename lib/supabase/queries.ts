@@ -1627,11 +1627,13 @@ export async function getAdminReels() {
 // ---------- product media manager ----------
 export async function getProductsWithMedia() {
   const sb = supabaseServer();
+  // Product Photos is where the owner ADDS photos to a piece — so it must include newly created
+  // DRAFTS (which don't have photos yet), not just published items. Exclude only archived/deleted.
   const { data } = await sb.from("products")
-    .select("id,sku,name,category:categories(name,slug), images:product_images(id,path,kind,sort)")
-    .eq("status", "published").order("sku");
+    .select("id,sku,name,status,category:categories(name,slug), images:product_images(id,path,kind,sort)")
+    .not("status", "in", "(archived,deleted)").order("sku");
   const base = ((data as any[]) ?? []).map((p) => ({
-    id: p.id, sku: p.sku, name: p.name, category: p.category?.name ?? "—", categorySlug: p.category?.slug ?? "all",
+    id: p.id, sku: p.sku, name: p.name, status: p.status, category: p.category?.name ?? "—", categorySlug: p.category?.slug ?? "all",
     images: (p.images ?? []).filter((i: any) => typeof i.path === "string" && i.path.startsWith("http")).sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0)),
     variants: [] as { sku: string; color: string | null }[],
   }));
