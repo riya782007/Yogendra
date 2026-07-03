@@ -84,14 +84,15 @@ body {
   .barcode-grid {
     display: grid !important;
     grid-template-columns: repeat(var(--bc-cols, 5), 1fr) !important;
-    /* Printable height = 297 − 2×8 = 281mm. Divide across the rows (minus 1mm slack for rounding)
-       so exactly --bc-rows fit per page; the next row flows cleanly to the following sheet. */
-    grid-auto-rows: calc((281mm - 1mm) / var(--bc-rows, 13)) !important;
-    gap: 0 !important;
+    /* Fixed row height (computed so rows + gaps fill the 281mm printable height exactly) and small
+       gutters between labels — matches the owner's existing sheet: separated labels, no boxes. */
+    grid-auto-rows: var(--bc-rowh, 19.77mm) !important;
+    column-gap: var(--bc-colgap, 3mm) !important;
+    row-gap: var(--bc-rowgap, 2mm) !important;
   }
   .barcode-label {
-    padding: 0.6mm !important;
-    border-radius: 0 !important;
+    padding: 0 !important;
+    border: none !important; border-radius: 0 !important;
     page-break-inside: avoid; break-inside: avoid;
     height: 100%; overflow: hidden;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -105,7 +106,9 @@ body {
   .barcode-label .bc-price { font-size: 6.5pt; line-height: 1; }
   .barcode-label svg { height: var(--bc-barh, 8.5mm) !important; max-width: 100% !important; }
 }
-/* on-screen label sizing */
+/* on-screen label sizing + preview outline (removed on print, where labels are borderless) */
 .barcode-label .bc-name { font-size: 10px; }
 .barcode-label .bc-sku { font-size: 10px; margin-top: 2px; }
 .barcode-label .bc-price { font-size: 11px; }
+.barcode-grid { column-gap: 3mm; row-gap: 2mm; }
+.barcode-label { border: 1px dashed #e7e2d9; padding: 3px; display: flex; flex-direction: column; align-items: center; justify-content: center; }

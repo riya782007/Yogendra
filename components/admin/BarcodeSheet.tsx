@@ -50,6 +50,12 @@ export function BarcodeSheet({ products }: { products: P[] }) {
   const cols = preset.cols;
   const rowsPerSheet = preset.rows;
   const per = preset.per;
+  // Physical sheet geometry (mm) — matches the owner's existing label sheet: A4 with 8mm margins,
+  // labels SEPARATED by small gutters (not touching) and no border boxes. The row height is derived
+  // so `rowsPerSheet` rows + their gaps exactly fill the printable height and all fit on one page.
+  const MARGIN_MM = 8, COL_GAP_MM = 3, ROW_GAP_MM = 2;
+  const printableH = 297 - 2 * MARGIN_MM; // 281mm
+  const rowH_MM = (printableH - (rowsPerSheet - 1) * ROW_GAP_MM) / rowsPerSheet;
 
   const toRow = (p: P): Row => ({ sku: p.sku, name: p.name, qty: 1, price: rup(p.price), special: "", wholesale: rup(p.wholesale) });
   const add = (p: P) => { setRows((prev) => (prev.find((x) => x.sku === p.sku) ? prev : [...prev, toRow(p)])); setQ(""); };
@@ -184,14 +190,14 @@ export function BarcodeSheet({ products }: { products: P[] }) {
       {/* Printable label grid — density set by paper size via --bc-cols */}
       {labels.length > 0 && (
         <div className="print-area">
-          <div className="barcode-grid grid" style={{ "--bc-cols": cols, "--bc-rows": rowsPerSheet, "--bc-barh": `${preset.barh}mm`, gridTemplateColumns: `repeat(${cols}, 1fr)` } as any}>
+          <div className="barcode-grid grid" style={{ "--bc-cols": cols, "--bc-rows": rowsPerSheet, "--bc-barh": `${preset.barh}mm`, "--bc-rowh": `${rowH_MM.toFixed(2)}mm`, "--bc-colgap": `${COL_GAP_MM}mm`, "--bc-rowgap": `${ROW_GAP_MM}mm`, gridTemplateColumns: `repeat(${cols}, 1fr)` } as any}>
             {labels.map((it, i) => {
               const line = priceLine(it);
               return (
-                <div key={i} className="barcode-label border border-sand text-center bg-white break-inside-avoid">
+                <div key={i} className="barcode-label text-center bg-white break-inside-avoid">
                   {opts.name && <p className="bc-name font-semibold text-ink truncate">{it.name}</p>}
                   <Barcode value={it.sku} height={28} unit={cols >= 8 ? 0.85 : 1.1} />
-                  {opts.sku && <p className="bc-sku tracking-widest text-ink">{it.sku}</p>}
+                  {opts.sku && <p className="bc-sku tracking-wide text-ink">SKU {it.sku}</p>}
                   {line && <p className="bc-price font-medium text-ink">{line}</p>}
                 </div>
               );
