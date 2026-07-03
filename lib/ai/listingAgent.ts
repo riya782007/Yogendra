@@ -19,18 +19,39 @@ const schema = z.object({
 function prompt(p: ProductLike) {
   const colors = (p.colors ?? []).join(", ");
   const sub = (p as any).subcategoryName ? ` Sub-category (type): ${(p as any).subcategoryName}.` : "";
+  const kw = (p.keywords ?? []).filter(Boolean).join(", ");
   return [
-    `You are a senior e-commerce copywriter for "Blythe Diva", a premium artificial-jewellery brand in Sadar Bazar, Rui Mandi, Delhi (retail + wholesale).`,
-    `Write a high-converting product page as STRICT JSON with keys: title, description, specs (object of label->value), tags (array), seo (object: metaTitle, metaDescription, keywords array).`,
-    `Product name: ${p.name}. SKU: ${p.sku}. Category: ${p.categoryName ?? "Jewellery"}.${sub}${colors ? ` Available colours: ${colors}.` : ""}`,
-    // TITLE is the owner's #1 complaint — the AI must NOT invent brands/names or unrelated attributes.
-    `TITLE RULES (STRICT — the shop owner's house style): the "title" must be built ONLY from the real Product name above (its actual material/style/type words like Kundan, Meenakari, Temple, Polki, Pearl, Oxidised, Gold, Bracelet, Necklace, Jhumka…), the Category and the Sub-category. Clean it into a short proper product name and ALWAYS append " – ${p.sku}" at the end, exactly like "Kundan Gold Bracelet – WBR1003" or "Meenakari Peacock Jhumka – EE1024". DO NOT invent or add: brand names, any person's name, made-up model names, or descriptors (e.g. "Daily Wear", "Minimal", "Anti Tarnish") that are NOT present in the product name/category. If the name is sparse, keep the title simple and factual from the category. Title MUST be under 60 characters and end with " – ${p.sku}".`,
-    `Rules: description 70-110 words, warm and aspirational; naturally weave in Google-friendly search terms (the category, the style e.g. Kundan/Meenakari/Temple/Polki/Pearl/Oxidised if applicable, occasions like wedding/festive/party/daily wear, and location terms "Sadar Bazar", "Delhi", "artificial jewellery online India"). Mention craftsmanship, brass alloy + anti-tarnish plating, lightweight comfort, COD and easy returns.`,
-    `specs (object) MUST include: SKU, Category, Material, Plating, Work/Style, Occasion, Care (and Colours if provided).`,
-    `tags: 8-12 short search tags mixing category, style, occasion, material.`,
-    `seo.metaTitle <= 60 chars; seo.metaDescription <= 155 chars and compelling; seo.keywords 8-12 long-tail phrases such as "<category> for wedding", "<style> <category>", "artificial jewellery online", "imitation jewellery Delhi".`,
-    `Return ONLY the JSON object, no markdown.`,
-  ].join("\n");
+    `You are the senior product copywriter for "BlytheDIVA", a premium artificial/imitation jewellery brand (Sadar Bazar, Rui Mandi, Delhi; retail + wholesale).`,
+    `Write ONE product page as STRICT minified JSON with keys: title, description, specs (object label->value), tags (array), seo (object: metaTitle, metaDescription, keywords array).`,
+    `INPUTS —`,
+    `• Product name the owner typed: ${p.name}`,
+    `• Category: ${p.categoryName ?? "Jewellery"}.${sub}`,
+    colors ? `• Colours: ${colors}.` : ``,
+    kw
+      ? `• Jewellery SPECIFICATIONS the owner provided — USE THESE to decide the material, style, type AND which pieces the set includes: ${kw}.`
+      : `• No extra specifications given — infer ONLY from the product name & category; do not invent components or materials.`,
+    ``,
+    `TITLE — MUST follow BlytheDIVA's exact house style:  «{First name} {material/style descriptors} {jewellery type} with {included pieces}»`,
+    `  1. START with a single elegant UNIQUE Indian girl's first name (e.g. Dhyani, Khyati, Ananya, Rutvika, Nashvika, Drishika, Tanisha, Priyanshi, Nidhi, Gitanjali, Aaradhya, Myra, Vanya…). Choose one that suits the piece; do not always use the same one.`,
+    `  2. Then descriptors drawn ONLY from the name + specifications: material (Kundan, Uncut Kundan, Acrylic Kundan, Meenakari, Temple, Polki, Pearl, Moissanite, Turkish Stone, Crystal, Oxidised…), style/length (Semi Long, Long, Double Layer, Layered, Single Line, Choker…), design (Chandbali, Jhumka, Danglers…).`,
+    `  3. Then the jewellery TYPE from the category (Necklace Set, Choker Set, Earrings, Ring, Bracelet…). If it ships with extra pieces, use "Set".`,
+    `  4. If the specifications list included pieces (earrings, maang tikka, finger ring…), append "with {those pieces}" — e.g. "with Maang Tikka", "with Maang Tikka and Finger Ring".`,
+    `  REAL examples of the required style: "Khyati Layered Kundan Necklace Set with Maang Tikka and Finger Ring", "Ananya Acrylic Kundan Chandbali Hanging Pearls", "Nashvika Double Layer Uncut Kundan Necklace Set", "Tanisha Moissanite Choker Set".`,
+    `  ABSOLUTELY DO NOT put a SKU, any product code, price, hyphen+code, or the word "BlytheDIVA" in the title. Title Case, under ~70 characters.`,
+    ``,
+    `DESCRIPTION — match BlytheDIVA's voice EXACTLY, 70-120 words, in this order:`,
+    `  a) Open: "Add royal elegance to your festive look with {the exact title you wrote} by BlytheDIVA."`,
+    `  b) Design: "Designed in a {style} style, this {type} features {material} detailing that gives a rich traditional and bridal appeal."`,
+    `  c) Included + occasions: if it's a set, state the exact pieces included (from the specifications, e.g. "a matching pair of earrings and maang tikka"), then "making it a complete jewellery choice for weddings, engagement ceremonies, sangeet, haldi-mehendi functions, festive celebrations, and family occasions."`,
+    `  d) Pairing: "Its elegant ethnic design pairs beautifully with sarees, lehengas, anarkalis, shararas, and bridal outfits."`,
+    `  e) Close: "Perfect for brides, bridesmaids, and women who love statement Indian jewellery, this {type} adds charm, richness, and timeless beauty to special occasion styling."`,
+    `  CRITICAL: claim ONLY the pieces/materials supported by the name or the specifications — never invent components that were not provided.`,
+    ``,
+    `specs (object) MUST include: Category, Material, Work/Style, Occasion, Care${colors ? ", Colours" : ""}, and Includes (if it's a set). DO NOT include the SKU.`,
+    `tags: 8-12 short search tags mixing type, style, material, occasion.`,
+    `seo.metaTitle <= 60 chars (title + " | BlytheDIVA"); seo.metaDescription <= 155 chars, compelling; seo.keywords 8-12 long-tail phrases like "kundan necklace set for wedding", "artificial jewellery online India", "bridal jewellery Delhi".`,
+    `Return ONLY the JSON object, minified, no markdown.`,
+  ].filter(Boolean).join("\n");
 }
 
 export function buildGateway() {

@@ -53,15 +53,23 @@ export function ProductEditor({
   const [saving, setSaving] = useState(false);
   const [title, setTitle] = useState(product.title);
   const [name, setName] = useState(product.name);
+  const [description, setDescription] = useState(product.description);
+  // Owner's spec keywords (e.g. "necklace set, earrings, maang tikka, uncut kundan") → the AI uses
+  // these to build a BlytheDIVA-style title + description.
+  const [specKeywords, setSpecKeywords] = useState("");
   const [suggesting, setSuggesting] = useState(false);
 
   async function suggestTitle() {
     setSuggesting(true);
     const catName = categories.find((c) => c.id === product.categoryId)?.name;
-    const res = await suggestProductTitleAction({ name, category: catName });
+    const keywords = specKeywords.split(/[,\n]/).map((k) => k.trim()).filter(Boolean);
+    const res = await suggestProductTitleAction({ name, category: catName, keywords });
     setSuggesting(false);
-    if (res.ok && res.title) { setTitle(res.title); toast("Title suggested ✨"); }
-    else toast(res.error ?? "Couldn't suggest a title", "error");
+    if (res.ok && res.title) {
+      setTitle(res.title);
+      if (res.description) setDescription(res.description);
+      toast("Title & description suggested ✨");
+    } else toast(res.error ?? "Couldn't suggest a title", "error");
   }
 
   const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
@@ -181,19 +189,27 @@ export function ProductEditor({
         <h2 className="font-display text-xl text-ink mb-1">Storefront content</h2>
         <p className="text-xs text-muted mb-4">What the customer reads on the product page.</p>
         <div className="space-y-4">
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className={`${label} mb-0`}>Display title</label>
+          {/* Spec keywords → AI title + description in BlytheDIVA house style */}
+          <div className="rounded-xl border border-emerald/30 bg-emerald-mist/20 p-3">
+            <label className={`${label} mb-1`}>Jewellery specifications <span className="text-muted/70">— 3–4 keywords for the AI</span></label>
+            <input value={specKeywords} onChange={(e) => setSpecKeywords(e.target.value)}
+              placeholder="e.g. necklace set, uncut kundan, earrings, maang tikka"
+              className={field} />
+            <div className="flex items-center gap-2 mt-2">
               <button type="button" onClick={suggestTitle} disabled={suggesting}
-                className="text-xs px-2.5 py-1 rounded-full bg-emerald-mist text-emerald-dark hover:bg-emerald-mist/70 disabled:opacity-50">
-                {suggesting ? "Thinking…" : "✨ Suggest title"}
+                className="text-xs px-3 py-1.5 rounded-full bg-emerald text-white hover:bg-emerald-dark disabled:opacity-50">
+                {suggesting ? "Writing…" : "✨ Generate title & description"}
               </button>
+              <span className="text-[11px] text-muted">Uses these specs + the name &amp; category. Says which pieces the set includes; no SKU in the title.</span>
             </div>
+          </div>
+          <div>
+            <label className={label}>Display title</label>
             <input name="title" value={title} onChange={(e) => setTitle(e.target.value)} className={field} />
           </div>
           <div>
             <label className={label}>Description</label>
-            <textarea name="description" defaultValue={product.description} rows={6} className={field} />
+            <textarea name="description" value={description} onChange={(e) => setDescription(e.target.value)} rows={6} className={field} />
           </div>
           <div>
             <label className={label}>Tags <span className="text-muted/70">(one per line or comma-separated — shown as chips & used for filtering)</span></label>
