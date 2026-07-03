@@ -18,13 +18,16 @@ type Row = {
   price: string; special: string; wholesale: string; // rupees, editable
 };
 
-// Paper presets → number of label columns across an A4 sheet (drives print density).
+// Paper presets — an EXACT cols×rows grid that fills an A4 sheet (210×297mm) with uniform 8mm
+// margins, so every sheet prints the full set with clean, even borders and nothing spills to an
+// extra page. `barh` is the barcode height (mm) chosen to fit the fixed cell for that density.
+// 65-up matches the standard Avery L7651 label sheet (38.1×21.2mm labels, 5×13).
 const PAPER = [
-  { key: "65", label: "65 per sheet (5 × 13)", cols: 5, per: 65 },
-  { key: "48", label: "48 per sheet (4 × 12)", cols: 4, per: 48 },
-  { key: "40", label: "40 per sheet (4 × 10)", cols: 4, per: 40 },
-  { key: "24", label: "24 per sheet (3 × 8)", cols: 3, per: 24 },
-  { key: "64", label: "64 per sheet (8 × 8)", cols: 8, per: 64 },
+  { key: "65", label: "65 per sheet (5 × 13) · A4 standard", cols: 5, rows: 13, per: 65, barh: 8.5 },
+  { key: "48", label: "48 per sheet (4 × 12)", cols: 4, rows: 12, per: 48, barh: 9.5 },
+  { key: "40", label: "40 per sheet (4 × 10)", cols: 4, rows: 10, per: 40, barh: 12 },
+  { key: "24", label: "24 per sheet (3 × 8)", cols: 3, rows: 8, per: 24, barh: 15 },
+  { key: "64", label: "64 per sheet (8 × 8)", cols: 8, rows: 8, per: 64, barh: 11 },
 ];
 
 const rup = (paise?: number) => {
@@ -43,8 +46,10 @@ export function BarcodeSheet({ products }: { products: P[] }) {
     () => (q.trim() ? products.filter((p) => (p.name + p.sku).toLowerCase().includes(q.toLowerCase())).slice(0, 10) : []),
     [q, products],
   );
-  const cols = PAPER.find((p) => p.key === paper)?.cols ?? 5;
-  const per = PAPER.find((p) => p.key === paper)?.per ?? 65;
+  const preset = PAPER.find((p) => p.key === paper) ?? PAPER[0];
+  const cols = preset.cols;
+  const rowsPerSheet = preset.rows;
+  const per = preset.per;
 
   const toRow = (p: P): Row => ({ sku: p.sku, name: p.name, qty: 1, price: rup(p.price), special: "", wholesale: rup(p.wholesale) });
   const add = (p: P) => { setRows((prev) => (prev.find((x) => x.sku === p.sku) ? prev : [...prev, toRow(p)])); setQ(""); };
@@ -179,13 +184,13 @@ export function BarcodeSheet({ products }: { products: P[] }) {
       {/* Printable label grid — density set by paper size via --bc-cols */}
       {labels.length > 0 && (
         <div className="print-area">
-          <div className="barcode-grid grid gap-1" style={{ "--bc-cols": cols, gridTemplateColumns: `repeat(${cols}, 1fr)` } as any}>
+          <div className="barcode-grid grid" style={{ "--bc-cols": cols, "--bc-rows": rowsPerSheet, "--bc-barh": `${preset.barh}mm`, gridTemplateColumns: `repeat(${cols}, 1fr)` } as any}>
             {labels.map((it, i) => {
               const line = priceLine(it);
               return (
                 <div key={i} className="barcode-label border border-sand text-center bg-white break-inside-avoid">
                   {opts.name && <p className="bc-name font-semibold text-ink truncate">{it.name}</p>}
-                  <Barcode value={it.sku} height={30} unit={1.1} />
+                  <Barcode value={it.sku} height={28} unit={cols >= 8 ? 0.85 : 1.1} />
                   {opts.sku && <p className="bc-sku tracking-widest text-ink">{it.sku}</p>}
                   {line && <p className="bc-price font-medium text-ink">{line}</p>}
                 </div>

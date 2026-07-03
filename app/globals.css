@@ -77,28 +77,33 @@ body {
   body { background: #fff !important; }
   .print-area { box-shadow: none !important; }
 
-  /* Barcode labels: column count driven by the chosen paper size (--bc-cols). */
-  @page { size: A4; margin: 6mm; }
+  /* Barcode labels — an exact cols×rows grid that FILLS one A4 sheet with uniform 8mm margins.
+     Column count (--bc-cols) and rows-per-sheet (--bc-rows) come from the chosen paper preset, so
+     e.g. 65-up = 5×13 lands exactly on one sheet with clean, even borders and never spills over. */
+  @page { size: A4; margin: 8mm; }
   .barcode-grid {
     display: grid !important;
-    grid-template-columns: repeat(var(--bc-cols, 8), 1fr) !important;
-    gap: 1mm !important;
+    grid-template-columns: repeat(var(--bc-cols, 5), 1fr) !important;
+    /* Printable height = 297 − 2×8 = 281mm. Divide across the rows (minus 1mm slack for rounding)
+       so exactly --bc-rows fit per page; the next row flows cleanly to the following sheet. */
+    grid-auto-rows: calc((281mm - 1mm) / var(--bc-rows, 13)) !important;
+    gap: 0 !important;
   }
   .barcode-label {
-    padding: 1mm !important;
-    border-radius: 2px !important;
-    page-break-inside: avoid;
-    height: 33mm;
-    display: flex; flex-direction: column; justify-content: center;
+    padding: 0.6mm !important;
+    border-radius: 0 !important;
+    page-break-inside: avoid; break-inside: avoid;
+    height: 100%; overflow: hidden;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
   }
   /* Catalogue PDF: make dark header/footer readable without background graphics */
   .catalog-dark, .catalog-dark * { background: transparent !important; color: #241B2E !important; }
   .catalog-dark a { color: #A07E2E !important; }
 
-  .barcode-label .bc-name { font-size: 6pt; line-height: 1.1; }
-  .barcode-label .bc-sku { font-size: 6pt; margin-top: 0.5mm; }
-  .barcode-label .bc-price { font-size: 7pt; }
-  .barcode-label svg { height: 12mm !important; }
+  .barcode-label .bc-name { font-size: 5.5pt; line-height: 1.05; max-width: 100%; }
+  .barcode-label .bc-sku { font-size: 6pt; margin-top: 0.4mm; line-height: 1; }
+  .barcode-label .bc-price { font-size: 6.5pt; line-height: 1; }
+  .barcode-label svg { height: var(--bc-barh, 8.5mm) !important; max-width: 100% !important; }
 }
 /* on-screen label sizing */
 .barcode-label .bc-name { font-size: 10px; }
