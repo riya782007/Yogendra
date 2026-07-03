@@ -27,12 +27,24 @@ export async function deleteCategoryAction(formData: FormData): Promise<void> {
   const id = String(formData.get("id") ?? "").trim();
   if (!id) return;
   const sb = supabaseServer();
-  const { count } = await sb.from("products").select("id", { count: "exact", head: true }).eq("category_id", id);
-  if ((count ?? 0) > 0) return; // refuse to delete a non-empty category
   const { data: cat } = await sb.from("categories").select("name").eq("id", id).maybeSingle();
+  // DELETING A CATEGORY MUST NEVER DELETE INVENTORY. Move its products to an "Uncategorised" bucket
+  // first (clearing their now-orphaned subcategory/style), THEN delete the category. Its sub-
+  // categories & styles cascade away, but every product — and its stock — survives.
+  const { count } = await sb.from("products").select("id", { count: "exact", head: true }).eq("category_id", id);
+  if ((count ?? 0) > 0) {
+    let { data: unc } = await sb.from("categories").select("id").eq("slug", "uncategorised").maybeSingle();
+    if (!unc) {
+      const ins = await sb.from("categories").insert({ name: "Uncategorised", slug: "uncategorised" }).select("id").single();
+      unc = (ins.data as any) ?? null;
+    }
+    if (unc && (unc as any).id !== id) {
+      await sb.from("products").update({ category_id: (unc as any).id, subcategory_id: null, style_id: null }).eq("category_id", id);
+    }
+  }
   await sb.from("categories").delete().eq("id", id);
-  await logActivity({ action: "category_deleted", ref: id, detail: `Deleted category${(cat as any)?.name ? ` “${(cat as any).name}”` : ""}.` });
-  revalidatePath("/admin/categories"); revalidatePath("/shop");
+  await logActivity({ action: "category_deleted", ref: id, detail: `Deleted category${(cat as any)?.name ? ` “${(cat as any).name}”` : ""} — products moved to Uncategorised (kept).` });
+  revalidatePath("/admin/categories"); revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidatePath("/catalog");
 }
 
 async function nextSku(sb: ReturnType<typeof supabaseServer>): Promise<number> {
