@@ -51,7 +51,7 @@ export async function requestPurchaseDeletionAction(formData: FormData): Promise
 
 export type PurchaseLine = { supplierSku: string; mappedProductId: string; variantId?: string; qty: number; unitCostRupees: number };
 
-export async function recordPurchaseAction(input: { supplierId: string; billNo: string; items: PurchaseLine[]; force?: boolean }): Promise<{ ok: boolean; total?: number; error?: string; duplicateBillNo?: boolean }> {
+export async function recordPurchaseAction(input: { supplierId: string; billNo: string; items: PurchaseLine[]; force?: boolean; paymentMode?: "cash" | "upi" | "bank" | "credit"; amountPaidRupees?: number }): Promise<{ ok: boolean; total?: number; error?: string; duplicateBillNo?: boolean }> {
   if (!input.supplierId) return { ok: false, error: "Choose a supplier" };
   const items = (input.items ?? []).filter((l) => l.qty > 0 && l.unitCostRupees > 0);
   if (!items.length) return { ok: false, error: "Add at least one line with qty and cost" };
@@ -71,6 +71,24 @@ export async function recordPurchaseAction(input: { supplierId: string; billNo: 
   const payload = items.map((l) => ({ supplier_sku: l.supplierSku, mapped_product_id: l.mappedProductId || "", variant_id: l.variantId || "", qty: l.qty, unit_cost: Math.round(l.unitCostRupees * 100) }));
   const { data, error } = await sb.rpc("record_purchase", { p_supplier_id: input.supplierId, p_bill_no: billNo || null, p_items: payload });
   if (error) return { ok: false, error: error.message };
+  const total = (data as any)?.total as number;
+
+  // Payment: "credit" (or amount 0) leaves the whole bill owed on the supplier ledger. Any amount
+  // paid now is recorded as a supplier payment (reduces what's owed + flows into Bank & Cash),
+  // capped at the bill total. Best-effort — a payment hiccup never unwinds the recorded stock.
+  const mode = input.paymentMode ?? "credit";
+  if (mode !== "credit") {
+    const paise = Math.min(Number(total) || 0, Math.max(0, Math.round((input.amountPaidRupees ?? 0) * 100)));
+    if (paise > 0) {
+      const ledgerMode = mode === "cash" ? "cash" : mode === "upi" ? "upi" : "bank";
+      const { error: payErr } = await sb.from("supplier_payments").insert({
+        supplier_id: input.supplierId, amount: paise, mode: ledgerMode,
+        ref: billNo || null, note: `Paid at purchase${billNo ? ` · bill ${billNo}` : ""}`,
+      });
+      if (payErr) console.warn("supplier payment not recorded (purchase still saved):", payErr.message);
+    }
+  }
   revalidatePath("/admin/purchases"); revalidatePath("/admin/dashboard");
-  return { ok: true, total: (data as any)?.total };
+  revalidatePath(`/admin/supplier/${input.supplierId}`); revalidatePath("/admin/cashbook");
+  return { ok: true, total };
 }

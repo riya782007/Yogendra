@@ -18,6 +18,10 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [confirmDup, setConfirmDup] = useState(false);
+  // How this purchase was paid. "credit" = nothing paid now → the full bill stays owed to the
+  // supplier (registered on their ledger). Otherwise the paid amount is recorded against the supplier.
+  const [payMode, setPayMode] = useState<"cash" | "upi" | "bank" | "credit">("credit");
+  const [paidStr, setPaidStr] = useState(""); // ₹ paid now; blank = full when a mode is chosen
 
   const input = "rounded-xl border border-sand px-3 py-2 text-sm bg-white outline-none focus:border-emerald";
   const set = (i: number, patch: Partial<Line>) => setLines((p) => p.map((l, idx) => idx === i ? { ...l, ...patch } : l));
@@ -42,12 +46,19 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
     });
     if (missing) { setMsg(`✕ Pick a colour for "${missing.mappedName}" — products with colours are bought per colour, not as the whole product.`); return; }
     setBusy(true); setMsg(""); if (!force) setConfirmDup(false);
+    // Paid now: 0 for credit; else the typed amount, defaulting to the full bill when left blank.
+    const amountPaidRupees = payMode === "credit" ? 0 : (paidStr.trim() !== "" ? Number(paidStr) || 0 : total);
     const res = await recordPurchaseAction({
       supplierId, billNo, force,
       items: lines.map((l) => ({ supplierSku: l.supplierSku, mappedProductId: l.mappedProductId, variantId: l.variantId, qty: Number(l.qty) || 0, unitCostRupees: Number(l.cost) || 0 })),
+      paymentMode: payMode, amountPaidRupees,
     });
     setBusy(false);
-    if (res.ok) { setMsg(`✓ Purchase recorded (${formatPaise(res.total ?? 0)}) — mapped items added to stock.`); setLines([{ supplierSku: "", mappedProductId: "", mappedName: "", variantId: "", qty: "", cost: "" }]); setBillNo(""); setConfirmDup(false); }
+    if (res.ok) {
+      const owed = Math.max(0, total - amountPaidRupees);
+      setMsg(`✓ Purchase recorded (${formatPaise(res.total ?? 0)})${payMode === "credit" || owed > 0 ? ` — ${formatPaise(owed * 100)} on credit to supplier` : " — paid in full"}. Stock updated.`);
+      setLines([{ supplierSku: "", mappedProductId: "", mappedName: "", variantId: "", qty: "", cost: "" }]); setBillNo(""); setPaidStr(""); setPayMode("credit"); setConfirmDup(false);
+    }
     else { setMsg(`✕ ${res.error}`); setConfirmDup(!!res.duplicateBillNo); }
   }
 
@@ -116,13 +127,36 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
       </div>
       <button onClick={() => setLines((p) => [...p, { supplierSku: "", mappedProductId: "", mappedName: "", variantId: "", qty: "", cost: "" }])} className="text-sm text-emerald nav-link mt-3">+ Add line</button>
 
-      <div className="flex items-center justify-between mt-5 border-t border-sand pt-4">
-        <span className="text-lg font-semibold text-ink">Total: {formatPaise(total * 100)}</span>
-        <div className="flex items-center gap-2">
-          {confirmDup && (
-            <button onClick={() => submit(true)} disabled={busy} className="px-4 py-2.5 rounded-xl border border-rose text-rose text-sm font-medium hover:bg-rose/10 disabled:opacity-50">Record anyway</button>
+      {/* Payment — how this purchase was paid. Credit leaves the amount owed on the supplier ledger. */}
+      <div className="mt-5 border-t border-sand pt-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-lg font-semibold text-ink">Total: {formatPaise(total * 100)}</span>
+          <div className="flex items-center gap-1.5 ml-auto">
+            <span className="text-[11px] text-muted mr-1">Payment</span>
+            {([["credit", "Credit"], ["cash", "Cash"], ["upi", "UPI"], ["bank", "Bank"]] as const).map(([v, label]) => (
+              <button key={v} type="button" onClick={() => setPayMode(v)}
+                className={`px-3 py-1.5 rounded-full text-xs transition-colors ${payMode === v ? (v === "credit" ? "bg-gold text-ink" : "bg-ink text-white") : "bg-white border border-sand text-muted hover:border-emerald"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 mt-2">
+          {payMode === "credit" ? (
+            <p className="text-[11px] text-gold-dark">The full {formatPaise(total * 100)} will be registered as owed to this supplier (payable). Record payments later from the supplier page.</p>
+          ) : (
+            <label className="text-[11px] text-muted flex items-center gap-1.5">
+              Paid now ₹
+              <input value={paidStr} onChange={(e) => setPaidStr(e.target.value)} inputMode="decimal" placeholder={String(total)} className={`${input} w-28`} />
+              <span className="text-muted">{paidStr.trim() !== "" && Number(paidStr) < total ? `· ${formatPaise((total - (Number(paidStr) || 0)) * 100)} on credit` : "· paid in full"}</span>
+            </label>
           )}
-          <button onClick={() => submit(false)} disabled={busy} className="btn-primary px-6 py-2.5 text-sm font-medium disabled:opacity-50">{busy ? "Recording…" : "Record purchase"}</button>
+          <div className="flex items-center gap-2 ml-auto">
+            {confirmDup && (
+              <button onClick={() => submit(true)} disabled={busy} className="px-4 py-2.5 rounded-xl border border-rose text-rose text-sm font-medium hover:bg-rose/10 disabled:opacity-50">Record anyway</button>
+            )}
+            <button onClick={() => submit(false)} disabled={busy} className="btn-primary px-6 py-2.5 text-sm font-medium disabled:opacity-50">{busy ? "Recording…" : "Record purchase"}</button>
+          </div>
         </div>
       </div>
       {msg && <p className={`text-sm mt-2 ${confirmDup ? "text-rose" : "text-ink"}`}>{msg}</p>}
