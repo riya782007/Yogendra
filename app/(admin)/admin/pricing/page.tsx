@@ -15,8 +15,9 @@ export default async function PricingPage() {
       <header className="mb-6">
         <h1 className="text-2xl font-bold text-stone-900">Pricing formula</h1>
         <p className="mt-1 text-stone-500">
-          One formula prices the whole catalogue. Turn on the % build-up to derive wholesale, retail and MRP
-          straight from each item's cost — exactly like your costing sheet.
+          The <b>base wholesale price</b> you enter on each product is the only pricing input — this formula
+          builds the Retail selling price and the MRP from it, exactly like your costing sheet. Purchase-bill
+          prices are reference-only and never affect pricing.
         </p>
       </header>
 
