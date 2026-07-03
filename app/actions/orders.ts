@@ -33,7 +33,7 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
 }
 
 export async function posSaleAction(input: {
-  items: { sku: string; qty: number; priceRupees?: number }[];
+  items: { sku: string; qty: number; priceRupees?: number; listRupees?: number }[];
   customer: { name?: string; phone?: string };
   payment: string;
   billType?: "gst" | "cash";
@@ -88,7 +88,12 @@ export async function posSaleAction(input: {
           if (v) { variantId = (v as any).id; productId = (v as any).product_id; }
         }
         if (!productId) continue; // can't map — leave the catalogue price on that line
-        let upd = sb.from("order_items").update({ unit_price: unit, line_total: unit * o.qty }).eq("order_id", orderId).eq("product_id", productId);
+        // Original (pre-discount) rate for the invoice's Rate → Disc → Amount display. Only stored
+        // when it's actually higher than the billed net, so a plain override doesn't fake a discount.
+        const list = Number.isFinite(o.listRupees as number) ? Math.round((o.listRupees as number) * 100) : 0;
+        const patch: Record<string, number> = { unit_price: unit, line_total: unit * o.qty };
+        if (list > unit) patch.unit_mrp = list;
+        let upd = sb.from("order_items").update(patch).eq("order_id", orderId).eq("product_id", productId);
         upd = variantId ? upd.eq("variant_id", variantId) : upd.is("variant_id", null);
         await upd;
       }

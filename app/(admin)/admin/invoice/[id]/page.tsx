@@ -83,11 +83,22 @@ export default async function Invoice({ params }: { params: { id: string } }) {
           <div className="grid sm:grid-cols-2 gap-4 border border-sand rounded-lg overflow-hidden">
             <div className="p-4 border-b sm:border-b-0 sm:border-r border-sand">
               <p className="font-display text-2xl text-ink leading-none">{BUSINESS.brand}</p>
-              <p className="text-xs text-muted mt-0.5">{BUSINESS.legalName}</p>
-              <p className="text-xs text-muted mt-1">{BUSINESS.address}</p>
-              <p className="text-xs text-ink mt-1"><b>GSTIN:</b> {BUSINESS.gstin}</p>
-              <p className="text-xs text-muted"><b>PAN:</b> {BUSINESS.pan}{BUSINESS.tin ? <> · <b>TIN:</b> {BUSINESS.tin}</> : null} · State: {BUSINESS.stateName} ({BUSINESS.stateCode})</p>
-              <p className="text-xs text-muted">{BUSINESS.phone} · {BUSINESS.email}</p>
+              {/* A cash memo is a non-GST retail bill — it carries only the trade name + contact,
+                  NOT GSTIN / PAN / TIN / legal entity. Full seller identity shows on GST invoices only. */}
+              {isCash ? (
+                <>
+                  <p className="text-xs text-muted mt-1">{BUSINESS.address}</p>
+                  <p className="text-xs text-muted mt-1">{BUSINESS.phone}{BUSINESS.email ? <> · {BUSINESS.email}</> : null}</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-muted mt-0.5">{BUSINESS.legalName}</p>
+                  <p className="text-xs text-muted mt-1">{BUSINESS.address}</p>
+                  <p className="text-xs text-ink mt-1"><b>GSTIN:</b> {BUSINESS.gstin}</p>
+                  <p className="text-xs text-muted"><b>PAN:</b> {BUSINESS.pan}{BUSINESS.tin ? <> · <b>TIN:</b> {BUSINESS.tin}</> : null} · State: {BUSINESS.stateName} ({BUSINESS.stateCode})</p>
+                  <p className="text-xs text-muted">{BUSINESS.phone} · {BUSINESS.email}</p>
+                </>
+              )}
             </div>
             <div className="p-4 text-xs space-y-1">
               <div className="flex justify-between"><span className="text-muted">Invoice No.</span><span className="font-medium text-ink">{invNo}</span></div>
@@ -116,6 +127,7 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                 {!isCash && <th className={`${th} text-center`}>HSN</th>}
                 <th className={`${th} text-right`}>Qty</th>
                 <th className={`${th} text-right`}>Rate</th>
+                <th className={`${th} text-right`}>Disc</th>
                 <th className={`${th} text-right`}>{isCash ? "Amount" : "Taxable Value"}</th>
               </tr>
             </thead>
@@ -123,20 +135,25 @@ export default async function Invoice({ params }: { params: { id: string } }) {
               {items.map((it: any, i: number) => {
                 const lineTaxable = (isCash || gstExclusive) ? it.line_total : Math.round(it.line_total / (1 + GST_RATE / 100));
                 const unit = (isCash || gstExclusive) ? it.unit_price : Math.round(it.unit_price / (1 + GST_RATE / 100));
+                // Original (pre-discount) rate for the Rate column; Amount stays the discounted net.
+                const origRaw = it.unit_mrp && it.unit_mrp > it.unit_price ? it.unit_mrp : it.unit_price;
+                const origUnit = (isCash || gstExclusive) ? origRaw : Math.round(origRaw / (1 + GST_RATE / 100));
+                const discPct = origUnit > unit ? Math.round((1 - unit / origUnit) * 100) : 0;
                 return (
                   <tr key={i} className="border-b border-sand/60">
                     <td className={`${td} text-muted`}>{i + 1}</td>
                     <td className={`${td} text-ink`}>{it.product?.name}{it.variant?.color ? ` – ${it.variant.color}` : ""} <span className="font-mono font-semibold text-ink bg-cream border border-sand rounded px-1.5 py-0.5 text-[11px] whitespace-nowrap">{it.variant?.sku ?? it.product?.sku}</span></td>
                     {!isCash && <td className={`${td} text-center text-muted`}>{HSN_JEWELLERY}</td>}
                     <td className={`${td} text-right`}>{it.qty}</td>
-                    <td className={`${td} text-right`}>{formatPaise(unit)}</td>
+                    <td className={`${td} text-right ${discPct > 0 ? "text-muted line-through" : ""}`}>{formatPaise(origUnit)}</td>
+                    <td className={`${td} text-right ${discPct > 0 ? "text-emerald-dark" : "text-muted"}`}>{discPct > 0 ? `${discPct}%` : "—"}</td>
                     <td className={`${td} text-right`}>{formatPaise(lineTaxable)}</td>
                   </tr>
                 );
               })}
               <tr className="bg-cream/50 font-medium">
                 <td className={td}></td><td className={`${td} text-ink`}>Total</td>{!isCash && <td className={td}></td>}
-                <td className={`${td} text-right`}>{qtyTotal}</td><td className={td}></td>
+                <td className={`${td} text-right`}>{qtyTotal}</td><td className={td}></td><td className={td}></td>
                 <td className={`${td} text-right`}>{formatPaise(itemsTaxable)}</td>
               </tr>
             </tbody>
@@ -231,7 +248,7 @@ export default async function Invoice({ params }: { params: { id: string } }) {
               </ol>
             </div>
             <div className="text-right text-xs flex flex-col justify-end">
-              <p className="text-muted">For <b className="text-ink">{BUSINESS.legalName}</b></p>
+              <p className="text-muted">For <b className="text-ink">{isCash ? BUSINESS.brand : BUSINESS.legalName}</b></p>
               <div className="h-12" />
               <p className="text-ink border-t border-sand pt-1 inline-block ml-auto">Authorised Signatory</p>
             </div>

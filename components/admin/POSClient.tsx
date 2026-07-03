@@ -43,14 +43,22 @@ export function POSClient({ products, customers = [], methods = [], employees = 
   const pct = (v: string) => { const n = Number(v); return Number.isFinite(n) && n > 0 && n < 100 ? n : 0; };
   const gDisc = pct(globalDisc);
   const baseUnit = (l: Line | P) => (custType === "wholesale" && l.wholesale > 0 ? l.wholesale : l.price);
-  const effUnit = (l: Line) => {
+  // rawUnit = the ORIGINAL unit rate shown in the Rate column (a manual override, else the tier rate).
+  // It does NOT change when a discount is applied — the discount only affects the Amount.
+  const rawUnit = (l: Line) => {
     const ov = l.override.trim();
     if (ov !== "" && Number.isFinite(Number(ov)) && Number(ov) >= 0) return Math.round(Number(ov) * 100);
-    const d = l.disc.trim() !== "" ? pct(l.disc) : gDisc;
-    const base = baseUnit(l);
+    return baseUnit(l);
+  };
+  const lineDiscPct = (l: Line) => (l.disc.trim() !== "" ? pct(l.disc) : gDisc);
+  // effUnit = the discounted unit that actually bills (Amount = effUnit × qty). Discount applies on
+  // top of the Rate (override or tier), so Rate stays original and Amount reflects the discount.
+  const effUnit = (l: Line) => {
+    const d = lineDiscPct(l);
+    const base = rawUnit(l);
     return d > 0 ? Math.round((base * (100 - d)) / 100) : base;
   };
-  const mrpUnit = (l: Line) => Math.max(l.mrp || 0, effUnit(l));
+  const mrpUnit = (l: Line) => Math.max(l.mrp || 0, rawUnit(l));
 
   const [custQ, setCustQ] = useState("");
   const custMatches = useMemo(() => {
@@ -113,9 +121,10 @@ export function POSClient({ products, customers = [], methods = [], employees = 
       items: lines.map((l) => {
         const ov = l.override.trim();
         const hasOv = ov !== "" && Number.isFinite(Number(ov)) && Number(ov) >= 0;
-        if (hasOv) return { sku: l.sku, qty: l.qty, priceRupees: Number(ov) };
-        const d = l.disc.trim() !== "" ? pct(l.disc) : gDisc;
-        if (d > 0) return { sku: l.sku, qty: l.qty, priceRupees: effUnit(l) / 100 };
+        const d = lineDiscPct(l);
+        // When a rate is overridden OR a discount applies, bill the NET unit and also record the
+        // ORIGINAL rate (listRupees) so the invoice can show Rate → Disc → Amount.
+        if (hasOv || d > 0) return { sku: l.sku, qty: l.qty, priceRupees: effUnit(l) / 100, listRupees: rawUnit(l) / 100 };
         return { sku: l.sku, qty: l.qty };
       }),
       customer: cust, payment: "cash",
@@ -179,6 +188,21 @@ export function POSClient({ products, customers = [], methods = [], employees = 
           {scanMsg && <p className={`text-[11px] mt-0.5 absolute ${scanMsg.ok ? "text-emerald-dark" : "text-rose"}`}>{scanMsg.text}</p>}
         </div>
 
+        {/* Salesperson (employee sales attribution) — always visible so the counter records who sold. */}
+        <div className="shrink-0">
+          {employees.length > 0 ? (
+            <label className={`flex items-center gap-2 ${salesEmp ? "border-emerald" : "border-sand"} rounded-xl border px-3 py-2 text-sm`}>
+              <span className="text-muted text-xs whitespace-nowrap">☺ Sold by</span>
+              <select value={salesEmp} onChange={(e) => setSalesEmp(e.target.value)} className="bg-transparent outline-none text-ink max-w-[130px]">
+                <option value="">— select —</option>
+                {employees.map((emp) => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
+              </select>
+            </label>
+          ) : (
+            <a href="/admin/employees" className="flex items-center gap-1 rounded-xl border border-dashed border-sand px-3 py-2 text-xs text-muted hover:border-emerald">☺ Add employees to track sales</a>
+          )}
+        </div>
+
         {/* Compact customer chip (F2) */}
         <div className="relative shrink-0">
           <button onClick={() => setCustPanel((v) => !v)} className="flex items-center gap-2 rounded-xl border border-sand px-3 py-2 text-sm hover:border-emerald">
@@ -214,15 +238,6 @@ export function POSClient({ products, customers = [], methods = [], employees = 
               <input className={`${inp} w-full`} placeholder="Name (override)" value={cust.name} onChange={(e) => setCust({ ...cust, name: e.target.value })} />
               <input className={`${inp} w-full`} placeholder="Phone (optional)" value={cust.phone} onChange={(e) => setCust({ ...cust, phone: e.target.value })} />
               {billType === "gst" && <input className={`${inp} w-full`} placeholder="Buyer GSTIN (B2B)" value={gstin} onChange={(e) => setGstin(e.target.value.toUpperCase())} />}
-              {employees.length > 0 && (
-                <label className="block">
-                  <span className="text-[11px] text-muted">Salesperson (who dealt with the customer)</span>
-                  <select value={salesEmp} onChange={(e) => setSalesEmp(e.target.value)} className={`${inp} w-full mt-0.5`}>
-                    <option value="">— Not recorded —</option>
-                    {employees.map((emp) => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
-                  </select>
-                </label>
-              )}
               <button onClick={() => setCustPanel(false)} className="w-full py-1.5 rounded-lg bg-ink text-white text-sm">Done</button>
             </div>
           )}
@@ -268,7 +283,7 @@ export function POSClient({ products, customers = [], methods = [], employees = 
                         </div>
                       </td>
                       <td className="px-2 py-1.5 text-right align-middle">
-                        <input value={l.override} onChange={(e) => setOverride(l.sku, e.target.value)} inputMode="decimal" placeholder={String(Math.round(effUnit(l) / 100))}
+                        <input value={l.override} onChange={(e) => setOverride(l.sku, e.target.value)} inputMode="decimal" placeholder={String(Math.round(baseUnit(l) / 100))}
                           className={`w-20 text-right rounded border border-transparent hover:border-sand focus:border-emerald px-1 py-0.5 outline-none ${l.override.trim() !== "" ? "text-emerald-dark font-medium" : "text-ink"}`} />
                       </td>
                       <td className="px-2 py-1.5 text-right align-middle">
