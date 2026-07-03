@@ -103,7 +103,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
     <ProductEditor
       product={product}
       categories={categories.map((c) => ({ id: c.id, name: c.name, slug: c.slug }))}
-      formula={{ retailMultiplier: formula.retailMultiplier, mrpMultiplier: formula.mrpMultiplier, wholesaleMarkupPct: formula.wholesaleMarkupPct }}
+      formula={formula}
       effective={(() => {
         const eff = resolvePrices(p.base_wholesale ?? 0, formula, overridesOf(p));
         return {

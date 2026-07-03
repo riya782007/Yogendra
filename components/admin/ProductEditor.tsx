@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
 import { updateProductAction } from "@/app/actions/updateProduct";
 import { suggestProductTitleAction } from "@/app/actions/aiContent";
+import { computePrices, type PricingFormula } from "@/lib/pricing";
 
 type Cat = { id: string; name: string; slug: string };
 export type EditorProduct = {
@@ -41,7 +42,7 @@ export function ProductEditor({
 }: {
   product: EditorProduct;
   categories: Cat[];
-  formula: { retailMultiplier: number; mrpMultiplier: number; wholesaleMarkupPct: number };
+  formula: PricingFormula;
   /** Override-aware effective prices (rupees). `custom` = explicit prices are pinned, so the
    *  formula below is NOT what the product actually sells for. */
   effective?: { retail: number; mrp: number; wholesale: number; custom: boolean };
@@ -64,9 +65,12 @@ export function ProductEditor({
   }
 
   const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
-  const retail = base * formula.retailMultiplier;
-  const mrp = base * formula.mrpMultiplier;
-  const wholesale = base * (1 + formula.wholesaleMarkupPct / 100);
+  // Use the SINGLE shared pricing engine (honours the build-up chain / overrides), so this preview
+  // always matches the Pricing tab, catalogue and storefront — never the old flat multipliers.
+  const ps = computePrices(Math.round((Number(base) || 0) * 100), formula);
+  const retail = ps.retailPrice / 100;
+  const mrp = ps.mrp / 100;
+  const wholesale = ps.wholesaleRate / 100;
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
