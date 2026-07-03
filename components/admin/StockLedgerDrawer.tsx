@@ -13,6 +13,7 @@ type Movement = {
   id: string; kind: string; delta: number; runningBalance: number;
   source: string | null; reason: string | null; created_by: string | null;
   ref_id: string | null; created_at: string; invoice_no?: string | null;
+  party?: string | null;
   doc: { href: string; label: string } | null;
 };
 type Ledger = {
@@ -91,7 +92,7 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
       if (from && r.created_at < from) return false;
       if (to && r.created_at > to + "T23:59:59") return false;
       if (!s) return true;
-      return [r.invoice_no, r.ref_id, r.source, r.reason, r.created_by, r.kind].some((v) => (v ?? "").toString().toLowerCase().includes(s));
+      return [r.invoice_no, r.ref_id, r.source, r.reason, r.created_by, r.kind, r.party].some((v) => (v ?? "").toString().toLowerCase().includes(s));
     });
   }, [rows, filter, q, from, to]);
 
@@ -208,7 +209,7 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
                       <div key={r.id} className="p-2.5 flex items-center gap-3 text-sm">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] capitalize ${KIND_STYLE[r.kind] ?? "bg-cream text-muted"}`}>{r.kind}</span>
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs text-ink truncate">{r.invoice_no ? <b>{r.invoice_no} · </b> : ""}{r.reason ?? r.source ?? "—"}</p>
+                          <p className="text-xs text-ink truncate">{r.invoice_no ? <b>{r.invoice_no} · </b> : ""}{r.party ? <span className="text-ink">{r.party} · </span> : ""}{r.reason ?? r.source ?? "—"}</p>
                           <p className="text-[10px] text-muted">{time(r.created_at)}{r.created_by ? ` · ${r.created_by}` : ""}{r.doc ? " · " : ""}{r.doc && <Link href={r.doc.href} className="text-emerald nav-link">{r.doc.label}</Link>}</p>
                         </div>
                         <span className={`font-semibold tabular-nums ${r.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{r.delta > 0 ? "+" : ""}{r.delta}</span>

@@ -845,6 +845,8 @@ export type LedgerMovement = {
   id: string; kind: string; delta: number; runningBalance: number;
   source: string | null; reason: string | null; created_by: string | null;
   ref_id: string | null; created_at: string; invoice_no?: string | null;
+  /** Customer name (sales) or supplier name (purchases) for this movement. */
+  party?: string | null;
   doc: { href: string; label: string } | null;
 };
 
@@ -885,8 +887,15 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   const purchaseRefs = [...new Set(allRows.filter((r) => r.kind === "purchase" && r.ref_id).map((r) => r.ref_id))];
   const invoiceBy = new Map<string, string>();
   const billBy = new Map<string, string>();
-  if (saleRefs.length) { const { data } = await sb.from("orders").select("id,invoice_no").in("id", saleRefs as string[]); for (const o of (data as any[]) ?? []) invoiceBy.set(o.id, o.invoice_no); }
-  if (purchaseRefs.length) { const { data } = await sb.from("purchases").select("id,bill_no").in("id", purchaseRefs as string[]); for (const o of (data as any[]) ?? []) billBy.set(o.id, o.bill_no); }
+  const partyBy = new Map<string, string>();   // sale → customer name, purchase → supplier name
+  if (saleRefs.length) {
+    const { data } = await sb.from("orders").select("id,invoice_no,customer_name").in("id", saleRefs as string[]);
+    for (const o of (data as any[]) ?? []) { invoiceBy.set(o.id, o.invoice_no); if (o.customer_name) partyBy.set(o.id, o.customer_name); }
+  }
+  if (purchaseRefs.length) {
+    const { data } = await sb.from("purchases").select("id,bill_no, supplier:suppliers(name)").in("id", purchaseRefs as string[]);
+    for (const o of (data as any[]) ?? []) { billBy.set(o.id, o.bill_no); const nm = (o as any).supplier?.name; if (nm) partyBy.set(o.id, nm); }
+  }
 
   const docFor = (r: any): { href: string; label: string } | null => {
     if (!r.ref_id) return null;
@@ -904,6 +913,7 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     source: r.source ?? null, reason: r.reason ?? null, created_by: r.created_by ?? r.source ?? null,
     ref_id: r.ref_id ?? null, created_at: r.created_at,
     invoice_no: r.kind === "sale" ? (invoiceBy.get(r.ref_id) ?? null) : r.kind === "purchase" ? (billBy.get(r.ref_id) ?? null) : null,
+    party: r.ref_id ? (partyBy.get(r.ref_id) ?? null) : null,
     doc: docFor(r),
   }));
 

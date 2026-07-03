@@ -147,8 +147,12 @@ export function ProductEditor({
             />
           </div>
           <div>
-            <label className={label}>Stock quantity</label>
-            <input name="qty" type="number" min={0} step="1" defaultValue={product.qty} className={field} />
+            <label className={label}>Stock quantity <span className="text-muted font-normal">🔒 locked</span></label>
+            <div className={`${field} bg-cream/50 flex items-center justify-between`} aria-readonly>
+              <span className="text-ink font-medium">{product.qty}</span>
+              <span className="text-[11px] text-muted">read-only</span>
+            </div>
+            <p className="text-[11px] text-muted mt-1">Stock changes only via purchase/sales bills or the <b>Inventory</b> tab (logged with a reason) — so your tally can&apos;t break by accident.</p>
           </div>
         </div>
 
