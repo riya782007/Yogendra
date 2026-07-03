@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { getEstimates, getStorefront, getCustomersDb } from "@/lib/supabase/queries";
+import { supabaseServer } from "@/lib/supabase/server";
 import { formatPaise, resolvePrices, overridesOf } from "@/lib/pricing";
 import { EstimateClient } from "@/components/admin/EstimateClient";
 import { billEstimateAction, denyEstimateAction, reopenEstimateAction } from "@/app/actions/billing";
@@ -27,8 +28,30 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 export default async function Estimates({ searchParams }: { searchParams: { tab?: string; q?: string; sort?: string } }) {
-  const [{ products, formula }, estimates, customers] = await Promise.all([getStorefront({ includeDrafts: true, includeWholesaleOnly: true }), getEstimates({ sort: searchParams.sort }), getCustomersDb({})]);
-  const list = products.map((p) => { const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p)); return { sku: p.sku, name: p.name, price: ps.retailPrice, wholesale: ps.wholesaleRate }; });
+  const sb = supabaseServer();
+  const [{ products, formula }, estimates, customers, { data: variants }] = await Promise.all([
+    getStorefront({ includeDrafts: true, includeWholesaleOnly: true }),
+    getEstimates({ sort: searchParams.sort }),
+    getCustomersDb({}),
+    sb.from("variants").select("sku,color,qty,product_id,wholesale_override,retail_override,mrp_override"),
+  ]);
+  // Expand each design into its colour VARIANTS (variant SKUs are what get billed), so the estimate
+  // search shows the exact colour — e.g. "Rajwada Necklace · Green (KN132-GREEN)" — not just the parent.
+  const varsByProduct = new Map<string, any[]>();
+  for (const v of ((variants ?? []) as any[])) { const a = varsByProduct.get(v.product_id) ?? []; a.push(v); varsByProduct.set(v.product_id, a); }
+  const list: { sku: string; name: string; price: number; wholesale: number }[] = [];
+  for (const p of products as any[]) {
+    const vs = varsByProduct.get(p.id) ?? [];
+    if (vs.length) {
+      for (const v of vs) {
+        const ps = resolvePrices(p.base_wholesale, formula, overridesOf(v), overridesOf(p));
+        list.push({ sku: v.sku, name: `${p.name}${v.color ? " · " + v.color : ""}`, price: ps.retailPrice, wholesale: ps.wholesaleRate });
+      }
+    } else {
+      const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));
+      list.push({ sku: p.sku, name: p.name, price: ps.retailPrice, wholesale: ps.wholesaleRate });
+    }
+  }
   const custList = customers.map((c: any) => ({ id: c.id, name: c.name, phone: c.phone ?? "", type: c.type ?? "retail", gstin: c.gstin ?? "" }));
 
   const tab = TABS.find((t) => t.key === (searchParams.tab ?? "all")) ?? TABS[0];
