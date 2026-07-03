@@ -45,6 +45,10 @@ export function BarcodeSheet({ products }: { products: P[] }) {
   );
   const cols = PAPER.find((p) => p.key === paper)?.cols ?? 5;
   const per = PAPER.find((p) => p.key === paper)?.per ?? 65;
+  // Row height so exactly `rows` labels fit down one A4 sheet (297mm − 12mm margins ≈ 280mm usable,
+  // minus 1mm inter-row gaps). This makes "65 per sheet (5×13)" actually print on ONE page.
+  const rows = Math.max(1, Math.round(per / cols));
+  const labelHmm = ((280 - (rows - 1)) / rows).toFixed(2);
 
   const toRow = (p: P): Row => ({ sku: p.sku, name: p.name, qty: 1, price: rup(p.price), special: "", wholesale: rup(p.wholesale) });
   const add = (p: P) => { setRows((prev) => (prev.find((x) => x.sku === p.sku) ? prev : [...prev, toRow(p)])); setQ(""); };
@@ -173,7 +177,7 @@ export function BarcodeSheet({ products }: { products: P[] }) {
       {/* Printable label grid — density set by paper size via --bc-cols */}
       {labels.length > 0 && (
         <div className="print-area">
-          <div className="barcode-grid grid gap-1" style={{ "--bc-cols": cols, gridTemplateColumns: `repeat(${cols}, 1fr)` } as any}>
+          <div className="barcode-grid grid gap-1" style={{ "--bc-cols": cols, "--bc-h": `${labelHmm}mm`, gridTemplateColumns: `repeat(${cols}, 1fr)` } as any}>
             {labels.map((it, i) => {
               const line = priceLine(it);
               return (

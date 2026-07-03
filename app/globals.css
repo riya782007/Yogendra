@@ -85,10 +85,11 @@ body {
     gap: 1mm !important;
   }
   .barcode-label {
-    padding: 1mm !important;
+    padding: 0.8mm !important;
     border-radius: 2px !important;
     page-break-inside: avoid;
-    height: 33mm;
+    height: var(--bc-h, 20mm) !important;   /* row height set per paper size so N rows fit one A4 */
+    overflow: hidden;
     display: flex; flex-direction: column; justify-content: center;
   }
   /* Catalogue PDF: make dark header/footer readable without background graphics */
@@ -98,7 +99,7 @@ body {
   .barcode-label .bc-name { font-size: 6pt; line-height: 1.1; }
   .barcode-label .bc-sku { font-size: 6pt; margin-top: 0.5mm; }
   .barcode-label .bc-price { font-size: 7pt; }
-  .barcode-label svg { height: 12mm !important; }
+  .barcode-label svg { height: 10mm !important; width: 100% !important; }
 }
 /* on-screen label sizing */
 .barcode-label .bc-name { font-size: 10px; }
