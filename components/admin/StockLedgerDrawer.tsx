@@ -13,6 +13,7 @@ type Movement = {
   id: string; kind: string; delta: number; runningBalance: number;
   source: string | null; reason: string | null; created_by: string | null;
   ref_id: string | null; created_at: string; invoice_no?: string | null;
+  party?: string | null;
   variant?: { color: string | null; sku: string | null } | null;
   doc: { href: string; label: string } | null;
 };
@@ -96,7 +97,7 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
       if (from && r.created_at < from) return false;
       if (to && r.created_at > to + "T23:59:59") return false;
       if (!s) return true;
-      return [r.invoice_no, r.ref_id, r.source, r.reason, r.created_by, r.kind, r.variant?.color, r.variant?.sku].some((v) => (v ?? "").toString().toLowerCase().includes(s));
+      return [r.invoice_no, r.ref_id, r.source, r.reason, r.created_by, r.kind, r.party, r.variant?.color, r.variant?.sku].some((v) => (v ?? "").toString().toLowerCase().includes(s));
     });
   }, [rows, filter, colour, q, from, to]);
 
@@ -108,9 +109,9 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
   }, [filtered]);
 
   function exportCsv() {
-    const head = ["Date", "Time", "Type", "Change", "Balance", "Invoice/Bill", "Reference", "By", "Note"];
+    const head = ["Date", "Time", "Type", "Change", "Balance", "Invoice/Bill", "Party", "Reference", "By", "Note"];
     const lines = rows.map((r) => [day(r.created_at), time(r.created_at), r.kind, r.delta, r.runningBalance,
-      r.invoice_no ?? "", r.ref_id ?? "", r.created_by ?? "", (r.reason ?? r.source ?? "").replace(/[\n,]/g, " ")]);
+      r.invoice_no ?? "", r.party ?? "", r.ref_id ?? "", r.created_by ?? "", (r.reason ?? r.source ?? "").replace(/[\n,]/g, " ")]);
     const csv = [head, ...lines].map((row) => row.map((c) => `"${String(c)}"`).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     const a = document.createElement("a"); a.href = url; a.download = `ledger-${data?.header.sku ?? productId}.csv`; a.click();
@@ -235,7 +236,10 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
                         {r.variant?.color && <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-cream text-ink border border-sand whitespace-nowrap">{r.variant.color}</span>}
                         <div className="flex-1 min-w-0">
                           <p className="text-xs text-ink truncate">{r.invoice_no ? <b>{r.invoice_no} · </b> : ""}{r.reason ?? r.source ?? "—"}</p>
-                          <p className="text-[10px] text-muted">{time(r.created_at)}{r.created_by ? ` · ${r.created_by}` : ""}{r.doc ? " · " : ""}{r.doc && <Link href={r.doc.href} className="text-emerald nav-link">{r.doc.label}</Link>}</p>
+                          <p className="text-[10px] text-muted">
+                            {r.party && <b className="text-ink">{r.kind === "purchase" ? "From" : "To"} {r.party}</b>}
+                            {r.party ? " · " : ""}{time(r.created_at)}{r.created_by ? ` · ${r.created_by}` : ""}{r.doc ? " · " : ""}{r.doc && <Link href={r.doc.href} className="text-emerald nav-link">{r.doc.label}</Link>}
+                          </p>
                         </div>
                         <span className={`font-semibold tabular-nums ${r.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{r.delta > 0 ? "+" : ""}{r.delta}</span>
                         <span className="text-xs text-muted tabular-nums w-14 text-right">→ {r.runningBalance}</span>

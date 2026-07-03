@@ -81,11 +81,22 @@ export async function addEstimateLineAction(formData: FormData): Promise<void> {
   const qty = Math.max(1, Math.floor(Number(formData.get("qty") ?? 1)));
   if (!estimateId || !sku) return;
   const sb = supabaseServer();
-  const { data: p } = await sb.from("products").select("id,base_wholesale,wholesale_override,retail_override,mrp_override").ilike("sku", sku).maybeSingle();
-  if (!p) return;
+  // Resolve the SKU to a specific variant first (so the estimate records the exact colour),
+  // then fall back to a bare product SKU.
+  const { data: v } = await sb.from("variants").select("id,product_id,wholesale_override,retail_override,product:products(base_wholesale,wholesale_override,retail_override,mrp_override)").ilike("sku", sku).maybeSingle();
+  let productId: string, variantId: string | null = null, base: number, ov: any;
+  if (v) {
+    const vp = (v as any).product;
+    productId = (v as any).product_id; variantId = (v as any).id; base = vp.base_wholesale;
+    ov = { wholesale_override: (v as any).wholesale_override ?? vp.wholesale_override, retail_override: (v as any).retail_override ?? vp.retail_override, mrp_override: vp.mrp_override };
+  } else {
+    const { data: p } = await sb.from("products").select("id,base_wholesale,wholesale_override,retail_override,mrp_override").ilike("sku", sku).maybeSingle();
+    if (!p) return;
+    productId = (p as any).id; base = (p as any).base_wholesale; ov = overridesOf(p);
+  }
   const formula = await getPricingFormula();
-  const unit = resolvePrices((p as any).base_wholesale, formula, overridesOf(p)).retailPrice;
-  await sb.from("estimate_items").insert({ estimate_id: estimateId, product_id: (p as any).id, qty, unit_price: unit, line_total: unit * qty });
+  const unit = resolvePrices(base, formula, ov).retailPrice;
+  await sb.from("estimate_items").insert({ estimate_id: estimateId, product_id: productId, variant_id: variantId, qty, unit_price: unit, line_total: unit * qty });
   await recomputeEstimateTotal(sb, estimateId);
   revalidatePath(`/admin/estimate/${estimateId}`);
 }
@@ -113,9 +124,9 @@ export async function createEstimateAction(input: { items: { sku: string; qty: n
     // Match estimate_items back to the inputs by SKU.
     const priced = input.items.filter((i) => i.priceRupees != null && Number.isFinite(i.priceRupees) && (i.priceRupees as number) >= 0);
     if (priced.length) {
-      const { data: its } = await sb.from("estimate_items").select("id, qty, product:products(sku)").eq("estimate_id", estimateId);
+      const { data: its } = await sb.from("estimate_items").select("id, qty, product:products(sku), variant:variants(sku)").eq("estimate_id", estimateId);
       const bySku = new Map<string, { id: string; qty: number }>();
-      for (const it of ((its as any[]) ?? [])) { const sku = (it as any).product?.sku; if (sku) bySku.set(String(sku).toUpperCase(), { id: it.id, qty: it.qty }); }
+      for (const it of ((its as any[]) ?? [])) { const sku = (it as any).variant?.sku ?? (it as any).product?.sku; if (sku) bySku.set(String(sku).toUpperCase(), { id: it.id, qty: it.qty }); }
       for (const i of priced) {
         const m = bySku.get(i.sku.toUpperCase());
         if (!m) continue;

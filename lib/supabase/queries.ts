@@ -909,6 +909,7 @@ export type LedgerMovement = {
   id: string; kind: string; delta: number; runningBalance: number;
   source: string | null; reason: string | null; created_by: string | null;
   ref_id: string | null; created_at: string; invoice_no?: string | null;
+  party?: string | null;
   variant?: { color: string | null; sku: string | null } | null;
   doc: { href: string; label: string } | null;
 };
@@ -967,10 +968,15 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   // --- related documents (batch lookups) ---
   const saleRefs = [...new Set(allRows.filter((r) => r.kind === "sale" && r.ref_id).map((r) => r.ref_id))];
   const purchaseRefs = [...new Set(allRows.filter((r) => r.kind === "purchase" && r.ref_id).map((r) => r.ref_id))];
+  const estimateRefs = [...new Set(allRows.filter((r) => r.kind === "estimate" && r.ref_id).map((r) => r.ref_id))];
   const invoiceBy = new Map<string, string>();
   const billBy = new Map<string, string>();
-  if (saleRefs.length) { const { data } = await sb.from("orders").select("id,invoice_no").in("id", saleRefs as string[]); for (const o of (data as any[]) ?? []) invoiceBy.set(o.id, o.invoice_no); }
-  if (purchaseRefs.length) { const { data } = await sb.from("purchases").select("id,bill_no").in("id", purchaseRefs as string[]); for (const o of (data as any[]) ?? []) billBy.set(o.id, o.bill_no); }
+  // Party = who the movement was with — the customer on a sale/estimate, the supplier on a purchase.
+  // Surfaced on every timeline row so the owner can trace "sold 2 to Riya" without opening the bill.
+  const partyBy = new Map<string, string>();
+  if (saleRefs.length) { const { data } = await sb.from("orders").select("id,invoice_no,customer_name").in("id", saleRefs as string[]); for (const o of (data as any[]) ?? []) { invoiceBy.set(o.id, o.invoice_no); if (o.customer_name) partyBy.set(o.id, o.customer_name); } }
+  if (purchaseRefs.length) { const { data } = await sb.from("purchases").select("id,bill_no, supplier:suppliers(name)").in("id", purchaseRefs as string[]); for (const o of (data as any[]) ?? []) { billBy.set(o.id, o.bill_no); if (o.supplier?.name) partyBy.set(o.id, o.supplier.name); } }
+  if (estimateRefs.length) { const { data } = await sb.from("estimates").select("id,customer_name").in("id", estimateRefs as string[]); for (const o of (data as any[]) ?? []) { if (o.customer_name) partyBy.set(o.id, o.customer_name); } }
 
   const docFor = (r: any): { href: string; label: string } | null => {
     if (!r.ref_id) return null;
@@ -988,6 +994,7 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     source: r.source ?? null, reason: r.reason ?? null, created_by: r.created_by ?? r.source ?? null,
     ref_id: r.ref_id ?? null, created_at: r.created_at,
     invoice_no: r.kind === "sale" ? (invoiceBy.get(r.ref_id) ?? null) : r.kind === "purchase" ? (billBy.get(r.ref_id) ?? null) : null,
+    party: r.ref_id ? (partyBy.get(r.ref_id) ?? null) : null,
     variant: r.variant_id ? { color: variantById.get(r.variant_id)?.color ?? null, sku: variantById.get(r.variant_id)?.sku ?? null } : null,
     doc: docFor(r),
   }));
@@ -1418,7 +1425,7 @@ export async function getEstimate(id: string) {
   const sb = supabaseServer();
   const { data: estimate } = await sb.from("estimates").select("*").eq("id", id).maybeSingle();
   if (!estimate) return null;
-  const { data: items } = await sb.from("estimate_items").select("id,qty,unit_price,line_total,product:products(name,sku)").eq("estimate_id", id);
+  const { data: items } = await sb.from("estimate_items").select("id,qty,unit_price,line_total,product:products(name,sku),variant:variants(sku,color)").eq("estimate_id", id);
   return { estimate, items: (items as any[]) ?? [] };
 }
 export async function getRecentOrders(limit = 12) {
