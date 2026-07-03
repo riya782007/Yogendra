@@ -22,17 +22,48 @@ export async function createCategoryAction(formData: FormData) {
 }
 
 /** Delete a category — only when it has no products (to avoid orphaning the catalogue). */
-export async function deleteCategoryAction(formData: FormData): Promise<void> {
-  if (!(await requirePerm("catalog.edit"))) return;
-  const id = String(formData.get("id") ?? "").trim();
-  if (!id) return;
+/** Delete a category WITHOUT deleting its inventory. Products in it are moved to an auto-created
+ *  "Uncategorized" category (products.category_id is NOT NULL, so they must land somewhere) and the
+ *  category's subcategories are removed. Returns a result so the UI can confirm + report. */
+export async function deleteCategoryAction(id: string): Promise<{ ok: boolean; moved?: number; error?: string }> {
+  if (!(await requirePerm("catalog.edit"))) return { ok: false, error: "Your role can't edit the catalogue." };
+  id = (id ?? "").trim();
+  if (!id) return { ok: false, error: "Missing category." };
   const sb = supabaseServer();
+  const { data: cat } = await sb.from("categories").select("id,name").eq("id", id).maybeSingle();
+  if (!cat) return { ok: false, error: "Category not found." };
+
   const { count } = await sb.from("products").select("id", { count: "exact", head: true }).eq("category_id", id);
-  if ((count ?? 0) > 0) return; // refuse to delete a non-empty category
-  const { data: cat } = await sb.from("categories").select("name").eq("id", id).maybeSingle();
-  await sb.from("categories").delete().eq("id", id);
-  await logActivity({ action: "category_deleted", ref: id, detail: `Deleted category${(cat as any)?.name ? ` “${(cat as any).name}”` : ""}.` });
-  revalidatePath("/admin/categories"); revalidatePath("/shop");
+  const moved = count ?? 0;
+
+  if (moved > 0) {
+    // Ensure a safe "Uncategorized" bucket, then move the products there — inventory is preserved.
+    let uncatId: string | null = null;
+    const { data: existing } = await sb.from("categories").select("id").eq("slug", "uncategorized").maybeSingle();
+    if (existing) uncatId = (existing as any).id;
+    else {
+      const { data: created } = await sb.from("categories").insert({ name: "Uncategorized", slug: "uncategorized" }).select("id").maybeSingle();
+      uncatId = (created as any)?.id ?? null;
+    }
+    if (!uncatId || uncatId === id) return { ok: false, error: "Couldn't prepare a place to move the products." };
+    const { error: mvErr } = await sb.from("products").update({ category_id: uncatId }).eq("category_id", id);
+    if (mvErr) return { ok: false, error: `Couldn't move products: ${mvErr.message}` };
+  }
+
+  // Remove the category's subcategories (organisational only) + their product maps. Products keep
+  // their now-Uncategorized parent; they just lose this category's subcategory tags.
+  const { data: subs } = await sb.from("subcategories").select("id").eq("category_id", id);
+  const subIds = ((subs as any[]) ?? []).map((s) => s.id);
+  if (subIds.length) {
+    await sb.from("product_subcategory_map").delete().in("subcategory_id", subIds);
+    await sb.from("subcategories").delete().in("id", subIds);
+  }
+
+  const { error: delErr } = await sb.from("categories").delete().eq("id", id);
+  if (delErr) return { ok: false, error: delErr.message };
+  await logActivity({ action: "category_deleted", ref: id, detail: `Deleted category “${(cat as any).name}”${moved ? ` (${moved} product${moved === 1 ? "" : "s"} moved to Uncategorized)` : ""}.` });
+  revalidatePath("/admin/categories"); revalidatePath("/shop"); revalidatePath("/admin/catalogue");
+  return { ok: true, moved };
 }
 
 async function nextSku(sb: ReturnType<typeof supabaseServer>): Promise<number> {

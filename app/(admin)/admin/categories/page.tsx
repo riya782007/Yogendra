@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 import { supabaseServer } from "@/lib/supabase/server";
 import {
-  createCategoryAction, deleteCategoryAction,
+  createCategoryAction,
   createSubcategoryAction, deleteSubcategoryAction, setSubcategoryStyleAction,
   createStyleAction, deleteStyleAction,
   createLabelAction, deleteLabelAction,
@@ -9,6 +9,7 @@ import {
 import { getCategoryTree, getLabels, getStyles } from "@/lib/supabase/queries";
 import { getSession, can } from "@/lib/auth";
 import { CollapsibleCategory } from "@/components/admin/CollapsibleCategory";
+import { DeleteCategoryButton } from "@/components/admin/DeleteCategoryButton";
 
 export const metadata = { title: "Owner Console · Categories" };
 
@@ -71,8 +72,8 @@ export default async function Categories({ searchParams }: { searchParams: { q?:
             designCount={counts.get(c.id) ?? 0}
             subCount={c.subcategories.length}
             defaultOpen={!!q}
-            actions={canEdit && (counts.get(c.id) ?? 0) === 0 ? (
-              <form action={deleteCategoryAction}><input type="hidden" name="id" value={c.id} /><button title="Delete empty category" className="text-muted hover:text-rose text-sm">🗑</button></form>
+            actions={canEdit ? (
+              <DeleteCategoryButton id={c.id} name={c.name} productCount={counts.get(c.id) ?? 0} />
             ) : null}
           >
             {/* Subcategories */}
