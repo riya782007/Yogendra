@@ -10,9 +10,10 @@ type Line = { sku: string; name: string; price: number; wholesale: number; mrp: 
 type Cust = { id: string; name: string; phone: string; type: string; gstin: string };
 const TIER_LABEL: Record<string, string> = { retail: "R", wholesale: "W" };
 type Method = { id: string; name: string; kind: string };
+type Emp = { id: string; name: string };
 type PayLine = { methodId: string; amount: string };
 
-export function POSClient({ products, customers = [], methods = [] }: { products: P[]; customers?: Cust[]; methods?: Method[] }) {
+export function POSClient({ products, customers = [], methods = [], employees = [] }: { products: P[]; customers?: Cust[]; methods?: Method[]; employees?: Emp[] }) {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [scanMsg, setScanMsg] = useState<{ text: string; ok: boolean } | null>(null);
@@ -23,6 +24,7 @@ export function POSClient({ products, customers = [], methods = [] }: { products
   const [expanded, setExpanded] = useState<string | null>(null);
   const [cust, setCust] = useState({ name: "", phone: "" });
   const [custType, setCustType] = useState<"retail" | "wholesale">("retail");
+  const [salesEmp, setSalesEmp] = useState(""); // who dealt with the customer (performance attribution)
   const [custPanel, setCustPanel] = useState(false);
   const [billType, setBillType] = useState<"gst" | "cash">("gst");
   const [gstin, setGstin] = useState("");
@@ -119,7 +121,7 @@ export function POSClient({ products, customers = [], methods = [] }: { products
       customer: cust, payment: "cash",
       billType, buyerGstin: billType === "gst" ? gstin : "", buyerAddress: addr,
       ...(validPays.length ? { payments: validPays } : {}),
-      allowOversell: allowBackorder, tier: custType,
+      allowOversell: allowBackorder, tier: custType, salesEmployeeId: salesEmp || undefined,
       backorder: allowBackorder && lines.some((l) => l.qty > l.stock),
       packingRupees: Number(packing) || 0, courierRupees: Number(courier) || 0, adjustmentRupees: Number(adjustment) || 0,
     });
@@ -212,6 +214,15 @@ export function POSClient({ products, customers = [], methods = [] }: { products
               <input className={`${inp} w-full`} placeholder="Name (override)" value={cust.name} onChange={(e) => setCust({ ...cust, name: e.target.value })} />
               <input className={`${inp} w-full`} placeholder="Phone (optional)" value={cust.phone} onChange={(e) => setCust({ ...cust, phone: e.target.value })} />
               {billType === "gst" && <input className={`${inp} w-full`} placeholder="Buyer GSTIN (B2B)" value={gstin} onChange={(e) => setGstin(e.target.value.toUpperCase())} />}
+              {employees.length > 0 && (
+                <label className="block">
+                  <span className="text-[11px] text-muted">Salesperson (who dealt with the customer)</span>
+                  <select value={salesEmp} onChange={(e) => setSalesEmp(e.target.value)} className={`${inp} w-full mt-0.5`}>
+                    <option value="">— Not recorded —</option>
+                    {employees.map((emp) => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
+                  </select>
+                </label>
+              )}
               <button onClick={() => setCustPanel(false)} className="w-full py-1.5 rounded-lg bg-ink text-white text-sm">Done</button>
             </div>
           )}

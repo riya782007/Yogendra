@@ -43,6 +43,7 @@ export async function posSaleAction(input: {
   allowOversell?: boolean; // owner opt-in to bill beyond stock (backorder)
   backorder?: boolean; // this sale was billed beyond available stock (surfaces in /admin/backorders)
   tier?: "retail" | "wholesale"; // price list to bill at (#16)
+  salesEmployeeId?: string; // who dealt with the customer (employee performance attribution)
   payCashRupees?: number; // split tender — cash portion (#14/#37) [legacy]
   payBankRupees?: number; // split tender — UPI/card/bank portion (#14/#37) [legacy]
   packingRupees?: number; // extra charge — packing (GST-applicable)
@@ -185,6 +186,7 @@ export async function posSaleAction(input: {
     buyer_address: input.buyerAddress?.trim() || null,
     buyer_state: buyerState,
     customer_id: customerId,
+    sales_employee_id: input.salesEmployeeId?.trim() || null,
     total,
     amount_paid: amountPaid,
     payment_mode: payMode,

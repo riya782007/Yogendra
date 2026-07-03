@@ -252,6 +252,56 @@ export async function getCustomersDb(opts: { q?: string; type?: string }) {
   return (data as any[]) ?? [];
 }
 
+// ---------- employees (salespeople) + sales attribution (0037) ----------
+export type Employee = { id: string; name: string; phone: string | null; title: string | null; active: boolean };
+
+/** Roster of employees. `activeOnly` for the POS salesperson picker. */
+export async function getEmployees(opts: { activeOnly?: boolean } = {}): Promise<Employee[]> {
+  const sb = supabaseServer();
+  let q = sb.from("employees").select("id,name,phone,title,active").order("active", { ascending: false }).order("name");
+  if (opts.activeOnly) q = q.eq("active", true);
+  const { data } = await q;
+  return (((data as any[]) ?? []) as Employee[]);
+}
+
+/** Per-employee sales performance over an optional date range (paise). Every employee is returned
+ *  (even with 0 sales), highest sales first — the basis for performance-based rewards. */
+export async function getEmployeePerformance(range?: { from?: string; to?: string }): Promise<{ id: string; name: string; active: boolean; orders: number; sales: number; collected: number }[]> {
+  const sb = supabaseServer();
+  const emps = await getEmployees({});
+  let q = sb.from("orders").select("sales_employee_id,total,amount_paid,created_at").not("sales_employee_id", "is", null);
+  if (range?.from) q = q.gte("created_at", range.from);
+  if (range?.to) q = q.lte("created_at", range.to);
+  const { data } = await q;
+  const agg = new Map<string, { orders: number; sales: number; collected: number }>();
+  for (const o of ((data as any[]) ?? [])) {
+    const cur = agg.get(o.sales_employee_id) ?? { orders: 0, sales: 0, collected: 0 };
+    cur.orders += 1; cur.sales += (o.total ?? 0); cur.collected += (o.amount_paid ?? 0);
+    agg.set(o.sales_employee_id, cur);
+  }
+  return emps
+    .map((e) => ({ id: e.id, name: e.name, active: e.active, ...(agg.get(e.id) ?? { orders: 0, sales: 0, collected: 0 }) }))
+    .sort((a, b) => b.sales - a.sales);
+}
+
+/** Per-customer spend + order count + last-order date over an optional date range (paise), keyed by
+ *  customer_id. Powers promotional targeting on the Customers page (who hit / is near a target). */
+export async function getCustomerSpend(range?: { from?: string; to?: string }): Promise<Map<string, { spend: number; orders: number; last: string | null }>> {
+  const sb = supabaseServer();
+  let q = sb.from("orders").select("customer_id,total,created_at").not("customer_id", "is", null);
+  if (range?.from) q = q.gte("created_at", range.from);
+  if (range?.to) q = q.lte("created_at", range.to);
+  const { data } = await q;
+  const m = new Map<string, { spend: number; orders: number; last: string | null }>();
+  for (const o of ((data as any[]) ?? [])) {
+    const cur = m.get(o.customer_id) ?? { spend: 0, orders: 0, last: null as string | null };
+    cur.spend += (o.total ?? 0); cur.orders += 1;
+    if (!cur.last || o.created_at > cur.last) cur.last = o.created_at;
+    m.set(o.customer_id, cur);
+  }
+  return m;
+}
+
 /** Creditors — customers who owe a balance, aggregated across all their bills (outstanding =
  *  Σ bill total − amount paid). Important for wholesale credit tracking. */
 export async function getCreditors(): Promise<{ id: string | null; name: string; phone: string; outstanding: number; bills: number }[]> {
