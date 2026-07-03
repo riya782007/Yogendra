@@ -3,6 +3,7 @@ import { useState, useMemo, useRef, useEffect, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import { formatPaise } from "@/lib/pricing";
 import { posSaleAction } from "@/app/actions/orders";
+import { QtyField } from "@/components/admin/QtyField";
 
 type P = { sku: string; name: string; price: number; wholesale: number; mrp: number; category: string; qty: number };
 type Line = { sku: string; name: string; price: number; wholesale: number; mrp: number; qty: number; stock: number; override: string; disc: string };
