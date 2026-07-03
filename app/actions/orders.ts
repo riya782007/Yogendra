@@ -115,7 +115,11 @@ export async function posSaleAction(input: {
   // up to this GRAND total (not the pre-tax total), so a fully-paid GST bill records the tax-
   // inclusive amount and the printed invoice shows no phantom balance for the tax.
   const GST_RATE = 3;
-  const grandTotalPaise = billType === "gst" ? (total as number) + Math.round(((total as number) * GST_RATE) / 100) : (total as number);
+  // GST mode follows the customer TIER: WHOLESALE = exclusive (thin margins → GST added ON TOP of
+  // the collected total), RETAIL = inclusive (the shelf price already contains GST, nothing added).
+  const isWholesale = input.tier === "wholesale";
+  const gstMode: "exclusive" | "inclusive" | null = billType === "gst" ? (isWholesale ? "exclusive" : "inclusive") : null;
+  const grandTotalPaise = gstMode === "exclusive" ? (total as number) + Math.round(((total as number) * GST_RATE) / 100) : (total as number);
 
   // Upsert into the customer directory (by phone) and link the order to it.
   let customerId: string | null = null;
@@ -191,6 +195,10 @@ export async function posSaleAction(input: {
     pay_cash: payCash,
     pay_bank: payBank,
   }).eq("id", orderId);
+
+  // Persist the GST mode so the invoice renders correctly: WHOLESALE bills are exclusive (GST added
+  // on top), RETAIL bills are inclusive (GST already inside the price). Best-effort — never breaks a sale.
+  if (gstMode) await sb.from("orders").update({ gst_mode: gstMode }).eq("id", orderId).then(() => {}, () => {});
 
   // Itemised charge breakdown — best-effort; needs migration 0021. Never breaks a sale.
   if (xCharges !== 0) {

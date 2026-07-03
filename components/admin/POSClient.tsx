@@ -3,7 +3,6 @@ import { useState, useMemo, useRef, useEffect, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import { formatPaise } from "@/lib/pricing";
 import { posSaleAction } from "@/app/actions/orders";
-import { QtyField } from "@/components/admin/QtyField";
 
 type P = { sku: string; name: string; price: number; wholesale: number; mrp: number; category: string; qty: number };
 type Line = { sku: string; name: string; price: number; wholesale: number; mrp: number; qty: number; stock: number; override: string; disc: string };
@@ -80,8 +79,12 @@ export function POSClient({ products, customers = [], methods = [] }: { products
   const discountTotal = Math.max(0, mrpTotal - itemsTotal);
   const total = itemsTotal + chargesTotal;
   const GST_RATE = 3;
-  const gstOnBill = billType === "gst" ? Math.round((total * GST_RATE) / 100) : 0;
-  const grandTotal = total + gstOnBill;
+  // GST mode follows the tier (owner rule): WHOLESALE = exclusive → GST added ON TOP of the total;
+  // RETAIL = inclusive → GST is already inside the price, so nothing is added (shown for reference).
+  const gstExclusive = billType === "gst" && custType === "wholesale";
+  const gstAddOn = gstExclusive ? Math.round((total * GST_RATE) / 100) : 0;
+  const gstIncluded = billType === "gst" && !gstExclusive ? total - Math.round((total * 100) / (100 + GST_RATE)) : 0;
+  const grandTotal = total + gstAddOn;
   const received = payLines.reduce((s, l) => s + (Number(l.amount) || 0) * 100, 0);
   const remaining = grandTotal - received;
   const addPayLine = () => setPayLines((p) => [...p, { methodId: methods[0]?.id ?? "", amount: "" }]);
@@ -318,7 +321,8 @@ export function POSClient({ products, customers = [], methods = [] }: { products
           {discountTotal > 0 && <div className="flex justify-between text-sm"><span className="text-muted">Discount</span><span className="text-emerald-dark">− {formatPaise(discountTotal)}</span></div>}
           <div className="flex justify-between text-sm"><span className="text-muted">Net (items)</span><span className="text-ink/80">{formatPaise(itemsTotal)}</span></div>
           {chargesTotal !== 0 && <div className="flex justify-between text-sm"><span className="text-muted">Other charges</span><span className="text-ink/80">{chargesTotal > 0 ? "+ " : ""}{formatPaise(chargesTotal)}</span></div>}
-          {gstOnBill > 0 && <div className="flex justify-between text-sm"><span className="text-muted">GST @{GST_RATE}%</span><span className="text-ink/80">+ {formatPaise(gstOnBill)}</span></div>}
+          {gstAddOn > 0 && <div className="flex justify-between text-sm"><span className="text-muted">GST @{GST_RATE}% <span className="text-[11px] text-wine">· added (wholesale)</span></span><span className="text-ink/80">+ {formatPaise(gstAddOn)}</span></div>}
+          {gstIncluded > 0 && <div className="flex justify-between text-sm"><span className="text-muted">incl. GST @{GST_RATE}% <span className="text-[11px] text-emerald-dark">· within price (retail)</span></span><span className="text-muted">{formatPaise(gstIncluded)}</span></div>}
           <div className="flex justify-between items-baseline pt-1.5 border-t border-sand/60"><span className="text-muted">Payable</span><span className="text-2xl font-semibold text-ink">{formatPaise(grandTotal)}</span></div>
 
           {/* Payment (F4) */}
