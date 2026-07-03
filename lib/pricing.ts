@@ -52,11 +52,6 @@ function roundToNearest(valuePaise: number, stepPaise: number): number {
   if (!stepPaise || stepPaise <= 0) return Math.round(valuePaise);
   return Math.round(valuePaise / stepPaise) * stepPaise;
 }
-/** Round to the nearest price ENDING IN 9 rupees (e.g. 326 → 329) — the owner's retail rule. */
-function roundTo9Paise(paise: number): number {
-  const r = paise / 100;
-  return Math.max(9, Math.round((r - 9) / 10) * 10 + 9) * 100;
-}
 /** Round to the nearest multiple of 5 rupees (e.g. 407.5 → 410) — the owner's MRP rule. */
 function roundTo5Paise(paise: number): number {
   const r = paise / 100;
@@ -83,7 +78,8 @@ export function computePrices(baseWholesalePaise: number, formula: PricingFormul
     const printedMrp = retail * p(formula.mrpPct);
     return {
       wholesaleRate: roundToNearest(wholesale, formula.roundToPaise),
-      retailPrice: roundTo9Paise(retail),
+      // Final retail = whole ₹ + ₹0.51 (owner's fixed tax add-on), e.g. 127 → 127.51.
+      retailPrice: Math.round(retail / 100) * 100 + 51,
       mrp: roundTo5Paise(printedMrp),
     };
   }
@@ -105,7 +101,7 @@ export function buildupBreakdown(baseWholesalePaise: number, formula: PricingFor
   // The entered value IS the wholesale billing price. Retail & MRP build on top.
   const wholesale = base;
   const retailRaw = wholesale * p(formula.customerDiscountPct);
-  const retail = roundTo9Paise(retailRaw);            // + customer % = RETAIL (ends ₹9)
+  const retail = Math.round(retailRaw / 100) * 100 + 51; // + customer % → whole ₹ + ₹0.51 tax = RETAIL
   const mrp = roundTo5Paise(retailRaw * p(formula.mrpPct)); // + mrp % = MRP (nearest ₹5)
   return { base, wholesale, retail, mrp };
 }
