@@ -188,11 +188,23 @@ export async function reopenEstimateAction(formData: FormData) {
   revalidatePath("/admin/estimates");
 }
 
-export async function recordReturnAction(input: { orderId: string; reason: string; items: { product_id: string; qty: number }[] }): Promise<{ ok: boolean; qty?: number; error?: string }> {
+/** Convert a backorder into a fulfilled sale once stock has arrived — clears the backorder flag so
+ *  it drops off the Backorders list and counts as a normal completed sale. */
+export async function fulfillBackorderAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("billing.sell"))) return;
+  const id = String(formData.get("id") ?? "").trim();
+  if (!id) return;
+  await supabaseServer().from("orders").update({ is_backorder: false }).eq("id", id);
+  revalidatePath("/admin/backorders"); revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard");
+}
+
+export async function recordReturnAction(input: { orderId: string; reason: string; items: { product_id: string; variantSku?: string; qty: number }[] }): Promise<{ ok: boolean; qty?: number; error?: string }> {
   if (!(await requirePerm("billing.refund"))) return { ok: false, error: "Your role can't process returns/refunds." };
   if (!input.items?.length) return { ok: false, error: "Select items to return" };
   if (!input.reason?.trim()) return { ok: false, error: "Capture a return reason" };
-  const { data, error } = await supabaseServer().rpc("record_sales_return", { p_order_id: input.orderId, p_reason: input.reason, p_items: input.items });
+  // The RPC restocks by product_id; variantSku is carried for display/audit (variant-exact restock TBD).
+  const p_items = input.items.map((i) => ({ product_id: i.product_id, qty: i.qty }));
+  const { data, error } = await supabaseServer().rpc("record_sales_return", { p_order_id: input.orderId, p_reason: input.reason, p_items });
   if (error) return { ok: false, error: error.message };
   revalidatePath("/admin/returns"); revalidatePath("/admin/dashboard");
   return { ok: true, qty: (data as any)?.qty };

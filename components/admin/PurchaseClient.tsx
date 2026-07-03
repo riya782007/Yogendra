@@ -121,7 +121,11 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
                 return <button type="button" onClick={() => set(i, { cost: String(r) })} className="block text-[10px] text-emerald-dark mt-0.5 hover:underline" title="Use last purchase price">last ₹{r} · use</button>;
               })()}
             </div>
-            <div className="col-span-2 text-sm text-right pt-2">{formatPaise((Number(l.qty) || 0) * (Number(l.cost) || 0) * 100)}</div>
+            <div className="col-span-2 flex items-center justify-end gap-2 pt-2 text-sm">
+              <span>{formatPaise((Number(l.qty) || 0) * (Number(l.cost) || 0) * 100)}</span>
+              <button type="button" onClick={() => setLines((p) => (p.length > 1 ? p.filter((_, idx) => idx !== i) : p))}
+                title="Remove this line" className="text-muted hover:text-rose leading-none shrink-0">✕</button>
+            </div>
           </div>
         ))}
       </div>

@@ -3,7 +3,9 @@ import { useState } from "react";
 import { formatPaise } from "@/lib/pricing";
 import { recordReturnAction } from "@/app/actions/billing";
 
-type Order = { id: string; total: number; customer_name: string | null; created_at: string; order_items: { qty: number; product: { id: string; name: string; sku: string } }[] };
+type Order = { id: string; total: number; customer_name: string | null; created_at: string; order_items: { qty: number; product: { id: string; name: string; sku: string }; variant?: { sku: string; color: string | null } | null }[] };
+// A returnable line is identified by product + variant, so two colours of the same design don't merge.
+const lineKey = (it: Order["order_items"][number]) => `${it.product.id}::${it.variant?.sku ?? ""}`;
 
 export function ReturnClient({ orders }: { orders: Order[] }) {
   const [sel, setSel] = useState<string>("");
@@ -15,7 +17,10 @@ export function ReturnClient({ orders }: { orders: Order[] }) {
 
   async function submit() {
     if (!order) return;
-    const items = Object.entries(qty).filter(([, q]) => q > 0).map(([product_id, q]) => ({ product_id, qty: q }));
+    const items = Object.entries(qty).filter(([, q]) => q > 0).map(([key, q]) => {
+      const [product_id, variant_sku] = key.split("::");
+      return { product_id, variantSku: variant_sku || undefined, qty: q };
+    });
     setBusy(true); setMsg("");
     const res = await recordReturnAction({ orderId: order.id, reason, items });
     setBusy(false);
@@ -32,15 +37,21 @@ export function ReturnClient({ orders }: { orders: Order[] }) {
       </select>
       {order && (
         <div className="mt-4 space-y-2">
-          {order.order_items.map((it) => (
-            <div key={it.product.id} className="flex items-center gap-3 text-sm border-b border-sand/60 py-2">
-              <span className="flex-1">{it.product.name} <span className="text-muted">· sold {it.qty}</span></span>
-              <label className="text-xs text-muted">return</label>
-              <input type="number" min={0} max={it.qty} value={qty[it.product.id] ?? 0}
-                onChange={(e) => setQty({ ...qty, [it.product.id]: Math.min(it.qty, Math.max(0, Number(e.target.value))) })}
-                className="w-16 rounded-lg border border-sand px-2 py-1 text-sm" />
-            </div>
-          ))}
+          {order.order_items.map((it) => {
+            const k = lineKey(it);
+            return (
+              <div key={k} className="flex items-center gap-3 text-sm border-b border-sand/60 py-2">
+                <span className="flex-1">
+                  {it.product.name}{it.variant?.color ? <span className="text-ink"> · {it.variant.color}</span> : ""}
+                  <span className="text-muted"> · {it.variant?.sku ?? it.product.sku} · sold {it.qty}</span>
+                </span>
+                <label className="text-xs text-muted">return</label>
+                <input type="number" min={0} max={it.qty} value={qty[k] ?? 0}
+                  onChange={(e) => setQty({ ...qty, [k]: Math.min(it.qty, Math.max(0, Number(e.target.value))) })}
+                  className="w-16 rounded-lg border border-sand px-2 py-1 text-sm" />
+              </div>
+            );
+          })}
           <input className={input + " mt-2"} placeholder="Reason (e.g. wrong colour / damaged / not purchased)" value={reason} onChange={(e) => setReason(e.target.value)} />
           <button onClick={submit} disabled={busy} className="btn-primary px-5 py-2.5 text-sm font-medium disabled:opacity-50 mt-2">{busy ? "Recording…" : "Record return & restore stock"}</button>
         </div>

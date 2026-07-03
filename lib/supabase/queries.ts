@@ -858,11 +858,25 @@ export async function getStockMovements(opts: { page?: number; pageSize?: number
   // generic reference (orders/purchases/estimates), not a PostgREST FK, so we look it up in one
   // extra query and map it back rather than embedding.
   const saleRefs = [...new Set(rows.filter((r) => r.kind === "sale" && r.ref_id).map((r) => r.ref_id))];
+  const purchaseRefs = [...new Set(rows.filter((r) => r.kind === "purchase" && r.ref_id).map((r) => r.ref_id))];
+  const estimateRefs = [...new Set(rows.filter((r) => r.kind === "estimate" && r.ref_id).map((r) => r.ref_id))];
+  // party = the person/firm involved (customer on a sale/estimate, supplier on a purchase). The owner
+  // needs this to trace "who did I sell/buy this to/from" months later.
+  const partyBy = new Map<string, string>();
   if (saleRefs.length) {
-    const { data: ords } = await sb.from("orders").select("id,invoice_no").in("id", saleRefs as string[]);
-    const byId = new Map(((ords as any[]) ?? []).map((o) => [o.id, o.invoice_no]));
-    for (const r of rows) if (r.kind === "sale" && r.ref_id) r.invoice_no = byId.get(r.ref_id) ?? null;
+    const { data: ords } = await sb.from("orders").select("id,invoice_no,customer_name").in("id", saleRefs as string[]);
+    const byId = new Map(((ords as any[]) ?? []).map((o) => [o.id, o]));
+    for (const r of rows) if (r.kind === "sale" && r.ref_id) { const o = byId.get(r.ref_id); r.invoice_no = o?.invoice_no ?? null; if (o?.customer_name) partyBy.set(r.ref_id, o.customer_name); }
   }
+  if (purchaseRefs.length) {
+    const { data: purs } = await sb.from("purchases").select("id, supplier:suppliers(name)").in("id", purchaseRefs as string[]);
+    for (const p of ((purs as any[]) ?? [])) if (p.supplier?.name) partyBy.set(p.id, p.supplier.name);
+  }
+  if (estimateRefs.length) {
+    const { data: ests } = await sb.from("estimates").select("id,customer_name").in("id", estimateRefs as string[]);
+    for (const e of ((ests as any[]) ?? [])) if (e.customer_name) partyBy.set(e.id, e.customer_name);
+  }
+  for (const r of rows) r.party = r.ref_id ? (partyBy.get(r.ref_id) ?? null) : null;
   return { rows, total: count ?? 0, page, pageSize };
 }
 
@@ -1410,7 +1424,7 @@ export async function getEstimate(id: string) {
 export async function getRecentOrders(limit = 12) {
   const sb = supabaseServer();
   const { data } = await sb.from("orders")
-    .select("id,total,channel,payment_mode,customer_name,created_at,order_items(qty,product:products(id,name,sku))")
+    .select("id,total,channel,payment_mode,customer_name,created_at,order_items(qty,product:products(id,name,sku),variant:variants(sku,color))")
     .order("created_at", { ascending: false }).limit(limit);
   return (data as any[]) ?? [];
 }
