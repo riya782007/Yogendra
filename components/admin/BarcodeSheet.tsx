@@ -50,7 +50,9 @@ export function BarcodeSheet({ products }: { products: P[] }) {
   const sheetRows = Math.max(1, Math.round(per / cols));
   const labelHmm = ((280 - (sheetRows - 1)) / sheetRows).toFixed(2);
 
-  const toRow = (p: P): Row => ({ sku: p.sku, name: p.name, qty: 1, price: rup(p.price), special: "", wholesale: rup(p.wholesale) });
+  // Barcode-only rule (owner): the printed retail Price carries a fixed +₹0.51 tax add-on — the
+  // actual product/storefront price is NOT changed. Editable, so the owner can still override it.
+  const toRow = (p: P): Row => ({ sku: p.sku, name: p.name, qty: 1, price: rup((p.price ?? 0) + 51), special: "", wholesale: rup(p.wholesale) });
   const add = (p: P) => { setRows((prev) => (prev.find((x) => x.sku === p.sku) ? prev : [...prev, toRow(p)])); setQ(""); };
   /** Variant SKUs are what the POS scans — a design with colours should print one per variant. */
   const addAllVariants = (parentSku: string) => {
