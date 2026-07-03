@@ -895,6 +895,7 @@ export type LedgerMovement = {
   id: string; kind: string; delta: number; runningBalance: number;
   source: string | null; reason: string | null; created_by: string | null;
   ref_id: string | null; created_at: string; invoice_no?: string | null;
+  variant?: { color: string | null; sku: string | null } | null;
   doc: { href: string; label: string } | null;
 };
 
@@ -917,14 +918,33 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   //     that hasn't added ref_id / created_by yet (falls back to the always-present columns). ---
   let allRows: any[] = [];
   const rich = await sb.from("stock_adjustments")
-    .select("id,delta,kind,source,reason,ref_id,created_by,created_at")
+    .select("id,delta,kind,source,reason,ref_id,created_by,created_at,variant_id")
     .eq("product_id", productId).order("created_at", { ascending: true }).order("id", { ascending: true });
   if (rich.error) {
     const basic = await sb.from("stock_adjustments")
-      .select("id,delta,kind,source,reason,created_at")
+      .select("id,delta,kind,source,reason,created_at,variant_id")
       .eq("product_id", productId).order("created_at", { ascending: true });
     allRows = (basic.data as any[]) ?? [];
   } else allRows = (rich.data as any[]) ?? [];
+
+  // --- variants of this product: attach colour to each movement + build a per-colour breakdown so
+  //     the owner can see the stock movement of every variant, not just the product total. ---
+  const { data: varRows } = await sb.from("variants").select("id,sku,color,qty").eq("product_id", productId);
+  const variantById = new Map<string, { id: string; sku: string; color: string | null; qty: number }>();
+  for (const v of ((varRows as any[]) ?? [])) variantById.set(v.id, { id: v.id, sku: v.sku, color: v.color ?? null, qty: v.qty ?? 0 });
+  const vAgg = new Map<string, { purchased: number; sold: number; net: number }>();
+  for (const r of allRows) {
+    if (!r.variant_id) continue;
+    const a2 = vAgg.get(r.variant_id) ?? { purchased: 0, sold: 0, net: 0 };
+    const d = r.delta ?? 0;
+    if (r.kind === "purchase") a2.purchased += Math.max(0, d);
+    if (r.kind === "sale") a2.sold += Math.abs(Math.min(0, d));
+    a2.net += d;
+    vAgg.set(r.variant_id, a2);
+  }
+  const variants = [...variantById.values()]
+    .map((v) => ({ ...v, purchased: vAgg.get(v.id)?.purchased ?? 0, sold: vAgg.get(v.id)?.sold ?? 0, net: vAgg.get(v.id)?.net ?? 0 }))
+    .sort((a, b) => (a.color ?? "").localeCompare(b.color ?? ""));
 
   let bal = 0;
   for (const r of allRows) { bal += r.delta ?? 0; r.runningBalance = bal; }
@@ -954,6 +974,7 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     source: r.source ?? null, reason: r.reason ?? null, created_by: r.created_by ?? r.source ?? null,
     ref_id: r.ref_id ?? null, created_at: r.created_at,
     invoice_no: r.kind === "sale" ? (invoiceBy.get(r.ref_id) ?? null) : r.kind === "purchase" ? (billBy.get(r.ref_id) ?? null) : null,
+    variant: r.variant_id ? { color: variantById.get(r.variant_id)?.color ?? null, sku: variantById.get(r.variant_id)?.sku ?? null } : null,
     doc: docFor(r),
   }));
 
@@ -1004,6 +1025,7 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     },
     analytics: { opening, purchased, sold, returned, adjusted, reserved, available, currentStock, daysSinceLastSale, turnover, avgMonthlySales },
     reservations,
+    variants,
     movements,
     totalMovements,
     nextOffset: offset + limit < totalMovements ? offset + limit : null,
@@ -1608,8 +1630,20 @@ export async function getProductsWithMedia() {
   const { data } = await sb.from("products")
     .select("id,sku,name,category:categories(name,slug), images:product_images(id,path,kind,sort)")
     .eq("status", "published").order("sku");
-  return ((data as any[]) ?? []).map((p) => ({
+  const base = ((data as any[]) ?? []).map((p) => ({
     id: p.id, sku: p.sku, name: p.name, category: p.category?.name ?? "—", categorySlug: p.category?.slug ?? "all",
     images: (p.images ?? []).filter((i: any) => typeof i.path === "string" && i.path.startsWith("http")).sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0)),
+    variants: [] as { sku: string; color: string | null }[],
   }));
+  // Attach each product's variant SKUs + colours so Product Photos can be searched by colour.
+  const ids = base.map((p) => p.id);
+  if (ids.length) {
+    const { data: vrows } = await sb.from("variants").select("product_id,sku,color").in("product_id", ids);
+    const byP = new Map<string, { sku: string; color: string | null }[]>();
+    for (const v of ((vrows as any[]) ?? [])) {
+      const a = byP.get(v.product_id) ?? []; a.push({ sku: v.sku, color: v.color ?? null }); byP.set(v.product_id, a);
+    }
+    for (const p of base) p.variants = byP.get(p.id) ?? [];
+  }
+  return base;
 }

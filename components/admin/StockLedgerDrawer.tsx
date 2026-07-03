@@ -13,8 +13,10 @@ type Movement = {
   id: string; kind: string; delta: number; runningBalance: number;
   source: string | null; reason: string | null; created_by: string | null;
   ref_id: string | null; created_at: string; invoice_no?: string | null;
+  variant?: { color: string | null; sku: string | null } | null;
   doc: { href: string; label: string } | null;
 };
+type VariantSummary = { id: string; sku: string; color: string | null; qty: number; purchased: number; sold: number; net: number };
 type Ledger = {
   header: { id: string; sku: string; name: string; image: string | null; category: string | null;
     supplier: string | null; currentStock: number; reserved: number; available: number;
@@ -24,6 +26,7 @@ type Ledger = {
     reserved: number; available: number; currentStock: number; daysSinceLastSale: number | null;
     turnover: number; avgMonthlySales: number };
   reservations: { id: string; customer: string; qty: number; status: string; created_at: string }[];
+  variants: VariantSummary[];
   movements: Movement[];
   totalMovements: number;
   nextOffset: number | null;
@@ -60,6 +63,7 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [filter, setFilter] = useState("all");
+  const [colour, setColour] = useState(""); // "" = all colours; else filter movements to that variant colour
   const [q, setQ] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -88,12 +92,13 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
     const s = q.trim().toLowerCase();
     return rows.filter((r) => {
       if (kinds.length && !kinds.includes(r.kind)) return false;
+      if (colour && (r.variant?.color ?? "") !== colour) return false;
       if (from && r.created_at < from) return false;
       if (to && r.created_at > to + "T23:59:59") return false;
       if (!s) return true;
-      return [r.invoice_no, r.ref_id, r.source, r.reason, r.created_by, r.kind].some((v) => (v ?? "").toString().toLowerCase().includes(s));
+      return [r.invoice_no, r.ref_id, r.source, r.reason, r.created_by, r.kind, r.variant?.color, r.variant?.sku].some((v) => (v ?? "").toString().toLowerCase().includes(s));
     });
-  }, [rows, filter, q, from, to]);
+  }, [rows, filter, colour, q, from, to]);
 
   // Group by calendar day, with that day's closing balance (newest row's running balance).
   const groups = useMemo(() => {
@@ -178,6 +183,26 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
               </div>
             )}
 
+            {/* By colour / variant — the movement of every variant so the owner can decide per colour. */}
+            {data.variants.length > 0 && (
+              <div className="mx-4 mb-3 rounded-xl border border-sand bg-white p-3">
+                <p className="text-xs font-semibold text-ink mb-2">By colour · tap to filter the timeline below</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  <button onClick={() => setColour("")} className={`rounded-lg border p-2 text-left ${colour === "" ? "border-emerald ring-1 ring-emerald/40" : "border-sand hover:border-gold"}`}>
+                    <p className="text-[11px] font-medium text-ink">All colours</p>
+                    <p className="text-[10px] text-muted">Stock {h!.currentStock} · sold {a!.sold} · bought {a!.purchased}</p>
+                  </button>
+                  {data.variants.map((v) => (
+                    <button key={v.id} onClick={() => setColour((c) => (c === (v.color ?? "") ? "" : (v.color ?? "")))}
+                      className={`rounded-lg border p-2 text-left ${colour === (v.color ?? "") && colour !== "" ? "border-emerald ring-1 ring-emerald/40" : "border-sand hover:border-gold"}`}>
+                      <p className="text-[11px] font-medium text-ink truncate">{v.color ?? "—"} <span className="font-mono text-[9px] text-muted">{v.sku}</span></p>
+                      <p className="text-[10px] text-muted">Stock <b className={v.qty <= 2 ? "text-rose" : "text-ink"}>{v.qty}</b> · sold {v.sold} · bought {v.purchased}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Filters + search + export */}
             <div className="px-4 sticky top-0 bg-ivory/95 backdrop-blur py-2 border-y border-sand z-10">
               <div className="flex flex-wrap gap-1.5 mb-2">
@@ -207,6 +232,7 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
                     {items.map((r) => (
                       <div key={r.id} className="p-2.5 flex items-center gap-3 text-sm">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] capitalize ${KIND_STYLE[r.kind] ?? "bg-cream text-muted"}`}>{r.kind}</span>
+                        {r.variant?.color && <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-cream text-ink border border-sand whitespace-nowrap">{r.variant.color}</span>}
                         <div className="flex-1 min-w-0">
                           <p className="text-xs text-ink truncate">{r.invoice_no ? <b>{r.invoice_no} · </b> : ""}{r.reason ?? r.source ?? "—"}</p>
                           <p className="text-[10px] text-muted">{time(r.created_at)}{r.created_by ? ` · ${r.created_by}` : ""}{r.doc ? " · " : ""}{r.doc && <Link href={r.doc.href} className="text-emerald nav-link">{r.doc.label}</Link>}</p>
