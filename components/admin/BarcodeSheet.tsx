@@ -57,7 +57,9 @@ export function BarcodeSheet({ products }: { products: P[] }) {
   const printableH = 297 - 2 * MARGIN_MM; // 281mm
   const rowH_MM = (printableH - (rowsPerSheet - 1) * ROW_GAP_MM) / rowsPerSheet;
 
-  const toRow = (p: P): Row => ({ sku: p.sku, name: p.name, qty: 1, price: rup(p.price), special: "", wholesale: rup(p.wholesale) });
+  // Special price is a FIXED constant (23) across all products — the owner's coded scheme.
+  const SPECIAL_FIXED = "23";
+  const toRow = (p: P): Row => ({ sku: p.sku, name: p.name, qty: 1, price: rup(p.price), special: SPECIAL_FIXED, wholesale: rup(p.wholesale) });
   const add = (p: P) => { setRows((prev) => (prev.find((x) => x.sku === p.sku) ? prev : [...prev, toRow(p)])); setQ(""); };
   /** Variant SKUs are what the POS scans — a design with colours should print one per variant. */
   const addAllVariants = (parentSku: string) => {
@@ -75,19 +77,28 @@ export function BarcodeSheet({ products }: { products: P[] }) {
   const input = "w-full rounded-xl border border-sand px-4 py-2.5 text-sm bg-white outline-none focus:border-emerald";
   const cell = "w-24 rounded-lg border border-sand px-2 py-1 text-sm text-right outline-none focus:border-emerald";
 
-  const money = (v: string) => {
-    const s = (v ?? "").trim();
-    if (!s) return "";
-    return opts.currency ? `₹${s}` : s;
+  // Retail printed with a fixed ".51" suffix — the owner's way of masking the true price inside the
+  // code. e.g. 120 -> "120.51", 319 -> "319.51". (Any decimals the owner typed are dropped first.)
+  const codeRetail = (v: string) => {
+    const int = (v ?? "").trim().split(".")[0].replace(/[^\d]/g, "");
+    return int ? `${int}.51` : "";
   };
-  // Wholesale / cost is printed as a private code (7·price·7) so a customer glancing at the
-  // tag can't read the trade price — staff decode it at a glance. e.g. ₹40 -> "7407".
+  // Wholesale / cost printed as a private code (7·price·7) so a customer glancing at the tag can't
+  // read the trade price — staff decode it at a glance. e.g. 100 -> "71007".
   const codeWholesale = (v: string) => {
     const n = Math.round(Number((v ?? "").trim()));
     return Number.isFinite(n) && n > 0 ? `7${n}7` : "";
   };
-  const priceLine = (r: Row) => [opts.price && money(r.price), opts.special && money(r.special), opts.wholesale && codeWholesale(r.wholesale)]
-    .filter((x) => x && x !== "").join("  ");
+  // The owner's coded price string — concatenated with NO separators:
+  //   {retail}.51  +  {fixed special = 23}  +  7{wholesale}7
+  // e.g. retail 120, wholesale 100 -> "120.51" + "23" + "71007" = "120.512371007".
+  const priceLine = (r: Row) => {
+    let out = "";
+    if (opts.price) out += codeRetail(r.price);
+    if (opts.special) out += (r.special.trim() || SPECIAL_FIXED);
+    if (opts.wholesale) out += codeWholesale(r.wholesale);
+    return out;
+  };
 
   return (
     <div>
