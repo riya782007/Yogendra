@@ -102,7 +102,7 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
   const sb = supabaseServer();
   const pageSize = opts.pageSize ?? 25;
   const page = Math.max(1, opts.page ?? 1);
-  let query = sb.from("products").select("id,sku,name,qty,base_wholesale,type,status,generated_content,category:categories(id,name,slug)", { count: "exact" });
+  let query = sb.from("products").select("id,sku,name,qty,base_wholesale,type,status,generated_content,admin_tags,category:categories(id,name,slug)", { count: "exact" });
   if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.or(`name.ilike.%${s}%,sku.ilike.%${s}%`); }
   if (opts.category && opts.category !== "all") {
     const { data: cat } = await sb.from("categories").select("id").eq("slug", opts.category).maybeSingle();

@@ -7,6 +7,7 @@ import { formatPaise } from "@/lib/pricing";
 import { getSession, can } from "@/lib/auth";
 import { setProductVisibilityAction } from "@/app/actions/catalog";
 import { DeleteProductButton } from "@/components/admin/DeleteProductButton";
+import { ProductTags } from "@/components/admin/ProductTags";
 
 export const metadata = { title: "Owner Console · Product 360" };
 
@@ -36,7 +37,13 @@ export default async function Product360({ params }: { params: { sku: string } }
         <span className={`text-xs px-2 py-0.5 rounded-full ${published ? "bg-emerald-mist text-emerald-dark" : "bg-gold/15 text-gold-dark"}`}>{published ? "Visible on store" : "Hidden"}</span>
       </div>
       <h1 className="font-display text-4xl text-ink">{p.name}</h1>
-      <p className="text-sm text-muted mb-5">{p.category?.name} · {p.sku}</p>
+      <p className="text-sm text-muted mb-4">{p.category?.name} · {p.sku}</p>
+
+      {/* Internal notes — admin-only status tags (inventory updated, images sorted…). Never on store. */}
+      <div className="mb-5 rounded-2xl bg-white p-4 shadow-card">
+        <p className="text-[11px] uppercase tracking-wide text-muted mb-1.5">Internal notes <span className="normal-case font-normal">· only staff see these, never on the storefront</span></p>
+        <ProductTags sku={p.sku} initial={(p as any).admin_tags ?? []} canEdit={can(session, "catalog.edit")} />
+      </div>
 
       {/* Analytics */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">

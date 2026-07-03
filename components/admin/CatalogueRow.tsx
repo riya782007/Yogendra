@@ -4,13 +4,14 @@ import Link from "next/link";
 import { CatalogueRowActions } from "@/components/admin/CatalogueRowActions";
 import { GeneratePhotoButton } from "@/components/admin/GeneratePhotoButton";
 import { DeleteProductButton } from "@/components/admin/DeleteProductButton";
+import { ProductTags } from "@/components/admin/ProductTags";
 
 type V = { sku: string; color: string | null; qty: number };
 export type CatalogueRowProduct = {
   id: string; sku: string; name: string; status: string;
   image: string | null; categoryName: string; categorySlug: string;
   qty: number; priceLabel: string; offerPct: number; hasOffer: boolean;
-  hasAi: boolean; variants: V[];
+  hasAi: boolean; variants: V[]; adminTags: string[];
 };
 
 /** One catalogue row: a clean summary line (photo · name · category · price) that EXPANDS on click
@@ -42,12 +43,15 @@ export function CatalogueRow({
         </td>
         <td className="p-3 text-muted whitespace-nowrap">{p.categoryName} · {p.sku}</td>
         <td className="p-3"><span className="font-semibold">{p.priceLabel}</span>{p.hasOffer && <span className="text-xs text-rose ml-1">{p.offerPct}% off</span>}</td>
+        <td className="p-2" onClick={(e) => e.stopPropagation()}>
+          <ProductTags sku={p.sku} initial={p.adminTags} canEdit={canEdit} compact stopClick />
+        </td>
         <td className="p-3 text-right text-muted">{open ? "▴" : "▾"}</td>
       </tr>
 
       {open && (
         <tr className="bg-cream/30">
-          <td colSpan={5} className="px-4 py-4">
+          <td colSpan={6} className="px-4 py-4">
             <div className="flex flex-wrap gap-x-10 gap-y-5">
               {/* Image & publish */}
               <div>
