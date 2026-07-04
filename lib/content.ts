@@ -101,6 +101,41 @@ function westernHints(name: string, keywords?: string[]): string[] {
 const WESTERN_RE = /western|daily ?wear|\bdaily\b|office|work ?wear|corporate|casual|minimal|everyday|contemporary|modern|\bchic\b|trendy|anti[- ]?tarnish|waterproof|college|\bjeans\b|dress(es)?\b|co-?ord/;
 const BRIDAL_RE = /kundan|polki|temple|meenakari|choker|maang|tikka|rani ?haar|matha|bridal|dulhan|jhumk|chandbali|sabyasachi/;
 
+// ---- Spec-keyword parsing so the title mirrors what the owner typed, cleanly ordered ----
+// Jewellery TYPE words (removed from descriptors — the type is appended once at the end).
+const TYPE_WORD_RE = /\b(necklaces?|chokers?|earrings?|jhumkas?|jhumki|danglers?|studs?|rings?|bracelets?|kada|bangles?|pendants?|maang ?tikka|mangtikka|nose ?pins?|nath|haathphool|sets?|jewellery|jewelry|collection)\b/gi;
+// Pure "vibe" filler that clutters a title — dropped (BlytheDIVA titles don't carry these).
+const FILLER_WORDS = new Set(["ethnic","elegant","royal","beautiful","designer","fancy","latest","new","gorgeous","stylish","premium","trendy","classic","piece","women","womens","women's","girls","ladies","the","a","an","for","with","and","in","of","style","look","wear","artificial","imitation"]);
+// A phrase mentioning any of these is a MATERIAL/STONE (goes after the style adjectives).
+const MATERIAL_RE = /kundan|polki|meenakari|temple|moissanite|turkish|monalisa|mona ?lisa|crystal|pearl|stone|diamond|zircon|american diamond|\bad\b|\bcz\b|gold|silver|rose ?gold|rhodium|oxidis|oxidiz|brass|glass|acrylic|bead|enamel|jadau|jadtar|kemp/i;
+// A phrase mentioning any of these is a STYLE / SHAPE adjective (goes first).
+const STYLE_RE = /sleek|semi ?long|\blong\b|layered|double ?layer|single ?line|choker|statement|minimal|delicate|chunky|antique|contemporary|western|\bshort\b|multi ?layer|bold|dainty|hanging|drop|\bchand?bali\b|jhumka|anti[- ]?tarnish/i;
+
+function titleCasePhrase(s: string): string {
+  return s.split(/\s+/).filter(Boolean).map((w) => {
+    const lw = w.toLowerCase();
+    if (lw === "ad") return "AD"; if (lw === "cz") return "CZ";
+    return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+  }).join(" ");
+}
+
+/** Turn the owner's raw spec keywords into ordered, title-ready descriptors: strip the jewellery type
+ *  and filler words, then classify each phrase as a STYLE adjective (first) or a MATERIAL (after). */
+function parseSpecKeywords(keywords?: string[]): { styles: string[]; materials: string[]; ordered: string[] } {
+  const styles: string[] = [], materials: string[] = [], others: string[] = [];
+  for (const raw of (keywords ?? [])) {
+    const cleaned = raw.toLowerCase().replace(TYPE_WORD_RE, " ").split(/\s+/).filter((w) => w && !FILLER_WORDS.has(w)).join(" ").trim();
+    if (!cleaned) continue;
+    const tc = titleCasePhrase(cleaned);
+    if (MATERIAL_RE.test(cleaned)) materials.push(tc);
+    else if (STYLE_RE.test(cleaned)) styles.push(tc);
+    else others.push(tc);
+  }
+  const uniq = (a: string[]) => [...new Set(a)];
+  // order: style adjectives → other descriptors → materials/stones (BlytheDIVA reads best this way)
+  return { styles: uniq(styles), materials: uniq(materials), ordered: uniq([...styles, ...others, ...materials]) };
+}
+
 export function templateContent(p: ProductLike): GeneratedContent {
   const cat = p.categoryName ?? "Jewellery";
   const blob = (p.name + " " + (p.keywords ?? []).join(" ")).toLowerCase();
@@ -119,11 +154,25 @@ export function templateContent(p: ProductLike): GeneratedContent {
   const name = pickDivaName(p.sku || p.name);
   const withPieces = pieces.length ? ` with ${joinAnd(pieces)}` : "";
 
-  const material = styles.find((s) => /kundan|meenakari|temple|polki|pearl|moissanite|turkish|crystal|oxidised/i.test(s)) ?? "";
-  const styleWord = styles.filter((s) => /semi long|long|double layer|layered|choker|chandbali|jhumka/i.test(s)).join(" ");
+  // Prefer the owner's own spec keywords (cleanly parsed & ordered) — this is what he curated, so the
+  // title mirrors it faithfully. Fall back to name/word detection only when no keywords were given.
+  const parsed = parseSpecKeywords(p.keywords);
+  const hasKw = parsed.ordered.length > 0;
+  const material = parsed.materials.join(", ") || (styles.find((s) => /kundan|meenakari|temple|polki|pearl|moissanite|turkish|crystal|oxidised/i.test(s)) ?? "");
+  const styleWord = parsed.styles.join(" ") || styles.filter((s) => /semi long|long|double layer|layered|choker|chandbali|jhumka/i.test(s)).join(" ");
 
-  // TITLE — {UniqueName} {descriptors from keywords/name} {Type} with {pieces}. No SKU, ever.
-  const titleDescriptors = (western ? wStyles : [styleWord, material].filter(Boolean)).slice(0, 3).join(" ").trim();
+  // TITLE — {UniqueName} {ordered descriptors} {Type} with {pieces}. No SKU, ever.
+  // Word-level dedupe (drops repeats + any leftover type word) and cap length so it stays catalogue-tidy.
+  const rawDescriptorWords = (hasKw ? parsed.ordered.join(" ") : (western ? wStyles.join(" ") : [styleWord, material].filter(Boolean).join(" "))).split(/\s+/);
+  const typeWords = new Set(type.toLowerCase().split(/\s+/));
+  const seen = new Set<string>(); const descWords: string[] = [];
+  for (const w of rawDescriptorWords) {
+    const lw = w.toLowerCase();
+    if (!lw || seen.has(lw) || typeWords.has(lw)) continue;
+    seen.add(lw); descWords.push(w);
+    if (descWords.length >= 5) break;
+  }
+  const titleDescriptors = descWords.join(" ").trim();
   const title = [name, titleDescriptors, type].filter(Boolean).join(" ") + withPieces;
 
   let description: string;
@@ -144,7 +193,7 @@ export function templateContent(p: ProductLike): GeneratedContent {
     const materialLine = material ? `${material.toLowerCase()} detailing that gives a rich traditional and bridal appeal` : "elegant craftsmanship with a rich traditional appeal";
     description =
       `Add royal elegance to your festive look with ${title} by BlytheDIVA. ` +
-      `Designed in a graceful ${styleWord || "classic"} style, this ${catL} features ${materialLine}. ` +
+      `Designed in a graceful ${(styleWord || "classic").toLowerCase()} style, this ${catL} features ${materialLine}. ` +
       `${includesLine}for weddings, engagement ceremonies, sangeet, haldi-mehendi functions, festive celebrations and family occasions. ` +
       `Its elegant ethnic design pairs beautifully with sarees, lehengas, anarkalis, shararas and bridal outfits. ` +
       `Perfect for brides, bridesmaids and women who love statement Indian jewellery, this ${catL} adds charm, richness and timeless beauty to special-occasion styling.`;
