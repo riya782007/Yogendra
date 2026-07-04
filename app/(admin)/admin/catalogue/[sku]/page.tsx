@@ -56,9 +56,10 @@ export default async function ProductPage({ params, searchParams }: { params: { 
     getProductEstimateReservations(p.id).catch(() => []),
   ]);
   // Last price this piece was actually bought at (display-only, for the owner's margin reference).
-  const lastCosts = await getLastPurchaseCosts().catch(() => ({ byProduct: {}, byVariant: {} }));
-  const lastCostPaise: number | undefined = (lastCosts.byProduct?.[p.id])
-    ?? (p.variants ?? []).map((v: any) => lastCosts.byVariant?.[v.id]).find((c: number | undefined) => typeof c === "number");
+  const lastCosts: { byProduct: Record<string, number>; byVariant: Record<string, number> } =
+    await getLastPurchaseCosts().catch(() => ({ byProduct: {}, byVariant: {} }));
+  const lastCostPaise: number | undefined = lastCosts.byProduct[p.id]
+    ?? (p.variants ?? []).map((v: any) => lastCosts.byVariant[v.id]).find((c: number | undefined) => typeof c === "number");
   const labelIds = new Set((((p as any).product_labels as any[]) ?? []).map((x) => x.label_id));
 
   const session = getSession();
