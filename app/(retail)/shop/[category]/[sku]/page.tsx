@@ -68,7 +68,8 @@ export default async function ProductPage({ params }: Params) {
   const jsonLd = {
     "@context": "https://schema.org", "@type": "Product", name: p.name, sku: p.sku, category: catName,
     description: content.seo.metaDescription, keywords: content.seo.keywords.join(", "), brand: { "@type": "Brand", name: "Blythe Diva" },
-    aggregateRating: { "@type": "AggregateRating", ratingValue: reviews.avg, reviewCount: reviews.count },
+    // Only advertise a rating when real reviews exist — a fake aggregateRating is a Google penalty risk.
+    ...(reviews.count > 0 ? { aggregateRating: { "@type": "AggregateRating", ratingValue: reviews.avg, reviewCount: reviews.count } } : {}),
     offers: { "@type": "Offer", priceCurrency: "INR", price: (o.price / 100).toFixed(2), availability: p.qty > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock" },
   };
 
@@ -133,10 +134,14 @@ export default async function ProductPage({ params }: Params) {
       <section id="reviews" className="mt-16 grid md:grid-cols-3 gap-8">
         <div className="md:col-span-1">
           <h2 className="font-display text-3xl text-ink">Customer Reviews</h2>
-          <div className="mt-3 flex items-end gap-3">
-            <span className="text-5xl font-semibold text-ink">{reviews.avg}</span>
-            <div className="pb-1"><Stars rating={reviews.avg} /><p className="text-xs text-muted mt-1">{reviews.count} verified reviews</p></div>
-          </div>
+          {reviews.count > 0 ? (
+            <div className="mt-3 flex items-end gap-3">
+              <span className="text-5xl font-semibold text-ink">{reviews.avg}</span>
+              <div className="pb-1"><Stars rating={reviews.avg} count={reviews.count} /><p className="text-xs text-muted mt-1">{reviews.count} verified review{reviews.count === 1 ? "" : "s"}</p></div>
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-muted">No reviews yet — be the first to review this piece.</p>
+          )}
           <div className="mt-4 space-y-1.5">
             {[5, 4, 3, 2, 1].map((s) => {
               const pct = reviews.count ? Math.round(((reviews.dist[s] ?? 0) / reviews.count) * 100) : 0;

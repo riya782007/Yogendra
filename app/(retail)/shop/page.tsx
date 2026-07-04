@@ -11,14 +11,17 @@ import { ReelsSection } from "@/components/site/ReelsSection";
 
 export const metadata = {
   title: "Premium Artificial Jewellery — Kundan, Meena, Temple",
-  description: "Shop handcrafted artificial jewellery from Blythe Diva, Sadar Bazar Delhi. Necklaces, earrings, bracelets, anklets & rings with COD and free shipping over ₹999.",
+  description: "Shop handcrafted artificial jewellery from Blythe Diva. Necklaces, earrings, bracelets, anklets & rings with COD and free shipping over ₹999.",
 };
 
 export default async function Shop() {
   const [{ products, formula }, reviews, reels, promos] = await Promise.all([getStorefront(), getFeaturedReviews(), getShoppableReels(), getActivePromotions("retail")]);
   const cats = Array.from(new Map(products.map((p) => [p.category.slug, p.category])).values());
   const bestsellers = [...products].sort((a, b) => b.reviews - a.reviews).slice(0, 8);
-  const trending = products.slice(0, 8);
+  // New Arrivals first (recently added), then the rest — real feed for the nav link + section.
+  const trending = [...products].sort((a, b) => (b.isNew ? 1 : 0) - (a.isNew ? 1 : 0)).slice(0, 8);
+  // Real product photos for the hero collage (falls back to a tasteful placeholder if none yet).
+  const heroPics = products.filter((p) => p.image).slice(0, 3);
 
   return (
     <>
@@ -29,7 +32,7 @@ export default async function Shop() {
       <section className="relative overflow-hidden bg-gradient-to-b from-cream to-ivory">
         <div className="max-w-7xl mx-auto px-5 py-14 md:py-20 grid md:grid-cols-2 gap-10 items-center">
           <div className="animate-fadeUp">
-            <p className="text-gold-dark tracking-[0.3em] uppercase text-xs mb-4">Yogendra Industries · Since Sadar Bazar</p>
+            <p className="text-gold-dark tracking-[0.3em] uppercase text-xs mb-4">Blythe Diva · Fine Artificial Jewellery</p>
             <h1 className="font-display text-5xl md:text-6xl leading-[1.05] text-ink">
               Adorn your <span className="text-gold-gradient">every</span> moment.
             </h1>
@@ -40,13 +43,19 @@ export default async function Shop() {
               <Link href="#bestsellers" className="btn-primary px-7 py-3 text-sm font-medium">Shop the collection</Link>
             </div>
             <div className="flex items-center gap-6 mt-8 text-sm text-muted">
-              <span>★ 4.8 avg rating</span><span>·</span><span>50,000+ customers</span><span>·</span><span>24 designs live</span>
+              <span>✦ Anti-tarnish finish</span><span>·</span><span>Cash on delivery</span><span>·</span><span>Free shipping over ₹999</span>
             </div>
           </div>
           <div className="relative h-[360px] md:h-[440px]">
-            <div className="absolute right-0 top-0 w-52 h-64 rounded-3xl overflow-hidden shadow-luxe rotate-3 animate-float"><ProductImage name="Kundan Set" /></div>
-            <div className="absolute left-2 top-16 w-44 h-56 rounded-3xl overflow-hidden shadow-luxe -rotate-6 animate-float" style={{ animationDelay: "1s" }}><ProductImage name="Meena Haar" /></div>
-            <div className="absolute left-28 bottom-0 w-40 h-48 rounded-3xl overflow-hidden shadow-gold rotate-2 animate-float" style={{ animationDelay: "2s" }}><ProductImage name="Jhumka" /></div>
+            {[{ c: "absolute right-0 top-0 w-52 h-64 rounded-3xl overflow-hidden shadow-luxe rotate-3 animate-float", d: "0s", n: "Kundan Set" },
+              { c: "absolute left-2 top-16 w-44 h-56 rounded-3xl overflow-hidden shadow-luxe -rotate-6 animate-float", d: "1s", n: "Meena Haar" },
+              { c: "absolute left-28 bottom-0 w-40 h-48 rounded-3xl overflow-hidden shadow-gold rotate-2 animate-float", d: "2s", n: "Jhumka" }].map((s, i) => (
+              <div key={i} className={s.c} style={{ animationDelay: s.d }}>
+                {heroPics[i]?.image
+                  ? <img src={heroPics[i].image!} alt={heroPics[i].name} className="w-full h-full object-cover" />
+                  : <ProductImage name={s.n} />}
+              </div>
+            ))}
             <div className="absolute right-10 bottom-6 h-20 w-20 rounded-full border border-gold/40 animate-spinSlow" />
           </div>
         </div>
@@ -75,7 +84,7 @@ export default async function Shop() {
       </section>
 
       {/* BESTSELLERS */}
-      <section id="bestsellers" className="max-w-7xl mx-auto px-5 py-8">
+      <section id="bestsellers" className="max-w-7xl mx-auto px-5 py-8 scroll-mt-24">
         <div className="flex items-end justify-between mb-7">
           <div>
             <p className="text-gold-dark tracking-[0.25em] uppercase text-xs">Loved by thousands</p>
@@ -103,9 +112,9 @@ export default async function Shop() {
         </Reveal>
       </section>
 
-      {/* TRENDING */}
-      <section className="max-w-7xl mx-auto px-5 py-8">
-        <h2 className="font-display text-4xl text-ink mb-7">New &amp; Trending</h2>
+      {/* NEW ARRIVALS */}
+      <section id="new-arrivals" className="max-w-7xl mx-auto px-5 py-8 scroll-mt-24">
+        <h2 className="font-display text-4xl text-ink mb-7">New Arrivals</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
           {trending.map((p, i) => (
             <Reveal key={p.sku} delay={(i % 4) * 80}><ProductCard p={p as any} formula={formula} index={i} /></Reveal>
