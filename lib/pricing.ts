@@ -54,6 +54,37 @@ function roundToNearest(valuePaise: number, stepPaise: number): number {
 }
 
 /**
+ * Charm-round a RETAIL selling price (paise) UP to the next whole rupee ending in 9.
+ * The owner's rule: the final retail price must end in 9 (₹126 → ₹129, ₹130 → ₹139).
+ * We round UP (never down) so the charm price never dips below the formula's output and
+ * margin is protected. A value already ending in 9 is left as-is.
+ */
+export function roundRetailCharmPaise(valuePaise: number): number {
+  if (!Number.isFinite(valuePaise) || valuePaise <= 0) return valuePaise;
+  const rupees = Math.max(1, Math.round(valuePaise / 100));
+  const bumpToNine = ((9 - (rupees % 10)) + 10) % 10; // smallest add so it ends in 9
+  return (rupees + bumpToNine) * 100;
+}
+
+/**
+ * Round a printed MRP (paise) to the nearest whole rupee ending in 0 or 5 (a multiple of 5).
+ * If a retail floor is given, the MRP is never printed below the selling price — it is bumped
+ * up to the next multiple of 5 at or above retail (keeps MRP ≥ retail, so the strike-through
+ * price always looks right and passes validation).
+ */
+export function roundMrpTo5Paise(valuePaise: number, retailFloorPaise?: number): number {
+  if (!Number.isFinite(valuePaise) || valuePaise <= 0) return valuePaise;
+  let rupees = Math.round(valuePaise / 100 / 5) * 5;
+  if (rupees <= 0) rupees = 5;
+  let out = rupees * 100;
+  if (typeof retailFloorPaise === "number" && Number.isFinite(retailFloorPaise) && out < retailFloorPaise) {
+    const floorRupees = Math.ceil(retailFloorPaise / 100);
+    out = Math.ceil(floorRupees / 5) * 5 * 100; // next multiple of 5 ≥ retail
+  }
+  return out;
+}
+
+/**
  * The pricing build-up, in paise, following the owner's costing sheet EXACTLY.
  * Starting from the base WHOLESALE price (W = what the client sells to resellers at):
  *   1. free shipping   → W × (1 + shipping%)
@@ -85,18 +116,20 @@ export function computePrices(baseWholesalePaise: number, formula: PricingFormul
   const base = Number.isFinite(baseWholesalePaise) ? baseWholesalePaise : NaN;
 
   // Module 4 — %-build-up chain (mirrors the DB `bd_price()` and the costing sheet exactly).
+  // Final display rule (owner's request): RETAIL always ends in 9, MRP always ends in 0/5.
   if (formula.useBuildup) {
     const s = buildupStages(base, formula);
+    const retailPrice = roundRetailCharmPaise(s.retail);
     return {
       wholesaleRate: roundToNearest(s.wholesale, formula.roundToPaise),
-      retailPrice: roundToNearest(s.retail, formula.roundToPaise),
-      mrp: roundToNearest(s.mrp, formula.roundToPaise),
+      retailPrice,
+      mrp: roundMrpTo5Paise(s.mrp, retailPrice),
     };
   }
 
   const wholesaleRate = roundToNearest(base * (1 + formula.wholesaleMarkupPct / 100), formula.roundToPaise);
-  const retailPrice = roundToNearest(base * formula.retailMultiplier, formula.roundToPaise);
-  const mrp = roundToNearest(base * formula.mrpMultiplier, formula.roundToPaise);
+  const retailPrice = roundRetailCharmPaise(base * formula.retailMultiplier);
+  const mrp = roundMrpTo5Paise(base * formula.mrpMultiplier, retailPrice);
 
   return { wholesaleRate, retailPrice, mrp };
 }
@@ -109,6 +142,9 @@ export function buildupBreakdown(baseWholesalePaise: number, formula: PricingFor
   const base = Number.isFinite(baseWholesalePaise) ? baseWholesalePaise : 0;
   const s = buildupStages(base, formula);
   const round = formula.roundToPaise;
+  // Intermediate stages show the raw running total; the FINAL retail/mrp use the charm rounding
+  // (retail → ends in 9, mrp → ends in 0/5) so the preview matches what the storefront prints.
+  const retail = roundRetailCharmPaise(s.retail);
   return {
     base,
     wholesale: roundToNearest(s.wholesale, round),
@@ -116,8 +152,8 @@ export function buildupBreakdown(baseWholesalePaise: number, formula: PricingFor
     afterPacking: roundToNearest(s.afterPacking, round),
     afterPromotion: roundToNearest(s.afterPromotion, round),
     afterReseller: roundToNearest(s.afterReseller, round),
-    retail: roundToNearest(s.retail, round),
-    mrp: roundToNearest(s.mrp, round),
+    retail,
+    mrp: roundMrpTo5Paise(s.mrp, retail),
   };
 }
 
