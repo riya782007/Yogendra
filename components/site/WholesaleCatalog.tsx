@@ -5,17 +5,23 @@ import { ProductImage } from "@/components/Placeholder";
 import { QtyField } from "@/components/admin/QtyField";
 import { placeWholesaleOrderAction, wholesaleLogoutAction } from "@/app/actions/wholesale";
 
-type P = { sku: string; name: string; category: string; qty: number; price: number; mrp: number; image: string | null };
+type P = { sku: string; name: string; category: string; qty: number; price: number; mrp: number; image: string | null; colour?: string | null };
 type HistItem = { sku: string; name: string; qty: number };
 type Hist = { id: string; total: number; created_at: string; invoice_no: string | null; items: HistItem[] };
+type PayInfo = { payeeName: string; upiId: string | null; qrUrl: string | null };
 
-export function WholesaleCatalog({ products, customerName, minOrder = 300000, history = [] }: {
-  products: P[]; customerName: string; minOrder?: number; history?: Hist[];
+export function WholesaleCatalog({ products, customerName, minOrder = 300000, history = [], payInfo = null }: {
+  products: P[]; customerName: string; minOrder?: number; history?: Hist[]; payInfo?: PayInfo | null;
 }) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
+  const [colour, setColour] = useState("all");
+  const [inStock, setInStock] = useState(false);
+  const [sort, setSort] = useState<"featured" | "price_asc" | "price_desc" | "margin">("featured");
   const [qty, setQty] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState(false);
+  const [paying, setPaying] = useState(false);   // payment (QR + UTR) step
+  const [utr, setUtr] = useState("");
   const [done, setDone] = useState<{ id: string; total: number } | null>(null);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState<"order" | "history">("order");
@@ -25,12 +31,19 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
 
   const bySku = useMemo(() => new Map(products.map((p) => [p.sku.toUpperCase(), p])), [products]);
   const categories = useMemo(() => Array.from(new Set(products.map((p) => p.category).filter(Boolean))).sort(), [products]);
+  const colours = useMemo(() => Array.from(new Set(products.map((p) => p.colour).filter((c): c is string => !!c))).sort(), [products]);
   const list = useMemo(() => {
     const s = q.trim().toLowerCase();
-    return products.filter((p) =>
+    const out = products.filter((p) =>
       (cat === "all" || p.category === cat) &&
-      (!s || (p.name + p.sku + p.category).toLowerCase().includes(s)));
-  }, [q, cat, products]);
+      (colour === "all" || (p.colour ?? "").toLowerCase() === colour.toLowerCase()) &&
+      (!inStock || p.qty > 0) &&
+      (!s || (p.name + p.sku + p.category + (p.colour ?? "")).toLowerCase().includes(s)));
+    if (sort === "price_asc") out.sort((a, b) => a.price - b.price);
+    else if (sort === "price_desc") out.sort((a, b) => b.price - a.price);
+    else if (sort === "margin") out.sort((a, b) => (b.mrp - b.price) - (a.mrp - a.price));
+    return out;
+  }, [q, cat, colour, inStock, sort, products]);
 
   const lines = Object.entries(qty).filter(([, n]) => n > 0);
   const orderTotal = lines.reduce((s, [sku, n]) => s + (bySku.get(sku.toUpperCase())?.price ?? 0) * n, 0);
@@ -46,12 +59,18 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
   const setQtyAbs = (sku: string, n: number) => setQty((s) => ({ ...s, [sku]: clamp(sku, n) }));
   const addQty = (sku: string, d: number) => setQty((s) => ({ ...s, [sku]: clamp(sku, (s[sku] ?? 0) + d) }));
 
-  async function place() {
+  /** Open the payment step (scan QR → pay → enter UTR). */
+  function goToPay() {
+    if (lines.length === 0 || belowMin) return;
+    setErr(""); setUtr(""); setPaying(true);
+  }
+  /** Finalise: record the order with the UPI reference; the owner is WhatsApp'd to verify & dispatch. */
+  async function confirmOrder() {
     if (lines.length === 0) return;
     setBusy(true); setErr("");
-    const res = await placeWholesaleOrderAction(lines.map(([sku, n]) => ({ sku, qty: n })));
+    const res = await placeWholesaleOrderAction(lines.map(([sku, n]) => ({ sku, qty: n })), { paymentRef: utr.trim() || undefined });
     setBusy(false);
-    if (res.ok) { setDone({ id: res.orderId!, total: res.total ?? 0 }); setQty({}); }
+    if (res.ok) { setDone({ id: res.orderId!, total: res.total ?? 0 }); setQty({}); setPaying(false); }
     else setErr(res.error ?? "Could not place order");
   }
 
@@ -134,11 +153,26 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
         <>
           {/* Filters + quick order */}
           <div className="flex flex-wrap items-center gap-2 mb-3">
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search designs…" className="rounded-full border border-sand px-4 py-2 text-sm outline-none focus:border-emerald flex-1 min-w-[150px]" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search designs / SKU / colour…" className="rounded-full border border-sand px-4 py-2 text-sm outline-none focus:border-emerald flex-1 min-w-[150px]" />
             <select value={cat} onChange={(e) => setCat(e.target.value)} className="rounded-full border border-sand px-4 py-2 text-sm bg-white outline-none focus:border-emerald">
               <option value="all">All categories</option>
               {categories.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
+            {colours.length > 0 && (
+              <select value={colour} onChange={(e) => setColour(e.target.value)} className="rounded-full border border-sand px-4 py-2 text-sm bg-white outline-none focus:border-emerald">
+                <option value="all">All colours</option>
+                {colours.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            )}
+            <select value={sort} onChange={(e) => setSort(e.target.value as any)} className="rounded-full border border-sand px-4 py-2 text-sm bg-white outline-none focus:border-emerald">
+              <option value="featured">Sort: Featured</option>
+              <option value="price_asc">Price: low → high</option>
+              <option value="price_desc">Price: high → low</option>
+              <option value="margin">Best margin</option>
+            </select>
+            <label className="inline-flex items-center gap-1.5 rounded-full border border-sand px-4 py-2 text-sm text-ink cursor-pointer">
+              <input type="checkbox" checked={inStock} onChange={(e) => setInStock(e.target.checked)} className="accent-emerald" /> In stock
+            </label>
             <details className="relative">
               <summary className="cursor-pointer list-none px-4 py-2 rounded-full border border-sand text-sm text-ink hover:border-gold">⚡ Quick order</summary>
               <div className="absolute right-0 z-20 mt-2 w-80 bg-white rounded-2xl shadow-luxe border border-sand p-3">
@@ -165,7 +199,7 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
                   const out = p.qty <= 0;
                   return (
                     <tr key={p.sku} className="border-t border-sand/60 hover:bg-cream/40">
-                      <td className="p-3"><div className="flex items-center gap-3"><Img p={p} className="w-12 h-14 rounded-lg shrink-0" /><span className="text-ink font-medium">{p.name}<span className="block text-xs text-muted font-normal">{p.category}</span></span></div></td>
+                      <td className="p-3"><div className="flex items-center gap-3"><Img p={p} className="w-12 h-14 rounded-lg shrink-0" /><span className="text-ink font-medium">{p.name}<span className="block text-xs text-muted font-normal">{p.category}{p.colour ? ` · ${p.colour}` : ""}</span></span></div></td>
                       <td className="p-4 text-muted font-mono text-xs">{p.sku}</td>
                       <td className="p-4">{out ? <span className="text-muted">Out</span> : <span className={p.qty <= 3 ? "text-rose" : "text-emerald"}>{p.qty}</span>}</td>
                       <td className="p-4 text-right font-semibold text-emerald-dark whitespace-nowrap">{formatPaise(p.price)}</td>
@@ -198,7 +232,7 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
                 <div key={p.sku} className="bg-white rounded-2xl border border-sand shadow-card p-3 flex gap-3">
                   <Img p={p} className="w-20 h-24 rounded-lg shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-ink font-medium leading-tight">{p.name}</p>
+                    <p className="text-ink font-medium leading-tight">{p.name}{p.colour ? <span className="text-emerald-dark"> · {p.colour}</span> : null}</p>
                     <p className="text-xs text-muted">{p.category} · <span className="font-mono">{p.sku}</span></p>
                     <div className="flex items-baseline gap-2 mt-1 flex-wrap">
                       <span className="font-semibold text-emerald-dark">{formatPaise(p.price)}</span>
@@ -227,8 +261,8 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
                 <span className="ml-4 text-xl font-semibold text-ivory">{formatPaise(orderTotal)}</span>
                 {err && <span className="ml-4 text-rose-light text-sm">{err}</span>}
               </div>
-              <button onClick={place} disabled={busy || lines.length === 0 || belowMin} className="btn-gold px-6 py-2.5 text-sm font-medium disabled:opacity-50">
-                {busy ? "Placing…" : belowMin ? `Add ${formatPaise(shortBy)} more` : "Place wholesale order"}
+              <button onClick={goToPay} disabled={busy || lines.length === 0 || belowMin} className="btn-gold px-6 py-2.5 text-sm font-medium disabled:opacity-50">
+                {belowMin ? `Add ${formatPaise(shortBy)} more` : "Review & pay →"}
               </button>
             </div>
             {belowMin && (
@@ -239,6 +273,49 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
             )}
           </div>
         </>
+      )}
+
+      {/* Payment step — scan the owner's UPI QR, pay, submit the reference. No Razorpay = owner keeps 100%. */}
+      {paying && (
+        <div className="fixed inset-0 z-[90] bg-ink/60 backdrop-blur-sm grid place-items-center p-4" onClick={() => !busy && setPaying(false)}>
+          <div className="bg-white rounded-2xl shadow-luxe w-full max-w-md max-h-[92vh] overflow-y-auto p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="font-display text-2xl text-ink">Pay to confirm</h3>
+                <p className="text-xs text-muted">{itemCount} pcs · {lines.length} design{lines.length === 1 ? "" : "s"}</p>
+              </div>
+              <button onClick={() => !busy && setPaying(false)} className="text-muted hover:text-ink text-lg leading-none">✕</button>
+            </div>
+
+            <div className="mt-3 flex items-center justify-between rounded-xl bg-cream/70 px-4 py-3">
+              <span className="text-sm text-muted">Amount to pay</span>
+              <span className="text-2xl font-semibold text-ink">{formatPaise(orderTotal)}</span>
+            </div>
+
+            {payInfo && (payInfo.qrUrl || payInfo.upiId) ? (
+              <div className="mt-4 text-center">
+                <p className="text-sm text-ink font-medium">Scan &amp; pay in any UPI app</p>
+                {payInfo.qrUrl
+                  ? <img src={payInfo.qrUrl} alt="UPI QR" className="mx-auto mt-2 w-56 h-56 object-contain rounded-xl border border-sand bg-white" />
+                  : <div className="mx-auto mt-2 w-56 h-56 rounded-xl border border-dashed border-sand grid place-items-center text-xs text-muted p-4">QR will be added soon — use the UPI ID below.</div>}
+                {payInfo.upiId && <p className="mt-2 text-sm text-ink">UPI ID: <b className="font-mono">{payInfo.upiId}</b></p>}
+                <p className="text-[11px] text-muted mt-1">Pay to {payInfo.payeeName}. Then enter the UPI reference below.</p>
+              </div>
+            ) : (
+              <p className="mt-4 text-sm text-gold-dark bg-gold/10 rounded-xl px-4 py-3">Payment details will be shared with you on WhatsApp right after you place the order. You can add the UPI reference now or later.</p>
+            )}
+
+            <label className="block text-xs font-medium text-muted mt-4 mb-1">UPI transaction reference (UTR) <span className="text-muted/70">— optional, speeds up verification</span></label>
+            <input value={utr} onChange={(e) => setUtr(e.target.value)} placeholder="e.g. 4351xxxxxxxx" className="w-full rounded-xl border border-sand px-3 py-2.5 text-sm outline-none focus:border-emerald" />
+            {err && <p className="text-sm text-rose mt-2">{err}</p>}
+
+            <div className="flex items-center gap-2 mt-4">
+              <button onClick={confirmOrder} disabled={busy} className="btn-gold flex-1 py-2.5 text-sm font-medium disabled:opacity-50">{busy ? "Placing…" : "I've paid — place order"}</button>
+              <button onClick={() => !busy && setPaying(false)} className="px-4 py-2.5 rounded-xl bg-ink/5 text-ink text-sm hover:bg-ink/10">Back</button>
+            </div>
+            <p className="text-[11px] text-muted mt-2 text-center">We verify your payment and dispatch — you'll get a WhatsApp confirmation.</p>
+          </div>
+        </div>
       )}
 
       {/* Image enlarge */}
