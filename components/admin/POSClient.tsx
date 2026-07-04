@@ -3,6 +3,7 @@ import { useState, useMemo, useRef, useEffect, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import { formatPaise } from "@/lib/pricing";
 import { posSaleAction } from "@/app/actions/orders";
+import { quickAddEmployeeAction } from "@/app/actions/employees";
 import { QtyField } from "@/components/admin/QtyField";
 
 type P = { sku: string; name: string; price: number; wholesale: number; mrp: number; category: string; qty: number };
@@ -25,6 +26,24 @@ export function POSClient({ products, customers = [], methods = [], employees = 
   const [cust, setCust] = useState({ name: "", phone: "" });
   const [custType, setCustType] = useState<"retail" | "wholesale">("retail");
   const [salesEmp, setSalesEmp] = useState(""); // who dealt with the customer (performance attribution)
+  // Local, editable roster so a staffer can add their name here and be selected immediately.
+  const [emps, setEmps] = useState<Emp[]>(employees);
+  const [addingEmp, setAddingEmp] = useState(false);
+  const [newEmpName, setNewEmpName] = useState("");
+  const [empBusy, setEmpBusy] = useState(false);
+  const empRef = useRef<HTMLSelectElement>(null);
+  /** Add (or reuse) a salesperson by name from the POS box, then select them for this sale. */
+  async function addEmp() {
+    const n = newEmpName.trim();
+    if (!n) return;
+    setEmpBusy(true);
+    const r = await quickAddEmployeeAction(n);
+    setEmpBusy(false);
+    if (r.ok && r.id) {
+      setEmps((prev) => (prev.some((e) => e.id === r.id) ? prev : [...prev, { id: r.id!, name: r.name || n }]));
+      setSalesEmp(r.id); setNewEmpName(""); setAddingEmp(false); setErr("");
+    } else setErr(r.error ?? "Could not add employee");
+  }
   const [custPanel, setCustPanel] = useState(false);
   const [billType, setBillType] = useState<"gst" | "cash">("gst");
   const [gstin, setGstin] = useState("");
@@ -115,6 +134,13 @@ export function POSClient({ products, customers = [], methods = [], employees = 
 
   async function complete() {
     if (busy || lines.length === 0) return;
+    // Require attribution so every bill lands on an employee's tally (the whole point of tracking).
+    if (!salesEmp) {
+      setErr('Pick who made this sale under "Sold by" — or add their name — before recording the bill.');
+      setAddingEmp(emps.length === 0); // if the roster is empty, open the add-name box straight away
+      empRef.current?.focus();
+      return;
+    }
     setBusy(true); setErr("");
     const validPays = payLines.filter((l) => l.methodId && (Number(l.amount) || 0) > 0).map((l) => ({ methodId: l.methodId, amount: Number(l.amount) || 0 }));
     const res = await posSaleAction({
@@ -188,18 +214,26 @@ export function POSClient({ products, customers = [], methods = [], employees = 
           {scanMsg && <p className={`text-[11px] mt-0.5 absolute ${scanMsg.ok ? "text-emerald-dark" : "text-rose"}`}>{scanMsg.text}</p>}
         </div>
 
-        {/* Salesperson (employee sales attribution) — always visible so the counter records who sold. */}
+        {/* Salesperson (employee sales attribution) — REQUIRED so every bill is tracked. Staff can
+            pick from the roster or add their own name on the spot. */}
         <div className="shrink-0">
-          {employees.length > 0 ? (
-            <label className={`flex items-center gap-2 ${salesEmp ? "border-emerald" : "border-sand"} rounded-xl border px-3 py-2 text-sm`}>
-              <span className="text-muted text-xs whitespace-nowrap">☺ Sold by</span>
-              <select value={salesEmp} onChange={(e) => setSalesEmp(e.target.value)} className="bg-transparent outline-none text-ink max-w-[130px]">
-                <option value="">— select —</option>
-                {employees.map((emp) => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
-              </select>
-            </label>
-          ) : (
-            <a href="/admin/employees" className="flex items-center gap-1 rounded-xl border border-dashed border-sand px-3 py-2 text-xs text-muted hover:border-emerald">☺ Add employees to track sales</a>
+          <div className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm ${salesEmp ? "border-emerald" : "border-gold"}`}>
+            <span className="text-muted text-xs whitespace-nowrap">☺ Sold by<span className="text-rose" title="Required">*</span></span>
+            <select ref={empRef} value={salesEmp} onChange={(e) => setSalesEmp(e.target.value)} className="bg-transparent outline-none text-ink max-w-[130px]">
+              <option value="">— select —</option>
+              {emps.map((emp) => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
+            </select>
+            <button type="button" onClick={() => setAddingEmp((v) => !v)} className="text-emerald-dark text-xs hover:underline whitespace-nowrap" title="Add a new salesperson">＋ New</button>
+          </div>
+          {addingEmp && (
+            <div className="mt-1 flex items-center gap-1">
+              <input value={newEmpName} onChange={(e) => setNewEmpName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addEmp(); } }}
+                placeholder="Type your name" autoFocus
+                className="rounded-lg border border-sand px-2 py-1 text-xs w-32 outline-none focus:border-emerald" />
+              <button type="button" onClick={addEmp} disabled={empBusy || !newEmpName.trim()}
+                className="text-xs px-2 py-1 rounded-lg bg-ink text-white disabled:opacity-50">{empBusy ? "…" : "Add"}</button>
+            </div>
           )}
         </div>
 
