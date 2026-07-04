@@ -260,7 +260,8 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
     }
   }
 
-  /** Draw the "blythediva" wordmark onto a generated stand shot (client canvas), then publish it. */
+  /** Publish the generated stand shot. The "blythediva" wordmark is now printed ON the display bust
+   *  by the AI, so we publish the shot AS-IS (no caption overlay beneath the image). */
   async function brandAndPublish(imageUrl: string, variantId: string | null, key: string) {
     setErr(""); addBusy(key);
     try {
@@ -271,14 +272,6 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
       canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
       const ctx = canvas.getContext("2d")!;
       ctx.drawImage(img, 0, 0);
-      const w = canvas.width, h = canvas.height;
-      ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
-      ctx.fillStyle = "rgba(20,18,16,0.92)";
-      ctx.font = `600 ${Math.round(w * 0.055)}px Georgia, 'Times New Roman', serif`;
-      ctx.fillText("blythediva", w / 2, h - Math.round(h * 0.045));
-      ctx.fillStyle = "rgba(160,130,60,0.9)";
-      ctx.font = `${Math.round(w * 0.02)}px Georgia, serif`;
-      ctx.fillText("A R T I F I C I A L   J E W E L L E R Y", w / 2, h - Math.round(h * 0.02));
       const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
       const base64 = dataUrl.split(",")[1];
       const r = await uploadBrandedImageAction({ productId: p.id, variantId, base64, mime: "image/jpeg", shotType: "branded_stand" });

@@ -151,7 +151,7 @@ export const SHOT_META: Record<ShotType, { label: string; frame: string; aspect:
   angle45:       { label: "45°", frame: "a close 45-degree crop of the worn piece, jewellery large and tack-sharp, face minimal/cropped", aspect: "4:5" },
   back:          { label: "Back View", frame: "a back view showing the clasp / nape drape of the piece", aspect: "4:5" },
   detail:        { label: "Detail Shot", frame: "a detail shot isolating the craftsmanship — clasp, motif and stone setting", aspect: "1:1" },
-  branded_stand: { label: "On Stand", frame: "the jewellery displayed ALONE on an elegant matte jewellery display stand / bust (a necklace draped on a neck bust, earrings on an ear stand, a bangle on a T-bar, a ring on a ring cone), premium boutique presentation on a soft neutral studio backdrop, tasteful soft shadow", aspect: "1:1", productOnly: true, extra: "Leave a clean, empty margin of space at the BOTTOM of the frame (no jewellery there) so a brand wordmark can be placed under the piece afterwards." },
+  branded_stand: { label: "On Stand", frame: "the jewellery displayed ALONE on an elegant matte jewellery display stand / bust (a necklace draped on a neck bust, earrings on an ear stand, a bangle on a T-bar, a ring on a ring cone), premium boutique presentation on a soft neutral studio backdrop, tasteful soft shadow", aspect: "1:1", productOnly: true, extra: "The bust/stand should have a clean lower area where the brand wordmark is printed on it (see the wordmark rule) — like a real boutique display nameplate." },
   catalog_white: { label: "Catalog White", frame: "a clean catalog product shot of the jewellery ALONE on a pure white seamless background", aspect: "1:1", productOnly: true },
   transparent:   { label: "Transparent PNG", frame: "the jewellery ALONE perfectly isolated on a flat pure-white background with crisp clean edges, ready to cut out", aspect: "1:1", productOnly: true },
   social_crop:   { label: "Social Crop", frame: "a square social-media crop, model and jewellery centred with comfortable breathing room", aspect: "1:1" },
@@ -169,6 +169,9 @@ export type StudioSettings = {
 
 const FIDELITY = `This is a REAL, manufactured jewellery product the customer will physically receive — the design in your output MUST be a pixel-faithful reproduction of the attached reference image. Same metal colour & finish, same gemstone cut/colour/size/placement, same engravings, links, clasps and proportions. Do NOT redesign, restyle, embellish or "improve" the piece.`;
 const NO_TEXT = `ABSOLUTELY NO TEXT of any kind anywhere — no words, letters, numbers, captions, labels, logos, watermarks, price tags or UI. Every surface must be free of writing.`;
+// For the branded "On Stand" shot the ONE allowed piece of text is the boutique wordmark, printed
+// on the display bust itself (part of the photograph, like a real jewellery-shop nameplate).
+const BRAND_WORDMARK = `BRAND WORDMARK — the ONLY text allowed in the image: render the lowercase wordmark "blythediva" as if elegantly printed / softly embossed ON the display bust or stand itself — centred on the bust, just BELOW the jewellery — in a refined thin serif, small and tasteful (a subtle boutique nameplate, NOT a big overlay or caption). It must sit on the physical stand as part of the photo, never floating in empty space beneath the frame. Spell it EXACTLY "blythediva" — all lowercase, one word, correctly spelled. Absolutely NO other text, letters, numbers, tags, logos or watermarks anywhere else.`;
 
 // The client's #1 art-direction rule: shoot CLOSE, crop tight on the piece, the model's face is
 // NOT the subject. This block is injected into every model (worn) prompt so the jewellery — not the
@@ -248,9 +251,11 @@ THE JEWELLERY IS THE HERO: it must be the brightest, sharpest, most eye-catching
 LIGHTING: ${s.lighting?.trim() || "bright, clean, high-key studio beauty lighting"}; crisp directional key on the jewellery; no dark/muddy tones, no heavy face shadows, no blown highlights.
 TECHNICAL: photorealistic, ${s.lens?.trim() || "85mm lens look"}, ${s.focus?.trim() || "shallow depth of field, jewellery tack-sharp"}, high resolution, natural skin texture, professional colour grading.${meta.extra ? `\nENHANCEMENT: ${meta.extra}` : ""}${settingsBlock(s)}
 
-${NO_TEXT}
+${opts.shotType === "branded_stand" ? BRAND_WORDMARK : NO_TEXT}
 OUTPUT FRAMING: render in ${aspectNote}.
-OUTPUT: a clean photograph with NO text, NO watermark, NO logo and NO graphic overlays.`;
+OUTPUT: ${opts.shotType === "branded_stand"
+    ? `a clean product photograph with the "blythediva" wordmark printed on the stand as described, and NO other text, watermark or logo.`
+    : `a clean photograph with NO text, NO watermark, NO logo and NO graphic overlays.`}`;
   return { prompt, aspect: meta.aspect };
 }
 
