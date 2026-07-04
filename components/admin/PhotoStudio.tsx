@@ -14,7 +14,7 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
 import {
   generateStudioImageAction, setGenerationStatusAction, publishGenerationAction, detectJewelleryAction,
-  uploadBrandedImageAction,
+  uploadBrandedImageAction, refineGenerationAction,
 } from "@/app/actions/studio";
 import { addVariantImageAction } from "@/app/actions/variants";
 
@@ -149,6 +149,10 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
   // depends on a router.refresh() that could cancel other in-flight generations.
   const [results, setResults] = useState<Record<string, string>>({});
   const slot = (shotType: string, variantId?: string) => `${shotType}:${variantId ?? "_"}`;
+
+  // "Fix a detail" — the candidate the owner is surgically editing (mark + comment). Null = closed.
+  const [refineGen, setRefineGen] = useState<Gen | null>(null);
+  const openRefine = (g?: Gen | null) => { if (g?.output_path) setRefineGen(g); };
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scheduleRefresh = () => { if (refreshTimer.current) clearTimeout(refreshTimer.current); refreshTimer.current = setTimeout(() => router.refresh(), 1500); };
 
@@ -338,6 +342,7 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
                 {heroUrl && <a href={heroUrl} target="_blank" className="px-2 py-1 rounded-lg bg-ink/5 hover:bg-ink/10">View</a>}
                 {heroUrl && <a href={heroUrl} download className="px-2 py-1 rounded-lg bg-ink/5 hover:bg-ink/10">⬇ Download</a>}
                 <button onClick={() => gen("hero", "hero")} disabled={isBusy("hero")} className="px-2 py-1 rounded-lg bg-gold/15 text-gold-dark hover:bg-gold/25 disabled:opacity-50">{isBusy("hero") ? "…" : "⟳ Regenerate"}</button>
+                {hero && <button onClick={() => openRefine(hero)} className="px-2 py-1 rounded-lg bg-emerald-mist text-emerald-dark hover:bg-emerald/20" title="Mark a wrong area and tell the AI what to fix — only that spot changes">✏️ Fix a detail</button>}
                 {hero && hero.status !== "published" && (
                   <form action={publishGenerationAction}><input type="hidden" name="id" value={hero.id} /><button className="px-2 py-1 rounded-lg bg-emerald text-white">Publish</button></form>
                 )}
@@ -394,8 +399,9 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
                       {angleUrl ? <img src={angleUrl} alt={a.label} className="w-full h-full object-cover" /> : <div className="w-full h-full grid place-items-center text-[9px] text-muted text-center">{a.label}</div>}
                       {isBusy(a.key) && <div className="absolute inset-0 bg-ink/40 grid place-items-center text-cream text-[10px]">…</div>}
                     </div>
-                    <div className="flex items-center justify-between mt-0.5">
+                    <div className="flex items-center justify-between gap-1 mt-0.5">
                       <button onClick={() => gen(a.key, a.key)} disabled={isBusy(a.key)} className="text-[10px] text-gold-dark hover:underline disabled:opacity-50">{isBusy(a.key) ? "…" : (cand.length ? "⟳ Regen" : "Make")}</button>
+                      {top && <button onClick={() => openRefine(top)} className="text-[10px] text-emerald-dark hover:underline" title="Fix a detail on this shot">✏️ Fix</button>}
                       {top && top.status !== "published" && <form action={publishGenerationAction}><input type="hidden" name="id" value={top.id} /><button className="text-[10px] text-emerald">Pub</button></form>}
                     </div>
                   </div>
@@ -449,6 +455,7 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
                             ? <img src={vModelUrl} alt="model" className="w-10 h-12 rounded object-cover inline-block" />
                             : <div className="w-10 h-12 rounded bg-cream inline-grid place-items-center text-[9px] text-muted relative">{isBusy(`vm-${v.id}`) && <span className="absolute inset-0 grid place-items-center bg-ink/30 text-cream text-[9px]">…</span>}model</div>}
                           <button onClick={() => gen("model", `vm-${v.id}`, v.id, { matchColorName: !!recolor[v.id] })} disabled={isBusy(`vm-${v.id}`)} className="block text-[10px] text-gold-dark hover:underline mt-0.5 w-full disabled:opacity-50">{isBusy(`vm-${v.id}`) ? "…" : (vModelUrl ? "⟳ Model" : "＋ Model")}</button>
+                          {vModel && <button onClick={() => openRefine(vModel)} className="block text-[10px] text-emerald-dark hover:underline w-full" title="Fix a detail on this model shot">✏️ Fix</button>}
                         </div>
                         {/* Branded stand */}
                         <div className="text-center">
@@ -500,6 +507,21 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
         </div>
       </div>
 
+      {/* Fix-a-detail modal: mark the wrong area + say what it should be → only that spot is edited. */}
+      {refineGen && (
+        <RefineModal
+          gen={refineGen}
+          onClose={() => setRefineGen(null)}
+          onDone={(g, url) => {
+            setResults((x) => ({ ...x, [slot(g.shot_type, g.variant_id ?? undefined)]: url }));
+            setRefineGen(null);
+            toast("Detail fixed — saved as a new candidate ✓", "success");
+            scheduleRefresh();
+          }}
+          onError={(m) => { setErr(m); toast(m, "error"); }}
+        />
+      )}
+
       {/* Right guide rail */}
       <aside className="space-y-4">
         <div className="bg-white rounded-2xl border border-sand p-4 shadow-card">
@@ -547,5 +569,152 @@ function StatusBtn({ id, status, title }: { id: string; status: string; title: s
       <input type="hidden" name="status" value={status} />
       <button className="w-full text-[10px] rounded bg-ink/5 hover:bg-ink/10 leading-none py-0.5" title={status}>{title}</button>
     </form>
+  );
+}
+
+/**
+ * RefineModal — the "Fix a detail" workflow (the client's ChatGPT-style mark-and-comment).
+ * The owner drags a box over the wrong area of a generated shot and types what it should be.
+ * We draw that box onto the image (so the AI knows exactly WHERE), send it plus the correction
+ * to refineGenerationAction (which also re-feeds the original raw photo as the true design), and
+ * get back a surgically-edited image saved as a NEW candidate.
+ */
+function RefineModal({
+  gen, onClose, onDone, onError,
+}: {
+  gen: Gen;
+  onClose: () => void;
+  onDone: (gen: Gen, url: string) => void;
+  onError: (msg: string) => void;
+}) {
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [disp, setDisp] = useState<{ w: number; h: number } | null>(null);
+  const [instruction, setInstruction] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  // Drag rectangle in DISPLAY pixels (relative to the image box).
+  const [start, setStart] = useState<{ x: number; y: number } | null>(null);
+  const [rect, setRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const drawing = useRef(false);
+
+  function onImgLoad() {
+    const im = imgRef.current; if (!im) return;
+    const natW = im.naturalWidth || 1, natH = im.naturalHeight || 1;
+    const maxW = 460, maxH = 520;
+    let w = Math.min(maxW, natW), h = (w * natH) / natW;
+    if (h > maxH) { h = maxH; w = (h * natW) / natH; }
+    setDisp({ w: Math.round(w), h: Math.round(h) });
+  }
+
+  function pos(e: React.PointerEvent) {
+    const r = wrapRef.current!.getBoundingClientRect();
+    const x = Math.max(0, Math.min(e.clientX - r.left, r.width));
+    const y = Math.max(0, Math.min(e.clientY - r.top, r.height));
+    return { x, y };
+  }
+  function down(e: React.PointerEvent) {
+    e.preventDefault();
+    const p = pos(e); drawing.current = true; setStart(p); setRect({ x: p.x, y: p.y, w: 0, h: 0 });
+    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+  }
+  function move(e: React.PointerEvent) {
+    if (!drawing.current || !start) return;
+    const p = pos(e);
+    setRect({ x: Math.min(start.x, p.x), y: Math.min(start.y, p.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) });
+  }
+  function up() { drawing.current = false; }
+
+  async function submit() {
+    const text = instruction.trim();
+    if (!text) { onError("Type what should change first."); return; }
+    setSubmitting(true);
+    try {
+      let markedBase64: string | undefined;
+      let markedMime: string | undefined;
+      let region: { x: number; y: number; w: number; h: number } | null = null;
+      const im = imgRef.current;
+      const hasBox = !!(rect && rect.w > 6 && rect.h > 6 && disp);
+      if (hasBox && im) {
+        const natW = im.naturalWidth, natH = im.naturalHeight;
+        const sx = natW / disp!.w, sy = natH / disp!.h;
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = natW; canvas.height = natH;
+          const ctx = canvas.getContext("2d")!;
+          ctx.drawImage(im, 0, 0, natW, natH);
+          ctx.strokeStyle = "rgba(40,220,90,0.95)";
+          ctx.lineWidth = Math.max(4, Math.round(natW * 0.006));
+          ctx.strokeRect(rect!.x * sx, rect!.y * sy, rect!.w * sx, rect!.h * sy);
+          const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+          markedBase64 = dataUrl.split(",")[1];
+          markedMime = "image/jpeg";
+        } catch {
+          // Cross-origin taint — proceed without the marker; the text instruction still guides the edit.
+          markedBase64 = undefined;
+        }
+        region = { x: rect!.x / disp!.w, y: rect!.y / disp!.h, w: rect!.w / disp!.w, h: rect!.h / disp!.h };
+      }
+      const r = await refineGenerationAction({ generationId: gen.id, instruction: text, markedBase64, markedMime, region });
+      if (r.ok && r.url) onDone(gen, r.url);
+      else onError(reasonText(r.reason, r.error));
+    } catch {
+      onError("Network error — try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-ink/60 backdrop-blur-sm grid place-items-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[92vh] overflow-y-auto p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between mb-1">
+          <div>
+            <p className="font-display text-xl text-ink">Fix a detail</p>
+            <p className="text-xs text-muted">Drag a box over the wrong area, then say what it should be. Only that spot changes — everything else stays exactly the same.</p>
+          </div>
+          <button onClick={onClose} className="text-muted hover:text-ink text-lg leading-none">✕</button>
+        </div>
+
+        <div className="my-3 grid place-items-center">
+          <div
+            ref={wrapRef}
+            onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerLeave={up}
+            className="relative rounded-xl overflow-hidden border border-sand cursor-crosshair touch-none select-none"
+            style={disp ? { width: disp.w, height: disp.h } : undefined}
+          >
+            {/* crossOrigin anonymous so we can composite the marker onto a canvas (same as branding). */}
+            <img
+              ref={imgRef} src={gen.output_path ?? ""} alt="candidate" crossOrigin="anonymous"
+              onLoad={onImgLoad} className="block w-full h-full object-contain bg-cream" draggable={false}
+            />
+            {rect && rect.w > 1 && rect.h > 1 && (
+              <div className="absolute border-2 border-emerald bg-emerald/10 pointer-events-none"
+                style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }} />
+            )}
+          </div>
+          <div className="mt-1 flex items-center gap-3 text-[11px] text-muted">
+            <span>{rect && rect.w > 6 ? "✓ Area marked" : "Tip: drag to mark the exact spot"}</span>
+            {rect && <button onClick={() => { setRect(null); setStart(null); }} className="text-emerald nav-link">clear box</button>}
+          </div>
+        </div>
+
+        <label className="block text-xs font-medium text-muted mb-1">What should it look like?</label>
+        <textarea
+          value={instruction} onChange={(e) => setInstruction(e.target.value)} rows={3}
+          placeholder='e.g. "the bottom heart pendant should be a small open outline heart, same as the reference photo — not a solid circle"'
+          className="w-full rounded-xl border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-emerald"
+        />
+        <p className="text-[11px] text-muted mt-1">The AI also re-checks your original raw photo for the true design, so the fix matches the real piece.</p>
+
+        <div className="flex items-center gap-2 mt-4">
+          <button onClick={submit} disabled={submitting || !instruction.trim()}
+            className="px-4 py-2 rounded-xl bg-ink text-white text-sm disabled:opacity-50">
+            {submitting ? "Fixing…" : "✏️ Apply fix"}
+          </button>
+          <button onClick={onClose} className="px-4 py-2 rounded-xl bg-ink/5 text-ink text-sm hover:bg-ink/10">Cancel</button>
+          <span className="ml-auto text-[11px] text-muted">Saved as a new candidate — your current image is kept.</span>
+        </div>
+      </div>
+    </div>
   );
 }

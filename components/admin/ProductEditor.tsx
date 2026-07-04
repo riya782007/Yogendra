@@ -63,7 +63,7 @@ export function ProductEditor({
     setSuggesting(true);
     const catName = categories.find((c) => c.id === product.categoryId)?.name;
     const keywords = specKeywords.split(/[,\n]/).map((k) => k.trim()).filter(Boolean);
-    const res = await suggestProductTitleAction({ name, category: catName, keywords });
+    const res = await suggestProductTitleAction({ name, category: catName, keywords, sku: product.sku });
     setSuggesting(false);
     if (res.ok && res.title) {
       setTitle(res.title);
@@ -71,7 +71,8 @@ export function ProductEditor({
       // Tell the owner which engine wrote it: "OpenAI" means the API key is live; "offline template"
       // means it fell back (key missing/invalid on the deployment) so he can fix the env variable.
       const engine = res.fallbackUsed || res.provider === "deterministic" ? "offline template" : (res.provider === "openai" ? "OpenAI ✨" : res.provider ?? "AI");
-      toast(`Title & description written by ${engine}`);
+      // When the product photo was fed to the model, let the owner know the copy is based on the image.
+      toast(`Title & description written by ${engine}${res.usedImage ? " — from the product photo 📸" : ""}`);
     } else toast(res.error ?? "Couldn't suggest a title", "error");
   }
 
@@ -203,7 +204,7 @@ export function ProductEditor({
                 className="text-xs px-3 py-1.5 rounded-full bg-emerald text-white hover:bg-emerald-dark disabled:opacity-50">
                 {suggesting ? "Writing…" : "✨ Generate title & description"}
               </button>
-              <span className="text-[11px] text-muted">Uses these specs + the name &amp; category. Says which pieces the set includes; no SKU in the title.</span>
+              <span className="text-[11px] text-muted">Looks at the product photo + these specs, the name &amp; category. Says which pieces the set includes; no SKU in the title.</span>
             </div>
           </div>
           <div>

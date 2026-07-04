@@ -18,6 +18,10 @@ export type ProductLike = {
   colors?: string[];
   keywords?: string[];
   generated_content?: GeneratedContent | null;
+  /** Optional product photo (base64, no data: prefix) so the AI can look at the piece
+   *  when writing the title & description. Ignored by the deterministic template fallback. */
+  imageBase64?: string;
+  imageMime?: string;
 };
 
 const LOCATION = ["Sadar Bazar", "Rui Mandi", "Delhi", "artificial jewellery wholesale Delhi", "imitation jewellery online India"];

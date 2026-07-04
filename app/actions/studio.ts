@@ -9,8 +9,8 @@ import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 import { logActivity } from "@/lib/audit";
-import { buildStudioPrompt, type ShotType, type StudioSettings } from "@/lib/ai/imagePrompt";
-import { generateImage, geminiConfigured } from "@/lib/ai/gemini";
+import { buildStudioPrompt, buildRefinePrompt, SHOT_META, type ShotType, type StudioSettings } from "@/lib/ai/imagePrompt";
+import { generateImage, editImage, geminiConfigured } from "@/lib/ai/gemini";
 import { detectJewellery } from "@/lib/ai/detect";
 
 const BUCKET = "product-media";
@@ -124,6 +124,79 @@ export async function generateStudioImageAction(input: {
 
   await logActivity({ action: "photo_generated", ref: prod.sku, detail: `${shotType} v${version} (${result.model})` });
   revalidatePath(`/admin/media/${productId}`);
+  return { ok: true, id: (row as any)?.id, url: pub.publicUrl, provider: result.model };
+}
+
+/**
+ * Refine (surgical "fix a detail") — the owner marks a wrong area on a generated candidate and
+ * types what it should be. We edit ONLY that region, re-anchored to the ORIGINAL raw reference,
+ * and save the result as a NEW candidate linked to its parent. NON-DESTRUCTIVE: the original
+ * candidate is untouched, so the owner can compare and revert.
+ *
+ * `markedBase64` is the candidate image with the owner's outline drawn on it (composited in the
+ * browser). `region` is the normalised {x,y,w,h} (0..1) of the marked box, stored for history.
+ */
+export async function refineGenerationAction(input: {
+  generationId: string;
+  instruction: string;
+  markedBase64?: string;
+  markedMime?: string;
+  region?: { x: number; y: number; w: number; h: number } | null;
+}): Promise<GenOut> {
+  if (!(await requirePerm("catalog.ai"))) return { ok: false, reason: "not_permitted" };
+  const instruction = (input.instruction ?? "").trim();
+  if (!input.generationId || !instruction) return { ok: false, reason: "bad_input" };
+  if (!geminiConfigured()) return { ok: false, reason: "no_key" };
+  const sb = supabaseServer();
+
+  const { data: g } = await sb.from("image_generations").select("*").eq("id", input.generationId).maybeSingle();
+  const gen = g as any;
+  if (!gen || !gen.output_path) return { ok: false, reason: "not_found" };
+
+  // Build the image stack fed to the editor, in priority order:
+  //   1. the marked copy (WHERE to edit) — if the owner drew a box,
+  //   2. the clean generated candidate (the image being edited),
+  //   3. the ORIGINAL raw reference (the true design — the fidelity anchor).
+  const images: { base64: string; mime?: string }[] = [];
+  const hasMarker = !!input.markedBase64;
+  if (hasMarker) images.push({ base64: input.markedBase64!, mime: input.markedMime ?? "image/png" });
+  const outImg = await fetchAsBase64(gen.output_path);
+  if (outImg) images.push({ base64: outImg.base64, mime: outImg.mime });
+  let hasReference = false;
+  if (gen.raw_image_path) {
+    const ref = await fetchAsBase64(gen.raw_image_path);
+    if (ref) { images.push({ base64: ref.base64, mime: ref.mime }); hasReference = true; }
+  }
+  if (!images.length) return { ok: false, reason: "no_source" };
+
+  const meta = SHOT_META[gen.shot_type as ShotType] ?? SHOT_META.hero;
+  const { data: prod } = await sb.from("products").select("sku,name, category:categories(name)").eq("id", gen.product_id).maybeSingle();
+  const prow = prod as any;
+  const prompt = buildRefinePrompt({
+    instruction, hasReference, hasMarker,
+    productName: prow?.name, typeLabel: prow?.category?.name,
+  });
+
+  const result = await editImage({ prompt, images, aspectRatio: meta.aspect });
+  if (!result.ok) return { ok: false, reason: result.reason, error: result.error };
+
+  await sb.storage.createBucket(BUCKET, { public: true }).catch(() => {});
+  const ext = result.mime.includes("png") ? "png" : "jpg";
+  const path = `${prow?.sku ?? gen.product_id}/${gen.shot_type}-fix-${Date.now()}.${ext}`;
+  const up = await sb.storage.from(BUCKET).upload(path, Buffer.from(result.base64, "base64"), { contentType: result.mime, upsert: true });
+  if (up.error) return { ok: false, reason: "upload_failed", error: up.error.message };
+  const { data: pub } = sb.storage.from(BUCKET).getPublicUrl(path);
+
+  const { count } = await sb.from("image_generations").select("id", { count: "exact", head: true }).eq("product_id", gen.product_id).eq("shot_type", gen.shot_type);
+  const { data: row } = await sb.from("image_generations").insert({
+    product_id: gen.product_id, variant_id: gen.variant_id ?? null, raw_image_path: gen.raw_image_path,
+    output_path: pub.publicUrl, shot_type: gen.shot_type, prompt, settings: gen.settings ?? {}, detected: gen.detected ?? null,
+    provider: result.model, version: (count ?? 0) + 1, status: "candidate", created_by: "owner",
+    parent_id: gen.id, edit_instruction: instruction, edit_region: input.region ?? null,
+  }).select("id").maybeSingle();
+
+  await logActivity({ action: "photo_refined", ref: prow?.sku ?? gen.product_id, detail: `${gen.shot_type} fix (${result.model})` });
+  revalidatePath(`/admin/media/${gen.product_id}`);
   return { ok: true, id: (row as any)?.id, url: pub.publicUrl, provider: result.model };
 }
 

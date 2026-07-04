@@ -20,16 +20,22 @@ function prompt(p: ProductLike) {
   const colors = (p.colors ?? []).join(", ");
   const sub = (p as any).subcategoryName ? ` Sub-category (type): ${(p as any).subcategoryName}.` : "";
   const kw = (p.keywords ?? []).filter(Boolean).join(", ");
+  const hasImage = !!p.imageBase64;
   return [
     `You are the senior product copywriter for "BlytheDIVA", a premium artificial/imitation jewellery brand (Sadar Bazar, Rui Mandi, Delhi; retail + wholesale).`,
     `Write ONE product page as STRICT minified JSON with keys: title, description, specs (object label->value), tags (array), seo (object: metaTitle, metaDescription, keywords array).`,
     `INPUTS —`,
+    hasImage
+      ? `• A PHOTO of the actual jewellery piece is attached — LOOK AT IT CAREFULLY. Identify the jewellery type (necklace set, choker, jhumka, chandbali, ring, bracelet…), the material/work (Kundan, Polki, Meenakari, Pearl, Temple, Oxidised, Moissanite/AD stones…), colours of the stones/beads/enamel, the length/layers, and any included pieces (earrings, maang tikka). Base the title, description, specs, colours and included pieces on WHAT YOU SEE. If the photo and the typed text ever disagree, TRUST THE PHOTO. Never claim a component that is not visible in the photo and not in the specifications.`
+      : ``,
     `• Product name the owner typed: ${p.name}`,
     `• Category: ${p.categoryName ?? "Jewellery"}.${sub}`,
     colors ? `• Colours: ${colors}.` : ``,
     kw
       ? `• Jewellery SPECIFICATIONS the owner provided — USE THESE to decide the material, style, type AND which pieces the set includes: ${kw}.`
-      : `• No extra specifications given — infer ONLY from the product name & category; do not invent components or materials.`,
+      : hasImage
+        ? `• No extra specifications given — infer the material, style, type and included pieces from the ATTACHED PHOTO and the product name & category; do not invent anything not visible in the photo.`
+        : `• No extra specifications given — infer ONLY from the product name & category; do not invent components or materials.`,
     ``,
     `TITLE — MUST follow BlytheDIVA's exact house style:  «{First name} {material/style descriptors} {jewellery type} with {included pieces}»`,
     `  1. START with a single elegant UNIQUE Indian girl's first name (e.g. Dhyani, Khyati, Ananya, Rutvika, Nashvika, Drishika, Tanisha, Priyanshi, Nidhi, Gitanjali, Aaradhya, Myra, Vanya…). Choose one that suits the piece; do not always use the same one.`,
@@ -65,9 +71,16 @@ export function buildGateway() {
   return new AiGateway({
     primary: {
       name: "openai",
-      run: async (call: any) => JSON.parse(await openaiChat({ system: "You are BlytheDIVA's product copywriter. Return only valid minified JSON.", user: call._prompt, json: true })),
+      // OpenAI is vision-capable (gpt-4o-mini), so when the owner's product photo is present we
+      // attach it — the model reads the piece off the image, not just the typed text.
+      run: async (call: any) => JSON.parse(await openaiChat({
+        system: "You are BlytheDIVA's product copywriter. Return only valid minified JSON.",
+        user: call._prompt, json: true,
+        imageBase64: call._product?.imageBase64, imageMime: call._product?.imageMime,
+      })),
     },
     secondary: {
+      // Groq's text models can't see images; it only runs if OpenAI is unavailable, as a text-only writer.
       name: "groq",
       run: async (call: any) => JSON.parse(await groqChat({ system: "You are BlytheDIVA's product copywriter. Return only valid minified JSON.", user: call._prompt, json: true })),
     },

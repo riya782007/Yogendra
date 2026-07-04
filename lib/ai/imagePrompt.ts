@@ -96,6 +96,46 @@ OUTPUT FRAMING: Render the final image in ${aspectNote}, the jewellery centered 
 OUTPUT: A clean product photograph with NO text, NO watermark, NO logo and NO graphic overlays anywhere.`;
 }
 
+/**
+ * Build the prompt for a SURGICAL "fix a detail" edit. The owner marks the wrong region and types
+ * what it should be; we edit ONLY that area and re-anchor it to the ORIGINAL raw reference so the
+ * corrected detail matches the real manufactured piece — everything else stays pixel-identical.
+ */
+export function buildRefinePrompt(opts: {
+  instruction: string;
+  /** true when the original raw product photo is supplied as a reference for the true design. */
+  hasReference: boolean;
+  /** true when the image being edited carries a visible marker/outline around the target area. */
+  hasMarker: boolean;
+  productName?: string;
+  typeLabel?: string;
+}): string {
+  const piece = (opts.typeLabel || "jewellery piece").trim();
+  const named = opts.productName?.trim() ? ` ("${opts.productName.trim()}")` : "";
+  return [
+    `You are retouching an existing e-commerce photograph of a REAL, manufactured ${piece}${named}. This is a precise LOCAL edit, NOT a new image.`,
+    `INPUT IMAGES (in order):`,
+    opts.hasMarker
+      ? `  • IMAGE 1 — the photo to edit, with a bright outline/mark drawn around the EXACT area to change. The mark only shows you WHERE to edit; do NOT render the mark in your output.`
+      : `  • IMAGE 1 — the photo to edit.`,
+    `  • IMAGE 2 — the same generated photo, clean (no mark).`,
+    opts.hasReference ? `  • IMAGE 3 — the ORIGINAL raw product photo: the GROUND TRUTH for the piece's true design (real shape, stones, beads, colour, proportions).` : ``,
+    ``,
+    `THE EDIT:`,
+    opts.hasMarker
+      ? `Change ONLY the marked area. Leave every pixel outside the mark exactly as it is.`
+      : `Change ONLY the specific detail described below. Leave the rest of the image exactly as it is.`,
+    `Owner's correction (do exactly this): "${opts.instruction.trim()}"`,
+    opts.hasReference
+      ? `Reproduce the corrected detail to MATCH THE ORIGINAL REFERENCE (IMAGE 3) exactly — its real shape, stone/bead layout, colour and proportions. Do not invent anything not present in the reference.`
+      : `Keep the correction consistent with the rest of the piece; do not invent new elements.`,
+    ``,
+    `KEEP EVERYTHING ELSE PIXEL-IDENTICAL: the model, face crop, pose, hands, framing, zoom, lighting, background, colours and all other parts of the jewellery must remain exactly as in IMAGE 1. Do NOT re-pose, re-light, re-crop, recolour or regenerate the whole scene. Make the smallest change that satisfies the correction.`,
+    `ABSOLUTELY NO TEXT, watermark, logo, or editing mark anywhere in the final image.`,
+    `Output the COMPLETE edited photograph at the same composition and aspect ratio as IMAGE 1.`,
+  ].filter(Boolean).join("\n");
+}
+
 // ===================== AI Photography Studio (Product Photos) =====================
 export type ShotType =
   | "hero" | "model" | "closeup" | "lifestyle" | "side" | "angle45" | "back" | "detail"
