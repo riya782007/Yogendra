@@ -63,7 +63,7 @@ export function Header({ categories }: { categories: Cat[] }) {
 
           <div className="flex items-center gap-2 sm:gap-3 text-ink">
             <SearchBox />
-            <Link href="/account" aria-label="Track order / Account" title="Track order"
+            <Link href="/account" aria-label="My account" title="My account"
               className="hidden sm:grid place-items-center p-2 rounded-full hover:bg-cream hover:text-emerald transition-colors"><IconUser /></Link>
             <WishlistWidget />
             <CartWidget />

@@ -487,6 +487,32 @@ export async function getBankMethodTotals(): Promise<{ method: string; total: nu
   return [...map.entries()].map(([method, total]) => ({ method, total })).sort((a, b) => b.total - a.total);
 }
 
+/** Storefront account: a signed-in shopper's own orders (matched by their mobile), newest first. */
+export async function getCustomerOrders(phone10: string): Promise<{ id: string; invoice_no: string | null; total: number; amount_paid: number; status: string | null; bill_type: string | null; channel: string | null; created_at: string }[]> {
+  const p = (phone10 ?? "").replace(/\D/g, "").slice(-10);
+  if (p.length !== 10) return [];
+  const sb = supabaseServer();
+  const { data } = await sb.from("orders")
+    .select("id,invoice_no,total,amount_paid,status,bill_type,channel,created_at,customer_phone")
+    .ilike("customer_phone", `%${p}`)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  return ((data as any[]) ?? []).map((o) => ({
+    id: o.id, invoice_no: o.invoice_no ?? null, total: o.total ?? 0, amount_paid: o.amount_paid ?? 0,
+    status: o.status ?? null, bill_type: o.bill_type ?? null, channel: o.channel ?? null, created_at: o.created_at,
+  }));
+}
+
+/** Storefront account: the customer's saved profile (name/phone), or null. */
+export async function getCustomerProfile(phone10: string): Promise<{ name: string | null; phone: string | null } | null> {
+  const p = (phone10 ?? "").replace(/\D/g, "").slice(-10);
+  if (p.length !== 10) return null;
+  const sb = supabaseServer();
+  const { data } = await sb.from("customers").select("name,phone").ilike("phone", `%${p}`).limit(1);
+  const c = (data as any[])?.[0];
+  return c ? { name: c.name ?? null, phone: c.phone ?? null } : { name: null, phone: p };
+}
+
 export async function getCustomerById(id: string) {
   const sb = supabaseServer();
   const { data: c } = await sb.from("customers").select("*").eq("id", id).maybeSingle();
