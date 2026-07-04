@@ -119,20 +119,27 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
   if (ids.length) {
     const [{ data: imgs }, { data: vrows }] = await Promise.all([
       sb.from("product_images").select("product_id,path,sort").in("product_id", ids).order("sort", { ascending: true }),
-      sb.from("variants").select("product_id,sku,color,qty").in("product_id", ids),
+      sb.from("variants").select("product_id,sku,color,qty,image_paths").in("product_id", ids),
     ]);
     const byP = new Map<string, string>();
     for (const im of ((imgs as any[]) ?? [])) {
       if (!im.path || !String(im.path).startsWith("http")) continue;
       if (!byP.has(im.product_id)) byP.set(im.product_id, im.path);
     }
+    // Fall back to a VARIANT's photo when the product itself has none — a piece may have been shot
+    // per-colour (variant image) without a product-level hero, and the catalogue should still show it.
+    const vImgByP = new Map<string, string>();
     const vByP = new Map<string, { sku: string; color: string | null; qty: number }[]>();
     for (const v of ((vrows as any[]) ?? [])) {
       const a = vByP.get(v.product_id) ?? [];
       a.push({ sku: v.sku, color: v.color ?? null, qty: v.qty ?? 0 });
       vByP.set(v.product_id, a);
+      if (!vImgByP.has(v.product_id) && Array.isArray(v.image_paths)) {
+        const hit = v.image_paths.find((x: string) => typeof x === "string" && x.startsWith("http"));
+        if (hit) vImgByP.set(v.product_id, hit);
+      }
     }
-    for (const r of rows) { r.image = byP.get(r.id) ?? null; r.variants = vByP.get(r.id) ?? []; }
+    for (const r of rows) { r.image = byP.get(r.id) ?? vImgByP.get(r.id) ?? null; r.variants = vByP.get(r.id) ?? []; }
   }
   return { rows, total: count ?? 0, page, pageSize };
 }
@@ -216,7 +223,20 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       for (const p of rows) (p as any).images = byP.get((p as any).id) ?? [];
     }
   }
-  return ((data as any[]) ?? []).map((p): CatalogCard => {
+  // Variant-image fallback: a piece may only have per-colour (variant) photos and no product-level
+  // hero — the card should still show an image instead of a blank tile.
+  const cardRows = (data as any[]) ?? [];
+  const vImgByP = new Map<string, string>();
+  const cardIds = cardRows.map((p) => p.id).filter(Boolean);
+  if (cardIds.length) {
+    const { data: vimgs } = await sb.from("variants").select("product_id,image_paths").in("product_id", cardIds);
+    for (const v of ((vimgs as any[]) ?? [])) {
+      if (vImgByP.has(v.product_id) || !Array.isArray(v.image_paths)) continue;
+      const hit = v.image_paths.find((x: string) => typeof x === "string" && x.startsWith("http"));
+      if (hit) vImgByP.set(v.product_id, hit);
+    }
+  }
+  return cardRows.map((p): CatalogCard => {
     const ov = overridesOf(p);
     const o = _liveOffer(p.base_wholesale, formula, ov);
     const set = _resolvePrices(p.base_wholesale, formula, ov);
@@ -233,7 +253,7 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       // Trade price is emitted ONLY for authorised callers; omitted from retail JSON entirely.
       ...(opts.includeWholesalePricing ? { wholesale: set.wholesaleRate } : {}),
       qty: p.qty, price: o.price, mrp: o.mrp, offerPct: o.offerPct, hasOffer: o.hasOffer,
-      image: imgs[0]?.path ?? null,
+      image: imgs[0]?.path ?? vImgByP.get(p.id) ?? null,
       tags: ((p.generated_content as any)?.tags ?? []).slice(0, 6),
       keywords: (seo.keywords ?? []).slice(0, 6),
       labels: labelNames.slice(0, 6),
