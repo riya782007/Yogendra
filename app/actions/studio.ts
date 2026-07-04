@@ -211,6 +211,41 @@ export async function refineGenerationAction(input: {
   return { ok: true, id: (row as any)?.id, url: pub.publicUrl, provider: result.model };
 }
 
+/**
+ * Set the storefront COVER (card thumbnail) to a specific image the owner picked — which may be a
+ * product image OR any colour/variant photo. We validate the URL actually belongs to this product
+ * (it's one of its product_images or a variant's image_paths) so a stray URL can't be injected,
+ * then store it on products.thumbnail_path. Pass an empty url to clear it (revert to automatic).
+ */
+export async function setProductThumbnailAction(input: { productId: string; url: string }): Promise<{ ok: boolean; reason?: string }> {
+  if (!(await requirePerm("catalog.edit")) && !(await requirePerm("catalog.ai"))) return { ok: false, reason: "not_permitted" };
+  const { productId } = input;
+  const url = (input.url ?? "").trim();
+  if (!productId) return { ok: false, reason: "bad_input" };
+  const sb = supabaseServer();
+
+  if (url) {
+    // Confirm the chosen image really belongs to this product before pinning it as the cover.
+    const [{ data: imgs }, { data: vars }] = await Promise.all([
+      sb.from("product_images").select("path").eq("product_id", productId),
+      sb.from("variants").select("image_paths").eq("product_id", productId),
+    ]);
+    const owned = new Set<string>();
+    for (const i of ((imgs as any[]) ?? [])) if (typeof i.path === "string") owned.add(i.path);
+    for (const v of ((vars as any[]) ?? [])) for (const p of (Array.isArray(v.image_paths) ? v.image_paths : [])) if (typeof p === "string") owned.add(p);
+    if (!owned.has(url)) return { ok: false, reason: "not_an_image_of_this_product" };
+  }
+
+  const { error } = await sb.from("products").update({ thumbnail_path: url || null }).eq("id", productId);
+  if (error) return { ok: false, reason: error.message };
+
+  const { data: prod } = await sb.from("products").select("sku, category:categories(slug)").eq("id", productId).maybeSingle();
+  const sku = (prod as any)?.sku; const slug = (prod as any)?.category?.slug ?? "all";
+  revalidatePath("/shop"); revalidatePath("/admin/catalogue"); revalidatePath(`/admin/media/${productId}`);
+  if (sku) revalidatePath(`/shop/${slug}/${sku}`);
+  return { ok: true };
+}
+
 /** A/B status: favorite | rejected | archived | candidate (restore). */
 export async function setGenerationStatusAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("catalog.ai"))) return;

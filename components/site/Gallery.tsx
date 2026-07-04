@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { isRealImage } from "@/components/Placeholder";
 
 const GRAD = "linear-gradient(135deg,#E7C9D2,#F2EADA,#E2C887)";
@@ -68,11 +68,19 @@ export function Gallery({ name, images }: { name: string; images: { path: string
   );
 }
 
+const MAX_ZOOM = 5;
+
 function Lightbox({ images, start, name, onClose }: { images: { path: string }[]; start: number; name: string; onClose: () => void }) {
   const [idx, setIdx] = useState(start);
   const [scale, setScale] = useState(1);
-  const next = () => { setIdx((i) => (i + 1) % images.length); setScale(1); };
-  const prev = () => { setIdx((i) => (i - 1 + images.length) % images.length); setScale(1); };
+  const [pos, setPos] = useState({ x: 0, y: 0 }); // pan offset in px (applied with the zoom)
+  const boxRef = useRef<HTMLDivElement>(null);
+  // Pointer-drag panning; `moved` suppresses the tap-to-zoom that would otherwise fire on release.
+  const drag = useRef<{ sx: number; sy: number; ox: number; oy: number; moved: boolean; active: boolean }>({ sx: 0, sy: 0, ox: 0, oy: 0, moved: false, active: false });
+
+  const reset = () => { setScale(1); setPos({ x: 0, y: 0 }); };
+  const next = () => { setIdx((i) => (i + 1) % images.length); reset(); };
+  const prev = () => { setIdx((i) => (i - 1 + images.length) % images.length); reset(); };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -85,27 +93,90 @@ function Lightbox({ images, start, name, onClose }: { images: { path: string }[]
     return () => { window.removeEventListener("keydown", onKey); document.body.style.overflow = ""; };
   }, [images.length]);
 
-  function wheelZoom(e: React.WheelEvent) {
-    e.preventDefault();
-    setScale((s) => Math.min(3.5, Math.max(1, s + (e.deltaY < 0 ? 0.3 : -0.3))));
+  /** Keep the panned image from being dragged completely out of view. */
+  function clamp(p: { x: number; y: number }, s: number) {
+    const el = boxRef.current;
+    if (!el) return p;
+    const r = el.getBoundingClientRect();
+    const maxX = ((s - 1) * r.width) / 2;
+    const maxY = ((s - 1) * r.height) / 2;
+    return { x: Math.max(-maxX, Math.min(maxX, p.x)), y: Math.max(-maxY, Math.min(maxY, p.y)) };
   }
 
+  /** Zoom to a new scale while keeping the point under (clientX, clientY) fixed on screen. */
+  function zoomTo(newScale: number, clientX?: number, clientY?: number) {
+    const el = boxRef.current;
+    const s = Math.min(MAX_ZOOM, Math.max(1, Math.round(newScale * 100) / 100));
+    if (!el || s === 1) { setScale(s); setPos({ x: 0, y: 0 }); return; }
+    const r = el.getBoundingClientRect();
+    const cx = (clientX ?? r.left + r.width / 2) - (r.left + r.width / 2);
+    const cy = (clientY ?? r.top + r.height / 2) - (r.top + r.height / 2);
+    setScale((prevS) => {
+      const ratio = s / prevS;
+      setPos((prev) => clamp({ x: cx - (cx - prev.x) * ratio, y: cy - (cy - prev.y) * ratio }, s));
+      return s;
+    });
+  }
+
+  function onWheel(e: React.WheelEvent) {
+    e.preventDefault();
+    zoomTo(scale + (e.deltaY < 0 ? 0.4 : -0.4), e.clientX, e.clientY);
+  }
+  function onPointerDown(e: React.PointerEvent) {
+    if (scale <= 1) return; // only pan when zoomed in
+    drag.current = { sx: e.clientX, sy: e.clientY, ox: pos.x, oy: pos.y, moved: false, active: true };
+    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+  }
+  function onPointerMove(e: React.PointerEvent) {
+    const d = drag.current;
+    if (!d.active) return;
+    const dx = e.clientX - d.sx, dy = e.clientY - d.sy;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) d.moved = true;
+    setPos(clamp({ x: d.ox + dx, y: d.oy + dy }, scale));
+  }
+  function onPointerUp() { drag.current.active = false; }
+  function onImgClick(e: React.MouseEvent) {
+    if (drag.current.moved) { drag.current.moved = false; return; } // was a pan, not a tap
+    if (scale > 1) zoomTo(1);
+    else zoomTo(2.5, e.clientX, e.clientY); // zoom in on the tapped detail
+  }
+
+  const zoomed = scale > 1;
   return (
     <div className="fixed inset-0 z-[100] bg-ink/92 backdrop-blur-sm grid place-items-center animate-fadeIn" onClick={onClose}>
       <button onClick={onClose} aria-label="Close" className="absolute top-4 right-5 z-10 text-cream/80 hover:text-white text-3xl leading-none">✕</button>
-      <div className="relative max-w-[94vw] max-h-[90vh] overflow-hidden" onClick={(e) => e.stopPropagation()} onWheel={wheelZoom}>
+      <div
+        ref={boxRef}
+        className="relative max-w-[94vw] max-h-[90vh] overflow-hidden touch-none"
+        onClick={(e) => e.stopPropagation()}
+        onWheel={onWheel}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerLeave={onPointerUp}
+      >
         <img src={images[idx].path} alt={name}
-          onClick={() => setScale((s) => (s >= 2.5 ? 1 : s + 0.75))}
-          style={{ transform: `scale(${scale})`, cursor: scale > 1 ? "zoom-out" : "zoom-in" }}
-          className="max-w-[94vw] max-h-[90vh] object-contain transition-transform duration-200 select-none" draggable={false} />
+          onClick={onImgClick}
+          style={{ transform: `translate(${pos.x}px, ${pos.y}px) scale(${scale})`, cursor: zoomed ? (drag.current.active ? "grabbing" : "grab") : "zoom-in", transition: drag.current.active ? "none" : "transform 0.18s" }}
+          className="max-w-[94vw] max-h-[90vh] object-contain select-none" draggable={false} />
       </div>
+
+      {/* Zoom controls — work on touch too (where there's no scroll wheel). */}
+      <div className="absolute bottom-14 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+        <button onClick={() => zoomTo(scale - 0.5)} aria-label="Zoom out" className="h-10 w-10 rounded-full bg-white/15 hover:bg-white/30 text-white text-xl grid place-items-center disabled:opacity-30" disabled={!zoomed}>−</button>
+        <button onClick={() => reset()} aria-label="Reset zoom" className="px-3 h-10 rounded-full bg-white/15 hover:bg-white/30 text-white text-xs grid place-items-center">{Math.round(scale * 100)}%</button>
+        <button onClick={() => zoomTo(scale + 0.5)} aria-label="Zoom in" className="h-10 w-10 rounded-full bg-white/15 hover:bg-white/30 text-white text-xl grid place-items-center disabled:opacity-30" disabled={scale >= MAX_ZOOM}>+</button>
+      </div>
+
       {images.length > 1 && (
         <>
           <button onClick={(e) => { e.stopPropagation(); prev(); }} aria-label="Previous" className="absolute left-3 sm:left-6 top-1/2 -translate-y-1/2 h-11 w-11 rounded-full bg-white/15 hover:bg-white/30 text-white text-2xl grid place-items-center">‹</button>
           <button onClick={(e) => { e.stopPropagation(); next(); }} aria-label="Next" className="absolute right-3 sm:right-6 top-1/2 -translate-y-1/2 h-11 w-11 rounded-full bg-white/15 hover:bg-white/30 text-white text-2xl grid place-items-center">›</button>
         </>
       )}
-      <p className="absolute bottom-4 left-0 right-0 text-center text-cream/70 text-xs">Scroll or tap the image to zoom · {idx + 1}/{images.length}</p>
+      <p className="absolute bottom-4 left-0 right-0 text-center text-cream/70 text-xs">
+        {zoomed ? "Drag to move around · tap to reset" : "Scroll, tap, or +/− to zoom in"} · {idx + 1}/{images.length}
+      </p>
     </div>
   );
 }

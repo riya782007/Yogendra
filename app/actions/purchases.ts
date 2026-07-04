@@ -51,7 +51,16 @@ export async function requestPurchaseDeletionAction(formData: FormData): Promise
 
 export type PurchaseLine = { supplierSku: string; mappedProductId: string; variantId?: string; qty: number; unitCostRupees: number };
 
-export async function recordPurchaseAction(input: { supplierId: string; billNo: string; items: PurchaseLine[]; force?: boolean; paymentMode?: "cash" | "upi" | "bank" | "credit"; amountPaidRupees?: number }): Promise<{ ok: boolean; total?: number; error?: string; duplicateBillNo?: boolean }> {
+/** One leg of a split payment made at purchase time. Several may be supplied at once. */
+export type PurchasePayment = { mode: "cash" | "upi" | "bank"; amountRupees: number };
+
+export async function recordPurchaseAction(input: {
+  supplierId: string; billNo: string; items: PurchaseLine[]; force?: boolean;
+  /** NEW: split the bill across several methods at once (cash + upi + bank). Remainder = credit. */
+  payments?: PurchasePayment[];
+  /** Legacy single-method fields — still accepted so older callers keep working. */
+  paymentMode?: "cash" | "upi" | "bank" | "credit"; amountPaidRupees?: number;
+}): Promise<{ ok: boolean; total?: number; error?: string; duplicateBillNo?: boolean }> {
   if (!input.supplierId) return { ok: false, error: "Choose a supplier" };
   const items = (input.items ?? []).filter((l) => l.qty > 0 && l.unitCostRupees > 0);
   if (!items.length) return { ok: false, error: "Add at least one line with qty and cost" };
@@ -73,20 +82,29 @@ export async function recordPurchaseAction(input: { supplierId: string; billNo: 
   if (error) return { ok: false, error: error.message };
   const total = (data as any)?.total as number;
 
-  // Payment: "credit" (or amount 0) leaves the whole bill owed on the supplier ledger. Any amount
-  // paid now is recorded as a supplier payment (reduces what's owed + flows into Bank & Cash),
-  // capped at the bill total. Best-effort — a payment hiccup never unwinds the recorded stock.
-  const mode = input.paymentMode ?? "credit";
-  if (mode !== "credit") {
-    const paise = Math.min(Number(total) || 0, Math.max(0, Math.round((input.amountPaidRupees ?? 0) * 100)));
-    if (paise > 0) {
-      const ledgerMode = mode === "cash" ? "cash" : mode === "upi" ? "upi" : "bank";
-      const { error: payErr } = await sb.from("supplier_payments").insert({
-        supplier_id: input.supplierId, amount: paise, mode: ledgerMode,
-        ref: billNo || null, note: `Paid at purchase${billNo ? ` · bill ${billNo}` : ""}`,
-      });
-      if (payErr) console.warn("supplier payment not recorded (purchase still saved):", payErr.message);
-    }
+  // Payment: whatever is paid now is recorded as one supplier_payment PER method (so a bill can be
+  // split across cash + upi + bank in a single purchase); anything left unpaid stays owed on the
+  // supplier ledger (credit). Best-effort — a payment hiccup never unwinds the recorded stock.
+  //   • NEW callers pass `payments: [{mode, amountRupees}, …]`.
+  //   • Legacy callers pass a single `paymentMode` + `amountPaidRupees`; we adapt it to one leg.
+  const splits: PurchasePayment[] = (input.payments?.length)
+    ? input.payments
+    : (input.paymentMode && input.paymentMode !== "credit")
+      ? [{ mode: input.paymentMode, amountRupees: input.amountPaidRupees ?? 0 }]
+      : [];
+  let remaining = Number(total) || 0; // paise still available to allocate (never over-pay the bill)
+  for (const s of splits) {
+    if (remaining <= 0) break;
+    const want = Math.max(0, Math.round((Number(s.amountRupees) || 0) * 100));
+    const paise = Math.min(want, remaining);
+    if (paise <= 0) continue;
+    const ledgerMode = s.mode === "cash" ? "cash" : s.mode === "upi" ? "upi" : "bank";
+    const { error: payErr } = await sb.from("supplier_payments").insert({
+      supplier_id: input.supplierId, amount: paise, mode: ledgerMode,
+      ref: billNo || null, note: `Paid at purchase${billNo ? ` · bill ${billNo}` : ""}`,
+    });
+    if (payErr) console.warn("supplier payment not recorded (purchase still saved):", payErr.message);
+    else remaining -= paise;
   }
   revalidatePath("/admin/purchases"); revalidatePath("/admin/dashboard");
   revalidatePath(`/admin/supplier/${input.supplierId}`); revalidatePath("/admin/cashbook");

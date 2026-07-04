@@ -18,10 +18,9 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [confirmDup, setConfirmDup] = useState(false);
-  // How this purchase was paid. "credit" = nothing paid now → the full bill stays owed to the
-  // supplier (registered on their ledger). Otherwise the paid amount is recorded against the supplier.
-  const [payMode, setPayMode] = useState<"cash" | "upi" | "bank" | "credit">("credit");
-  const [paidStr, setPaidStr] = useState(""); // ₹ paid now; blank = full when a mode is chosen
+  // How this purchase was paid — a SPLIT across methods. Enter any amount against cash / upi / bank
+  // (one, several, or none). Whatever is left unpaid stays owed to the supplier (credit).
+  const [pay, setPay] = useState<{ cash: string; upi: string; bank: string }>({ cash: "", upi: "", bank: "" });
 
   const input = "rounded-xl border border-sand px-3 py-2 text-sm bg-white outline-none focus:border-emerald";
   const set = (i: number, patch: Partial<Line>) => setLines((p) => p.map((l, idx) => idx === i ? { ...l, ...patch } : l));
@@ -37,6 +36,18 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
   const suggest = (q: string) => q.trim() ? products.filter((p) => (p.name + p.sku).toLowerCase().includes(q.toLowerCase())).slice(0, 6) : [];
   const total = lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.cost) || 0), 0);
 
+  // Split-payment maths (rupees). paidNow = sum of all methods; the rest stays on credit.
+  const METHODS = [["cash", "Cash"], ["upi", "UPI"], ["bank", "Bank"]] as const;
+  const paidNow = (Number(pay.cash) || 0) + (Number(pay.upi) || 0) + (Number(pay.bank) || 0);
+  const credit = Math.max(0, total - paidNow);
+  const over = paidNow > total && total > 0;
+  /** Fill one method with whatever is still unpaid (so "Bank: fill remaining" pays the balance). */
+  const fillRemaining = (m: "cash" | "upi" | "bank") => setPay((s) => {
+    const others = (["cash", "upi", "bank"] as const).filter((k) => k !== m).reduce((n, k) => n + (Number(s[k]) || 0), 0);
+    const rem = Math.max(0, total - others);
+    return { ...s, [m]: rem ? String(rem) : "" };
+  });
+
   async function submit(force = false) {
     // A mapped product that HAS colours must be bought as a specific colour — never the parent.
     const missing = lines.find((l) => {
@@ -45,19 +56,22 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
       return hasVariants && !l.variantId;
     });
     if (missing) { setMsg(`✕ Pick a colour for "${missing.mappedName}" — products with colours are bought per colour, not as the whole product.`); return; }
+    if (over) { setMsg(`✕ Paid ${formatPaise(paidNow * 100)} is more than the bill total ${formatPaise(total * 100)} — reduce a method.`); return; }
     setBusy(true); setMsg(""); if (!force) setConfirmDup(false);
-    // Paid now: 0 for credit; else the typed amount, defaulting to the full bill when left blank.
-    const amountPaidRupees = payMode === "credit" ? 0 : (paidStr.trim() !== "" ? Number(paidStr) || 0 : total);
+    // Split payment: send one leg per method that has an amount. The rest is left as credit.
+    const payments = METHODS
+      .map(([m]) => ({ mode: m, amountRupees: Number(pay[m]) || 0 }))
+      .filter((p) => p.amountRupees > 0);
     const res = await recordPurchaseAction({
       supplierId, billNo, force,
       items: lines.map((l) => ({ supplierSku: l.supplierSku, mappedProductId: l.mappedProductId, variantId: l.variantId, qty: Number(l.qty) || 0, unitCostRupees: Number(l.cost) || 0 })),
-      paymentMode: payMode, amountPaidRupees,
+      payments,
     });
     setBusy(false);
     if (res.ok) {
-      const owed = Math.max(0, total - amountPaidRupees);
-      setMsg(`✓ Purchase recorded (${formatPaise(res.total ?? 0)})${payMode === "credit" || owed > 0 ? ` — ${formatPaise(owed * 100)} on credit to supplier` : " — paid in full"}. Stock updated.`);
-      setLines([{ supplierSku: "", mappedProductId: "", mappedName: "", variantId: "", qty: "", cost: "" }]); setBillNo(""); setPaidStr(""); setPayMode("credit"); setConfirmDup(false);
+      const owed = Math.max(0, total - paidNow);
+      setMsg(`✓ Purchase recorded (${formatPaise(res.total ?? 0)})${owed > 0 ? ` — ${formatPaise(owed * 100)} on credit to supplier` : " — paid in full"}. Stock updated.`);
+      setLines([{ supplierSku: "", mappedProductId: "", mappedName: "", variantId: "", qty: "", cost: "" }]); setBillNo(""); setPay({ cash: "", upi: "", bank: "" }); setConfirmDup(false);
     }
     else { setMsg(`✕ ${res.error}`); setConfirmDup(!!res.duplicateBillNo); }
   }
@@ -131,35 +145,44 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
       </div>
       <button onClick={() => setLines((p) => [...p, { supplierSku: "", mappedProductId: "", mappedName: "", variantId: "", qty: "", cost: "" }])} className="text-sm text-emerald nav-link mt-3">+ Add line</button>
 
-      {/* Payment — how this purchase was paid. Credit leaves the amount owed on the supplier ledger. */}
+      {/* Payment — SPLIT across methods. Enter any amount against cash / upi / bank (one, several,
+          or none). Whatever is left unpaid is registered as credit owed to the supplier. */}
       <div className="mt-5 border-t border-sand pt-4">
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3 mb-2">
           <span className="text-lg font-semibold text-ink">Total: {formatPaise(total * 100)}</span>
-          <div className="flex items-center gap-1.5 ml-auto">
-            <span className="text-[11px] text-muted mr-1">Payment</span>
-            {([["credit", "Credit"], ["cash", "Cash"], ["upi", "UPI"], ["bank", "Bank"]] as const).map(([v, label]) => (
-              <button key={v} type="button" onClick={() => setPayMode(v)}
-                className={`px-3 py-1.5 rounded-full text-xs transition-colors ${payMode === v ? (v === "credit" ? "bg-gold text-ink" : "bg-ink text-white") : "bg-white border border-sand text-muted hover:border-emerald"}`}>
-                {label}
-              </button>
-            ))}
-          </div>
+          <span className="text-[11px] text-muted ml-auto">Split the payment across methods — anything left over stays on credit.</span>
         </div>
-        <div className="flex flex-wrap items-center gap-3 mt-2">
-          {payMode === "credit" ? (
-            <p className="text-[11px] text-gold-dark">The full {formatPaise(total * 100)} will be registered as owed to this supplier (payable). Record payments later from the supplier page.</p>
-          ) : (
-            <label className="text-[11px] text-muted flex items-center gap-1.5">
-              Paid now ₹
-              <input value={paidStr} onChange={(e) => setPaidStr(e.target.value)} inputMode="decimal" placeholder={String(total)} className={`${input} w-28`} />
-              <span className="text-muted">{paidStr.trim() !== "" && Number(paidStr) < total ? `· ${formatPaise((total - (Number(paidStr) || 0)) * 100)} on credit` : "· paid in full"}</span>
-            </label>
-          )}
+        <div className="grid sm:grid-cols-3 gap-3">
+          {METHODS.map(([m, label]) => (
+            <div key={m} className="rounded-xl border border-sand p-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-ink">{label}</span>
+                <button type="button" onClick={() => fillRemaining(m)} className="text-[10px] text-emerald-dark hover:underline" title="Pay the remaining balance with this method">fill remaining</button>
+              </div>
+              <div className="mt-1 flex items-center gap-1">
+                <span className="text-sm text-muted">₹</span>
+                <input value={pay[m]} onChange={(e) => setPay((s) => ({ ...s, [m]: e.target.value }))} inputMode="decimal" placeholder="0" className={`${input} w-full`} />
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-3 mt-3">
+          <p className="text-[11px]">
+            {over ? (
+              <span className="text-rose">Paid {formatPaise(paidNow * 100)} exceeds the total — reduce a method.</span>
+            ) : paidNow === 0 ? (
+              <span className="text-gold-dark">Nothing paid now — the full {formatPaise(total * 100)} will be owed to this supplier (credit). Record payments later from the supplier page.</span>
+            ) : credit > 0 ? (
+              <span className="text-muted">Paid {formatPaise(paidNow * 100)} now · <b className="text-gold-dark">{formatPaise(credit * 100)} on credit</b></span>
+            ) : (
+              <span className="text-emerald-dark">Paid in full ✓</span>
+            )}
+          </p>
           <div className="flex items-center gap-2 ml-auto">
             {confirmDup && (
-              <button onClick={() => submit(true)} disabled={busy} className="px-4 py-2.5 rounded-xl border border-rose text-rose text-sm font-medium hover:bg-rose/10 disabled:opacity-50">Record anyway</button>
+              <button onClick={() => submit(true)} disabled={busy || over} className="px-4 py-2.5 rounded-xl border border-rose text-rose text-sm font-medium hover:bg-rose/10 disabled:opacity-50">Record anyway</button>
             )}
-            <button onClick={() => submit(false)} disabled={busy} className="btn-primary px-6 py-2.5 text-sm font-medium disabled:opacity-50">{busy ? "Recording…" : "Record purchase"}</button>
+            <button onClick={() => submit(false)} disabled={busy || over} className="btn-primary px-6 py-2.5 text-sm font-medium disabled:opacity-50">{busy ? "Recording…" : "Record purchase"}</button>
           </div>
         </div>
       </div>

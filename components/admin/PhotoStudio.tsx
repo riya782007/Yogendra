@@ -14,7 +14,7 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
 import {
   generateStudioImageAction, setGenerationStatusAction, publishGenerationAction, detectJewelleryAction,
-  uploadBrandedImageAction, refineGenerationAction,
+  uploadBrandedImageAction, refineGenerationAction, setProductThumbnailAction,
 } from "@/app/actions/studio";
 import { addVariantImageAction } from "@/app/actions/variants";
 
@@ -71,10 +71,11 @@ type Gen = { id: string; output_path: string | null; shot_type: string; version:
 type Data = {
   product: { id: string; sku: string; name: string; category?: { name?: string; slug?: string } };
   raw: { id: string; path: string } | null;
-  images: { id: string; path: string; sort: number }[];
+  images: { id: string; path: string; sort: number; kind?: string | null }[];
   generations: Gen[];
-  variants?: { id: string; sku: string; color: string | null; image: string | null }[];
+  variants?: { id: string; sku: string; color: string | null; image: string | null; images?: string[] }[];
   detected: { category?: string; material?: string; style?: string; attributes?: string[] } | null;
+  thumbnailPath?: string | null;
 };
 
 const LIGHTING = ["Soft Studio Light", "Diffused Light", "Top Light for diamonds", "Warm Light for gold", "Natural Daylight"];
@@ -153,6 +154,30 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
   // "Fix a detail" — the candidate the owner is surgically editing (mark + comment). Null = closed.
   const [refineGen, setRefineGen] = useState<Gen | null>(null);
   const openRefine = (g?: Gen | null) => { if (g?.output_path) setRefineGen(g); };
+
+  // Storefront cover (card thumbnail) chooser. null = automatic (first generated photo).
+  const [cover, setCover] = useState<string | null>(data.thumbnailPath ?? null);
+  const [coverBusy, setCoverBusy] = useState(false);
+  // Every image the owner may pick as the cover: generated product photos + every colour's photos.
+  const coverOptions: { url: string; label: string }[] = (() => {
+    const out: { url: string; label: string }[] = [];
+    const seen = new Set<string>();
+    const add = (url?: string | null, label?: string) => {
+      if (url && url.startsWith("http") && !seen.has(url)) { seen.add(url); out.push({ url, label: label ?? "" }); }
+    };
+    (data.images ?? []).forEach((i) => { if (i.kind !== "source" && i.kind !== "flatlay") add(i.path, "Photo"); });
+    (data.variants ?? []).forEach((v) => (v.images ?? []).forEach((u) => add(u, v.color ?? v.sku)));
+    return out;
+  })();
+  async function chooseCover(url: string | null) {
+    setCoverBusy(true);
+    try {
+      const r = await setProductThumbnailAction({ productId: p.id, url: url ?? "" });
+      if (r.ok) { setCover(url); toast(url ? "Storefront cover updated ✓" : "Cover set to automatic ✓", "success"); scheduleRefresh(); }
+      else { toast(r.reason === "not_an_image_of_this_product" ? "That image isn't on this product." : (r.reason ? `Couldn't set cover (${r.reason})` : "Couldn't set the cover"), "error"); }
+    } catch { toast("Network error — try again.", "error"); }
+    finally { setCoverBusy(false); }
+  }
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scheduleRefresh = () => { if (refreshTimer.current) clearTimeout(refreshTimer.current); refreshTimer.current = setTimeout(() => router.refresh(), 1500); };
 
@@ -383,6 +408,31 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
               )}
               <button onClick={() => gen("hero", "hero")} disabled={isBusy("hero")} className="w-full mt-2 px-3 py-2 rounded-xl bg-ink text-white text-sm disabled:opacity-50">{isBusy("hero") ? "Generating…" : "✦ Regenerate image"}</button>
             </div>
+          </div>
+
+          {/* Storefront cover — the owner chooses which photo (incl. a specific colour) is the card thumbnail. */}
+          <div className="mt-6 border-t border-sand pt-4">
+            <p className="text-sm font-medium text-ink">Storefront cover <span className="text-muted font-normal">· the thumbnail customers see on the shop</span></p>
+            <p className="text-[11px] text-muted mb-2">Pick any photo — including a specific colour — as the cover, or leave it Automatic (the first generated photo).</p>
+            {coverOptions.length === 0 ? (
+              <p className="text-[11px] text-muted">Generate or upload a photo first, then choose your cover here.</p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => chooseCover(null)} disabled={coverBusy}
+                  className={`w-16 h-20 rounded-lg border grid place-items-center text-[10px] text-center leading-tight disabled:opacity-50 ${cover === null ? "border-emerald ring-2 ring-emerald bg-emerald-mist/30 text-emerald-dark" : "border-sand text-muted hover:border-emerald"}`}>
+                  Auto{cover === null ? " ✓" : ""}
+                </button>
+                {coverOptions.map((o) => (
+                  <button key={o.url} type="button" onClick={() => chooseCover(o.url)} disabled={coverBusy}
+                    className={`relative w-16 h-20 rounded-lg overflow-hidden border disabled:opacity-50 ${cover === o.url ? "border-emerald ring-2 ring-emerald" : "border-sand hover:border-emerald"}`}
+                    title={`Set ${o.label || "this photo"} as the storefront cover`}>
+                    <img src={o.url} alt={o.label} className="w-full h-full object-cover" />
+                    {cover === o.url && <span className="absolute top-0.5 left-0.5 text-[8px] bg-emerald text-white px-1 rounded">Cover</span>}
+                    {o.label && o.label !== "Photo" && <span className="absolute bottom-0 inset-x-0 bg-ink/55 text-white text-[8px] py-0.5 text-center truncate px-0.5">{o.label}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Additional angles */}

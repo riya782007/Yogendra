@@ -54,6 +54,13 @@ export default async function ProductPage({ params }: Params) {
     ...((p.images ?? []) as any[]).filter((i: any) => isStorefrontImage(i.kind)),
     ...((p.variants ?? []) as any[]).flatMap((v: any) => (((v.image_paths ?? []) as string[]) || []).map((path) => ({ path, kind: v.color }))),
   ];
+  // Owner-chosen storefront cover leads the gallery (so the hero matches the card thumbnail).
+  const coverPath = typeof (p as any).thumbnail_path === "string" && (p as any).thumbnail_path.startsWith("http") ? (p as any).thumbnail_path : null;
+  if (coverPath) {
+    const i = galleryImages.findIndex((g: any) => g.path === coverPath);
+    if (i > 0) galleryImages.unshift(galleryImages.splice(i, 1)[0]);
+    else if (i === -1) galleryImages.unshift({ path: coverPath, kind: "cover" });
+  }
   const waText = `Please place an order for ${p.name} (SKU:${p.sku})`;
   const waHref = `https://wa.me/919873151767?text=${encodeURIComponent(waText)}`;
   

@@ -113,7 +113,7 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
   const sb = supabaseServer();
   const pageSize = opts.pageSize ?? 25;
   const page = Math.max(1, opts.page ?? 1);
-  let query = sb.from("products").select("id,sku,name,qty,base_wholesale,type,status,generated_content,admin_tags,category:categories(id,name,slug)", { count: "exact" });
+  let query = sb.from("products").select("id,sku,name,qty,base_wholesale,type,status,generated_content,admin_tags,thumbnail_path,category:categories(id,name,slug)", { count: "exact" });
   if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.or(`name.ilike.%${s}%,sku.ilike.%${s}%`); }
   if (opts.category && opts.category !== "all") {
     const { data: cat } = await sb.from("categories").select("id").eq("slug", opts.category).maybeSingle();
@@ -150,7 +150,7 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
         if (hit) vImgByP.set(v.product_id, hit);
       }
     }
-    for (const r of rows) { r.image = byP.get(r.id) ?? vImgByP.get(r.id) ?? null; r.variants = vByP.get(r.id) ?? []; }
+    for (const r of rows) { r.image = (typeof r.thumbnail_path === "string" && r.thumbnail_path.startsWith("http") ? r.thumbnail_path : null) ?? byP.get(r.id) ?? vImgByP.get(r.id) ?? null; r.variants = vByP.get(r.id) ?? []; }
   }
   return { rows, total: count ?? 0, page, pageSize };
 }
@@ -216,7 +216,7 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
   // deployed DB, PostgREST fails the WHOLE query and returns null — which blanks the whole catalogue
   // (the bug). So fall back to a BASIC select (core fields + category + images) that cannot fail.
   // Same resilience pattern as getProductBySku.
-  const RICH = "id,sku,name,qty,base_wholesale,wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,generated_content,category:categories(name,slug),subcategory:subcategories(name,slug),images:product_images(path,kind,sort),product_labels(label_id,labels(name))";
+  const RICH = "id,sku,name,qty,base_wholesale,wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,generated_content,thumbnail_path,category:categories(name,slug),subcategory:subcategories(name,slug),images:product_images(path,kind,sort),product_labels(label_id,labels(name))";
   const BASIC = "id,sku,name,qty,base_wholesale,wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,generated_content,category:categories(name,slug)";
 
   let { data, error } = await build(RICH);
@@ -264,7 +264,8 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       // Trade price is emitted ONLY for authorised callers; omitted from retail JSON entirely.
       ...(opts.includeWholesalePricing ? { wholesale: set.wholesaleRate } : {}),
       qty: p.qty, price: o.price, mrp: o.mrp, offerPct: o.offerPct, hasOffer: o.hasOffer,
-      image: imgs[0]?.path ?? vImgByP.get(p.id) ?? null,
+      // Owner-chosen cover wins; else first generated image; else a variant photo.
+      image: (typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http") ? p.thumbnail_path : null) ?? imgs[0]?.path ?? vImgByP.get(p.id) ?? null,
       tags: ((p.generated_content as any)?.tags ?? []).slice(0, 6),
       keywords: (seo.keywords ?? []).slice(0, 6),
       labels: labelNames.slice(0, 6),
@@ -1155,7 +1156,7 @@ export type ProductPim = NonNullable<Awaited<ReturnType<typeof getProductForPim>
 export async function getStudioData(productId: string) {
   if (!productId) return null;
   const sb = supabaseServer();
-  const { data: p } = await sb.from("products").select("id,sku,name,status, category:categories(name,slug)").eq("id", productId).maybeSingle();
+  const { data: p } = await sb.from("products").select("id,sku,name,status,thumbnail_path, category:categories(name,slug)").eq("id", productId).maybeSingle();
   if (!p) return null;
   const prod = p as any;
   const { data: imgs } = await sb.from("product_images").select("id,path,kind,sort,generation_id").eq("product_id", productId).order("sort");
@@ -1166,11 +1167,11 @@ export async function getStudioData(productId: string) {
   const raw = images.find((i) => i.kind === "source" || i.kind === "flatlay") ?? null;
   const published = images.filter((i) => i.path.startsWith("http")).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0));
   const detected = generations.find((g) => g.detected)?.detected ?? null;
-  const variants = ((vars as any[]) ?? []).map((v) => ({
-    id: v.id, sku: v.sku, color: v.color ?? null,
-    image: (Array.isArray(v.image_paths) ? v.image_paths.find((x: string) => typeof x === "string" && x.startsWith("http")) : null) ?? null,
-  }));
-  return { product: prod, raw, images: published, generations, variants, detected };
+  const variants = ((vars as any[]) ?? []).map((v) => {
+    const vImgs = (Array.isArray(v.image_paths) ? v.image_paths : []).filter((x: string) => typeof x === "string" && x.startsWith("http"));
+    return { id: v.id, sku: v.sku, color: v.color ?? null, image: vImgs[0] ?? null, images: vImgs as string[] };
+  });
+  return { product: prod, raw, images: published, generations, variants, detected, thumbnailPath: prod.thumbnail_path ?? null };
 }
 export type StudioData = NonNullable<Awaited<ReturnType<typeof getStudioData>>>;
 
@@ -1308,7 +1309,9 @@ export async function getStorefront(
     const rating = a && a.n ? a.sum / a.n : 4.6;
     const reviews = a?.n ?? 0;
     const isNew = p.created_at ? now - new Date(p.created_at).getTime() < 1000 * 60 * 60 * 24 * 21 : false;
-    return { ...p, image: imgByProduct.get(p.id) ?? null, rating: Math.round(rating * 10) / 10, reviews, isNew };
+    // Owner-chosen storefront cover (any product/variant image) wins over the automatic pick.
+    const cover = (typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http")) ? p.thumbnail_path : null;
+    return { ...p, image: cover ?? imgByProduct.get(p.id) ?? null, rating: Math.round(rating * 10) / 10, reviews, isNew };
   });
   if (!opts.includeWholesaleOnly) products = products.filter((p: any) => !p.wholesale_only);
   // Wholesale storefront hides retail-only items (admin/POS pass excludeRetailOnly=false → see all).
