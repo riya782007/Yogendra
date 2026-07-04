@@ -9,7 +9,8 @@ export default async function Returns() {
   return (
     <main className="p-8 bg-cream/40 min-h-screen max-w-4xl">
       <h1 className="font-display text-4xl text-ink mb-1">Sales Returns</h1>
-      <p className="text-sm text-muted mb-6">Capture a reason, restore stock, and keep an audit trail — books stay accurate.</p>
+      <p className="text-sm text-muted mb-2">Capture a reason, restore stock, and keep an audit trail — books stay accurate.</p>
+      <p className="text-xs text-gold-dark bg-gold/10 rounded-lg px-3 py-2 mb-6 inline-block">Staff-created returns require owner approval — they're sent to the Approvals page and processed once the owner clears them with the OTP.</p>
       <ReturnClient orders={orders as any} />
 
       <h2 className="font-medium text-ink mb-3">Recent returns</h2>

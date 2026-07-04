@@ -38,6 +38,17 @@ export async function decideApprovalAction(formData: FormData) {
       revalidatePath("/admin/purchases");
     }
   }
+  if (approve && a.action === "sales_return") {
+    const p = (a.payload as any) ?? {};
+    const p_items = ((p.items ?? []) as any[]).map((i) => ({ product_id: i.product_id, qty: i.qty }));
+    if (p.orderId && p_items.length) {
+      const { error } = await sb.rpc("record_sales_return", { p_order_id: p.orderId, p_reason: p.reason ?? "Approved return", p_items });
+      if (!error) {
+        await sb.from("audit_log").insert({ actor: "system", action: "applied", ref: id, detail: `sales return processed for order ${p.orderId}` });
+        revalidatePath("/admin/returns");
+      }
+    }
+  }
   revalidatePath("/admin/approvals");
   revalidatePath("/admin/dashboard");
 }

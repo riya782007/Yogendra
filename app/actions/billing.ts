@@ -2,9 +2,11 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
-import { requirePerm } from "@/lib/auth";
+import { requirePerm, getSession } from "@/lib/auth";
 import { getPricingFormula } from "@/lib/supabase/queries";
 import { resolvePrices, overridesOf } from "@/lib/pricing";
+
+const OWNER_OTP = () => process.env.OWNER_OTP ?? "482913";
 
 /** Recompute an estimate's total from its current line items. */
 async function recomputeEstimateTotal(sb: ReturnType<typeof supabaseServer>, estimateId: string) {
@@ -209,13 +211,29 @@ export async function fulfillBackorderAction(formData: FormData): Promise<void> 
   revalidatePath("/admin/backorders"); revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard");
 }
 
-export async function recordReturnAction(input: { orderId: string; reason: string; items: { product_id: string; variantSku?: string; qty: number }[] }): Promise<{ ok: boolean; qty?: number; error?: string }> {
+export async function recordReturnAction(input: { orderId: string; reason: string; items: { product_id: string; variantSku?: string; qty: number }[] }): Promise<{ ok: boolean; qty?: number; error?: string; pending?: boolean }> {
   if (!(await requirePerm("billing.refund"))) return { ok: false, error: "Your role can't process returns/refunds." };
   if (!input.items?.length) return { ok: false, error: "Select items to return" };
   if (!input.reason?.trim()) return { ok: false, error: "Capture a return reason" };
+  const sb = supabaseServer();
+
+  // A sales return restocks goods and reverses money — so STAFF cannot finalise one on their own.
+  // Only the owner may. A staff request is raised as an approval the owner clears with the OTP on
+  // /admin/approvals; on approval the return is executed there (see decideApprovalAction).
+  if (!getSession().isOwner) {
+    await sb.from("approvals").insert({
+      action: "sales_return",
+      payload: { orderId: input.orderId, reason: input.reason, items: input.items.map((i) => ({ product_id: i.product_id, qty: i.qty, variantSku: i.variantSku ?? null })) },
+      status: "pending",
+      otp_hash: `h:${OWNER_OTP()}`,
+    });
+    revalidatePath("/admin/approvals");
+    return { ok: true, pending: true };
+  }
+
   // The RPC restocks by product_id; variantSku is carried for display/audit (variant-exact restock TBD).
   const p_items = input.items.map((i) => ({ product_id: i.product_id, qty: i.qty }));
-  const { data, error } = await supabaseServer().rpc("record_sales_return", { p_order_id: input.orderId, p_reason: input.reason, p_items });
+  const { data, error } = await sb.rpc("record_sales_return", { p_order_id: input.orderId, p_reason: input.reason, p_items });
   if (error) return { ok: false, error: error.message };
   revalidatePath("/admin/returns"); revalidatePath("/admin/dashboard");
   return { ok: true, qty: (data as any)?.qty };
