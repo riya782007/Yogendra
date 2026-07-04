@@ -69,7 +69,7 @@ function labelFamily(label: string): string {
 
 type Gen = { id: string; output_path: string | null; shot_type: string; version: number; status: string; provider: string | null; settings: any; created_at: string; variant_id?: string | null };
 type Data = {
-  product: { id: string; sku: string; name: string; category?: { name?: string } };
+  product: { id: string; sku: string; name: string; category?: { name?: string; slug?: string } };
   raw: { id: string; path: string } | null;
   images: { id: string; path: string; sort: number }[];
   generations: Gen[];
@@ -302,6 +302,16 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
               <p className="font-medium text-ink">{p.name}</p>
               <p className="text-xs text-muted">{p.category?.name} · {p.sku}</p>
             </div>
+            {/* Jump straight to the live product page the customer sees (opens in a new tab so the
+                studio stays open). Uses the category slug + SKU route. */}
+            <a
+              href={`/shop/${p.category?.slug ?? "all"}/${p.sku}`}
+              target="_blank" rel="noopener noreferrer"
+              className="ml-auto shrink-0 px-3 py-1.5 rounded-full bg-emerald-mist text-emerald-dark text-xs font-medium hover:bg-emerald/20 whitespace-nowrap"
+              title="Open this product's live view page in a new tab"
+            >
+              View product page ↗
+            </a>
           </div>
 
           <div className="grid sm:grid-cols-[120px_1fr_220px] gap-4">
