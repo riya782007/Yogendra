@@ -37,6 +37,7 @@ export async function posSaleAction(input: {
   customer: { name?: string; phone?: string };
   payment: string;
   billType?: "gst" | "cash";
+  gstMode?: "exclusive" | "inclusive"; // exclusive = GST added on top; inclusive = price already contains GST
   buyerGstin?: string;
   buyerAddress?: string;
   amountPaidRupees?: number; // partial/advance; defaults to full
@@ -124,7 +125,12 @@ export async function posSaleAction(input: {
   // what the customer actually hands over) — otherwise a full cash payment leaves a paise-level
   // phantom balance. This is the exact number the invoice prints as "Grand Total".
   const GST_RATE = 3;
-  const grandRawPaise = billType === "gst" ? (total as number) + Math.round(((total as number) * GST_RATE) / 100) : (total as number);
+  const gstMode = input.gstMode === "inclusive" ? "inclusive" : "exclusive";
+  // Exclusive: customer pays total + GST. Inclusive: the price already includes GST, so the grand
+  // total IS `total` (the tax is the portion inside it). Round to the nearest ₹1 (matches the invoice).
+  const grandRawPaise = billType !== "gst" ? (total as number)
+    : gstMode === "inclusive" ? (total as number)
+    : (total as number) + Math.round(((total as number) * GST_RATE) / 100);
   const grandTotalPaise = Math.round(grandRawPaise / 100) * 100;
 
   // Upsert into the customer directory (by phone) and link the order to it.
@@ -191,6 +197,7 @@ export async function posSaleAction(input: {
 
   await sb.from("orders").update({
     bill_type: billType,
+    gst_mode: billType === "gst" ? gstMode : null,
     buyer_gstin: input.buyerGstin?.trim() || null,
     buyer_address: input.buyerAddress?.trim() || null,
     buyer_state: buyerState,

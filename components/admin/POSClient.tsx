@@ -46,6 +46,8 @@ export function POSClient({ products, customers = [], methods = [], employees = 
   }
   const [custPanel, setCustPanel] = useState(false);
   const [billType, setBillType] = useState<"gst" | "cash">("gst");
+  // Exclusive = GST added on top of the price; Inclusive = the shown price already contains GST.
+  const [gstMode, setGstMode] = useState<"exclusive" | "inclusive">("exclusive");
   const [gstin, setGstin] = useState("");
   const [addr, setAddr] = useState("");
   const [globalDisc, setGlobalDisc] = useState("");
@@ -109,8 +111,13 @@ export function POSClient({ products, customers = [], methods = [], employees = 
   const discountTotal = Math.max(0, mrpTotal - itemsTotal);
   const total = itemsTotal + chargesTotal;
   const GST_RATE = 3;
-  const gstOnBill = billType === "gst" ? Math.round((total * GST_RATE) / 100) : 0;
-  const grandTotal = total + gstOnBill;
+  const isGst = billType === "gst";
+  // Exclusive: GST added ON TOP of `total`. Inclusive: `total` already contains GST, so the tax is
+  // the portion inside it (total − total/1.03) and the customer pays exactly `total`.
+  const gstOnBill = !isGst ? 0
+    : gstMode === "inclusive" ? (total - Math.round(total / (1 + GST_RATE / 100)))
+    : Math.round((total * GST_RATE) / 100);
+  const grandTotal = isGst && gstMode === "inclusive" ? total : total + gstOnBill;
   const received = payLines.reduce((s, l) => s + (Number(l.amount) || 0) * 100, 0);
   const remaining = grandTotal - received;
   const addPayLine = () => setPayLines((p) => [...p, { methodId: methods[0]?.id ?? "", amount: "" }]);
@@ -154,7 +161,7 @@ export function POSClient({ products, customers = [], methods = [], employees = 
         return { sku: l.sku, qty: l.qty };
       }),
       customer: cust, payment: "cash",
-      billType, buyerGstin: billType === "gst" ? gstin : "", buyerAddress: addr,
+      billType, gstMode: billType === "gst" ? gstMode : undefined, buyerGstin: billType === "gst" ? gstin : "", buyerAddress: addr,
       ...(validPays.length ? { payments: validPays } : {}),
       allowOversell: allowBackorder, tier: custType, salesEmployeeId: salesEmp || undefined,
       backorder: allowBackorder && lines.some((l) => l.qty > l.stock),
@@ -190,6 +197,17 @@ export function POSClient({ products, customers = [], methods = [], employees = 
             <button key={v} onClick={() => setBillType(v)} className={`px-3 py-2 transition-colors ${billType === v ? "bg-ink text-white" : "text-muted hover:bg-cream"}`}>{label}</button>
           ))}
         </div>
+        {/* GST exclusive/inclusive — only relevant on a tax invoice. */}
+        {billType === "gst" && (
+          <div className="inline-flex items-center gap-1.5 shrink-0">
+            <span className="text-[11px] text-muted">GST</span>
+            <div className="inline-flex rounded-lg border border-sand overflow-hidden text-xs">
+              {([["exclusive", "Exclusive (add on top)"], ["inclusive", "Inclusive (in price)"]] as const).map(([v, label]) => (
+                <button key={v} onClick={() => setGstMode(v)} className={`px-2.5 py-2 transition-colors ${gstMode === v ? "bg-emerald text-white" : "text-muted hover:bg-cream"}`}>{label}</button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Unified product search + scan (F3, autofocus) */}
         <div className="relative flex-1 min-w-[220px]">
@@ -378,7 +396,7 @@ export function POSClient({ products, customers = [], methods = [], employees = 
           {discountTotal > 0 && <div className="flex justify-between text-sm"><span className="text-muted">Discount</span><span className="text-emerald-dark">− {formatPaise(discountTotal)}</span></div>}
           <div className="flex justify-between text-sm"><span className="text-muted">Net (items)</span><span className="text-ink/80">{formatPaise(itemsTotal)}</span></div>
           {chargesTotal !== 0 && <div className="flex justify-between text-sm"><span className="text-muted">Other charges</span><span className="text-ink/80">{chargesTotal > 0 ? "+ " : ""}{formatPaise(chargesTotal)}</span></div>}
-          {gstOnBill > 0 && <div className="flex justify-between text-sm"><span className="text-muted">GST @{GST_RATE}%</span><span className="text-ink/80">+ {formatPaise(gstOnBill)}</span></div>}
+          {gstOnBill > 0 && <div className="flex justify-between text-sm"><span className="text-muted">GST @{GST_RATE}%{isGst && gstMode === "inclusive" ? " (incl.)" : ""}</span><span className="text-ink/80">{isGst && gstMode === "inclusive" ? "" : "+ "}{formatPaise(gstOnBill)}</span></div>}
           <div className="flex justify-between items-baseline pt-1.5 border-t border-sand/60"><span className="text-muted">Payable</span><span className="text-2xl font-semibold text-ink">{formatPaise(grandTotal)}</span></div>
 
           {/* Payment (F4) */}
