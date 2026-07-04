@@ -164,7 +164,15 @@ export function ProductEditor({
           </div>
           <div>
             <label className={label}>Stock quantity</label>
-            <input name="qty" type="number" min={0} step="1" defaultValue={product.qty} className={field} />
+            {product.type === "configurable" ? (
+              <>
+                <input name="qty" type="number" value={product.qty} readOnly tabIndex={-1}
+                  className={`${field} bg-cream/60 text-muted cursor-not-allowed`} />
+                <p className="text-[11px] text-muted mt-1">Total across all colours. Edit each colour&apos;s stock on the <b>Variants</b> tab — this updates automatically.</p>
+              </>
+            ) : (
+              <input name="qty" type="number" min={0} step="1" defaultValue={product.qty} className={field} />
+            )}
           </div>
         </div>
 

@@ -120,8 +120,12 @@ export async function posSaleAction(input: {
   // A GST tax invoice is exclusive → the customer pays total + GST. Cap/allow the recorded payment
   // up to this GRAND total (not the pre-tax total), so a fully-paid GST bill records the tax-
   // inclusive amount and the printed invoice shows no phantom balance for the tax.
+  // Round to the nearest ₹1 to MATCH the invoice's Grand Total (which shows a round-off line and is
+  // what the customer actually hands over) — otherwise a full cash payment leaves a paise-level
+  // phantom balance. This is the exact number the invoice prints as "Grand Total".
   const GST_RATE = 3;
-  const grandTotalPaise = billType === "gst" ? (total as number) + Math.round(((total as number) * GST_RATE) / 100) : (total as number);
+  const grandRawPaise = billType === "gst" ? (total as number) + Math.round(((total as number) * GST_RATE) / 100) : (total as number);
+  const grandTotalPaise = Math.round(grandRawPaise / 100) * 100;
 
   // Upsert into the customer directory (by phone) and link the order to it.
   let customerId: string | null = null;

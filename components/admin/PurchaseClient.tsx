@@ -136,7 +136,7 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
               })()}
             </div>
             <div className="col-span-2 flex items-center justify-end gap-2 pt-2 text-sm">
-              <span>{formatPaise((Number(l.qty) || 0) * (Number(l.cost) || 0) * 100)}</span>
+              <span className="sensitive">{formatPaise((Number(l.qty) || 0) * (Number(l.cost) || 0) * 100)}</span>
               <button type="button" onClick={() => setLines((p) => (p.length > 1 ? p.filter((_, idx) => idx !== i) : p))}
                 title="Remove this line" className="text-muted hover:text-rose leading-none shrink-0">✕</button>
             </div>
@@ -149,7 +149,7 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
           or none). Whatever is left unpaid is registered as credit owed to the supplier. */}
       <div className="mt-5 border-t border-sand pt-4">
         <div className="flex flex-wrap items-center gap-3 mb-2">
-          <span className="text-lg font-semibold text-ink">Total: {formatPaise(total * 100)}</span>
+          <span className="text-lg font-semibold text-ink">Total: <span className="sensitive">{formatPaise(total * 100)}</span></span>
           <span className="text-[11px] text-muted ml-auto">Split the payment across methods — anything left over stays on credit.</span>
         </div>
         <div className="grid sm:grid-cols-3 gap-3">

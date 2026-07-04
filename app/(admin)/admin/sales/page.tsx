@@ -26,9 +26,16 @@ export default async function SalesRecords({ searchParams }: { searchParams: { p
   const to = searchParams.to ?? "";
   const sort = searchParams.sort ?? "";
   const session = getSession();
-  const gstOnly = can(session, "billing.gst_only"); // GST Officer — restrict to GST tax invoices
+  // `billing.gst_only` is a RESTRICTION for the GST-Officer role — it must never apply to the owner
+  // (whose "*" wildcard would otherwise match it and hide their own cash memos & estimates).
+  const gstOnly = !session.isOwner && session.permissions !== "*" && can(session, "billing.gst_only");
   const { rows, total } = await getOrdersPage({ page, pageSize: PAGE_SIZE, q, channel, from: from || undefined, to: to ? to + "T23:59:59" : undefined, sort, billType: gstOnly ? "gst" : undefined });
-  const pageSum = rows.reduce((s: number, r: any) => s + (r.total ?? 0), 0);
+  // Show sales WITH and WITHOUT tax together. `total` is the taxable value (pre-GST); a GST bill's
+  // grand total adds 3% GST rounded to the nearest ₹1 (matches the invoice); a cash memo has no tax.
+  const withoutTax = (r: any) => r.total ?? 0;
+  const withTax = (r: any) => (r.bill_type === "cash" ? (r.total ?? 0) : Math.round(((r.total ?? 0) + Math.round((r.total ?? 0) * 0.03)) / 100) * 100);
+  const pageSumNoTax = rows.reduce((s: number, r: any) => s + withoutTax(r), 0);
+  const pageSumWithTax = rows.reduce((s: number, r: any) => s + withTax(r), 0);
   const sel = "rounded-xl border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-emerald";
 
   // Pillar 1 — sortable register: click a header to sort A–Z / Z–A (toggles on repeat click).
@@ -70,10 +77,11 @@ export default async function SalesRecords({ searchParams }: { searchParams: { p
             <th className="p-3"><Link href={sortHref("date", false)} className={thLink}>Date{arrow("date")}</Link></th>
             <th className="p-3"><Link href={sortHref("name", true)} className={thLink}>Customer{arrow("name")}</Link></th>
             <th className="p-3">Channel</th><th className="p-3">Bill</th><th className="p-3">Status</th>
-            <th className="p-3 text-right"><Link href={sortHref("amount", false)} className={thLink}>Amount{arrow("amount")}</Link></th>
+            <th className="p-3 text-right">Without tax</th>
+            <th className="p-3 text-right"><Link href={sortHref("amount", false)} className={thLink}>With tax{arrow("amount")}</Link></th>
           </tr></thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan={7} className="p-4 text-muted">No sales match these filters.</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={8} className="p-4 text-muted">No sales match these filters.</td></tr>}
             {rows.map((r: any) => (
               <tr key={r.id} className="border-t border-sand/60 hover:bg-cream/40">
                 <td className="p-3"><Link href={`/admin/invoice/${r.id}`} className="text-emerald nav-link font-medium">{r.invoice_no || String(r.id).slice(0, 8).toUpperCase()} ↗</Link>{r.source_tag === "estimate"
@@ -84,11 +92,12 @@ export default async function SalesRecords({ searchParams }: { searchParams: { p
                 <td className="p-3"><span className={`px-2 py-0.5 rounded-full text-xs capitalize ${CH_STYLE[r.channel] ?? "bg-cream text-muted"}`}>{r.channel}</span></td>
                 <td className="p-3 text-xs uppercase text-muted">{r.bill_type === "cash" ? "Cash memo" : "GST"}</td>
                 <td className="p-3">{(() => { const paid = r.amount_paid ?? 0; const st = paid <= 0 ? "Unpaid" : paid >= r.total ? "Paid" : "Partial"; const cls: Record<string, string> = { Paid: "bg-emerald-mist text-emerald-dark", Partial: "bg-gold/15 text-gold-dark", Unpaid: "bg-rose/10 text-rose" }; return <span className={`px-2 py-0.5 rounded-full text-xs ${cls[st]}`}>{st}</span>; })()}</td>
-                <td className="p-3 text-right font-medium">{formatPaise(r.total)}</td>
+                <td className="p-3 text-right text-muted tabular-nums"><span className="sensitive">{formatPaise(withoutTax(r))}</span></td>
+                <td className="p-3 text-right font-medium tabular-nums"><span className="sensitive">{formatPaise(withTax(r))}</span>{r.bill_type !== "cash" && withTax(r) !== withoutTax(r) && <span className="block text-[10px] text-muted font-normal">incl. GST</span>}</td>
               </tr>
             ))}
           </tbody>
-          {rows.length > 0 && <tfoot><tr className="border-t border-sand bg-cream/40"><td colSpan={6} className="p-3 text-right text-muted">This page</td><td className="p-3 text-right font-semibold text-ink">{formatPaise(pageSum)}</td></tr></tfoot>}
+          {rows.length > 0 && <tfoot><tr className="border-t border-sand bg-cream/40"><td colSpan={6} className="p-3 text-right text-muted">This page</td><td className="p-3 text-right font-semibold text-muted tabular-nums"><span className="sensitive">{formatPaise(pageSumNoTax)}</span></td><td className="p-3 text-right font-semibold text-ink tabular-nums"><span className="sensitive">{formatPaise(pageSumWithTax)}</span></td></tr></tfoot>}
         </table>
       </div>
       <Pager basePath="/admin/sales" params={{ q, channel, from, to, sort }} page={page} pageSize={PAGE_SIZE} total={total} />

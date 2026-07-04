@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   getProductBySku, getCategories, getPricingFormula, getSubcategories, getStyles,
   getProductSalesStats, getStockHistory, getProductEstimateReservations, getVariantOptions, getLabels, getColorCodeMap,
+  getLastPurchaseCosts,
 } from "@/lib/supabase/queries";
 import { ProductEditor, type EditorProduct } from "@/components/admin/ProductEditor";
 import { ProductWorkspace, type WorkspaceTab, type TabKey } from "@/components/admin/ProductWorkspace";
@@ -54,6 +55,10 @@ export default async function ProductPage({ params, searchParams }: { params: { 
     getColorCodeMap().catch(() => ({} as Record<string, string>)),
     getProductEstimateReservations(p.id).catch(() => []),
   ]);
+  // Last price this piece was actually bought at (display-only, for the owner's margin reference).
+  const lastCosts = await getLastPurchaseCosts().catch(() => ({ byProduct: {}, byVariant: {} }));
+  const lastCostPaise: number | undefined = (lastCosts.byProduct?.[p.id])
+    ?? (p.variants ?? []).map((v: any) => lastCosts.byVariant?.[v.id]).find((c: number | undefined) => typeof c === "number");
   const labelIds = new Set((((p as any).product_labels as any[]) ?? []).map((x) => x.label_id));
 
   const session = getSession();
@@ -87,7 +92,9 @@ export default async function ProductPage({ params, searchParams }: { params: { 
       .map((l) => l.name)
       .join(", "),
     basePriceRupees: Math.round((p.base_wholesale ?? 0) / 100),
-    qty: p.qty ?? 0,
+    // Configurable products carry their stock on the variants — show the live sum, not the (possibly
+    // stale) product-row qty, so the read-only Basic-tab total always matches the Variants tab.
+    qty: p.type === "configurable" ? variantStock : (p.qty ?? 0),
     title: gc.title ?? p.name,
     description: gc.description ?? "",
     tags: tags.join("\n"),
@@ -132,6 +139,13 @@ export default async function ProductPage({ params, searchParams }: { params: { 
           <div className="rounded-xl bg-cream/60 p-4"><p className="text-xs uppercase tracking-wide text-muted">Wholesale {prodOv.wholesale ? "· custom" : ""}</p><p className="text-2xl font-semibold text-ink mt-1">{formatPaise(effective.wholesaleRate)}</p><p className="text-[11px] text-muted">what retailers pay</p></div>
           <div className="rounded-xl bg-emerald-mist/50 p-4"><p className="text-xs uppercase tracking-wide text-muted">Retail {prodOv.retail ? "· custom" : ""}</p><p className="text-2xl font-semibold text-emerald-dark mt-1">{formatPaise(effective.retailPrice)}</p><p className="text-[11px] text-muted">shop selling price</p></div>
           <div className="rounded-xl bg-gold/10 p-4"><p className="text-xs uppercase tracking-wide text-muted">MRP {prodOv.mrp ? "· custom" : ""}</p><p className="text-2xl font-semibold text-gold-dark mt-1">{formatPaise(effective.mrp)}</p><p className="text-[11px] text-muted">printed price</p></div>
+        </div>
+        {/* Last purchase cost — display only, so the owner can see margin at a glance. */}
+        <div className="mt-3 flex items-center gap-2 rounded-xl bg-ink/5 px-4 py-2.5 text-sm">
+          <span className="text-xs uppercase tracking-wide text-muted">Last purchase cost</span>
+          {typeof lastCostPaise === "number"
+            ? <><span className="font-semibold text-ink">{formatPaise(lastCostPaise)}</span><span className="text-[11px] text-muted">what you last bought this at</span></>
+            : <span className="text-muted">No purchase recorded yet — record one under Purchases.</span>}
         </div>
       </div>
 

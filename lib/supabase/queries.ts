@@ -320,14 +320,19 @@ export async function getEmployeePerformance(range?: { from?: string; to?: strin
  *  customer_id. Powers promotional targeting on the Customers page (who hit / is near a target). */
 export async function getCustomerSpend(range?: { from?: string; to?: string }): Promise<Map<string, { spend: number; orders: number; last: string | null }>> {
   const sb = supabaseServer();
-  let q = sb.from("orders").select("customer_id,total,created_at").not("customer_id", "is", null);
+  // Count EVERY bill the customer took — cash memos AND GST invoices — at the amount they actually
+  // spent (the GST-inclusive grand total, matching the ledger and the printed bill). GST bills store
+  // `total` pre-tax, so add the 3% GST rounded to ₹1; cash memos have no tax.
+  let q = sb.from("orders").select("customer_id,total,bill_type,created_at").not("customer_id", "is", null);
   if (range?.from) q = q.gte("created_at", range.from);
   if (range?.to) q = q.lte("created_at", range.to);
   const { data } = await q;
   const m = new Map<string, { spend: number; orders: number; last: string | null }>();
   for (const o of ((data as any[]) ?? [])) {
+    const t = o.total ?? 0;
+    const grand = o.bill_type === "cash" ? t : Math.round((t + Math.round(t * 0.03)) / 100) * 100;
     const cur = m.get(o.customer_id) ?? { spend: 0, orders: 0, last: null as string | null };
-    cur.spend += (o.total ?? 0); cur.orders += 1;
+    cur.spend += grand; cur.orders += 1;
     if (!cur.last || o.created_at > cur.last) cur.last = o.created_at;
     m.set(o.customer_id, cur);
   }
@@ -1572,12 +1577,14 @@ export async function getActivityLog(limit = 60) {
 // ---------- CRM + abandoned carts + SEO ----------
 export async function getCustomers() {
   const sb = supabaseServer();
-  const { data } = await sb.from("orders").select("customer_name,customer_phone,total,created_at");
+  const { data } = await sb.from("orders").select("customer_name,customer_phone,total,bill_type,created_at");
   const map = new Map<string, { name: string; phone: string | null; orders: number; spent: number; last: string }>();
   for (const o of (data as any[]) ?? []) {
     const name = (o.customer_name ?? "").trim(); if (!name) continue;
+    const t = o.total ?? 0;
+    const grand = o.bill_type === "cash" ? t : Math.round((t + Math.round(t * 0.03)) / 100) * 100; // amount actually spent (incl. GST)
     const c = map.get(name) ?? { name, phone: o.customer_phone ?? null, orders: 0, spent: 0, last: o.created_at };
-    c.orders++; c.spent += o.total ?? 0; if (o.created_at > c.last) c.last = o.created_at; if (!c.phone) c.phone = o.customer_phone ?? null;
+    c.orders++; c.spent += grand; if (o.created_at > c.last) c.last = o.created_at; if (!c.phone) c.phone = o.customer_phone ?? null;
     map.set(name, c);
   }
   return [...map.values()].sort((a, b) => b.spent - a.spent);
