@@ -162,9 +162,20 @@ export async function refineGenerationAction(input: {
   if (hasMarker) images.push({ base64: input.markedBase64!, mime: input.markedMime ?? "image/png" });
   const outImg = await fetchAsBase64(gen.output_path);
   if (outImg) images.push({ base64: outImg.base64, mime: outImg.mime });
+
+  // The fix must reproduce the UPLOADED photo's true details. Use this generation's own reference,
+  // and if it doesn't carry one (older rows), fall back to the product's current raw upload
+  // (kind 'source'/'flatlay') — the exact photo the owner uploaded — so the correction is always
+  // anchored to the real piece, never guessed from the generated image alone.
   let hasReference = false;
-  if (gen.raw_image_path) {
-    const ref = await fetchAsBase64(gen.raw_image_path);
+  let refUrl: string | null = gen.raw_image_path ?? null;
+  if (!refUrl) {
+    const { data: imgs } = await sb.from("product_images").select("path,kind").eq("product_id", gen.product_id);
+    const all = ((imgs as any[]) ?? []).filter((i) => typeof i.path === "string" && i.path.startsWith("http"));
+    refUrl = (all.find((i) => i.kind === "source" || i.kind === "flatlay") ?? all.find((i) => i.kind === "source"))?.path ?? null;
+  }
+  if (refUrl) {
+    const ref = await fetchAsBase64(refUrl);
     if (ref) { images.push({ base64: ref.base64, mime: ref.mime }); hasReference = true; }
   }
   if (!images.length) return { ok: false, reason: "no_source" };

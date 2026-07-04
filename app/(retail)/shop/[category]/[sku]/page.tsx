@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getProductBySku, getPricingFormula, getProductReviews, getRecommendations } from "@/lib/supabase/queries";
+import { getProductBySku, getPricingFormula, getProductReviews, getRecommendations, isStorefrontImage } from "@/lib/supabase/queries";
 import { resolveProductContent } from "@/lib/content";
 import { liveOffer } from "@/lib/offers";
 import { formatPaise, resolvePrices, overridesOf } from "@/lib/pricing";
@@ -48,9 +48,10 @@ export default async function ProductPage({ params }: Params) {
     const label = [v.color, v.size, v.polish].filter(Boolean).join(" · ") || v.sku;
     return { sku: v.sku, label, image: (v.image_paths?.[0] ?? null) as string | null, price: vo.price, qty: v.qty ?? 0 };
   });
-  // Gallery shows product photos + every variant photo, all zoomable.
+  // Gallery shows AI-generated product photos + every variant photo, all zoomable. The raw upload
+  // (kind 'source'/'flatlay') is kept for the Fix-a-detail editor but never shown to customers.
   const galleryImages = [
-    ...((p.images ?? []) as any[]),
+    ...((p.images ?? []) as any[]).filter((i: any) => isStorefrontImage(i.kind)),
     ...((p.variants ?? []) as any[]).flatMap((v: any) => (((v.image_paths ?? []) as string[]) || []).map((path) => ({ path, kind: v.color }))),
   ];
   const waText = `Please place an order for ${p.name} (SKU:${p.sku})`;

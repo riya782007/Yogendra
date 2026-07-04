@@ -15,6 +15,17 @@ function escLike(s: string): string {
 export type DbCategory = { id: string; name: string; slug: string };
 export type DbVariant = { id: string; color: string | null; sku: string; qty: number; image_paths: string[]; size?: string | null; polish?: string | null; wholesale_override?: number | null; retail_override?: number | null; mrp_override?: number | null };
 export type DbImage = { id: string; path: string; kind: string | null; sort: number };
+
+/**
+ * The storefront must show ONLY AI-generated images, never the owner's raw upload. Raw photos are
+ * stored with kind 'source'/'flatlay' and are kept (the "Fix a detail" editor needs them as the
+ * true-design reference), so every customer-facing image read filters them out through this guard.
+ * Generated images (kind 'model','angle','hero', branded, or legacy null) always pass.
+ */
+const STOREFRONT_HIDDEN_IMAGE_KINDS = new Set(["source", "flatlay"]);
+export function isStorefrontImage(kind?: string | null): boolean {
+  return !STOREFRONT_HIDDEN_IMAGE_KINDS.has((kind ?? "").toLowerCase());
+}
 export type DbProduct = {
   id: string; category_id: string; sku: string; name: string;
   type: "simple" | "configurable"; base_wholesale: number; qty: number;
@@ -240,7 +251,7 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
     const ov = overridesOf(p);
     const o = _liveOffer(p.base_wholesale, formula, ov);
     const set = _resolvePrices(p.base_wholesale, formula, ov);
-    const imgs = (p.images ?? []).filter((i: any) => typeof i.path === "string" && i.path.startsWith("http")).sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0));
+    const imgs = (p.images ?? []).filter((i: any) => typeof i.path === "string" && i.path.startsWith("http") && isStorefrontImage(i.kind)).sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0));
     const seo = (p.generated_content as any)?.seo ?? {};
     // Labels come through the join as product_labels[{ label_id, labels: { name } }]; flatten to names.
     const labelNames = ((p.product_labels ?? []) as any[])
@@ -1270,7 +1281,7 @@ export async function getStorefront(
   const [{ data: prods }, { data: revs }, { data: pimgs }, { data: vimgs }, formula] = await Promise.all([
     pq,
     sb.from("reviews").select("product_id, rating"),
-    sb.from("product_images").select("product_id, path, sort").order("sort", { ascending: true }),
+    sb.from("product_images").select("product_id, path, sort, kind").order("sort", { ascending: true }),
     sb.from("variants").select("product_id, image_paths"),
     getPricingFormula(),
   ]);
@@ -1283,6 +1294,7 @@ export async function getStorefront(
   const imgByProduct = new Map<string, string>();
   for (const r of (pimgs as any[]) ?? []) {
     if (!r.path || !String(r.path).startsWith("http")) continue;
+    if (!isStorefrontImage(r.kind)) continue; // hide the raw upload — only AI-generated images on the shop
     if (!imgByProduct.has(r.product_id)) imgByProduct.set(r.product_id, r.path);
   }
   for (const v of (vimgs as any[]) ?? []) {
