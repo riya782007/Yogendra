@@ -1,7 +1,8 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
-import { getStorefront, getFeaturedReviews, getShoppableReels } from "@/lib/supabase/queries";
+import { getStorefront, getFeaturedReviews, getShoppableReels, getActivePromotions } from "@/lib/supabase/queries";
 import { ProductCard } from "@/components/site/ProductCard";
+import { PromoHero } from "@/components/site/PromoHero";
 import { ProductImage } from "@/components/Placeholder";
 import { TrustBar } from "@/components/site/TrustBar";
 import { Reveal } from "@/components/site/Reveal";
@@ -14,13 +15,16 @@ export const metadata = {
 };
 
 export default async function Shop() {
-  const [{ products, formula }, reviews, reels] = await Promise.all([getStorefront(), getFeaturedReviews(), getShoppableReels()]);
+  const [{ products, formula }, reviews, reels, promos] = await Promise.all([getStorefront(), getFeaturedReviews(), getShoppableReels(), getActivePromotions("retail")]);
   const cats = Array.from(new Map(products.map((p) => [p.category.slug, p.category])).values());
   const bestsellers = [...products].sort((a, b) => b.reviews - a.reviews).slice(0, 8);
   const trending = products.slice(0, 8);
 
   return (
     <>
+      {/* AI promotional poster (festive offers) — auto-placed when the owner publishes a campaign. */}
+      <PromoHero promos={promos} />
+
       {/* HERO */}
       <section className="relative overflow-hidden bg-gradient-to-b from-cream to-ivory">
         <div className="max-w-7xl mx-auto px-5 py-14 md:py-20 grid md:grid-cols-2 gap-10 items-center">

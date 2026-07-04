@@ -1277,6 +1277,28 @@ export type StoreProduct = DbProduct & {
   category: DbCategory; rating: number; reviews: number; isNew: boolean; image?: string | null;
 };
 
+// ---------- promotional posters / festive campaigns (0036) ----------
+export type Promotion = { id: string; title: string | null; image_path: string; cta_href: string | null; aspect: string | null; category?: { slug?: string; name?: string } | null };
+
+/** Published promo posters for a storefront scope, newest first. */
+export async function getActivePromotions(scope: "retail" | "wholesale"): Promise<Promotion[]> {
+  const sb = supabaseServer();
+  let q = sb.from("promotions")
+    .select("id,title,image_path,cta_href,aspect, category:categories(slug,name)")
+    .eq("status", "published")
+    .order("created_at", { ascending: false });
+  q = scope === "retail" ? q.eq("show_retail", true) : q.eq("show_wholesale", true);
+  const { data } = await q;
+  return ((data as any[]) ?? []).filter((p) => typeof p.image_path === "string" && p.image_path.startsWith("http")) as Promotion[];
+}
+
+/** Admin: every campaign for the promotions page. */
+export async function getPromotionsAdmin() {
+  const sb = supabaseServer();
+  const { data } = await sb.from("promotions").select("*, category:categories(slug,name)").order("created_at", { ascending: false }).limit(60);
+  return ((data as any[]) ?? []);
+}
+
 export async function getStorefront(
   opts: { includeDrafts?: boolean; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean } = {},
 ): Promise<{ products: StoreProduct[]; formula: PF }> {

@@ -1,8 +1,9 @@
 export const dynamic = "force-dynamic";
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { getStorefront, getWholesaleOrderHistory, getCategories } from "@/lib/supabase/queries";
+import { getStorefront, getWholesaleOrderHistory, getCategories, getActivePromotions } from "@/lib/supabase/queries";
 import { supabaseServer } from "@/lib/supabase/server";
+import { PromoHero } from "@/components/site/PromoHero";
 import { resolvePrices, overridesOf } from "@/lib/pricing";
 import { getWholesaleSession } from "@/lib/wholesale";
 import { WholesaleCatalog } from "@/components/site/WholesaleCatalog";
@@ -40,9 +41,11 @@ export default async function TradeDashboard() {
   });
   const history = await getWholesaleOrderHistory(session.id).catch(() => []);
   const categories = (await getCategories()).map((c) => ({ id: c.id, name: c.name }));
+  const promos = await getActivePromotions("wholesale").catch(() => []);
 
   return (
     <div className="max-w-7xl mx-auto px-5 py-8">
+      {promos.length > 0 && <div className="rounded-2xl overflow-hidden mb-6 shadow-card"><PromoHero promos={promos} /></div>}
       <h1 className="font-display text-4xl text-ink mb-1">Dealer Dashboard</h1>
       <p className="text-sm text-muted mb-6">Factory-direct trade rates. Enter quantities and place your order — ₹{minRupees} minimum. Your margin vs MRP is shown on every line.</p>
       <WholesaleCatalog products={list} customerName={session.name} minOrder={minOrder} history={history} />
