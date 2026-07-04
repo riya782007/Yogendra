@@ -108,3 +108,50 @@ export async function placeWholesaleOrderAction(
   revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard");
   return { ok: true, orderId, total };
 }
+
+/**
+ * RFQ — a dealer requests a quote for a bulk / custom order (quantities, designs, budget, timeline).
+ * We store it and WhatsApp the owner so he can reply with a price. Best-effort notify never blocks.
+ */
+export async function requestQuoteAction(details: string): Promise<{ ok: boolean; error?: string }> {
+  const sess = await getWholesaleSession();
+  if (!sess) return { ok: false, error: "Please log in as an approved wholesale customer." };
+  const body = (details ?? "").trim();
+  if (body.length < 5) return { ok: false, error: "Please add a few details about what you need." };
+  const sb = supabaseServer();
+  const { data: cust } = await sb.from("customers").select("name,phone").eq("id", sess.id).maybeSingle();
+  const dealerName = (sess as any).name || (cust as any)?.name || "Dealer";
+  const dealerPhone = (cust as any)?.phone ?? null;
+
+  const { error } = await sb.from("wholesale_quote_requests").insert({
+    customer_id: sess.id, dealer_name: dealerName, dealer_phone: dealerPhone, details: body.slice(0, 2000),
+  });
+  if (error) return { ok: false, error: error.message };
+
+  try {
+    const owner = process.env.OWNER_WHATSAPP_NUMBER;
+    if (owner) {
+      const lines = [
+        `📝 New QUOTE REQUEST (wholesale)`,
+        `Dealer: ${dealerName}${dealerPhone ? ` · ${dealerPhone}` : ""}`,
+        ``,
+        body.slice(0, 600),
+        ``,
+        `Reply to the dealer with your best trade price.`,
+      ];
+      await sendWhatsAppText(owner, lines.join("\n"));
+    }
+  } catch (e) { console.warn("[wholesale] rfq notify failed:", (e as any)?.message); }
+
+  return { ok: true };
+}
+
+/** Owner: mark a quote request open/closed. */
+export async function setQuoteStatusAction(formData: FormData) {
+  if (!(await requirePerm("customers.manage"))) return;
+  const id = String(formData.get("id") ?? "");
+  const status = String(formData.get("status") ?? "closed") === "open" ? "open" : "closed";
+  if (!id) return;
+  await supabaseServer().from("wholesale_quote_requests").update({ status }).eq("id", id);
+  revalidatePath("/admin/quotes");
+}

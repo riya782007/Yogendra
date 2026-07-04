@@ -632,12 +632,26 @@ export async function getLastPurchaseCosts(): Promise<{ byProduct: Record<string
 export async function getWholesaleOrderHistory(customerId: string) {
   const sb = supabaseServer();
   const { data: orders } = await sb.from("orders")
-    .select("id,total,created_at,invoice_no, order_items(qty, product:products(sku,name))")
+    .select("id,total,amount_paid,status,payment_ref,created_at,invoice_no, order_items(qty, product:products(sku,name))")
     .eq("customer_id", customerId).eq("channel", "wholesale")
     .order("created_at", { ascending: false }).limit(20);
   return ((orders as any[]) ?? []).map((o) => ({
-    id: o.id as string, total: (o.total ?? 0) as number, created_at: o.created_at as string, invoice_no: (o.invoice_no ?? null) as string | null,
+    id: o.id as string, total: (o.total ?? 0) as number, amountPaid: (o.amount_paid ?? 0) as number,
+    status: (o.status ?? "placed") as string, paymentRef: (o.payment_ref ?? null) as string | null,
+    created_at: o.created_at as string, invoice_no: (o.invoice_no ?? null) as string | null,
     items: ((o.order_items as any[]) ?? []).map((it) => ({ sku: it.product?.sku as string, name: it.product?.name as string, qty: it.qty as number })).filter((x) => x.sku),
+  }));
+}
+
+/** Wholesale RFQs — dealer quote requests for the owner to price (newest first). */
+export async function getWholesaleQuoteRequests() {
+  const sb = supabaseServer();
+  const { data } = await sb.from("wholesale_quote_requests")
+    .select("id,dealer_name,dealer_phone,details,status,created_at")
+    .order("created_at", { ascending: false }).limit(200);
+  return ((data as any[]) ?? []).map((r) => ({
+    id: r.id as string, dealerName: (r.dealer_name ?? "Dealer") as string, dealerPhone: (r.dealer_phone ?? null) as string | null,
+    details: (r.details ?? "") as string, status: (r.status ?? "open") as string, created_at: r.created_at as string,
   }));
 }
 

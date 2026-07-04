@@ -62,6 +62,8 @@ export default async function TradeDashboard() {
   const payInfo = upi ? { payeeName: (upi.name as string) ?? "Blythe Diva", upiId: (upi.upi_id as string) ?? null, qrUrl: (upi.qr_code_url as string) ?? null } : null;
 
   const history = await getWholesaleOrderHistory(session.id).catch(() => []);
+  // What this dealer still owes across their recent wholesale orders (transparency + gentle nudge).
+  const outstanding = (history as any[]).reduce((s, h) => s + Math.max(0, (h.total ?? 0) - (h.amountPaid ?? 0)), 0);
   const categories = (await getCategories()).map((c) => ({ id: c.id, name: c.name }));
   const promos = await getActivePromotions("wholesale").catch(() => []);
 
@@ -70,7 +72,7 @@ export default async function TradeDashboard() {
       {promos.length > 0 && <div className="rounded-2xl overflow-hidden mb-6 shadow-card"><PromoHero promos={promos} /></div>}
       <h1 className="font-display text-4xl text-ink mb-1">Dealer Dashboard</h1>
       <p className="text-sm text-muted mb-6">Factory-direct trade rates. Enter quantities and place your order — ₹{minRupees} minimum. Your margin vs MRP is shown on every line.</p>
-      <WholesaleCatalog products={list} customerName={session.name} minOrder={minOrder} history={history} payInfo={payInfo} />
+      <WholesaleCatalog products={list} customerName={session.name} minOrder={minOrder} history={history} payInfo={payInfo} outstanding={outstanding} />
 
       {/* Trade partners can offer their own designs for us to stock. */}
       <section className="mt-12 border-t border-sand pt-8">

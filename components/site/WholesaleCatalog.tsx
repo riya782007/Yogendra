@@ -3,15 +3,15 @@ import { useState, useMemo } from "react";
 import { formatPaise } from "@/lib/pricing";
 import { ProductImage } from "@/components/Placeholder";
 import { QtyField } from "@/components/admin/QtyField";
-import { placeWholesaleOrderAction, wholesaleLogoutAction } from "@/app/actions/wholesale";
+import { placeWholesaleOrderAction, wholesaleLogoutAction, requestQuoteAction } from "@/app/actions/wholesale";
 
 type P = { sku: string; name: string; category: string; qty: number; price: number; mrp: number; image: string | null; colour?: string | null };
 type HistItem = { sku: string; name: string; qty: number };
-type Hist = { id: string; total: number; created_at: string; invoice_no: string | null; items: HistItem[] };
+type Hist = { id: string; total: number; amountPaid?: number; status?: string; paymentRef?: string | null; created_at: string; invoice_no: string | null; items: HistItem[] };
 type PayInfo = { payeeName: string; upiId: string | null; qrUrl: string | null };
 
-export function WholesaleCatalog({ products, customerName, minOrder = 300000, history = [], payInfo = null }: {
-  products: P[]; customerName: string; minOrder?: number; history?: Hist[]; payInfo?: PayInfo | null;
+export function WholesaleCatalog({ products, customerName, minOrder = 300000, history = [], payInfo = null, outstanding = 0 }: {
+  products: P[]; customerName: string; minOrder?: number; history?: Hist[]; payInfo?: PayInfo | null; outstanding?: number;
 }) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
@@ -28,6 +28,19 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
   const [bulk, setBulk] = useState("");
   const [bulkMsg, setBulkMsg] = useState("");
   const [zoom, setZoom] = useState<{ src: string; name: string } | null>(null);
+  const [rfqOpen, setRfqOpen] = useState(false);   // request-a-quote (bulk/custom)
+  const [rfqText, setRfqText] = useState("");
+  const [rfqBusy, setRfqBusy] = useState(false);
+  const [rfqDone, setRfqDone] = useState(false);
+  const [rfqErr, setRfqErr] = useState("");
+
+  async function submitQuote() {
+    setRfqBusy(true); setRfqErr("");
+    const res = await requestQuoteAction(rfqText.trim());
+    setRfqBusy(false);
+    if (res.ok) { setRfqDone(true); setRfqText(""); }
+    else setRfqErr(res.error ?? "Could not send your request.");
+  }
 
   const bySku = useMemo(() => new Map(products.map((p) => [p.sku.toUpperCase(), p])), [products]);
   const categories = useMemo(() => Array.from(new Set(products.map((p) => p.category).filter(Boolean))).sort(), [products]);
@@ -129,25 +142,43 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
             <button onClick={() => setTab("order")} className={`px-3 py-1 rounded-full ${tab === "order" ? "bg-ink text-white" : "text-muted"}`}>Order</button>
             <button onClick={() => setTab("history")} className={`px-3 py-1 rounded-full ${tab === "history" ? "bg-ink text-white" : "text-muted"}`}>History {history.length ? `(${history.length})` : ""}</button>
           </div>
+          <button onClick={() => { setRfqOpen(true); setRfqDone(false); setRfqErr(""); }} className="text-sm px-3 py-1 rounded-full border border-gold text-gold-dark hover:bg-gold/10">Request a quote</button>
           <form action={wholesaleLogoutAction}><button className="text-sm text-muted hover:text-ink">Sign out</button></form>
         </div>
       </div>
 
+      {/* Outstanding-balance banner: dealers see at a glance what they still owe (B2B transparency). */}
+      {outstanding > 0 && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-gold/40 bg-gold/10 px-4 py-3">
+          <p className="text-sm text-ink">Outstanding balance: <b className="text-gold-dark">{formatPaise(outstanding)}</b> <span className="text-muted">across your recent orders</span></p>
+          <button onClick={() => setTab("history")} className="text-xs text-emerald nav-link">View orders →</button>
+        </div>
+      )}
+
       {tab === "history" ? (
         <div className="space-y-3">
           {history.length === 0 && <p className="text-sm text-muted bg-white rounded-2xl border border-sand p-6 text-center">No past orders yet — place your first below.</p>}
-          {history.map((h) => (
-            <div key={h.id} className="bg-white rounded-2xl border border-sand shadow-card p-5 flex flex-wrap items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="font-medium text-ink">{h.invoice_no || h.id.slice(0, 8).toUpperCase()} <span className="text-xs text-muted">· {new Date(h.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" })}</span></p>
-                <p className="text-sm text-muted truncate">{h.items.map((i) => `${i.name} ×${i.qty}`).join(", ") || "—"}</p>
+          {history.map((h) => {
+            const due = Math.max(0, (h.total ?? 0) - (h.amountPaid ?? 0));
+            const paid = due <= 0 && (h.total ?? 0) > 0;
+            const st = (h.status ?? "placed").toLowerCase();
+            const label = paid ? "Paid" : st === "dispatched" || st === "shipped" ? "Dispatched" : st === "cancelled" ? "Cancelled" : due > 0 ? "Payment pending" : "Placed";
+            const cls = paid ? "bg-emerald-mist text-emerald-dark" : st === "cancelled" ? "bg-rose/10 text-rose" : "bg-gold/15 text-gold-dark";
+            return (
+              <div key={h.id} className="bg-white rounded-2xl border border-sand shadow-card p-5 flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-medium text-ink flex items-center gap-2">{h.invoice_no || h.id.slice(0, 8).toUpperCase()} <span className="text-xs text-muted">· {new Date(h.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" })}</span><span className={`text-[10px] px-2 py-0.5 rounded-full ${cls}`}>{label}</span></p>
+                  <p className="text-sm text-muted truncate">{h.items.map((i) => `${i.name} ×${i.qty}`).join(", ") || "—"}</p>
+                  {h.paymentRef && <p className="text-[11px] text-muted mt-0.5">UPI ref: <span className="font-mono">{h.paymentRef}</span></p>}
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="font-semibold text-ink">{formatPaise(h.total)}</p>
+                  {due > 0 && <p className="text-[11px] text-gold-dark">Due {formatPaise(due)}</p>}
+                  <button onClick={() => reorder(h)} className="text-xs text-emerald nav-link">↻ Reorder these</button>
+                </div>
               </div>
-              <div className="text-right shrink-0">
-                <p className="font-semibold text-ink">{formatPaise(h.total)}</p>
-                <button onClick={() => reorder(h)} className="text-xs text-emerald nav-link">↻ Reorder these</button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <>
@@ -314,6 +345,40 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
               <button onClick={() => !busy && setPaying(false)} className="px-4 py-2.5 rounded-xl bg-ink/5 text-ink text-sm hover:bg-ink/10">Back</button>
             </div>
             <p className="text-[11px] text-muted mt-2 text-center">We verify your payment and dispatch — you'll get a WhatsApp confirmation.</p>
+          </div>
+        </div>
+      )}
+
+      {/* Request-a-quote: bulk / custom orders → stored + WhatsApp to owner for a price. */}
+      {rfqOpen && (
+        <div className="fixed inset-0 z-[90] bg-ink/60 backdrop-blur-sm grid place-items-center p-4" onClick={() => !rfqBusy && setRfqOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-luxe w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+            {rfqDone ? (
+              <div className="text-center py-4">
+                <p className="text-4xl mb-2">✓</p>
+                <h3 className="font-display text-2xl text-ink">Request sent</h3>
+                <p className="text-sm text-muted mt-1">We&apos;ll get back to you on WhatsApp with a trade price shortly.</p>
+                <button onClick={() => setRfqOpen(false)} className="btn-primary px-6 py-2.5 text-sm font-medium mt-4">Done</button>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className="font-display text-2xl text-ink">Request a quote</h3>
+                    <p className="text-xs text-muted">For bulk, mixed-lot or custom orders — tell us what you need.</p>
+                  </div>
+                  <button onClick={() => !rfqBusy && setRfqOpen(false)} className="text-muted hover:text-ink text-lg leading-none">✕</button>
+                </div>
+                <textarea value={rfqText} onChange={(e) => setRfqText(e.target.value)} rows={5}
+                  placeholder={"e.g. 200 pcs mixed jhumkas, gold-tone, need by Diwali — best rate?"}
+                  className="w-full rounded-xl border border-sand px-3 py-2.5 text-sm outline-none focus:border-emerald mt-3" />
+                {rfqErr && <p className="text-sm text-rose mt-2">{rfqErr}</p>}
+                <div className="flex items-center gap-2 mt-3">
+                  <button onClick={submitQuote} disabled={rfqBusy || rfqText.trim().length < 5} className="btn-gold flex-1 py-2.5 text-sm font-medium disabled:opacity-50">{rfqBusy ? "Sending…" : "Send request"}</button>
+                  <button onClick={() => !rfqBusy && setRfqOpen(false)} className="px-4 py-2.5 rounded-xl bg-ink/5 text-ink text-sm hover:bg-ink/10">Cancel</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
