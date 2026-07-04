@@ -36,7 +36,8 @@ function prompt(p: ProductLike) {
     `  2. Then descriptors drawn ONLY from the name + specifications: material (Kundan, Uncut Kundan, Acrylic Kundan, Meenakari, Temple, Polki, Pearl, Moissanite, Turkish Stone, Crystal, Oxidised…), style/length (Semi Long, Long, Double Layer, Layered, Single Line, Choker…), design (Chandbali, Jhumka, Danglers…).`,
     `  3. Then the jewellery TYPE from the category (Necklace Set, Choker Set, Earrings, Ring, Bracelet…). If it ships with extra pieces, use "Set".`,
     `  4. If the specifications list included pieces (earrings, maang tikka, finger ring…), append "with {those pieces}" — e.g. "with Maang Tikka", "with Maang Tikka and Finger Ring".`,
-    `  REAL examples of the required style: "Khyati Layered Kundan Necklace Set with Maang Tikka and Finger Ring", "Ananya Acrylic Kundan Chandbali Hanging Pearls", "Nashvika Double Layer Uncut Kundan Necklace Set", "Tanisha Moissanite Choker Set".`,
+    `  LENGTH: aim for 5-10 words with 2-4 descriptors — rich like BlytheDIVA's live catalogue, not a bare 3-word title.`,
+    `  REAL live BlytheDIVA titles to mirror in style & length: "Dhyani Semi Long Uncut Kundan Necklace Set with Maang Tikka", "Rutvika Double Layer Uncut Kundan Long Necklace Set with Maang Tikka", "Khyati Layered Kundan Necklace Set with Maang Tikka and Finger Ring", "Ananya Acrylic Kundan Chandbali Hanging Pearls", "Gitanjali Turkish Stone Single Line Choker", "Tanisha Moissanite Choker Set", "Rashika Meenakari Chandbali with Hanging Pearls", "Nidhi Kundan Chandbali with Hanging Jhumka", "Priyanshi Crystal Stone Danglers".`,
     `  ABSOLUTELY DO NOT put a SKU, any product code, price, hyphen+code, or the word "BlytheDIVA" in the title. Title Case, under ~70 characters.`,
     ``,
     `REGISTER — read the name + specifications and pick the RIGHT voice:`,
@@ -59,14 +60,16 @@ function prompt(p: ProductLike) {
 }
 
 export function buildGateway() {
+  // OpenAI is the PRIMARY writer (the owner sets OPENAI_API_KEY for high-quality BlytheDIVA titles);
+  // Groq is a free secondary if present; deterministic template is the always-there final hop.
   return new AiGateway({
     primary: {
-      name: "groq",
-      run: async (call: any) => JSON.parse(await groqChat({ system: "Return only valid minified JSON.", user: call._prompt, json: true })),
+      name: "openai",
+      run: async (call: any) => JSON.parse(await openaiChat({ system: "You are BlytheDIVA's product copywriter. Return only valid minified JSON.", user: call._prompt, json: true })),
     },
     secondary: {
-      name: "openai",
-      run: async (call: any) => JSON.parse(await openaiChat({ system: "Return only valid minified JSON.", user: call._prompt, json: true })),
+      name: "groq",
+      run: async (call: any) => JSON.parse(await groqChat({ system: "You are BlytheDIVA's product copywriter. Return only valid minified JSON.", user: call._prompt, json: true })),
     },
     deterministic: (call: any) => templateContent(call._product) as GeneratedContent,
     budgetPaise: Number(process.env.AI_BUDGET_PAISE ?? 500000),

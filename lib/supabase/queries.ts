@@ -1650,9 +1650,14 @@ export async function getProductsWithMedia() {
   const sb = supabaseServer();
   // Product Photos is where the owner ADDS photos to a piece — so it must include newly created
   // DRAFTS (which don't have photos yet), not just published items. Exclude only archived/deleted.
-  const { data } = await sb.from("products")
+  // product_status enum = draft | published | flagged (there is NO archived/deleted state — deletion is
+  // a hard delete). Filtering with NOT IN (archived,deleted) made Postgres fail casting those unknown
+  // labels to the enum, so the whole query errored and the list came back EMPTY. Include every real
+  // status (drafts included, so freshly-created pieces show up here to receive their first photo).
+  const { data, error } = await sb.from("products")
     .select("id,sku,name,status,category:categories(name,slug), images:product_images(id,path,kind,sort)")
-    .not("status", "in", "(archived,deleted)").order("sku");
+    .in("status", ["draft", "published", "flagged"]).order("sku");
+  if (error) console.error("getProductsWithMedia:", error.message);
   const base = ((data as any[]) ?? []).map((p) => ({
     id: p.id, sku: p.sku, name: p.name, status: p.status, category: p.category?.name ?? "—", categorySlug: p.category?.slug ?? "all",
     images: (p.images ?? []).filter((i: any) => typeof i.path === "string" && i.path.startsWith("http")).sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0)),

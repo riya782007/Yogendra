@@ -68,7 +68,10 @@ export function ProductEditor({
     if (res.ok && res.title) {
       setTitle(res.title);
       if (res.description) setDescription(res.description);
-      toast("Title & description suggested ✨");
+      // Tell the owner which engine wrote it: "OpenAI" means the API key is live; "offline template"
+      // means it fell back (key missing/invalid on the deployment) so he can fix the env variable.
+      const engine = res.fallbackUsed || res.provider === "deterministic" ? "offline template" : (res.provider === "openai" ? "OpenAI ✨" : res.provider ?? "AI");
+      toast(`Title & description written by ${engine}`);
     } else toast(res.error ?? "Couldn't suggest a title", "error");
   }
 
