@@ -169,15 +169,19 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
               <div className="bg-white rounded-xl border border-sand p-2.5"><p className="text-[10px] uppercase tracking-wide text-muted">Avg/month</p><p className="text-lg font-semibold text-ink">{a!.avgMonthlySales}</p></div>
             </div>
 
-            {/* Reservation panel */}
+            {/* Estimates panel — every quote for this product (any status), clickable through to the
+                estimate; only OPEN ones reserve stock. */}
             {data.reservations.length > 0 && (
               <div className="mx-4 mb-3 rounded-xl border border-gold/40 bg-gold/5 p-3">
-                <p className="text-xs font-semibold text-gold-dark mb-1.5">🔖 Reserved by estimates · {h!.reserved} pcs · available after reservation {h!.available}</p>
+                <p className="text-xs font-semibold text-gold-dark mb-1.5">🔖 Estimates · {h!.reserved} pcs reserved (open) · available {h!.available}</p>
                 <ul className="divide-y divide-gold/20">
-                  {data.reservations.map((r) => (
-                    <li key={r.id} className="py-1.5 flex items-center justify-between gap-2 text-xs">
-                      <span className="min-w-0 truncate"><Link href={`/admin/estimate/${r.id}`} className="text-emerald nav-link font-medium">EST-{r.id.slice(0, 8).toUpperCase()}</Link> · {r.customer} · {day(r.created_at)}</span>
-                      <span className="text-gold-dark font-semibold whitespace-nowrap">{r.qty} pcs · {r.status}</span>
+                  {data.reservations.map((r, i) => (
+                    <li key={r.id + "-" + i} className="py-1.5 flex items-center justify-between gap-2 text-xs">
+                      <span className="min-w-0 truncate">
+                        <Link href={`/admin/estimate/${r.id}`} className="text-emerald nav-link font-medium">EST-{r.id.slice(0, 8).toUpperCase()}</Link>
+                        {" · "}{r.customer}{(r as any).variant ? ` · ${(r as any).variant}` : ""} · {day(r.created_at)}
+                      </span>
+                      <span className="text-gold-dark font-semibold whitespace-nowrap">{r.qty} pcs · {fmt((r as any).lineTotal)} · {r.status}</span>
                     </li>
                   ))}
                 </ul>

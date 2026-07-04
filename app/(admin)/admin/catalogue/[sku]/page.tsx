@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import {
   getProductBySku, getCategories, getPricingFormula, getSubcategories, getStyles,
-  getProductSalesStats, getStockHistory, getProductEstimateReservations, getVariantOptions, getLabels, getColorCodeMap,
+  getProductSalesStats, getStockHistory, getProductEstimates, getVariantOptions, getLabels, getColorCodeMap,
   getLastPurchaseCosts,
 } from "@/lib/supabase/queries";
 import { ProductEditor, type EditorProduct } from "@/components/admin/ProductEditor";
@@ -53,7 +53,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
     getVariantOptions().catch(() => ({ color: [], size: [], polish: [] })),
     getLabels().catch(() => []),
     getColorCodeMap().catch(() => ({} as Record<string, string>)),
-    getProductEstimateReservations(p.id).catch(() => []),
+    getProductEstimates(p.id).catch(() => []),
   ]);
   // Last price this piece was actually bought at (display-only, for the owner's margin reference).
   const lastCosts: { byProduct: Record<string, number>; byVariant: Record<string, number> } =
@@ -438,14 +438,15 @@ export default async function ProductPage({ params, searchParams }: { params: { 
       </div>
       {estReservations.length > 0 && (
         <div className={card}>
-          <h3 className="font-medium text-ink mb-1">🔖 Reserved by open estimates</h3>
-          <p className="text-xs text-muted mb-3">Soft holds — this stock only moves when the estimate is billed.</p>
+          <h3 className="font-medium text-ink mb-1">🔖 Estimates (quotes) for this product</h3>
+          <p className="text-xs text-muted mb-3">Every quote raised for this piece — with date, party, variant &amp; price. Open estimates soft-hold stock; converted/billed ones have become sales. Click to open the estimate.</p>
           <ul className="divide-y divide-sand/60">
-            {estReservations.map((e) => (
-              <li key={e.id} className="py-2 flex items-center justify-between gap-3 text-sm">
-                <Link href={`/admin/estimate/${e.id}`} className="text-emerald nav-link">EST-{String(e.id).slice(0, 8).toUpperCase()} →</Link>
-                <span className="flex-1 text-muted truncate">{e.customer || "Walk-in"}</span>
-                <span className="text-gold-dark font-semibold whitespace-nowrap">{e.qty} pcs held</span>
+            {estReservations.map((e, i) => (
+              <li key={e.id + "-" + i} className="py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                <Link href={`/admin/estimate/${e.id}`} className="text-emerald nav-link whitespace-nowrap">EST-{String(e.id).slice(0, 8).toUpperCase()} →</Link>
+                <span className="text-ink truncate">{e.customer || "Walk-in"}{e.variant ? <span className="text-muted"> · {e.variant}</span> : null}</span>
+                <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${e.status === "open" ? "bg-gold/15 text-gold-dark" : "bg-emerald-mist text-emerald-dark"}`}>{e.status}</span>
+                <span className="ml-auto text-ink whitespace-nowrap tabular-nums">{e.qty} pcs · {formatPaise(e.lineTotal)}</span>
                 <span className="text-muted whitespace-nowrap">{timeAgo(e.created_at)}</span>
               </li>
             ))}

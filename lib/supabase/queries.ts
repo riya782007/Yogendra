@@ -876,6 +876,33 @@ export async function getProductEstimateReservations(productId: string): Promise
     .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
 }
 
+/**
+ * EVERY estimate that includes this product — ANY status (open / converted / cash_billed) — for the
+ * movement history so quotes are tracked with date, party, variant, qty and price, and are clickable
+ * through to the estimate. (getProductEstimateReservations only returns the OPEN soft-holds.)
+ */
+export async function getProductEstimates(productId: string): Promise<{ id: string; customer: string | null; status: string; qty: number; unitPrice: number; lineTotal: number; variant: string | null; created_at: string }[]> {
+  if (!productId) return [];
+  const sb = supabaseServer();
+  const { data } = await sb
+    .from("estimate_items")
+    .select("qty,unit_price,line_total, variant:variants(color), estimate:estimates(id,customer_name,status,created_at)")
+    .eq("product_id", productId);
+  return ((data as any[]) ?? [])
+    .filter((r) => r.estimate)
+    .map((r) => ({
+      id: r.estimate.id as string,
+      customer: (r.estimate.customer_name as string | null) ?? null,
+      status: (r.estimate.status as string) ?? "open",
+      qty: (r.qty as number) ?? 0,
+      unitPrice: (r.unit_price as number) ?? 0,
+      lineTotal: (r.line_total as number) ?? (((r.unit_price as number) ?? 0) * ((r.qty as number) ?? 0)),
+      variant: (r.variant?.color as string | null) ?? null,
+      created_at: r.estimate.created_at as string,
+    }))
+    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+}
+
 // Pillar 5 — the single Stock Movement History register: every in/out across all products,
 // each row carrying ref_id so its purchase/sale bill opens straight from here.
 export async function getStockMovements(opts: { page?: number; pageSize?: number; kind?: string; q?: string; from?: string; to?: string }) {
@@ -1036,15 +1063,26 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     doc: docFor(r),
   }));
 
-  // --- reservations (open estimates = soft holds, not in the ledger) ---
+  // --- estimates for this product (ANY status, with variant + price) so every quote is tracked in
+  //     the ledger, clickable through to the estimate. Only OPEN estimates soft-hold stock. ---
   const { data: resv } = await sb.from("estimate_items")
-    .select("qty, estimate:estimates(id,customer_name,status,created_at)")
+    .select("qty,unit_price,line_total, variant:variants(color), estimate:estimates(id,customer_name,status,created_at)")
     .eq("product_id", productId);
   const reservations = ((resv as any[]) ?? [])
-    .filter((r) => r.estimate && r.estimate.status === "open")
-    .map((r) => ({ id: r.estimate.id as string, customer: (r.estimate.customer_name as string) ?? "Walk-in", qty: (r.qty as number) ?? 0, status: r.estimate.status as string, created_at: r.estimate.created_at as string }))
+    .filter((r) => r.estimate)
+    .map((r) => ({
+      id: r.estimate.id as string,
+      customer: (r.estimate.customer_name as string) ?? "Walk-in",
+      qty: (r.qty as number) ?? 0,
+      unitPrice: (r.unit_price as number) ?? 0,
+      lineTotal: (r.line_total as number) ?? (((r.unit_price as number) ?? 0) * ((r.qty as number) ?? 0)),
+      variant: (r.variant?.color as string | null) ?? null,
+      status: r.estimate.status as string,
+      created_at: r.estimate.created_at as string,
+    }))
     .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
-  const reserved = reservations.reduce((s, r) => s + r.qty, 0);
+  // Availability is only reduced by OPEN estimates (converted/billed ones already became sales).
+  const reserved = reservations.filter((r) => r.status === "open").reduce((s, r) => s + r.qty, 0);
 
   // --- supplier + cost from purchase history ---
   const { data: pis } = await sb.from("purchase_items")
