@@ -6,6 +6,13 @@ import { recordReturnAction } from "@/app/actions/billing";
 type Order = { id: string; total: number; customer_name: string | null; created_at: string; order_items: { qty: number; product: { id: string; name: string; sku: string }; variant?: { sku: string; color: string | null } | null }[] };
 // A returnable line is identified by product + variant, so two colours of the same design don't merge.
 const lineKey = (it: Order["order_items"][number]) => `${it.product.id}::${it.variant?.sku ?? ""}`;
+// Short colour summary for the dropdown so the owner spots the variant before opening the order.
+const colourSummary = (o: Order): string => {
+  const cols = Array.from(new Set((o.order_items ?? []).map((it) => it.variant?.color).filter((c): c is string => !!c)));
+  if (cols.length === 0) return "";
+  const shown = cols.slice(0, 3).join(", ");
+  return cols.length > 3 ? `${shown} +${cols.length - 3}` : shown;
+};
 
 export function ReturnClient({ orders }: { orders: Order[] }) {
   const [sel, setSel] = useState<string>("");
@@ -34,7 +41,7 @@ export function ReturnClient({ orders }: { orders: Order[] }) {
       <h2 className="font-medium text-ink mb-3">Record a sales return</h2>
       <select className={input} value={sel} onChange={(e) => { setSel(e.target.value); setQty({}); }}>
         <option value="">Select an order…</option>
-        {orders.map((o) => <option key={o.id} value={o.id}>{String(o.id).slice(0, 8).toUpperCase()} · {o.customer_name || "Walk-in"} · {formatPaise(o.total)}</option>)}
+        {orders.map((o) => { const c = colourSummary(o); return <option key={o.id} value={o.id}>{String(o.id).slice(0, 8).toUpperCase()} · {o.customer_name || "Walk-in"} · {formatPaise(o.total)}{c ? ` · ${c}` : ""}</option>; })}
       </select>
       {order && (
         <div className="mt-4 space-y-2">
