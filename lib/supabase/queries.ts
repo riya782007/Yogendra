@@ -277,13 +277,22 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
 }
 
 // ---------- customer directory (real customers table) ----------
+/** Placeholder "walk-in" names used at the counter for anonymous cash sales — these should NOT
+ *  clutter the customer directory (the owner: "walk in ko 1 manke chalo"). */
+const WALKIN_NAMES = new Set(["cash (w)", "cash (r)", "walk-in", "walk in", "walkin"]);
+export function isWalkInPlaceholder(name?: string | null, phone?: string | null): boolean {
+  const n = (name ?? "").trim().toLowerCase();
+  return !((phone ?? "").trim()) && (n === "" || WALKIN_NAMES.has(n));
+}
+
 export async function getCustomersDb(opts: { q?: string; type?: string }) {
   const sb = supabaseServer();
   let query = sb.from("customers").select("id,name,phone,type,gstin,city,credit_balance,created_at");
   if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.or(`name.ilike.%${s}%,phone.ilike.%${s}%,gstin.ilike.%${s}%`); }
   if (opts.type && opts.type !== "all") query = query.eq("type", opts.type);
   const { data } = await query.order("name");
-  return (data as any[]) ?? [];
+  // Collapse anonymous walk-ins: they're bill placeholders, not real directory contacts.
+  return ((data as any[]) ?? []).filter((c) => !isWalkInPlaceholder(c.name, c.phone));
 }
 
 // ---------- employees (salespeople) + sales attribution (0037) ----------
@@ -1645,10 +1654,15 @@ export async function getPurchaseById(id: string) {
   const sb = supabaseServer();
   const { data: p } = await sb.from("purchases").select("*, supplier:suppliers(id,name,city)").eq("id", id).maybeSingle();
   if (!p) return null;
-  const { data: items } = await sb.from("purchase_items").select("supplier_sku,qty,unit_cost, product:products(sku,name)").eq("purchase_id", id);
+  const { data: items } = await sb.from("purchase_items").select("id,supplier_sku,qty,unit_cost,mapped_product_id, product:products(sku,name)").eq("purchase_id", id);
   const { data: pending } = await sb.from("approvals").select("id").eq("action", "delete_purchase").eq("status", "pending").contains("payload", { purchase_id: id }).maybeSingle();
   const { data: suppliers } = await sb.from("suppliers").select("id,name,city").order("name");
-  return { purchase: p, items: (items as any[]) ?? [], deletionPending: !!pending, suppliers: (suppliers as any[]) ?? [] };
+  // Products list for re-mapping any unmapped line (owner picks the design the supplier item is).
+  const hasUnmapped = ((items as any[]) ?? []).some((it) => !it.mapped_product_id);
+  const { data: products } = hasUnmapped
+    ? await sb.from("products").select("id,name,sku").order("sku")
+    : { data: [] as any[] };
+  return { purchase: p, items: (items as any[]) ?? [], deletionPending: !!pending, suppliers: (suppliers as any[]) ?? [], products: (products as any[]) ?? [] };
 }
 
 export async function searchProducts(q: string) {
@@ -1709,6 +1723,7 @@ export async function getCustomers() {
   const map = new Map<string, { name: string; phone: string | null; orders: number; spent: number; last: string }>();
   for (const o of (data as any[]) ?? []) {
     const name = (o.customer_name ?? "").trim(); if (!name) continue;
+    if (isWalkInPlaceholder(name, o.customer_phone)) continue; // walk-in cash placeholders aren't directory customers
     const t = o.total ?? 0;
     const grand = o.bill_type === "cash" ? t : Math.round((t + Math.round(t * 0.03)) / 100) * 100; // amount actually spent (incl. GST)
     const c = map.get(name) ?? { name, phone: o.customer_phone ?? null, orders: 0, spent: 0, last: o.created_at };

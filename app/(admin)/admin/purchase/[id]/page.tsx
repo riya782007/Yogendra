@@ -4,14 +4,14 @@ import { notFound } from "next/navigation";
 import { getPurchaseById } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { getSession, can } from "@/lib/auth";
-import { updatePurchaseAction, requestPurchaseDeletionAction } from "@/app/actions/purchases";
+import { updatePurchaseAction, requestPurchaseDeletionAction, mapPurchaseLineAction } from "@/app/actions/purchases";
 
 export const metadata = { title: "Owner Console · Purchase" };
 
 export default async function PurchaseDetail({ params }: { params: { id: string } }) {
   const data = await getPurchaseById(params.id);
   if (!data) notFound();
-  const { purchase: p, items, deletionPending, suppliers } = data;
+  const { purchase: p, items, deletionPending, suppliers, products } = data;
   const canEdit = can(getSession(), "purchases.create");
   const ref = p.bill_no || String(p.id).slice(0, 8).toUpperCase();
   const fld = "rounded-xl border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-emerald";
@@ -31,7 +31,19 @@ export default async function PurchaseDetail({ params }: { params: { id: string 
             {items.map((it: any, i: number) => (
               <tr key={i} className="border-t border-sand/60">
                 <td className="p-3 text-ink">{it.supplier_sku || "—"}</td>
-                <td className="p-3 text-muted">{it.product ? `${it.product.name} (${it.product.sku})` : <span className="text-rose">unmapped</span>}</td>
+                <td className="p-3 text-muted">
+                  {it.product ? `${it.product.name} (${it.product.sku})` : canEdit ? (
+                    <form action={mapPurchaseLineAction} className="flex items-center gap-1.5">
+                      <input type="hidden" name="line_id" value={it.id} />
+                      <input type="hidden" name="purchase_id" value={p.id} />
+                      <select name="product_id" required defaultValue="" className="rounded-lg border border-rose/40 bg-white px-2 py-1 text-xs outline-none focus:border-emerald max-w-[180px]">
+                        <option value="" disabled>Map to design…</option>
+                        {(products as any[]).map((pr) => <option key={pr.id} value={pr.id}>{pr.name} ({pr.sku})</option>)}
+                      </select>
+                      <button className="text-xs px-2 py-1 rounded-full bg-emerald text-white hover:bg-emerald-dark whitespace-nowrap" title="Map this line and add its stock to inventory">Map</button>
+                    </form>
+                  ) : <span className="text-rose">unmapped</span>}
+                </td>
                 <td className="p-3 text-right">{it.qty}</td>
                 <td className="p-3 text-right">{formatPaise(it.unit_cost)}</td>
                 <td className="p-3 text-right font-medium">{formatPaise(it.unit_cost * it.qty)}</td>

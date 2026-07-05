@@ -14,6 +14,23 @@ export async function createSupplierAction(formData: FormData) {
   revalidatePath("/admin/purchases");
 }
 
+/**
+ * Map an unmapped purchase line to a product. An unmapped line never added its stock at purchase
+ * time (there was no product to add to), so mapping it now applies that missing stock. The bill
+ * total / ledger already counted this line, so money is untouched.
+ */
+export async function mapPurchaseLineAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("purchases.create"))) return;
+  const lineId = String(formData.get("line_id") ?? "").trim();
+  const productId = String(formData.get("product_id") ?? "").trim();
+  const purchaseId = String(formData.get("purchase_id") ?? "").trim();
+  if (!lineId || !productId) return;
+  const sb = supabaseServer();
+  await sb.rpc("map_purchase_line", { p_line_id: lineId, p_product: productId, p_variant: null });
+  if (purchaseId) revalidatePath(`/admin/purchase/${purchaseId}`);
+  revalidatePath("/admin/inventory"); revalidatePath("/admin/stock-movements");
+}
+
 /** Low-risk edit of a purchase's bill number / supplier — direct, permissioned. */
 export async function updatePurchaseAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("purchases.create"))) return;
