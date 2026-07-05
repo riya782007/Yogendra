@@ -238,3 +238,19 @@ export async function recordReturnAction(input: { orderId: string; reason: strin
   revalidatePath("/admin/returns"); revalidatePath("/admin/dashboard");
   return { ok: true, qty: (data as any)?.qty };
 }
+
+/**
+ * Cancel a whole order (e.g. a dealer or retail COD order the customer backed out of).
+ * Restocks every line, reverses the sale in the ledger, and marks the order "cancelled".
+ * Money-reversing, so it is OWNER-ONLY — staff can't self-cancel.
+ */
+export async function cancelOrderAction(orderId: string, reason?: string): Promise<{ ok: boolean; error?: string; already?: boolean }> {
+  if (!getSession().isOwner) return { ok: false, error: "Only the owner can cancel an order." };
+  if (!orderId) return { ok: false, error: "Missing order." };
+  const sb = supabaseServer();
+  const { data, error } = await sb.rpc("cancel_order", { p_order_id: orderId, p_reason: (reason ?? "").trim() || "Cancelled" });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/admin/sales"); revalidatePath("/admin/backorders"); revalidatePath("/admin/dashboard");
+  revalidatePath(`/admin/invoice/${orderId}`);
+  return { ok: true, already: !!(data as any)?.already };
+}

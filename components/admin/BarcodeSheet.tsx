@@ -91,12 +91,19 @@ export function BarcodeSheet({ products }: { products: P[] }) {
   };
   // The owner's coded price string — concatenated with NO separators:
   //   {retail}.51  +  {fixed special = 23}  +  7{wholesale}7
-  // e.g. retail 120, wholesale 100 -> "120.51" + "23" + "71007" = "120.512371007".
+  // e.g. retail 229, wholesale 120 -> "229.51" + "23" + "71207" = "229.512371207".
+  // The fixed "23" is STRUCTURAL glue in the code — it always sits between the retail part and the
+  // cost code whenever both are shown, independent of the "Show Special Price" display toggle.
   const priceLine = (r: Row) => {
-    let out = "";
-    if (opts.price) out += codeRetail(r.price);
-    if (opts.special) out += (r.special.trim() || SPECIAL_FIXED);
-    if (opts.wholesale) out += codeWholesale(r.wholesale);
+    const retail = opts.price ? codeRetail(r.price) : "";
+    const whole = opts.wholesale ? codeWholesale(r.wholesale) : "";
+    const special = (r.special.trim() || SPECIAL_FIXED);
+    // Both segments shown → embed the special connector between them (the owner's masked tag).
+    if (retail && whole) return retail + special + whole;
+    // Only one segment (or the explicit Show-Special toggle) → fall back gracefully.
+    let out = retail;
+    if (opts.special) out += special;
+    out += whole;
     return out;
   };
 

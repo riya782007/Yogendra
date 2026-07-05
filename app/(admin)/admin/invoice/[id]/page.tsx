@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { getOrder } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { PrintButton } from "@/components/admin/PrintButton";
+import { CancelOrderButton } from "@/components/admin/CancelOrderButton";
 import { BUSINESS, HSN_JEWELLERY, GST_RATE, gstSplit, gstSplitExclusive, stateCodeFromGstin, stateNameFromCode, bankHasDetails, amountInWords } from "@/lib/business";
 import { getSession, can } from "@/lib/auth";
 import { recordPaymentAction, setDocTypeAction, saveOrderNoteAction, setBillTypeAction, setGstModeAction } from "@/app/actions/payments";
@@ -67,7 +68,10 @@ export default async function Invoice({ params }: { params: { id: string } }) {
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center justify-between mb-4 no-print">
           <Link href="/admin/billing" className="text-sm text-emerald nav-link">← New sale</Link>
-          <PrintButton />
+          <div className="flex items-center gap-2">
+            {session.isOwner && <CancelOrderButton orderId={String(order.id)} cancelled={order.status === "cancelled"} />}
+            <PrintButton />
+          </div>
         </div>
 
         <div className="print-area bg-white rounded-2xl shadow-card p-5 sm:p-8 text-[13px]" id="invoice">
