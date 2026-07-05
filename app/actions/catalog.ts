@@ -723,6 +723,15 @@ export async function savePricingFormulaAction(formData: FormData): Promise<void
     mrp_multiplier: num("mrp_multiplier", 2.75),
     round_to: Math.max(1, Math.round(num("round_to", 100))),
     wholesale_min_order: Math.max(0, Math.round(num("wholesale_min_order_rupees", 3000) * 100)), // ₹ → paise
+    // Global quantity-break tiers — parallel arrays from the editor rows, sanitised + sorted.
+    wholesale_tiers: (() => {
+      const mins = formData.getAll("tier_min").map((v) => Math.floor(Number(v)));
+      const offs = formData.getAll("tier_off").map((v) => Number(v));
+      const rows = mins.map((minQty, i) => ({ min_qty: minQty, pct_off: offs[i] }))
+        .filter((t) => Number.isFinite(t.min_qty) && t.min_qty >= 1 && Number.isFinite(t.pct_off) && t.pct_off > 0 && t.pct_off <= 100)
+        .sort((a, b) => a.min_qty - b.min_qty);
+      return rows;
+    })(),
   };
   const sb = supabaseServer();
   const { data: row } = await sb.from("pricing_settings").select("id").limit(1).maybeSingle();

@@ -30,7 +30,42 @@ export type PricingFormula = {
   mrpPct?: number;
   /** Minimum wholesale order value in paise (gate on the wholesale cart). */
   wholesaleMinOrder?: number;
+  /** Global quantity-break tiers: buy N+ of a line → % off that line's wholesale rate. */
+  wholesaleTiers?: WholesaleTier[];
 };
+
+/** A single global quantity break, e.g. { minQty: 12, pctOff: 5 } = 12+ pcs get 5% off. */
+export type WholesaleTier = { minQty: number; pctOff: number };
+
+/**
+ * Best (highest) % off a given line quantity qualifies for, across all tiers.
+ * Pure + shared by the storefront display and mirrored by the DB RPC that records the order.
+ */
+export function tierPctOff(tiers: WholesaleTier[] | undefined, qty: number): number {
+  if (!tiers?.length || qty <= 0) return 0;
+  let pct = 0;
+  for (const t of tiers) {
+    const min = Number(t?.minQty);
+    const off = Number(t?.pctOff);
+    if (Number.isFinite(min) && Number.isFinite(off) && qty >= min && off > pct) pct = off;
+  }
+  return Math.max(0, Math.min(100, pct));
+}
+
+/** Apply a tier % to a unit price (paise), rounded to the nearest paise — matches the RPC. */
+export function applyTier(unitPaise: number, pctOff: number): number {
+  if (!pctOff) return unitPaise;
+  return Math.max(0, Math.round(unitPaise * (1 - pctOff / 100)));
+}
+
+/** Normalise/sort tiers ascending by minQty, dropping invalid rows. */
+export function cleanTiers(raw: unknown): WholesaleTier[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((r: any) => ({ minQty: Math.floor(Number(r?.minQty ?? r?.min_qty)), pctOff: Number(r?.pctOff ?? r?.pct_off) }))
+    .filter((t) => Number.isFinite(t.minQty) && t.minQty >= 1 && Number.isFinite(t.pctOff) && t.pctOff > 0 && t.pctOff <= 100)
+    .sort((a, b) => a.minQty - b.minQty);
+}
 
 export type PriceSet = {
   /** rate charged to wholesale buyers, in paise */

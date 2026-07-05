@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 import { getWholesaleSession } from "@/lib/wholesale";
+import { getPricingFormula } from "@/lib/supabase/queries";
 import { sendWhatsAppText } from "@/lib/whatsapp";
 
 const COOKIE = { httpOnly: true, sameSite: "lax" as const, secure: true, path: "/", maxAge: 60 * 60 * 12 };
@@ -74,7 +75,11 @@ export async function placeWholesaleOrderAction(
   const clean = (items ?? []).filter((i) => i.sku && i.qty > 0).map((i) => ({ sku: i.sku, qty: Math.floor(i.qty) }));
   if (!clean.length) return { ok: false, error: "Enter quantities for at least one product." };
   const sb = supabaseServer();
-  const { data, error } = await sb.rpc("place_wholesale_order", { p_customer: sess.id, p_items: clean, p_allow_oversell: false });
+  // Authoritative pricing: load the global quantity-break tiers from the DB (never trust the client)
+  // and hand them to the RPC, which applies the per-line discount as it records the order.
+  const formula = await getPricingFormula().catch(() => null);
+  const pTiers = (formula?.wholesaleTiers ?? []).map((t) => ({ min_qty: t.minQty, pct_off: t.pctOff }));
+  const { data, error } = await sb.rpc("place_wholesale_order", { p_customer: sess.id, p_items: clean, p_allow_oversell: false, p_tiers: pTiers });
   if (error) return { ok: false, error: error.message };
   const orderId = (data as any)?.order_id as string | undefined;
   const total = (data as any)?.total as number | undefined;

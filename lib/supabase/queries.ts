@@ -2,6 +2,7 @@
 import "server-only";
 import { supabaseServer } from "./server";
 import type { PricingFormula } from "../pricing";
+import { cleanTiers } from "../pricing";
 
 /**
  * Sanitise a user search term before putting it in a PostgREST `.or(...ilike...)` filter.
@@ -53,6 +54,7 @@ export async function getPricingFormula(): Promise<PricingFormula> {
     customerDiscountPct: Number(data?.customer_discount_pct ?? 5),
     mrpPct: Number(data?.mrp_pct ?? 25),
     wholesaleMinOrder: Number(data?.wholesale_min_order ?? 300000),
+    wholesaleTiers: cleanTiers(data?.wholesale_tiers),
   };
 }
 

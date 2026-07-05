@@ -1,6 +1,6 @@
 "use client";
 import { useState, useMemo } from "react";
-import { formatPaise } from "@/lib/pricing";
+import { formatPaise, tierPctOff, applyTier, type WholesaleTier } from "@/lib/pricing";
 import { ProductImage } from "@/components/Placeholder";
 import { QtyField } from "@/components/admin/QtyField";
 import { placeWholesaleOrderAction, wholesaleLogoutAction, requestQuoteAction } from "@/app/actions/wholesale";
@@ -10,8 +10,8 @@ type HistItem = { sku: string; name: string; qty: number };
 type Hist = { id: string; total: number; amountPaid?: number; status?: string; paymentRef?: string | null; created_at: string; invoice_no: string | null; items: HistItem[] };
 type PayInfo = { payeeName: string; upiId: string | null; qrUrl: string | null };
 
-export function WholesaleCatalog({ products, customerName, minOrder = 300000, history = [], payInfo = null, outstanding = 0 }: {
-  products: P[]; customerName: string; minOrder?: number; history?: Hist[]; payInfo?: PayInfo | null; outstanding?: number;
+export function WholesaleCatalog({ products, customerName, minOrder = 300000, history = [], payInfo = null, outstanding = 0, tiers = [] }: {
+  products: P[]; customerName: string; minOrder?: number; history?: Hist[]; payInfo?: PayInfo | null; outstanding?: number; tiers?: WholesaleTier[];
 }) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
@@ -58,8 +58,18 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
     return out;
   }, [q, cat, colour, inStock, sort, products]);
 
+  const sortedTiers = useMemo(() => [...(tiers ?? [])].sort((a, b) => a.minQty - b.minQty), [tiers]);
+  const hasTiers = sortedTiers.length > 0;
+  /** Discounted unit price for a line given its quantity (mirrors the DB RPC exactly). */
+  const unitFor = (sku: string, n: number) => {
+    const base = bySku.get(sku.toUpperCase())?.price ?? 0;
+    return applyTier(base, tierPctOff(sortedTiers, n));
+  };
+
   const lines = Object.entries(qty).filter(([, n]) => n > 0);
-  const orderTotal = lines.reduce((s, [sku, n]) => s + (bySku.get(sku.toUpperCase())?.price ?? 0) * n, 0);
+  const orderTotal = lines.reduce((s, [sku, n]) => s + unitFor(sku, n) * n, 0);
+  const grossTotal = lines.reduce((s, [sku, n]) => s + (bySku.get(sku.toUpperCase())?.price ?? 0) * n, 0);
+  const savings = Math.max(0, grossTotal - orderTotal);
   const itemCount = lines.reduce((s, [, n]) => s + n, 0);
   const belowMin = orderTotal > 0 && orderTotal < minOrder;
   const shortBy = Math.max(0, minOrder - orderTotal);
@@ -142,6 +152,7 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
             <button onClick={() => setTab("order")} className={`px-3 py-1 rounded-full ${tab === "order" ? "bg-ink text-white" : "text-muted"}`}>Order</button>
             <button onClick={() => setTab("history")} className={`px-3 py-1 rounded-full ${tab === "history" ? "bg-ink text-white" : "text-muted"}`}>History {history.length ? `(${history.length})` : ""}</button>
           </div>
+          <a href="/trade/line-sheet" target="_blank" rel="noreferrer" className="text-sm px-3 py-1 rounded-full border border-sand text-ink hover:border-emerald">↓ Line-sheet (PDF)</a>
           <button onClick={() => { setRfqOpen(true); setRfqDone(false); setRfqErr(""); }} className="text-sm px-3 py-1 rounded-full border border-gold text-gold-dark hover:bg-gold/10">Request a quote</button>
           <form action={wholesaleLogoutAction}><button className="text-sm text-muted hover:text-ink">Sign out</button></form>
         </div>
@@ -215,6 +226,17 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
           </div>
           {bulkMsg && <p className="text-xs text-emerald-dark mb-2">{bulkMsg}</p>}
 
+          {/* Bulk-discount banner — shows dealers the quantity breaks up front. */}
+          {hasTiers && (
+            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-2xl border border-emerald/30 bg-emerald-mist/50 px-4 py-2.5">
+              <span className="text-sm font-medium text-emerald-dark">Bulk savings:</span>
+              {sortedTiers.map((t, i) => (
+                <span key={i} className="text-xs bg-white border border-emerald/30 text-emerald-dark rounded-full px-2.5 py-1">Buy {t.minQty}+ → save {t.pctOff}%</span>
+              ))}
+              <span className="text-[11px] text-muted">per design, applied automatically</span>
+            </div>
+          )}
+
           {/* Desktop: dense table */}
           <div className="hidden md:block overflow-x-auto rounded-2xl border border-sand bg-white shadow-card">
             <table className="w-full text-sm">
@@ -243,7 +265,12 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
                         </div>
                         {n >= p.qty && p.qty > 0 && <p className="text-[10px] text-gold-dark mt-0.5">max stock</p>}
                       </td>
-                      <td className="p-4 text-right font-medium">{n > 0 ? formatPaise(p.price * n) : <span className="text-muted">—</span>}</td>
+                      <td className="p-4 text-right font-medium">{n > 0 ? (() => {
+                        const off = tierPctOff(sortedTiers, n);
+                        return off > 0
+                          ? <span>{formatPaise(applyTier(p.price, off) * n)}<span className="block text-[10px] text-emerald-dark">−{off}% bulk</span></span>
+                          : formatPaise(p.price * n);
+                      })() : <span className="text-muted">—</span>}</td>
                     </tr>
                   );
                 })}
@@ -290,6 +317,7 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
               <div>
                 <span className="text-cream/70 text-sm">{itemCount} pcs · {lines.length} design{lines.length === 1 ? "" : "s"}</span>
                 <span className="ml-4 text-xl font-semibold text-ivory">{formatPaise(orderTotal)}</span>
+                {savings > 0 && <span className="ml-3 text-sm text-emerald-light">saved {formatPaise(savings)}</span>}
                 {err && <span className="ml-4 text-rose-light text-sm">{err}</span>}
               </div>
               <button onClick={goToPay} disabled={busy || lines.length === 0 || belowMin} className="btn-gold px-6 py-2.5 text-sm font-medium disabled:opacity-50">
@@ -319,7 +347,7 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
             </div>
 
             <div className="mt-3 flex items-center justify-between rounded-xl bg-cream/70 px-4 py-3">
-              <span className="text-sm text-muted">Amount to pay</span>
+              <span className="text-sm text-muted">Amount to pay{savings > 0 && <span className="block text-[11px] text-emerald-dark">incl. {formatPaise(savings)} bulk savings</span>}</span>
               <span className="text-2xl font-semibold text-ink">{formatPaise(orderTotal)}</span>
             </div>
 

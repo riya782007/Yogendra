@@ -31,6 +31,15 @@ export default function PricingFormulaEditor({ initial, action }: Props) {
     roundToPaise: initial.roundToPaise,
   });
 
+  // Global quantity-break tiers (buy N+ → % off). Editable rows.
+  const [tiers, setTiers] = useState<{ minQty: number; pctOff: number }[]>(
+    (initial.wholesaleTiers ?? []).map((t) => ({ minQty: t.minQty, pctOff: t.pctOff })),
+  );
+  const setTier = (i: number, k: "minQty" | "pctOff", v: number) =>
+    setTiers((s) => s.map((t, j) => (j === i ? { ...t, [k]: v } : t)));
+  const addTier = () => setTiers((s) => [...s, { minQty: 12, pctOff: 5 }]);
+  const removeTier = (i: number) => setTiers((s) => s.filter((_, j) => j !== i));
+
   const formula: PricingFormula = useMemo(
     () => ({
       ...mult,
@@ -138,6 +147,26 @@ export default function PricingFormulaEditor({ initial, action }: Props) {
         <label className="text-sm font-medium text-ink">Minimum wholesale order (₹)</label>
         <p className="text-[11px] text-muted mb-2">Wholesale carts below this value can&apos;t check out.</p>
         <input name="wholesale_min_order_rupees" type="number" min={0} step={1} defaultValue={Math.round((initial.wholesaleMinOrder ?? 300000) / 100)} className="w-40 rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald" />
+      </div>
+
+      {/* Global quantity-break tiers: buy N+ of a design → % off the wholesale rate on that line. */}
+      <div className="rounded-2xl border border-sand bg-white p-4 mb-4">
+        <label className="text-sm font-medium text-ink">Wholesale bulk discounts (quantity breaks)</label>
+        <p className="text-[11px] text-muted mb-3">Reward dealers for buying more. Applies to every design automatically, per line: order N+ pieces of one design and that line gets the % off. Higher tiers win.</p>
+        {tiers.length === 0 && <p className="text-xs text-muted mb-2">No bulk discounts set. Add one to start rewarding larger orders.</p>}
+        <div className="space-y-2">
+          {tiers.map((t, i) => (
+            <div key={i} className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-muted">Buy</span>
+              <input name="tier_min" type="number" min={1} step={1} value={t.minQty} onChange={(e) => setTier(i, "minQty", Math.floor(Number(e.target.value)))} className="w-24 rounded-xl border border-sand px-3 py-2 outline-none focus:border-emerald" />
+              <span className="text-muted">pcs or more →</span>
+              <input name="tier_off" type="number" min={0} max={100} step={0.5} value={t.pctOff} onChange={(e) => setTier(i, "pctOff", Number(e.target.value))} className="w-24 rounded-xl border border-sand px-3 py-2 outline-none focus:border-emerald" />
+              <span className="text-muted">% off</span>
+              <button type="button" onClick={() => removeTier(i)} className="ml-1 text-xs text-rose hover:underline">Remove</button>
+            </div>
+          ))}
+        </div>
+        <button type="button" onClick={addTier} className="mt-3 text-xs px-3 py-1.5 rounded-full border border-emerald text-emerald-dark hover:bg-emerald-mist">+ Add a discount tier</button>
       </div>
 
       <div className="flex items-center gap-3">
