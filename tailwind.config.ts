@@ -33,6 +33,7 @@ export default {
         shimmer: { "0%": { backgroundPosition: "-200% 0" }, "100%": { backgroundPosition: "200% 0" } },
         pop: { "0%": { transform: "scale(0.9)", opacity: "0" }, "100%": { transform: "scale(1)", opacity: "1" } },
         spinSlow: { to: { transform: "rotate(360deg)" } },
+        slideInRight: { "0%": { transform: "translateX(100%)" }, "100%": { transform: "translateX(0)" } },
       },
       animation: {
         fadeUp: "fadeUp 0.7s cubic-bezier(0.16,1,0.3,1) both",
@@ -42,6 +43,7 @@ export default {
         shimmer: "shimmer 2.5s linear infinite",
         pop: "pop 0.35s cubic-bezier(0.16,1,0.3,1) both",
         spinSlow: "spinSlow 14s linear infinite",
+        slideInRight: "slideInRight 0.25s ease both",
       },
     },
   },

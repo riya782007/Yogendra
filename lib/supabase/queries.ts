@@ -318,6 +318,32 @@ export async function getEmployeePerformance(range?: { from?: string; to?: strin
     .sort((a, b) => b.sales - a.sales);
 }
 
+/** Individual attributed sales (date + customer + amount) for the owner's employee ledger.
+ *  Every bill tied to a salesperson in the period, newest first — so the owner can audit each sale. */
+export async function getEmployeeSalesLedger(range?: { from?: string; to?: string }, limit = 300): Promise<{ id: string; invoice_no: string | null; employee: string; customer: string; total: number; amountPaid: number; billType: string; channel: string; created_at: string }[]> {
+  const sb = supabaseServer();
+  const emps = await getEmployees({});
+  const nameById = new Map(emps.map((e) => [e.id, e.name]));
+  let q = sb.from("orders")
+    .select("id,invoice_no,sales_employee_id,customer_name,total,amount_paid,bill_type,channel,created_at")
+    .not("sales_employee_id", "is", null)
+    .order("created_at", { ascending: false }).limit(limit);
+  if (range?.from) q = q.gte("created_at", range.from);
+  if (range?.to) q = q.lte("created_at", range.to);
+  const { data } = await q;
+  return ((data as any[]) ?? []).map((o) => ({
+    id: o.id as string,
+    invoice_no: (o.invoice_no ?? null) as string | null,
+    employee: (nameById.get(o.sales_employee_id) ?? "—") as string,
+    customer: (o.customer_name || "Walk-in") as string,
+    total: (o.total ?? 0) as number,
+    amountPaid: (o.amount_paid ?? 0) as number,
+    billType: (o.bill_type ?? "") as string,
+    channel: (o.channel ?? "") as string,
+    created_at: o.created_at as string,
+  }));
+}
+
 /** Per-customer spend + order count + last-order date over an optional date range (paise), keyed by
  *  customer_id. Powers promotional targeting on the Customers page (who hit / is near a target). */
 export async function getCustomerSpend(range?: { from?: string; to?: string }): Promise<Map<string, { spend: number; orders: number; last: string | null }>> {
