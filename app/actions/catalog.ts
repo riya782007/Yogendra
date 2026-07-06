@@ -25,6 +25,16 @@ export async function createCategoryAction(formData: FormData) {
 /** Delete a category WITHOUT deleting its inventory. Products in it are moved to an auto-created
  *  "Uncategorized" category (products.category_id is NOT NULL, so they must land somewhere) and the
  *  category's subcategories are removed. Returns a result so the UI can confirm + report. */
+/** Owner picks which variant a configurable product LEADS with on the storefront. */
+export async function setDefaultVariantAction(productId: string, variantId: string | null): Promise<{ ok: boolean; error?: string }> {
+  if (!(await requirePerm("catalog.edit"))) return { ok: false, error: "Your role can't edit the catalogue." };
+  const sb = supabaseServer();
+  const { error } = await sb.from("products").update({ default_variant_id: variantId }).eq("id", productId);
+  if (error) return { ok: false, error: /default_variant_id/.test(error.message) ? "One-time setup: run migration 0047 (default_variant_id column)." : error.message };
+  revalidatePath("/admin/products/" + productId); revalidatePath("/shop"); revalidatePath("/catalog");
+  return { ok: true };
+}
+
 export async function deleteCategoryAction(id: string): Promise<{ ok: boolean; moved?: number; error?: string }> {
   if (!(await requirePerm("catalog.edit"))) return { ok: false, error: "Your role can't edit the catalogue." };
   id = (id ?? "").trim();

@@ -65,7 +65,17 @@ export function POSClient({ products, customers = [], methods = [], employees = 
   const [credit, setCredit] = useState(false);
 
   const pct = (v: string) => { const n = Number(v); return Number.isFinite(n) && n > 0 && n < 100 ? n : 0; };
-  const gDisc = pct(globalDisc);
+  // DISCOUNT PARSER — owner's rule: a value WITH "%" is a percentage; a plain number is a RUPEE
+  // amount off per unit ("50" = ₹50 off each piece; "10%" = 10% off). Returns paise for amounts.
+  const parseDisc = (v: string): { pct: number; amtPaise: number } => {
+    const t = (v ?? "").trim();
+    if (!t) return { pct: 0, amtPaise: 0 };
+    if (t.endsWith("%")) return { pct: pct(t.slice(0, -1)), amtPaise: 0 };
+    const n = Number(t);
+    if (!Number.isFinite(n) || n <= 0) return { pct: 0, amtPaise: 0 };
+    return { pct: 0, amtPaise: Math.round(n * 100) };
+  };
+  const gDisc = pct((globalDisc ?? "").replace("%", ""));
   const baseUnit = (l: Line | P) => (custType === "wholesale" && l.wholesale > 0 ? l.wholesale : l.price);
   // rawUnit = the ORIGINAL unit rate shown in the Rate column (a manual override, else the tier rate).
   // It does NOT change when a discount is applied — the discount only affects the Amount.
@@ -74,13 +84,17 @@ export function POSClient({ products, customers = [], methods = [], employees = 
     if (ov !== "" && Number.isFinite(Number(ov)) && Number(ov) >= 0) return Math.round(Number(ov) * 100);
     return baseUnit(l);
   };
-  const lineDiscPct = (l: Line) => (l.disc.trim() !== "" ? pct(l.disc) : gDisc);
+  const lineDisc = (l: Line) => (l.disc.trim() !== "" ? parseDisc(l.disc) : { pct: gDisc, amtPaise: 0 });
+  const lineDiscPct = (l: Line) => lineDisc(l).pct; // kept for callers that only care about %
   // effUnit = the discounted unit that actually bills (Amount = effUnit × qty). Discount applies on
   // top of the Rate (override or tier), so Rate stays original and Amount reflects the discount.
+  // Supports BOTH forms: "10%" (percentage) and "50" (₹50 off per unit).
   const effUnit = (l: Line) => {
-    const d = lineDiscPct(l);
+    const d = lineDisc(l);
     const base = rawUnit(l);
-    return d > 0 ? Math.round((base * (100 - d)) / 100) : base;
+    if (d.pct > 0) return Math.round((base * (100 - d.pct)) / 100);
+    if (d.amtPaise > 0) return Math.max(0, base - d.amtPaise);
+    return base;
   };
   const mrpUnit = (l: Line) => Math.max(l.mrp || 0, rawUnit(l));
 
@@ -185,10 +199,10 @@ export function POSClient({ products, customers = [], methods = [], employees = 
       items: lines.map((l) => {
         const ov = l.override.trim();
         const hasOv = ov !== "" && Number.isFinite(Number(ov)) && Number(ov) >= 0;
-        const d = lineDiscPct(l);
-        // When a rate is overridden OR a discount applies, bill the NET unit and also record the
-        // ORIGINAL rate (listRupees) so the invoice can show Rate → Disc → Amount.
-        if (hasOv || d > 0) return { sku: l.sku, qty: l.qty, priceRupees: effUnit(l) / 100, listRupees: rawUnit(l) / 100 };
+        const d = lineDisc(l);
+        // When a rate is overridden OR a discount applies (percent OR rupee amount), bill the NET
+        // unit and record the ORIGINAL rate (listRupees) so the invoice shows Rate → Disc → Amount.
+        if (hasOv || d.pct > 0 || d.amtPaise > 0) return { sku: l.sku, qty: l.qty, priceRupees: effUnit(l) / 100, listRupees: rawUnit(l) / 100 };
         return { sku: l.sku, qty: l.qty };
       }),
       customer: cust, payment: "cash",
@@ -379,7 +393,7 @@ export function POSClient({ products, customers = [], methods = [], employees = 
                           className={`w-20 text-right rounded border border-transparent hover:border-sand focus:border-emerald px-1 py-0.5 outline-none ${l.override.trim() !== "" ? "text-emerald-dark font-medium" : "text-ink"}`} />
                       </td>
                       <td className="px-2 py-1.5 text-right align-middle">
-                        <input value={l.disc} onChange={(e) => setLineDisc(l.sku, e.target.value)} inputMode="decimal" placeholder={gDisc > 0 ? String(gDisc) : "0"}
+                        <input value={l.disc} onChange={(e) => setLineDisc(l.sku, e.target.value)} inputMode="decimal" placeholder={gDisc > 0 ? `${gDisc}%` : "10% / ₹50"} title='Type "10%" for percent or "50" for ₹50 off per piece'
                           className={`w-12 text-right rounded border border-transparent hover:border-sand focus:border-emerald px-1 py-0.5 outline-none ${pct(l.disc) > 0 ? "text-emerald-dark font-medium" : "text-ink"}`} />
                       </td>
                       <td className="px-3 py-1.5 text-right font-medium align-middle">{formatPaise(effUnit(l) * l.qty)}</td>

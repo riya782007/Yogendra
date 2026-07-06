@@ -1,0 +1,2 @@
+-- 0047 — applied live via MCP 2026-07-06: products.default_variant_id uuid (owner-chosen
+-- storefront lead colour; FK variants, on delete set null).

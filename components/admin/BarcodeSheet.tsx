@@ -207,7 +207,6 @@ export function BarcodeSheet({ products }: { products: P[] }) {
                   <th className="py-2 pr-3">Product</th>
                   <th className="py-2 pr-3 text-center">Barcode Qty</th>
                   <th className="py-2 pr-3 text-right">Price</th>
-                  <th className="py-2 pr-3 text-right">Special Price</th>
                   <th className="py-2 pr-3 text-right">Wholesale Price</th>
                   <th className="py-2 text-right">Action</th>
                 </tr>
@@ -221,7 +220,6 @@ export function BarcodeSheet({ products }: { products: P[] }) {
                       <QtyField value={r.qty} onChange={(n) => patch(r.sku, { qty: Math.max(1, Math.floor(n || 1)) })} className="w-16 rounded-lg border border-sand px-2 py-1 text-center" />
                     </td>
                     <td className="py-2 pr-3 text-right"><input className={cell} inputMode="decimal" value={r.price} onChange={(e) => patch(r.sku, { price: e.target.value })} /></td>
-                    <td className="py-2 pr-3 text-right"><input className={cell} inputMode="decimal" placeholder="—" value={r.special} onChange={(e) => patch(r.sku, { special: e.target.value })} /></td>
                     <td className="py-2 pr-3 text-right"><input className={cell} inputMode="decimal" value={r.wholesale} onChange={(e) => patch(r.sku, { wholesale: e.target.value })} /></td>
                     <td className="py-2 text-right"><button onClick={() => rm(r.sku)} className="text-xs px-3 py-1.5 rounded-lg bg-rose/10 text-rose hover:bg-rose/20">Delete</button></td>
                   </tr>
@@ -242,7 +240,7 @@ export function BarcodeSheet({ products }: { products: P[] }) {
           <div>
             <p className="text-xs font-medium text-muted mb-1">Barcode Options</p>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
-              {([["sku", "Show SKU"], ["name", "Show Product Name"], ["price", "Show Price"], ["special", "Show Special Price"], ["wholesale", "Show cost code (7·x·7)"], ["currency", "Show Currency"]] as const).map(([k, label]) => (
+              {([["sku", "Show SKU"], ["name", "Show Product Name"], ["price", "Show Price"], ["wholesale", "Show cost code (7·x·7)"], ["currency", "Show Currency"]] as const).map(([k, label]) => (
                 <label key={k} className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={(opts as any)[k]} onChange={(e) => setOpts((o) => ({ ...o, [k]: e.target.checked }))} className="accent-emerald" />
                   {label}

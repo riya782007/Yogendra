@@ -127,3 +127,45 @@ export async function recordPurchaseAction(input: {
   revalidatePath(`/admin/supplier/${input.supplierId}`); revalidatePath("/admin/cashbook");
   return { ok: true, total };
 }
+
+/** Lines of ONE purchase bill, with per-line returnable (bought − already returned to supplier). */
+export async function fetchPurchaseForReturnAction(purchaseId: string): Promise<{ ok: boolean; error?: string; items?: { productId: string; variantId: string | null; name: string; sku: string; color: string | null; qty: number; returned: number; returnable: number; unitCost: number }[] }> {
+  if (!(await requirePerm("purchases.manage"))) return { ok: false, error: "Your role can't manage purchases." };
+  const id = (purchaseId ?? "").trim();
+  if (!id) return { ok: false, error: "Missing purchase" };
+  const sb = supabaseServer();
+  const [{ data: items, error }, { data: rets }] = await Promise.all([
+    sb.from("purchase_items").select("qty,unit_cost,mapped_product_id,variant_id, product:products(id,name,sku), variant:variants(id,sku,color)").eq("purchase_id", id),
+    sb.from("stock_adjustments").select("product_id,variant_id,delta").eq("ref_id", id).eq("kind", "purchase_return"),
+  ]);
+  if (error) return { ok: false, error: error.message };
+  const retBy = new Map<string, number>();
+  for (const r of ((rets as any[]) ?? [])) {
+    const k = `${r.product_id}::${r.variant_id ?? ""}`;
+    retBy.set(k, (retBy.get(k) ?? 0) + Math.abs(r.delta ?? 0));
+  }
+  return { ok: true, items: ((items as any[]) ?? []).filter((it) => it.mapped_product_id).map((it) => {
+    const returned = retBy.get(`${it.mapped_product_id}::${it.variant_id ?? ""}`) ?? 0;
+    return {
+      productId: it.mapped_product_id, variantId: it.variant_id ?? null,
+      name: it.product?.name ?? "—", sku: it.variant?.sku ?? it.product?.sku ?? "",
+      color: it.variant?.color ?? null,
+      qty: it.qty ?? 0, returned, returnable: Math.max(0, (it.qty ?? 0) - returned),
+      unitCost: it.unit_cost ?? 0,
+    };
+  }) };
+}
+
+/** Record a PURCHASE RETURN (goods back to the supplier): variant-exact stock out + debit note.
+ *  The RPC enforces the per-line cap (bought − already returned) — same rule as sales returns. */
+export async function recordPurchaseReturnAction(input: { purchaseId: string; reason: string; items: { productId: string; variantId?: string | null; qty: number }[] }): Promise<{ ok: boolean; qty?: number; amount?: number; error?: string }> {
+  if (!(await requirePerm("purchases.manage"))) return { ok: false, error: "Your role can't manage purchases." };
+  if (!input.items?.length) return { ok: false, error: "Select items to return" };
+  if (!input.reason?.trim()) return { ok: false, error: "Add a reason (damaged, wrong goods, excess…)" };
+  const sb = supabaseServer();
+  const p_items = input.items.map((i) => ({ product_id: i.productId, variant_id: i.variantId ?? null, qty: i.qty }));
+  const { data, error } = await sb.rpc("record_purchase_return", { p_purchase_id: input.purchaseId, p_reason: input.reason, p_items });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/admin/purchases"); revalidatePath(`/admin/purchase/${input.purchaseId}`); revalidatePath("/admin/returns"); revalidatePath("/admin/stock-movements");
+  return { ok: true, qty: (data as any)?.qty, amount: (data as any)?.amount };
+}

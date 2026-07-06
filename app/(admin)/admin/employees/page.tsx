@@ -20,11 +20,27 @@ function rangeFor(period: string): { from?: string; to?: string; label: string }
   return { from, label: now.toLocaleDateString("en-IN", { month: "long", year: "numeric" }) };
 }
 
-export default async function EmployeesPage({ searchParams }: { searchParams: { period?: string } }) {
-  const canManage = can(getSession(), "customers.manage");
+export default async function EmployeesPage({ searchParams }: { searchParams: { period?: string; emp?: string } }) {
+  // STAFF MODULE IS OWNER-ONLY: sales attribution, per-person earnings and the full ledger are
+  // sensitive — staff must not see each other's numbers.
+  const session = getSession();
+  if (!session.isOwner) {
+    return (
+      <main className="p-8 bg-cream/40 min-h-screen">
+        <h1 className="font-display text-3xl text-ink mb-2">Staff &amp; Sales Ledger</h1>
+        <p className="text-sm text-muted">This module is visible to the owner only.</p>
+      </main>
+    );
+  }
+  const canManage = can(session, "customers.manage");
   const period = searchParams.period ?? "month";
+  const empFilter = (searchParams.emp ?? "").trim();
   const range = rangeFor(period);
-  const [roster, perf, ledger] = await Promise.all([getEmployees({}), getEmployeePerformance(range), getEmployeeSalesLedger(range)]);
+  const [roster, perf, ledgerAll] = await Promise.all([getEmployees({}), getEmployeePerformance(range), getEmployeeSalesLedger(range)]);
+  // Per-employee ledger: ?emp=<id> narrows every bill to one salesperson — the "certain employee
+  // registered in one place" tracking the owner asked for.
+  const empName = empFilter ? (roster.find((r: any) => r.id === empFilter)?.name ?? "") : "";
+  const ledger = empFilter ? ledgerAll.filter((s) => s.employee === empName) : ledgerAll;
 
   const totalSales = perf.reduce((s, p) => s + p.sales, 0);
   const tab = (key: string, label: string) =>
@@ -106,7 +122,13 @@ export default async function EmployeesPage({ searchParams }: { searchParams: { 
       <p className="text-[11px] text-muted mt-3">Sales = total value of bills attributed to the employee in the selected period. Collected = amount actually received on those bills. Marking someone inactive hides them from the POS picker but keeps their past sales.</p>
 
       {/* Sales ledger — every attributed bill with date + customer, so the owner can audit each sale. */}
-      <h2 className="font-display text-2xl text-ink mt-8 mb-1">Sales ledger</h2>
+      <h2 className="font-display text-2xl text-ink mt-8 mb-1">Sales ledger{empName ? ` — ${empName}` : ""}</h2>
+      <div className="flex flex-wrap gap-1.5 mb-2">
+        <Link href={`/admin/employees?period=${period}`} className={`text-xs px-2.5 py-1 rounded-full border ${!empFilter ? "bg-ink text-white border-ink" : "border-sand text-muted hover:border-emerald"}`}>All staff</Link>
+        {roster.map((r: any) => (
+          <Link key={r.id} href={`/admin/employees?period=${period}&emp=${r.id}`} className={`text-xs px-2.5 py-1 rounded-full border ${empFilter === r.id ? "bg-ink text-white border-ink" : "border-sand text-muted hover:border-emerald"}`}>{r.name}</Link>
+        ))}
+      </div>
       <p className="text-sm text-muted mb-3">Each bill credited to a salesperson in {range.label.toLowerCase()} — date, who sold it, and the customer. Click a bill to open it.</p>
       <div className="bg-white rounded-2xl shadow-card overflow-x-auto">
         <table className="w-full text-sm">

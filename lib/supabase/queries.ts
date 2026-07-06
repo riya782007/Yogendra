@@ -654,7 +654,16 @@ export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?
   let q = query.order(col, { ascending: asc, nullsFirst: false });
   if (col !== "created_at") q = q.order("created_at", { ascending: false });
   const { data, count } = await q.range(fromIdx, fromIdx + pageSize - 1);
-  return { rows: (data as any[]) ?? [], total: count ?? 0, page, pageSize };
+  const rows = (data as any[]) ?? [];
+  // Attach returned-piece counts so the sales list shows "↩ N returned" on affected bills —
+  // the chain-of-events note the client asked for (avoids double returns / miscommunication).
+  if (rows.length) {
+    const { data: rets } = await sb.from("returns").select("ref_order_id,qty").eq("kind", "sales").in("ref_order_id", rows.map((r) => r.id));
+    const by = new Map<string, number>();
+    for (const r of ((rets as any[]) ?? [])) if (r.ref_order_id) by.set(r.ref_order_id, (by.get(r.ref_order_id) ?? 0) + (r.qty ?? 0));
+    for (const r of rows) r.returned_qty = by.get(r.id) ?? 0;
+  }
+  return { rows, total: count ?? 0, page, pageSize };
 }
 
 export async function getPublishedProducts(): Promise<(DbProduct & { category: DbCategory })[]> {
