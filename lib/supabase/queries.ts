@@ -992,7 +992,7 @@ export async function getStockMovements(opts: { page?: number; pageSize?: number
   const pageSize = opts.pageSize ?? 30;
   const page = Math.max(1, opts.page ?? 1);
   let query = sb.from("stock_adjustments")
-    .select("id,product_id,delta,kind,source,reason,ref_id,sku,created_at, product:products(sku,name), variant:variants(color)", { count: "exact" });
+    .select("id,product_id,variant_id,delta,kind,source,reason,ref_id,sku,created_at, product:products(sku,name), variant:variants(color)", { count: "exact" });
   if (opts.kind && opts.kind !== "all") query = query.eq("kind", opts.kind);
   if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.ilike("sku", `%${s}%`); }
   if (opts.from) query = query.gte("created_at", opts.from);
@@ -1023,6 +1023,36 @@ export async function getStockMovements(opts: { page?: number; pageSize?: number
     for (const e of ((ests as any[]) ?? [])) if (e.customer_name) partyBy.set(e.id, e.customer_name);
   }
   for (const r of rows) r.party = r.ref_id ? (partyBy.get(r.ref_id) ?? null) : null;
+
+  // PRICE per movement — the owner checks "what did I sell/buy this at last time" from this very
+  // register. Batch-resolved: sale rows → order_items.unit_price, purchase rows →
+  // purchase_items.unit_cost, estimate rows → estimate_items.unit_price. Variant-exact when the
+  // movement carries a variant; falls back to the product-level line.
+  const priceKey = (ref: string, prod: string, vid: string | null) => `${ref}|${prod}|${vid ?? ""}`;
+  const priceBy = new Map<string, number>();
+  if (saleRefs.length) {
+    const { data: ois } = await sb.from("order_items").select("order_id,product_id,variant_id,unit_price").in("order_id", saleRefs as string[]);
+    for (const oi of ((ois as any[]) ?? [])) {
+      priceBy.set(priceKey(oi.order_id, oi.product_id, oi.variant_id ?? null), oi.unit_price ?? 0);
+      if (!priceBy.has(priceKey(oi.order_id, oi.product_id, null))) priceBy.set(priceKey(oi.order_id, oi.product_id, null), oi.unit_price ?? 0);
+    }
+  }
+  if (purchaseRefs.length) {
+    const { data: pis } = await sb.from("purchase_items").select("purchase_id,mapped_product_id,unit_cost").in("purchase_id", purchaseRefs as string[]);
+    for (const pi of ((pis as any[]) ?? [])) if (pi.mapped_product_id) priceBy.set(priceKey(pi.purchase_id, pi.mapped_product_id, null), pi.unit_cost ?? 0);
+  }
+  if (estimateRefs.length) {
+    const { data: eis } = await sb.from("estimate_items").select("estimate_id,product_id,variant_id,unit_price").in("estimate_id", estimateRefs as string[]);
+    for (const ei of ((eis as any[]) ?? [])) {
+      priceBy.set(priceKey(ei.estimate_id, ei.product_id, ei.variant_id ?? null), ei.unit_price ?? 0);
+      if (!priceBy.has(priceKey(ei.estimate_id, ei.product_id, null))) priceBy.set(priceKey(ei.estimate_id, ei.product_id, null), ei.unit_price ?? 0);
+    }
+  }
+  for (const r of rows) {
+    r.price = r.ref_id && r.product_id
+      ? (priceBy.get(priceKey(r.ref_id, r.product_id, r.variant_id ?? null)) ?? priceBy.get(priceKey(r.ref_id, r.product_id, null)) ?? null)
+      : null;
+  }
   return { rows, total: count ?? 0, page, pageSize };
 }
 
@@ -1032,7 +1062,7 @@ export async function getOpenEstimateReservations(limit = 50) {
   const sb = supabaseServer();
   const { data } = await sb
     .from("estimates")
-    .select("id, customer_name, created_at, estimate_items(qty, product:products(sku,name))")
+    .select("id, customer_name, created_at, estimate_items(qty, unit_price, variant:variants(color), product:products(sku,name))")
     .eq("status", "open")
     .order("created_at", { ascending: false })
     .limit(limit);
@@ -1042,6 +1072,7 @@ export async function getOpenEstimateReservations(limit = 50) {
     created_at: e.created_at as string,
     lines: ((e.estimate_items as any[]) ?? []).map((li) => ({
       qty: li.qty as number, sku: li.product?.sku as string | undefined, name: li.product?.name as string | undefined,
+      color: (li.variant?.color as string | null) ?? null, unitPrice: (li.unit_price as number | null) ?? null,
     })),
     qty: ((e.estimate_items as any[]) ?? []).reduce((s, li) => s + (li.qty ?? 0), 0),
   })).filter((e) => e.lines.length > 0);
@@ -1060,6 +1091,8 @@ export type LedgerMovement = {
   /** True for estimate/reservation holds — soft commitments that do NOT change the stock balance. */
   hold?: boolean;
   variant?: { color: string | null; sku: string | null } | null;
+  /** Unit price of this movement (paise): sale/estimate = billed rate, purchase = unit cost. */
+  price?: number | null;
   doc: { href: string; label: string } | null;
 };
 
@@ -1167,6 +1200,21 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   // Availability is only reduced by OPEN estimates (converted/billed ones already became sales).
   const reserved = reservations.filter((r) => r.status === "open").reduce((s, r) => s + r.qty, 0);
 
+  // Unit price per movement (sale rate / purchase cost / estimate rate), variant-exact w/ fallback.
+  const priceKey = (ref: string, vid: string | null) => `${ref}|${vid ?? ""}`;
+  const priceBy = new Map<string, number>();
+  if (saleRefs.length) {
+    const { data: ois } = await sb.from("order_items").select("order_id,variant_id,unit_price").in("order_id", saleRefs as string[]).eq("product_id", productId);
+    for (const oi of ((ois as any[]) ?? [])) {
+      priceBy.set(priceKey(oi.order_id, oi.variant_id ?? null), oi.unit_price ?? 0);
+      if (!priceBy.has(priceKey(oi.order_id, null))) priceBy.set(priceKey(oi.order_id, null), oi.unit_price ?? 0);
+    }
+  }
+  if (purchaseRefs.length) {
+    const { data: pis2 } = await sb.from("purchase_items").select("purchase_id,unit_cost").in("purchase_id", purchaseRefs as string[]).eq("mapped_product_id", productId);
+    for (const pi of ((pis2 as any[]) ?? [])) priceBy.set(priceKey(pi.purchase_id, null), pi.unit_cost ?? 0);
+  }
+
   // Real stock movements → display rows (carry the anchored running balance).
   const realDisplay: LedgerMovement[] = allRows.map((r) => ({
     id: r.id, kind: r.kind ?? "adjustment", delta: r.delta ?? 0, runningBalance: r.runningBalance ?? 0,
@@ -1176,6 +1224,7 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     party: r.ref_id ? (partyBy.get(r.ref_id) ?? null) : null,
     hold: false,
     variant: r.variant_id ? { color: variantById.get(r.variant_id)?.color ?? null, sku: variantById.get(r.variant_id)?.sku ?? null } : null,
+    price: r.ref_id ? (priceBy.get(priceKey(r.ref_id, r.variant_id ?? null)) ?? priceBy.get(priceKey(r.ref_id, null)) ?? null) : null,
     doc: docFor(r),
   }));
   // Estimate holds → timeline rows. They do NOT change the running balance (soft commitment), so
@@ -1187,6 +1236,7 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     created_by: null, ref_id: r.estimate.id as string, created_at: r.estimate.created_at as string,
     invoice_no: null, party: (r.estimate.customer_name as string) ?? null, hold: true,
     variant: (r.variant?.color as string | null) ? { color: r.variant.color as string, sku: null } : null,
+    price: (r.unit_price as number) ?? null,
     doc: { href: `/admin/estimate/${r.estimate.id}`, label: "Open estimate →" },
   }));
 

@@ -16,6 +16,7 @@ type Movement = {
   party?: string | null;
   hold?: boolean;
   variant?: { color: string | null; sku: string | null } | null;
+  price?: number | null;
   doc: { href: string; label: string } | null;
 };
 type VariantSummary = { id: string; sku: string; color: string | null; qty: number; purchased: number; sold: number; net: number };
@@ -110,8 +111,9 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
   }, [filtered]);
 
   function exportCsv() {
-    const head = ["Date", "Time", "Type", "Change", "Balance", "Invoice/Bill", "Party", "Reference", "By", "Note"];
+    const head = ["Date", "Time", "Type", "Change", "Balance", "Unit Price", "Invoice/Bill", "Party", "Reference", "By", "Note"];
     const lines = rows.map((r) => [day(r.created_at), time(r.created_at), r.kind, r.delta, r.hold ? "reserved" : (r.runningBalance ?? ""),
+      r.price != null ? (r.price / 100).toFixed(2) : "",
       r.invoice_no ?? "", r.party ?? "", r.ref_id ?? "", r.created_by ?? "", (r.reason ?? r.source ?? "").replace(/[\n,]/g, " ")]);
     const csv = [head, ...lines].map((row) => row.map((c) => `"${String(c)}"`).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
@@ -246,6 +248,7 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
                             {r.party ? " · " : ""}{time(r.created_at)}{r.created_by ? ` · ${r.created_by}` : ""}{r.doc ? " · " : ""}{r.doc && <Link href={r.doc.href} className="text-emerald nav-link">{r.doc.label}</Link>}
                           </p>
                         </div>
+                        {r.price != null && <span className="text-[11px] tabular-nums text-ink whitespace-nowrap" title="Unit rate on this document">@ {fmt(r.price)}</span>}
                         {r.hold ? (
                           <>
                             <span className="font-semibold tabular-nums text-gold-dark">⏳ {Math.abs(r.delta)}</span>

@@ -60,7 +60,7 @@ export default async function StockMovements({ searchParams }: { searchParams: {
                 <div className="flex-1 min-w-0">
                   <Link href={`/admin/estimate/${e.id}`} className="text-emerald nav-link font-medium">EST-{String(e.id).slice(0, 8).toUpperCase()} →</Link>
                   <span className="text-muted"> · {e.customer_name || "Walk-in"} · {new Date(e.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}</span>
-                  <div className="text-xs text-muted mt-0.5 truncate">{e.lines.map((l: any) => `${l.name ?? l.sku} ×${l.qty}`).join(", ")}</div>
+                  <div className="text-xs text-muted mt-0.5 truncate">{e.lines.map((l: any) => `${l.name ?? l.sku}${l.color ? ` (${l.color})` : ""} ×${l.qty}${l.unitPrice != null ? ` @ ₹${Math.round(l.unitPrice / 100)}` : ""}`).join(", ")}</div>
                 </div>
                 <span className="text-gold-dark font-semibold whitespace-nowrap">{e.qty} pcs</span>
               </li>

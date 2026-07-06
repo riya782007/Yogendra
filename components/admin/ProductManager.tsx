@@ -6,6 +6,7 @@
  * price preview and client-side validation. Each tab saves through its own server action; all
  * panels stay mounted so unsaved edits survive tab switches.
  */
+import { ProductHistoryLedger } from "./ProductHistoryLedger";
 import { useState } from "react";
 import Link from "next/link";
 import { formatPaise, computePrices } from "@/lib/pricing";
@@ -307,6 +308,10 @@ export function ProductManager({ data, initialTab }: { data: any; initialTab?: s
 
       {/* ---------- HISTORY ---------- */}
       <div hidden={tab !== "history"}>
+        <div className={`${card} mb-4`}>
+          {/* Movements + estimates for THIS product: date, party, variant, qty, price, document. */}
+          {tab === "history" && <ProductHistoryLedger productId={p.id} />}
+        </div>
         <div className={card}>
           <p className="text-sm font-medium text-ink mb-3">Audit timeline</p>
           {data.audit.length === 0 ? (
