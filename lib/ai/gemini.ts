@@ -43,12 +43,13 @@ function openaiKeyPresent(): boolean {
   return !!(process.env.OPENAI_API_KEY ?? process.env.openai_api_key ?? process.env.OpenAI_api_key);
 }
 
-/** OpenAI image fallback is OPT-IN: the account hit its billing hard limit, so Gemini handles all
- *  image generation. When OpenAI billing is sorted, set OPENAI_IMAGES_ENABLED=1 in Vercel env to
- *  restore the automatic fallback — no code change needed. */
+/** OpenAI image fallback is ON by default (billing refilled) — it rescues generation whenever the
+ *  Gemini chain fails (e.g. Gemini prepaid credits depleted / 429 RESOURCE_EXHAUSTED). Park OpenAI
+ *  again with OPENAI_DISABLED=1 if its billing cap is ever hit. */
 function openaiFallbackEnabled(): boolean {
   const on = (v?: string) => (v ?? "").trim() === "1";
-  return (on(process.env.OPENAI_IMAGES_ENABLED) || on(process.env.OPENAI_ENABLED)) && openaiKeyPresent();
+  if (on(process.env.OPENAI_DISABLED) && !on(process.env.OPENAI_ENABLED) && !on(process.env.OPENAI_IMAGES_ENABLED)) return false;
+  return openaiKeyPresent();
 }
 
 /** True if EITHER provider can generate images (Gemini primary, OpenAI fallback). */
