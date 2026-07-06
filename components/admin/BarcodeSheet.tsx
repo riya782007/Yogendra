@@ -18,13 +18,16 @@ type Row = {
   price: string; special: string; wholesale: string; // rupees, editable
 };
 
-// Paper presets → number of label columns across an A4 sheet (drives print density).
+// Paper presets with EXACT die-cut geometry in mm, so each barcode lands on its physical label.
+// 65-up = the standard Avery L7651 sheet: 38.1×21.2mm labels, 10.7mm top margin, 4.75mm side
+// margin, 2.5mm gap between columns, no gap between rows → 5×13 fills one A4 exactly (297mm tall).
+// lw/lh = label width/height · gx/gy = gap between columns/rows · mt/ml = top/left sheet margin.
 const PAPER = [
-  { key: "65", label: "65 per sheet (5 × 13)", cols: 5, per: 65 },
-  { key: "48", label: "48 per sheet (4 × 12)", cols: 4, per: 48 },
-  { key: "40", label: "40 per sheet (4 × 10)", cols: 4, per: 40 },
-  { key: "24", label: "24 per sheet (3 × 8)", cols: 3, per: 24 },
-  { key: "64", label: "64 per sheet (8 × 8)", cols: 8, per: 64 },
+  { key: "65", label: "65 per sheet (5 × 13)", cols: 5, per: 65, lw: 38.1, lh: 21.2, gx: 2.5, gy: 0, mt: 10.7, ml: 4.75 },
+  { key: "48", label: "48 per sheet (4 × 12)", cols: 4, per: 48, lw: 45.7, lh: 22.5, gx: 2.5, gy: 0, mt: 13.5, ml: 8.0 },
+  { key: "40", label: "40 per sheet (4 × 10)", cols: 4, per: 40, lw: 45.7, lh: 25.4, gx: 2.5, gy: 0, mt: 21.5, ml: 8.0 },
+  { key: "24", label: "24 per sheet (3 × 8)", cols: 3, per: 24, lw: 63.5, lh: 33.9, gx: 2.5, gy: 0, mt: 12.7, ml: 7.2 },
+  { key: "64", label: "64 per sheet (8 × 8)", cols: 8, per: 64, lw: 23.0, lh: 33.0, gx: 2.0, gy: 2.0, mt: 8.0, ml: 6.0 },
 ];
 
 const rup = (paise?: number) => {
@@ -43,12 +46,17 @@ export function BarcodeSheet({ products }: { products: P[] }) {
     () => (q.trim() ? products.filter((p) => (p.name + p.sku).toLowerCase().includes(q.toLowerCase())).slice(0, 10) : []),
     [q, products],
   );
-  const cols = PAPER.find((p) => p.key === paper)?.cols ?? 5;
-  const per = PAPER.find((p) => p.key === paper)?.per ?? 65;
-  // Row height so exactly `rows` labels fit down one A4 sheet (297mm − 12mm margins ≈ 280mm usable,
-  // minus 1mm inter-row gaps). This makes "65 per sheet (5×13)" actually print on ONE page.
-  const sheetRows = Math.max(1, Math.round(per / cols));
-  const labelHmm = ((280 - (sheetRows - 1)) / sheetRows).toFixed(2);
+  const G = PAPER.find((p) => p.key === paper) ?? PAPER[0];
+  const cols = G.cols;
+  const per = G.per;
+  // Feed the exact geometry to the print stylesheet as CSS variables. The @media print rules below
+  // consume these so every label sits on its die-cut position and all rows fit on ONE A4 sheet.
+  const sheetVars = {
+    "--bc-cols": cols,
+    "--bc-lw": `${G.lw}mm`, "--bc-lh": `${G.lh}mm`,
+    "--bc-gx": `${G.gx}mm`, "--bc-gy": `${G.gy}mm`,
+    "--bc-mt": `${G.mt}mm`, "--bc-ml": `${G.ml}mm`,
+  };
 
   // Barcode-only rule (owner): the printed retail Price carries a fixed +₹0.51 tax add-on — the
   // actual product/storefront price is NOT changed. Editable, so the owner can still override it.
@@ -178,8 +186,20 @@ export function BarcodeSheet({ products }: { products: P[] }) {
 
       {/* Printable label grid — density set by paper size via --bc-cols */}
       {labels.length > 0 && (
-        <div className="print-area">
-          <div className="barcode-grid grid gap-1" style={{ "--bc-cols": cols, "--bc-h": `${labelHmm}mm`, gridTemplateColumns: `repeat(${cols}, 1fr)` } as any}>
+        <div className="print-area bc-sheet" style={sheetVars as any}>
+          {/* Print-only geometry: match the physical die-cut sheet exactly. `position: fixed` makes the
+              sheet fill the page from the paper edge (escaping the admin page's padding), and @page
+              margin:0 lets the top/side margins come from the label sheet's own spec — so 65 labels
+              land on their labels and fit on ONE A4 instead of spilling onto a second page. */}
+          <style>{`
+            @media print {
+              @page { size: A4; margin: 0 !important; }
+              .bc-sheet.print-area { position: fixed !important; inset: 0 !important; width: 210mm !important; height: 297mm !important; margin: 0 !important; padding: var(--bc-mt) var(--bc-ml) 0 var(--bc-ml) !important; box-sizing: border-box !important; }
+              .bc-sheet .barcode-grid { display: grid !important; grid-template-columns: repeat(var(--bc-cols), var(--bc-lw)) !important; column-gap: var(--bc-gx) !important; row-gap: var(--bc-gy) !important; justify-content: start !important; align-content: start !important; }
+              .bc-sheet .barcode-label { width: var(--bc-lw) !important; height: var(--bc-lh) !important; box-sizing: border-box !important; overflow: hidden !important; }
+            }
+          `}</style>
+          <div className="barcode-grid grid gap-1" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` } as any}>
             {labels.map((it, i) => {
               const line = priceLine(it);
               return (
