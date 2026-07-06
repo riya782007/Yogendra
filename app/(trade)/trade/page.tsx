@@ -41,18 +41,28 @@ export default async function TradeDashboard() {
   const varsBy = new Map<string, any[]>();
   for (const v of ((vRows as any[]) ?? [])) { const a = varsBy.get(v.product_id) ?? []; a.push(v); varsBy.set(v.product_id, a); }
 
+  // Subcategory ("type") + style names for the dealer-panel filters (client point 14).
+  const [{ data: subRows }, { data: styleRows }] = await Promise.all([
+    sb.from("subcategories").select("id,name"),
+    sb.from("styles").select("id,name"),
+  ]);
+  const subName = new Map(((subRows as any[]) ?? []).map((x) => [x.id, x.name]));
+  const styleName = new Map(((styleRows as any[]) ?? []).map((x) => [x.id, x.name]));
+
   const list = (products as any[]).flatMap((p) => {
     const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));
     const parentImg = imgBy.get((p as any).id) ?? null;
     const vs = varsBy.get((p as any).id) ?? [];
+    const sub = subName.get((p as any).subcategory_id) ?? null;
+    const style = styleName.get((p as any).style_id) ?? null;
     if (vs.length > 0) {
       return vs.map((v) => ({
-        sku: v.sku, name: p.name, category: p.category.name, colour: v.color ?? null,
+        sku: v.sku, name: p.name, category: p.category.name, sub, style, colour: v.color ?? null,
         qty: v.qty ?? 0, price: ps.wholesaleRate, mrp: ps.mrp,
         image: (Array.isArray(v.image_paths) ? v.image_paths.find((x: string) => typeof x === "string" && x.startsWith("http")) : null) ?? parentImg,
       }));
     }
-    return [{ sku: p.sku, name: p.name, category: p.category.name, colour: null, qty: p.qty, price: ps.wholesaleRate, mrp: ps.mrp, image: parentImg }];
+    return [{ sku: p.sku, name: p.name, category: p.category.name, sub, style, colour: null, qty: p.qty, price: ps.wholesaleRate, mrp: ps.mrp, image: parentImg }];
   });
 
   // Owner's UPI collection details for direct QR payment (no Razorpay → owner keeps 100%).

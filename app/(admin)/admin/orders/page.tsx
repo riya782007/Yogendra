@@ -1,0 +1,114 @@
+export const dynamic = "force-dynamic";
+/**
+ * Storefront Orders — the owner's dedicated queue for WEBSITE orders (retail + wholesale panel),
+ * separate from the POS sales register ("sales me wo samajh nahi ayega"). Every new order shows
+ * prepaid/COD, the customer's details + delivery address and the exact items, with one-tap
+ * ACCEPT (confirms + WhatsApps the customer) or REJECT (cancels properly: restock + revenue
+ * reversal + customer notified).
+ */
+import Link from "next/link";
+import { supabaseServer } from "@/lib/supabase/server";
+import { formatPaise } from "@/lib/pricing";
+import { acceptStorefrontOrderAction, rejectStorefrontOrderAction } from "@/app/actions/orders";
+
+export const metadata = { title: "Owner Console · Storefront Orders" };
+
+const CH_STYLE: Record<string, string> = {
+  retail: "bg-emerald-mist text-emerald-dark",
+  wholesale: "bg-gold/15 text-gold-dark",
+};
+
+export default async function StorefrontOrders({ searchParams }: { searchParams?: { tab?: string } }) {
+  const sb = supabaseServer();
+  const tab = searchParams?.tab === "handled" ? "handled" : "new";
+  let rows: any[] = [];
+  let migrationMissing = false;
+  {
+    const q = sb.from("orders")
+      .select("id,invoice_no,channel,total,amount_paid,payment_mode,bill_type,status,fulfillment,customer_name,customer_phone,buyer_address,payment_ref,created_at, order_items(qty, product:products(name,sku), variant:variants(sku,color))")
+      .neq("channel", "pos")
+      .order("created_at", { ascending: false })
+      .limit(100);
+    const { data, error } = tab === "new"
+      ? await q.is("fulfillment", null).neq("status", "cancelled")
+      : await q.not("fulfillment", "is", null);
+    if (error && /fulfillment/i.test(error.message ?? "")) migrationMissing = true;
+    rows = (data as any[]) ?? [];
+  }
+
+  const tabCls = (k: string) => `px-3.5 py-1.5 rounded-full text-sm ${tab === k ? "bg-ink text-white" : "bg-white border border-sand text-muted hover:border-emerald"}`;
+
+  return (
+    <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
+      <h1 className="font-display text-4xl text-ink mb-1">Storefront Orders</h1>
+      <p className="text-sm text-muted mb-4">Website orders (shop + wholesale panel) — separate from POS sales. Accept to confirm &amp; pack; Reject cancels the bill, restocks and informs the customer.</p>
+
+      {migrationMissing ? (
+        <div className="rounded-2xl border border-gold/40 bg-gold/10 p-5 text-sm text-ink">
+          <p className="font-medium mb-1">One-time setup needed</p>
+          <p className="text-muted">Run <code className="bg-white px-1 rounded border border-sand">supabase/migrations/0049_order_fulfillment.sql</code> (adds the accept/reject column), then reload.</p>
+        </div>
+      ) : (
+        <>
+          <div className="flex gap-2 mb-4">
+            <Link href="/admin/orders" className={tabCls("new")}>🆕 New</Link>
+            <Link href="/admin/orders?tab=handled" className={tabCls("handled")}>Handled</Link>
+          </div>
+
+          {rows.length === 0 && <p className="text-muted text-sm bg-white rounded-2xl border border-sand p-6">Nothing here — {tab === "new" ? "no new website orders waiting. 🎉" : "no handled orders yet."}</p>}
+
+          <div className="space-y-3">
+            {rows.map((r) => {
+              const paid = r.amount_paid ?? 0;
+              const prepaid = paid >= (r.total ?? 0) && (r.total ?? 0) > 0;
+              const items = ((r.order_items as any[]) ?? []);
+              return (
+                <div key={r.id} className="rounded-2xl border border-sand bg-white shadow-card p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Link href={`/admin/invoice/${r.id}`} className="text-emerald nav-link font-medium">{r.invoice_no || String(r.id).slice(0, 8).toUpperCase()} ↗</Link>
+                        <span className={`px-2 py-0.5 rounded-full text-xs capitalize ${CH_STYLE[r.channel] ?? "bg-cream text-muted"}`}>{r.channel}</span>
+                        <span className={`px-2 py-0.5 rounded-full text-xs ${prepaid ? "bg-emerald-mist text-emerald-dark" : "bg-gold/15 text-gold-dark"}`}>
+                          {prepaid ? "PREPAID ✓" : r.payment_mode === "cod" ? "COD — collect on delivery" : paid > 0 ? `Part-paid ${formatPaise(paid)}` : "Unpaid"}
+                        </span>
+                        {r.payment_ref && <span className="text-[11px] text-muted font-mono">ref {r.payment_ref}</span>}
+                        {r.status === "cancelled" && <span className="px-2 py-0.5 rounded-full text-xs bg-rose/10 text-rose">Cancelled</span>}
+                        {r.fulfillment === "accepted" && <span className="px-2 py-0.5 rounded-full text-xs bg-emerald-mist text-emerald-dark">Accepted ✓</span>}
+                        {r.fulfillment === "rejected" && <span className="px-2 py-0.5 rounded-full text-xs bg-rose/10 text-rose">Rejected</span>}
+                      </div>
+                      <p className="text-sm text-ink mt-1.5">
+                        <b>{r.customer_name || "Walk-in"}</b>{r.customer_phone ? ` · ${r.customer_phone}` : ""}
+                        <span className="text-muted"> · {new Date(r.created_at).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                      </p>
+                      {r.buyer_address && <p className="text-xs text-muted mt-0.5">📦 {r.buyer_address}</p>}
+                      <p className="text-xs text-muted mt-1.5">
+                        {items.map((it: any) => `${it.product?.name ?? it.variant?.sku ?? "item"}${it.variant?.color ? ` (${it.variant.color})` : ""} ×${it.qty}`).join(" · ") || "—"}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-xl font-semibold text-ink">{formatPaise(r.total ?? 0)}</p>
+                      {tab === "new" && (
+                        <div className="flex gap-2 mt-2">
+                          <form action={acceptStorefrontOrderAction}>
+                            <input type="hidden" name="id" value={r.id} />
+                            <button className="px-3.5 py-1.5 rounded-full bg-emerald text-white text-xs font-medium hover:bg-emerald-dark">✓ Accept</button>
+                          </form>
+                          <form action={rejectStorefrontOrderAction}>
+                            <input type="hidden" name="id" value={r.id} />
+                            <input type="hidden" name="reason" value="Rejected by store" />
+                            <button className="px-3.5 py-1.5 rounded-full border border-rose/40 text-rose text-xs font-medium hover:bg-rose/10">✕ Reject</button>
+                          </form>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </main>
+  );
+}

@@ -1,9 +1,10 @@
 "use server";
+import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { isWalkInPlaceholder } from "@/lib/supabase/queries";
 import { requirePerm } from "@/lib/auth";
 import { sendPurchase } from "@/lib/ga4";
-import { notifyOrderPlaced } from "@/lib/whatsapp";
+import { notifyOrderPlaced, sendWhatsAppText } from "@/lib/whatsapp";
 
 export type PlaceOrderInput = {
   items: { sku: string; qty: number; color?: string }[];
@@ -279,4 +280,43 @@ export async function posSaleAction(input: {
 
   await sendPurchase({ orderId, valuePaise: total, channel: "retail", items: input.items.map((i) => ({ sku: i.sku, qty: i.qty })) });
   return { ok: true, orderId, total };
+}
+
+/** ACCEPT a storefront (website) order — moves it out of the "new" queue; customer WhatsApp'd. */
+export async function acceptStorefrontOrderAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("billing.sell"))) return;
+  const id = String(formData.get("id") ?? "").trim();
+  if (!id) return;
+  const sb = supabaseServer();
+  const { error } = await sb.from("orders").update({ fulfillment: "accepted" }).eq("id", id);
+  if (!error) {
+    const { data: o } = await sb.from("orders").select("invoice_no,customer_name,customer_phone,total").eq("id", id).maybeSingle();
+    const ph = (o as any)?.customer_phone;
+    if (ph) {
+      const inv = (o as any)?.invoice_no || id.slice(0, 8).toUpperCase();
+      await sendWhatsAppText(ph, `Hi ${(o as any)?.customer_name || "there"}! 💛 Your Blythe Diva order ${inv} is CONFIRMED and being packed. We'll share tracking soon.`).catch(() => {});
+    }
+  }
+  revalidatePath("/admin/orders"); revalidatePath("/admin/sales");
+}
+
+/** REJECT a storefront order — cancels it properly: restocks every line, reverses the revenue
+ *  ledger, marks cancelled (via the same cancel_order RPC the owner uses), customer notified. */
+export async function rejectStorefrontOrderAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("billing.sell"))) return;
+  const id = String(formData.get("id") ?? "").trim();
+  const reason = String(formData.get("reason") ?? "").trim() || "Order rejected by store";
+  if (!id) return;
+  const sb = supabaseServer();
+  const { error } = await sb.rpc("cancel_order", { p_order_id: id, p_reason: reason });
+  if (!error) {
+    await sb.from("orders").update({ fulfillment: "rejected" }).eq("id", id).then(() => {}, () => {});
+    const { data: o } = await sb.from("orders").select("invoice_no,customer_name,customer_phone").eq("id", id).maybeSingle();
+    const ph = (o as any)?.customer_phone;
+    if (ph) {
+      const inv = (o as any)?.invoice_no || id.slice(0, 8).toUpperCase();
+      await sendWhatsAppText(ph, `Hi ${(o as any)?.customer_name || "there"}, we're sorry — your Blythe Diva order ${inv} couldn't be fulfilled and has been cancelled. Any payment will be refunded. Reason: ${reason}`).catch(() => {});
+    }
+  }
+  revalidatePath("/admin/orders"); revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard");
 }

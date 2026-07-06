@@ -66,6 +66,18 @@ export async function regenWholesaleCodeAction(formData: FormData) {
  * keeps 100% of the revenue. The dealer submits the UPI reference (UTR); we record it on the order
  * and WhatsApp the owner to verify the payment and dispatch.
  */
+/** Owner's fixed wholesale shipping slabs (paise in → paise out).
+ *  3k–7k → ₹300 · 7k–12k → ₹400 · 12k–20k → ₹600 · 20k–30k → ₹900 · above ₹30k → quoted
+ *  separately by the store (0 here; flagged in the owner's WhatsApp + dealer's confirmation). */
+export function wholesaleShippingPaise(totalPaise: number): number {
+  if (totalPaise > 3000000) return 0;                 // above ₹30,000 — store quotes shipping
+  if (totalPaise > 2000000) return 90000;             // ₹20,001–30,000 → ₹900
+  if (totalPaise > 1200000) return 60000;             // ₹12,001–20,000 → ₹600
+  if (totalPaise > 700000) return 40000;              // ₹7,001–12,000 → ₹400
+  return 30000;                                       // ₹3,000–7,000 → ₹300 (min order is ₹3,000)
+}
+export const WHOLESALE_COD_FEE_PAISE = 12000;         // flat ₹120 per COD order
+
 export async function placeWholesaleOrderAction(
   items: { sku: string; qty: number }[],
   opts?: { paymentRef?: string; cod?: boolean },
@@ -82,11 +94,21 @@ export async function placeWholesaleOrderAction(
   const { data, error } = await sb.rpc("place_wholesale_order", { p_customer: sess.id, p_items: clean, p_allow_oversell: false, p_tiers: pTiers });
   if (error) return { ok: false, error: error.message };
   const orderId = (data as any)?.order_id as string | undefined;
-  const total = (data as any)?.total as number | undefined;
+  let total = (data as any)?.total as number | undefined;
   const ref = (opts?.paymentRef ?? "").trim().slice(0, 40);
 
   if (orderId) {
     await sb.rpc("assign_invoice_no", { p_order: orderId });
+
+    // SHIPPING (owner's fixed slabs) + COD fee belong IN the bill. Above ₹30k shipping is quoted
+    // separately, so nothing is auto-added there.
+    const itemsOnly = (total ?? 0) as number;
+    const ship = wholesaleShippingPaise(itemsOnly);
+    const codFee = opts?.cod ? WHOLESALE_COD_FEE_PAISE : 0;
+    if (ship + codFee > 0) {
+      total = itemsOnly + ship + codFee;
+      await sb.from("orders").update({ total, extra_courier: ship + codFee }).eq("id", orderId).then(() => {}, () => {});
+    }
     // Record the dealer's UPI payment claim so the owner can match it against his bank/UPI history.
     if (ref) await sb.from("orders").update({ payment_ref: ref, payment_mode: "upi" }).eq("id", orderId);
     // COD wholesale order: nothing received yet — dues stay on the dealer's ledger until collected.
@@ -99,12 +121,16 @@ export async function placeWholesaleOrderAction(
         const { data: o } = await sb.from("orders").select("invoice_no,total,customer_name").eq("id", orderId).maybeSingle();
         const inv = (o as any)?.invoice_no || orderId.slice(0, 8).toUpperCase();
         const amt = Math.round((((o as any)?.total ?? total ?? 0) as number) / 100).toLocaleString("en-IN");
+        const shipNote = wholesaleShippingPaise((total ?? 0) as number) === 0 && ((total ?? 0) as number) > 3000000
+          ? "🚚 Above ₹30,000 — CONTACT the dealer to quote shipping."
+          : null;
         const dealer = (sess as any).name || (o as any)?.customer_name || "Dealer";
         const lines = [
           `🔔 New WHOLESALE order ${inv}`,
           `Dealer: ${dealer}`,
           `Amount: ₹${amt}`,
-          opts?.cod ? `💵 COD — collect ₹${amt} on delivery.` : ref ? `UPI ref (UTR): ${ref} — verify this in your UPI/bank, then dispatch.` : `Payment: to be collected.`,
+          opts?.cod ? `💵 COD (incl. ₹120 COD fee) — collect ₹${amt} on delivery.` : ref ? `UPI ref (UTR): ${ref} — verify this in your UPI/bank, then dispatch.` : `Payment: to be collected.`,
+          ...(shipNote ? [shipNote] : []),
           `Open the Owner Console → Sales to confirm.`,
         ];
         await sendWhatsAppText(owner, lines.join("\n"));
