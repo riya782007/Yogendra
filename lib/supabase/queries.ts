@@ -1404,10 +1404,19 @@ export async function getPurchaseById(id: string) {
   const sb = supabaseServer();
   const { data: p } = await sb.from("purchases").select("*, supplier:suppliers(id,name,city)").eq("id", id).maybeSingle();
   if (!p) return null;
-  const { data: items } = await sb.from("purchase_items").select("supplier_sku,qty,unit_cost, product:products(sku,name)").eq("purchase_id", id);
+  // Show the variant (colour + variant SKU) alongside the mapped product. Resilient: if the variant
+  // embed isn't available on a given DB, fall back to the product-only select so nothing blanks.
+  const RICH_PI = "supplier_sku,qty,unit_cost, product:products(sku,name), variant:variants(sku,color)";
+  const BASIC_PI = "supplier_sku,qty,unit_cost, product:products(sku,name)";
+  const richPi = await sb.from("purchase_items").select(RICH_PI).eq("purchase_id", id);
+  let items: any[] | null = (richPi.data as any) ?? null;
+  if (richPi.error || items == null) {
+    const basicPi = await sb.from("purchase_items").select(BASIC_PI).eq("purchase_id", id);
+    items = (basicPi.data as any) ?? null;
+  }
   const { data: pending } = await sb.from("approvals").select("id").eq("action", "delete_purchase").eq("status", "pending").contains("payload", { purchase_id: id }).maybeSingle();
   const { data: suppliers } = await sb.from("suppliers").select("id,name,city").order("name");
-  return { purchase: p, items: (items as any[]) ?? [], deletionPending: !!pending, suppliers: (suppliers as any[]) ?? [] };
+  return { purchase: p, items: items ?? [], deletionPending: !!pending, suppliers: (suppliers as any[]) ?? [] };
 }
 
 export async function searchProducts(q: string) {

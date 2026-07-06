@@ -31,7 +31,12 @@ export default async function PurchaseDetail({ params }: { params: { id: string 
             {items.map((it: any, i: number) => (
               <tr key={i} className="border-t border-sand/60">
                 <td className="p-3 text-ink">{it.supplier_sku || "—"}</td>
-                <td className="p-3 text-muted">{it.product ? `${it.product.name} (${it.product.sku})` : <span className="text-rose">unmapped</span>}</td>
+                <td className="p-3 text-muted">{it.product ? (
+                  <>
+                    {it.product.name}{it.variant?.color ? <span className="text-ink"> – {it.variant.color}</span> : ""}{" "}
+                    <span className="font-mono text-xs text-ink/70">({it.variant?.sku ?? it.product.sku})</span>
+                  </>
+                ) : <span className="text-rose">unmapped</span>}</td>
                 <td className="p-3 text-right">{it.qty}</td>
                 <td className="p-3 text-right">{formatPaise(it.unit_cost)}</td>
                 <td className="p-3 text-right font-medium">{formatPaise(it.unit_cost * it.qty)}</td>
