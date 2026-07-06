@@ -134,6 +134,12 @@ export async function notifyOrderPlaced(args: {
   totalPaise: number;
   payment: string; // "cod" | "online" | ...
   itemCount: number;
+  /** One line per item — "SKU · colour × qty" — so the owner knows EXACTLY what sold. */
+  itemsText?: string | null;
+  /** Delivery address for the owner's dispatch message. */
+  address?: string | null;
+  /** Shipping charged on this order (paise) — shown separately so the owner ties out the total. */
+  shippingPaise?: number | null;
 }): Promise<void> {
   if (!whatsappConfigured()) return;
   const shortId = String(args.orderId).slice(0, 8).toUpperCase();
@@ -158,7 +164,13 @@ export async function notifyOrderPlaced(args: {
   if (owner) {
     await sendWhatsAppText(
       owner,
-      `🛒 New ${STORE()} order #${shortId}\n${args.customerName || "Customer"} (${args.customerPhone || "no phone"})\n${args.itemCount} item(s) · ${rupees(args.totalPaise)} · ${paid}`,
+      [
+        `🛒 New ${STORE()} order #${shortId}`,
+        `${args.customerName || "Customer"} (${args.customerPhone || "no phone"})`,
+        `${args.itemCount} item(s) · ${rupees(args.totalPaise)}${args.shippingPaise ? ` (incl. ${rupees(args.shippingPaise)} shipping)` : ""} · ${paid}`,
+        args.itemsText ? `\n${args.itemsText}` : "",
+        args.address ? `\n📦 Deliver to: ${args.address}` : "",
+      ].filter(Boolean).join("\n"),
     ).catch(() => {});
   }
 }

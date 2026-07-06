@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { getCreditors } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
+import { ReceivePaymentButton } from "@/components/admin/ReceivePaymentButton";
 
 export const metadata = { title: "Owner Console · Creditors" };
 
@@ -42,7 +43,12 @@ export default async function Creditors() {
                 <td className="p-3 text-ink">{r.name}{r.phone && <span className="block text-xs text-muted">{r.phone}</span>}</td>
                 <td className="p-3 text-right text-muted">{r.bills}</td>
                 <td className="p-3 text-right font-semibold text-rose">{formatPaise(r.outstanding)}</td>
-                <td className="p-3 text-right">{r.id && <Link href={`/admin/customer/${r.id}`} className="text-emerald nav-link text-xs">Ledger →</Link>}</td>
+                <td className="p-3 text-right">
+                  <div className="flex items-center justify-end gap-2">
+                    <ReceivePaymentButton customerId={r.id} phone={r.phone || null} customerName={r.name} outstandingPaise={r.outstanding} />
+                    {r.id && <Link href={`/admin/customer/${r.id}`} className="text-emerald nav-link text-xs whitespace-nowrap">Ledger →</Link>}
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>

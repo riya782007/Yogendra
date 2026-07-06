@@ -6,6 +6,7 @@ import { formatPaise } from "@/lib/pricing";
 import { getSession, can } from "@/lib/auth";
 import { upsertCustomerAction, deleteCustomerAction } from "@/app/actions/customers";
 import { approveWholesaleAction, regenWholesaleCodeAction } from "@/app/actions/wholesale";
+import { ReceivePaymentButton } from "@/components/admin/ReceivePaymentButton";
 
 export const metadata = { title: "Owner Console · Customer" };
 
@@ -33,6 +34,7 @@ export default async function CustomerDetail({ params }: { params: { id: string 
         <div className="bg-white rounded-2xl p-4 shadow-card">
           <p className="text-xs uppercase tracking-wide text-muted">Outstanding <span className="text-[10px] opacity-70">(from bills)</span></p>
           <p className={`text-xl font-semibold mt-1 ${outstanding > 0 ? "text-rose" : "text-ink"}`}>{formatPaise(outstanding)}</p>
+          {canManage && outstanding > 0 && <div className="mt-2"><ReceivePaymentButton customerId={c.id} phone={c.phone ?? null} customerName={c.name} outstandingPaise={outstanding} /></div>}
           {creditAdjustment !== 0 && (
             <p className={`text-[11px] mt-1 ${creditAdjustment > 0 ? "text-rose/80" : "text-emerald-dark"}`}>
               {creditAdjustment > 0 ? "+ " : "− "}{formatPaise(Math.abs(creditAdjustment))} manual adj.

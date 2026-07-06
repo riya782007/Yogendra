@@ -146,10 +146,15 @@ async function finalizeOnlineOrder(args: {
     return { ok: false, error: error.message, retry: true };
   }
   const orderId = (data as any)?.order_id as string;
-  const total = (data as any)?.total as number;
+  const itemsOnly = (data as any)?.total as number;
+  // The customer was CHARGED items + shipping — the recorded order must say the same.
+  const ship = shippingPaise(itemsOnly);
+  const total = itemsOnly + ship;
+  const addr = [ (customer as any).address, (customer as any).city, (customer as any).pincode ].filter(Boolean).join(", ");
 
   // Mark fully paid + record the Razorpay payment id. Razorpay/UPI settles to bank → bank book.
   await sb.from("orders").update({
+    total, ...(ship > 0 ? { extra_courier: ship } : {}), ...(addr ? { buyer_address: addr } : {}),
     amount_paid: total, payment_mode: "online", payment_ref: args.paymentId, pay_bank: total,
   }).eq("id", orderId);
 
@@ -161,6 +166,8 @@ async function finalizeOnlineOrder(args: {
   await notifyOrderPlaced({
     orderId, customerName: customer.name, customerPhone: customer.phone,
     totalPaise: total, payment: "online", itemCount: items.reduce((n, i) => n + i.qty, 0),
+    itemsText: items.map((i) => `• ${i.sku}${i.color ? ` · ${i.color}` : ""} × ${i.qty}`).join("\n"),
+    address: addr || null, shippingPaise: ship || null,
   }).catch(() => {});
 
   return { ok: true, orderId };

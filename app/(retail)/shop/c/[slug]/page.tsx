@@ -151,7 +151,7 @@ export default async function CategoryPage({ params, searchParams }: { params: {
       </Reveal>
 
       {/* ================= FILTERS (collapsed behind one button) ================= */}
-      <FiltersPanel activeCount={activeChips.length} activeChips={activeChips} clearHref={`/shop/c/${params.slug}`}>
+      <FiltersPanel defaultOpen activeCount={activeChips.length} activeChips={activeChips} clearHref={`/shop/c/${params.slug}`}>
         {/* Quick filters (labels) */}
         {labels.length > 0 && (
           <Row label="Quick">
@@ -223,7 +223,7 @@ export default async function CategoryPage({ params, searchParams }: { params: {
         )
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
-          {items.map((p, i) => (<Reveal key={p.sku} delay={(i % 4) * 70}><ProductCard p={p as any} formula={formula} /></Reveal>))}
+          {items.map((p, i) => (<Reveal key={p.sku} delay={(i % 4) * 70}><ProductCard p={{ ...(p as any), colors: [...(colourByProduct.get((p as any).id) ?? [])] }} formula={formula} /></Reveal>))}
         </div>
       )}
     </div>

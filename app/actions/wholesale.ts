@@ -68,7 +68,7 @@ export async function regenWholesaleCodeAction(formData: FormData) {
  */
 export async function placeWholesaleOrderAction(
   items: { sku: string; qty: number }[],
-  opts?: { paymentRef?: string },
+  opts?: { paymentRef?: string; cod?: boolean },
 ): Promise<{ ok: boolean; orderId?: string; total?: number; error?: string }> {
   const sess = await getWholesaleSession();
   if (!sess) return { ok: false, error: "Please log in as an approved wholesale customer." };
@@ -89,6 +89,8 @@ export async function placeWholesaleOrderAction(
     await sb.rpc("assign_invoice_no", { p_order: orderId });
     // Record the dealer's UPI payment claim so the owner can match it against his bank/UPI history.
     if (ref) await sb.from("orders").update({ payment_ref: ref, payment_mode: "upi" }).eq("id", orderId);
+    // COD wholesale order: nothing received yet — dues stay on the dealer's ledger until collected.
+    if (opts?.cod) await sb.from("orders").update({ payment_mode: "cod", amount_paid: 0 }).eq("id", orderId).then(() => {}, () => {});
 
     // Notify the owner on WhatsApp to verify the UPI payment and dispatch — best-effort, never blocks.
     try {
@@ -102,7 +104,7 @@ export async function placeWholesaleOrderAction(
           `🔔 New WHOLESALE order ${inv}`,
           `Dealer: ${dealer}`,
           `Amount: ₹${amt}`,
-          ref ? `UPI ref (UTR): ${ref} — verify this in your UPI/bank, then dispatch.` : `Payment: to be collected.`,
+          opts?.cod ? `💵 COD — collect ₹${amt} on delivery.` : ref ? `UPI ref (UTR): ${ref} — verify this in your UPI/bank, then dispatch.` : `Payment: to be collected.`,
           `Open the Owner Console → Sales to confirm.`,
         ];
         await sendWhatsAppText(owner, lines.join("\n"));

@@ -24,11 +24,25 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
     p_tier: "retail",
   });
   if (error) return { ok: false, error: error.message };
-  const orderId = (data as any)?.order_id, total = (data as any)?.total;
+  const orderId = (data as any)?.order_id;
+  let total = (data as any)?.total as number;
+
+  // SHIPPING belongs IN the order (free ≥ ₹999, else ₹50 — mirrors the checkout UI): the old code
+  // showed it at checkout but never recorded it, so every COD order's total was ₹50 short.
+  const ship = total >= 99900 || total === 0 ? 0 : 5000;
+  // DELIVERY ADDRESS was collected but never saved — the owner had bills with no address to ship to.
+  const addr = [input.customer.address, input.customer.city, input.customer.pincode].filter(Boolean).join(", ");
+  const patch: Record<string, unknown> = {};
+  if (ship > 0) { total = total + ship; patch.total = total; patch.extra_courier = ship; }
+  if (addr) patch.buyer_address = addr;
+  if (Object.keys(patch).length) await sb.from("orders").update(patch).eq("id", orderId).then(() => {}, () => {});
+
   await sendPurchase({ orderId, valuePaise: total, channel: "retail", items: input.items.map((i) => ({ sku: i.sku, qty: i.qty })) });
   await notifyOrderPlaced({
     orderId, customerName: input.customer.name, customerPhone: input.customer.phone,
     totalPaise: total, payment: input.payment, itemCount: input.items.reduce((n, i) => n + i.qty, 0),
+    itemsText: input.items.map((i) => `• ${i.sku}${i.color ? ` · ${i.color}` : ""} × ${i.qty}`).join("\n"),
+    address: addr || null, shippingPaise: ship || null,
   }).catch(() => {});
   return { ok: true, orderId, total };
 }

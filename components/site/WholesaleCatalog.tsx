@@ -88,6 +88,15 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
     setErr(""); setUtr(""); setPaying(true);
   }
   /** Finalise: record the order with the UPI reference; the owner is WhatsApp'd to verify & dispatch. */
+  async function confirmOrderCOD() {
+    if (lines.length === 0 || busy) return;
+    setBusy(true); setErr("");
+    const res = await placeWholesaleOrderAction(lines.map(([sku, n]) => ({ sku, qty: n })), { cod: true });
+    setBusy(false);
+    if (res.ok) { setDone({ id: res.orderId!, total: res.total ?? 0 }); setQty({}); setPaying(false); }
+    else setErr(res.error ?? "Could not place order");
+  }
+
   async function confirmOrder() {
     if (lines.length === 0) return;
     setBusy(true); setErr("");
@@ -372,6 +381,10 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
               <button onClick={confirmOrder} disabled={busy} className="btn-gold flex-1 py-2.5 text-sm font-medium disabled:opacity-50">{busy ? "Placing…" : "I've paid — place order"}</button>
               <button onClick={() => !busy && setPaying(false)} className="px-4 py-2.5 rounded-xl bg-ink/5 text-ink text-sm hover:bg-ink/10">Back</button>
             </div>
+            {/* COD — the dealer orders now, pays on delivery; the amount stays due on their ledger. */}
+            <button onClick={confirmOrderCOD} disabled={busy} className="w-full mt-2 py-2.5 rounded-xl border border-sand text-sm text-ink hover:border-emerald disabled:opacity-50">
+              💵 Order on COD — pay on delivery
+            </button>
             <p className="text-[11px] text-muted mt-2 text-center">We verify your payment and dispatch — you'll get a WhatsApp confirmation.</p>
           </div>
         </div>
