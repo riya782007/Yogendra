@@ -207,8 +207,13 @@ export async function fulfillBackorderAction(formData: FormData): Promise<void> 
   if (!(await requirePerm("billing.sell"))) return;
   const id = String(formData.get("id") ?? "").trim();
   if (!id) return;
-  await supabaseServer().from("orders").update({ is_backorder: false }).eq("id", id);
+  // fulfill_backorder is ALL-OR-NOTHING: it re-checks stock on every line (blocks with a clear
+  // error if still short), THEN moves stock + logs the sale movements + posts revenue + releases
+  // the bill into the sales record. The old flag-flip skipped all of that.
+  const { error } = await supabaseServer().rpc("fulfill_backorder", { p_order_id: id });
   revalidatePath("/admin/backorders"); revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard");
+  if (error) redirect(`/admin/backorders?err=${encodeURIComponent(error.message)}`);
+  redirect("/admin/backorders?ok=1");
 }
 
 export async function recordReturnAction(input: { orderId: string; reason: string; items: { product_id: string; variantSku?: string; qty: number }[] }): Promise<{ ok: boolean; qty?: number; error?: string; pending?: boolean }> {

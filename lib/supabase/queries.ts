@@ -607,6 +607,11 @@ export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?
   const pageSize = opts.pageSize ?? 25;
   const page = Math.max(1, opts.page ?? 1);
   let query = sb.from("orders").select("id,total,amount_paid,invoice_no,channel,status,payment_mode,bill_type,customer_name,customer_phone,source_tag,created_at", { count: "exact" });
+  // Open backorders are NOT sales yet — they hold no stock and post no revenue until the owner
+  // fulfils them on /admin/backorders. Keep them out of the sales record. (is_backorder may not
+  // exist pre-migration-0020; PostgREST treats .not on a missing column as an error, so this is
+  // written as .or to stay resilient.)
+  query = query.or("is_backorder.is.null,is_backorder.eq.false");
   if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.or(`customer_name.ilike.%${s}%,customer_phone.ilike.%${s}%`); }
   if (opts.channel && opts.channel !== "all") query = query.eq("channel", opts.channel);
   if (opts.billType) query = query.eq("bill_type", opts.billType);

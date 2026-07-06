@@ -12,7 +12,7 @@ const CH_STYLE: Record<string, string> = {
   pos: "bg-blue-100 text-blue-700",
 };
 
-export default async function Backorders() {
+export default async function Backorders({ searchParams }: { searchParams?: { err?: string; ok?: string } }) {
   const sb = supabaseServer();
   const { data, error } = await sb
     .from("orders")
@@ -31,9 +31,20 @@ export default async function Backorders() {
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
       <h1 className="font-display text-4xl text-ink mb-1">Backorders</h1>
       <p className="text-sm text-muted mb-5">
-        Sales billed beyond available stock (you ticked &ldquo;bill anyway as a backorder&rdquo; at the counter).
-        Fulfil these as fresh stock comes in. Open any row to see its bill &amp; items.
+        Bills rung up beyond available stock (you ticked &ldquo;bill anyway as a backorder&rdquo; at the counter).
+        These are held like <b>estimates</b>: inventory is untouched and they are NOT in the sales record yet.
+        Update stock first, then hit <b>Convert to sale</b> — stock moves, revenue posts and the bill joins Sales.
       </p>
+      {searchParams?.err && (
+        <div className="rounded-2xl border border-rose/40 bg-rose/10 p-4 text-sm text-ink mb-4">
+          <b>Couldn&apos;t convert:</b> {searchParams.err}
+        </div>
+      )}
+      {searchParams?.ok && (
+        <div className="rounded-2xl border border-emerald/40 bg-emerald-mist p-4 text-sm text-emerald-dark mb-4">
+          Backorder fulfilled — stock moved and the bill is now in the sales record.
+        </div>
+      )}
 
       {migrationMissing ? (
         <div className="rounded-2xl border border-gold/40 bg-gold/10 p-5 text-sm text-ink">
@@ -92,7 +103,7 @@ export default async function Backorders() {
                       <td className="p-3 text-right">
                         <form action={fulfillBackorderAction}>
                           <input type="hidden" name="id" value={r.id} />
-                          <button className="px-2.5 py-1 rounded-full bg-emerald text-white text-xs font-medium hover:bg-emerald-dark whitespace-nowrap" title="Stock has arrived — mark this backorder fulfilled and count it as a normal sale">✓ Convert to sale</button>
+                          <button className="px-2.5 py-1 rounded-full bg-emerald text-white text-xs font-medium hover:bg-emerald-dark whitespace-nowrap" title="Stock has arrived — moves inventory, posts revenue, and releases this bill into Sales (blocked if stock is still short)">✓ Convert to sale</button>
                         </form>
                       </td>
                     </tr>

@@ -64,6 +64,9 @@ export async function posSaleAction(input: {
   const { data, error } = await sb.rpc("place_order", {
     p_items: input.items.map((i) => ({ sku: i.sku, qty: i.qty })), p_customer: input.customer ?? {}, p_channel: "pos", p_payment: input.payment || "cash",
     p_allow_oversell: !!input.allowOversell, p_tier: input.tier === "wholesale" ? "wholesale" : "retail",
+    // BACKORDER = held like an estimate: the RPC records the bill but does NOT move stock, log a
+    // sale movement, or post revenue. All of that happens when the owner fulfils it manually.
+    p_backorder: !!input.backorder,
   });
   if (error) return { ok: false, error: error.message };
   const orderId = (data as any)?.order_id;

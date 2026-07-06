@@ -1,0 +1,6 @@
+-- 0044 — Backorders behave like ESTIMATES until fulfilled.
+-- Applied directly to the Supabase project on 2026-07-06 (via MCP). Kept here for the record.
+--   place_order(..., p_backorder := true): records the bill but moves NO stock, writes NO sale
+--   movement, posts NO revenue. fulfill_backorder(p_order_id): re-checks stock on every line
+--   (all-or-nothing, blocks with a clear error if short), then moves stock + logs movements +
+--   posts revenue + releases the order into the sales record (is_backorder = false).

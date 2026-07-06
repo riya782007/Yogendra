@@ -60,6 +60,9 @@ export function POSClient({ products, customers = [], methods = [], employees = 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [allowBackorder, setAllowBackorder] = useState(false);
+  // CREDIT SALE — the bill is recorded with whatever was actually received (even ₹0); the balance
+  // stays DUE on the bill (sales page shows Unpaid/Partial) instead of silently marking it paid.
+  const [credit, setCredit] = useState(false);
 
   const pct = (v: string) => { const n = Number(v); return Number.isFinite(n) && n > 0 && n < 100 ? n : 0; };
   const gDisc = pct(globalDisc);
@@ -163,6 +166,8 @@ export function POSClient({ products, customers = [], methods = [], employees = 
       customer: cust, payment: "cash",
       billType, gstMode: billType === "gst" ? gstMode : undefined, buyerGstin: billType === "gst" ? gstin : "", buyerAddress: addr,
       ...(validPays.length ? { payments: validPays } : {}),
+      // Credit sale: record EXACTLY what was received (₹0 for full credit) — never default to paid.
+      ...(credit ? { amountPaidRupees: received / 100 } : {}),
       allowOversell: allowBackorder, tier: custType, salesEmployeeId: salesEmp || undefined,
       backorder: allowBackorder && lines.some((l) => l.qty > l.stock),
       packingRupees: Number(packing) || 0, courierRupees: Number(courier) || 0, adjustmentRupees: Number(adjustment) || 0,
@@ -385,7 +390,7 @@ export function POSClient({ products, customers = [], methods = [], employees = 
           {lines.some((l) => l.qty > l.stock) && (
             <label className="mt-3 flex items-start gap-2 rounded-xl border border-gold/60 bg-gold/10 px-3 py-2 text-xs text-ink cursor-pointer">
               <input type="checkbox" checked={allowBackorder} onChange={(e) => setAllowBackorder(e.target.checked)} className="mt-0.5" />
-              <span>Some lines exceed stock. Tick to <b>bill as backorder</b> — otherwise blocked to prevent overselling.</span>
+              <span>Some lines exceed stock. Tick to <b>bill as backorder</b> — the bill is held like an estimate (no stock moves, not in Sales) until you convert it on the Backorders page.</span>
             </label>
           )}
         </div>
@@ -401,7 +406,7 @@ export function POSClient({ products, customers = [], methods = [], employees = 
 
           {/* Payment (F4) */}
           <div className="pt-2">
-            <p className="text-[11px] text-muted mb-1">Payment <span className="text-muted/70">— empty = paid in full cash</span> <span className="text-[10px]">F4</span></p>
+            <p className="text-[11px] text-muted mb-1">Payment <span className="text-muted/70">{credit ? "— CREDIT sale: balance stays due on the bill" : "— empty = paid in full cash"}</span> <span className="text-[10px]">F4</span></p>
             {methods.length === 0 ? (
               <p className="text-[11px] text-muted bg-cream/60 rounded-lg px-2 py-1.5">Add methods in Bank &amp; Payment Methods.</p>
             ) : (
@@ -418,6 +423,11 @@ export function POSClient({ products, customers = [], methods = [], employees = 
                 ))}
                 <div className="flex flex-wrap gap-1.5">
                   <button onClick={addPayLine} className="text-[11px] px-2.5 py-1 rounded-full border border-sand text-ink hover:border-emerald">+ Split</button>
+                  <button onClick={() => setCredit((c) => !c)}
+                    title="Record this bill on credit — the unpaid balance stays due against the customer"
+                    className={`text-[11px] px-2.5 py-1 rounded-full border ${credit ? "bg-wine text-white border-wine" : "border-sand text-muted hover:border-wine"}`}>
+                    {credit ? "✓ Credit (pay later)" : "Credit (pay later)"}
+                  </button>
                   {cashMethod && <button onClick={() => setPayLines([{ methodId: cashMethod.id, amount: String(Math.round(grandTotal / 100)) }])} className="text-[11px] px-2.5 py-1 rounded-full border border-sand text-muted hover:border-emerald">All cash</button>}
                   {payLines.length > 0 && remaining > 0 && (
                     <button onClick={() => setPayLine(payLines.length - 1, { amount: String((((Number(payLines[payLines.length - 1].amount) || 0) * 100 + remaining) / 100)) })} className="text-[11px] px-2.5 py-1 rounded-full border border-sand text-muted hover:border-emerald">Fill {formatPaise(remaining)}</button>
@@ -425,9 +435,9 @@ export function POSClient({ products, customers = [], methods = [], employees = 
                 </div>
               </div>
             )}
-            {received > 0 && (
-              <p className={`text-[11px] mt-1 text-right ${remaining > 0 ? "text-rose" : "text-emerald-dark"}`}>
-                Received {formatPaise(received)}{remaining > 0 ? ` · due ${formatPaise(remaining)}` : remaining < 0 ? ` · change ${formatPaise(-remaining)}` : " · settled"}
+            {(received > 0 || credit) && (
+              <p className={`text-[11px] mt-1 text-right ${credit && remaining > 0 ? "text-wine font-medium" : remaining > 0 ? "text-rose" : "text-emerald-dark"}`}>
+                Received {formatPaise(received)}{remaining > 0 ? ` · ${credit ? "CREDIT due" : "due"} ${formatPaise(remaining)}` : remaining < 0 ? ` · change ${formatPaise(-remaining)}` : " · settled"}
               </p>
             )}
           </div>
