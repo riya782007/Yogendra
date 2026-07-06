@@ -19,11 +19,12 @@ type Row = {
 };
 
 // Paper presets with EXACT die-cut geometry in mm, so each barcode lands on its physical label.
-// 65-up = the standard Avery L7651 sheet: 38.1×21.2mm labels, 10.7mm top margin, 4.75mm side
-// margin, 2.5mm gap between columns, no gap between rows → 5×13 fills one A4 exactly (297mm tall).
+// 65-up = the owner's pre-cut sheet (Avery L7651 layout): 38.1×21.2mm labels, 5 columns × 13 rows,
+// horizontal pitch 40.6mm (38.1 + 2.5 gap), vertical pitch 21.2mm (no row gap), top margin 11.2mm
+// (measured on the owner's physical sheet), left margin 4.75mm → all 65 land on ONE A4 (210×297).
 // lw/lh = label width/height · gx/gy = gap between columns/rows · mt/ml = top/left sheet margin.
 const PAPER = [
-  { key: "65", label: "65 per sheet (5 × 13)", cols: 5, per: 65, lw: 38.1, lh: 21.2, gx: 2.5, gy: 0, mt: 10.7, ml: 4.75 },
+  { key: "65", label: "65 per sheet (5 × 13)", cols: 5, per: 65, lw: 38.1, lh: 21.2, gx: 2.5, gy: 0, mt: 11.2, ml: 4.75 },
   { key: "48", label: "48 per sheet (4 × 12)", cols: 4, per: 48, lw: 45.7, lh: 22.5, gx: 2.5, gy: 0, mt: 13.5, ml: 8.0 },
   { key: "40", label: "40 per sheet (4 × 10)", cols: 4, per: 40, lw: 45.7, lh: 25.4, gx: 2.5, gy: 0, mt: 21.5, ml: 8.0 },
   { key: "24", label: "24 per sheet (3 × 8)", cols: 3, per: 24, lw: 63.5, lh: 33.9, gx: 2.5, gy: 0, mt: 12.7, ml: 7.2 },
@@ -55,16 +56,6 @@ export function BarcodeSheet({ products }: { products: P[] }) {
   const G = PAPER.find((p) => p.key === paper) ?? PAPER[0];
   const cols = G.cols;
   const per = G.per;
-  // Feed the exact geometry to the print stylesheet as CSS variables. The @media print rules below
-  // consume these so every label sits on its die-cut position and all rows fit on ONE A4 sheet.
-  const sheetVars = {
-    "--bc-cols": cols,
-    "--bc-lw": `${G.lw}mm`, "--bc-lh": `${(G.lh + adjRow).toFixed(2)}mm`,
-    "--bc-gx": `${G.gx}mm`, "--bc-gy": `${G.gy}mm`,
-    "--bc-mt": `${(G.mt + adjTop).toFixed(2)}mm`, "--bc-ml": `${G.ml}mm`,
-    "--bc-bw": `${barW}%`,
-  };
-
   // Special price is a FIXED constant (23) across all products — the owner's coded scheme. The
   // retail's ".51" tax add-on is applied by codeRetail at print time (product price is untouched).
   const SPECIAL_FIXED = "23";
@@ -83,6 +74,58 @@ export function BarcodeSheet({ products }: { products: P[] }) {
   const rm = (sku: string) => setRows((prev) => prev.filter((x) => x.sku !== sku));
 
   const labels = rows.flatMap((r) => Array.from({ length: Math.max(1, r.qty) }, () => r));
+
+  /**
+   * Print via an ISOLATED iframe document. The admin page's stylesheets (invoice A5 @page,
+   * catalogue @page, Tailwind resets, layout padding) can never touch it, and the iframe's own
+   * @page { margin: 0 } guarantees the die-cut geometry starts at the paper edge — so 13 rows
+   * (11.2mm top + 13 × 21.2mm = 286.8mm) always fit one A4 and every label lands on its pre-cut spot.
+   * Print dialog must be at 100% scale ("Actual size"), margins "Default/None".
+   */
+  const printLabels = () => {
+    const grid = document.getElementById("bc-preview-grid");
+    if (!grid) return;
+    const mt = (G.mt + adjTop).toFixed(2);
+    const lh = (G.lh + adjRow).toFixed(2);
+    const f = document.createElement("iframe");
+    f.setAttribute("aria-hidden", "true");
+    f.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;";
+    document.body.appendChild(f);
+    const d = f.contentDocument;
+    const w = f.contentWindow;
+    if (!d || !w) { document.body.removeChild(f); return; }
+    d.open();
+    d.write(`<!doctype html><html><head><meta charset="utf-8"><title>labels</title><style>
+      @page { size: A4 portrait; margin: 0; }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 210mm; background: #fff; }
+      .sheet { width: 210mm; height: 297mm; overflow: hidden; page-break-after: always; break-after: page;
+               padding: ${mt}mm 0 0 ${G.ml}mm; }
+      .sheet:last-child { page-break-after: auto; break-after: auto; }
+      .grid { display: grid; grid-template-columns: repeat(${cols}, ${G.lw}mm);
+              grid-auto-rows: ${lh}mm; column-gap: ${G.gx}mm; row-gap: ${G.gy}mm;
+              justify-content: start; align-content: start; }
+      .barcode-label { width: ${G.lw}mm; height: ${lh}mm; overflow: hidden; padding: 0.4mm;
+                       display: flex; flex-direction: column; align-items: center; justify-content: center;
+                       text-align: center; font-family: Arial, Helvetica, sans-serif; color: #000; }
+      .bc-name { font-size: 6pt; line-height: 1.1; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .bc-sku { font-size: 6pt; margin-top: 0.4mm; line-height: 1; letter-spacing: 0.02em; }
+      .bc-price { font-size: 7pt; line-height: 1.05; font-weight: 600; }
+      .barcode-label svg { height: 9mm; width: ${barW}%; display: block; margin: 0 auto; }
+    </style></head><body></body></html>`);
+    d.close();
+    const labelEls = Array.from(grid.children);
+    for (let i = 0; i < labelEls.length; i += per) {
+      const sheet = d.createElement("div"); sheet.className = "sheet";
+      const g = d.createElement("div"); g.className = "grid";
+      for (const el of labelEls.slice(i, i + per)) g.appendChild(d.importNode(el, true));
+      sheet.appendChild(g);
+      d.body.appendChild(sheet);
+    }
+    w.focus();
+    w.print();
+    setTimeout(() => { try { document.body.removeChild(f); } catch {} }, 60_000);
+  };
   const input = "w-full rounded-xl border border-sand px-4 py-2.5 text-sm bg-white outline-none focus:border-emerald";
   const cell = "w-24 rounded-lg border border-sand px-2 py-1 text-sm text-right outline-none focus:border-emerald";
 
@@ -231,28 +274,15 @@ export function BarcodeSheet({ products }: { products: P[] }) {
         <div className="flex items-center justify-between flex-wrap gap-3 mt-5">
           <div className="text-sm text-muted">Total Barcodes <span className="text-ink font-semibold text-base">{labels.length}</span>{labels.length > 0 && <> · ~{Math.ceil(labels.length / per)} sheet{Math.ceil(labels.length / per) === 1 ? "" : "s"}</>}</div>
           {labels.length > 0 && (
-            <button onClick={() => window.print()} className="btn-primary px-6 py-2.5 text-sm font-medium">🖶 Print {labels.length} label{labels.length === 1 ? "" : "s"}</button>
+            <button onClick={printLabels} className="btn-primary px-6 py-2.5 text-sm font-medium">🖶 Print {labels.length} label{labels.length === 1 ? "" : "s"}</button>
           )}
         </div>
       </div>
 
-      {/* Printable label grid — density set by paper size via --bc-cols */}
+      {/* On-screen PREVIEW grid (printing uses an isolated iframe built by printLabels above) */}
       {labels.length > 0 && (
-        <div className="print-area bc-sheet" style={sheetVars as any}>
-          {/* Print-only geometry: match the physical die-cut sheet exactly. `position: fixed` makes the
-              sheet fill the page from the paper edge (escaping the admin page's padding), and @page
-              margin:0 lets the top/side margins come from the label sheet's own spec — so 65 labels
-              land on their labels and fit on ONE A4 instead of spilling onto a second page. */}
-          <style>{`
-            @media print {
-              @page { size: A4; margin: 0 !important; }
-              .bc-sheet.print-area { position: fixed !important; inset: 0 !important; width: 210mm !important; height: 297mm !important; margin: 0 !important; padding: var(--bc-mt) var(--bc-ml) 0 var(--bc-ml) !important; box-sizing: border-box !important; }
-              .bc-sheet .barcode-grid { display: grid !important; grid-template-columns: repeat(var(--bc-cols), var(--bc-lw)) !important; column-gap: var(--bc-gx) !important; row-gap: var(--bc-gy) !important; justify-content: start !important; align-content: start !important; }
-              .bc-sheet .barcode-label { width: var(--bc-lw) !important; height: var(--bc-lh) !important; box-sizing: border-box !important; overflow: hidden !important; }
-              .bc-sheet .barcode-label svg { width: var(--bc-bw) !important; display: block !important; margin: 0 auto !important; }
-            }
-          `}</style>
-          <div className="barcode-grid grid gap-1" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` } as any}>
+        <div className="no-print">
+          <div id="bc-preview-grid" className="barcode-grid grid gap-1" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` } as any}>
             {labels.map((it, i) => {
               const line = priceLine(it);
               return (
