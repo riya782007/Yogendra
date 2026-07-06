@@ -23,6 +23,7 @@ export function ReviewResponder({ reviews }: { reviews: R[] }) {
 
   return (
     <div className="space-y-4">
+      {reviews.length === 0 && <p className="text-sm text-muted bg-white rounded-2xl p-5 shadow-card">No reviews yet — customer reviews will appear here for you to respond to.</p>}
       {reviews.map((r) => (
         <div key={r.id} className="bg-white rounded-2xl p-5 shadow-card">
           <div className="flex items-center justify-between">

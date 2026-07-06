@@ -27,8 +27,21 @@ function geminiKey(): string | undefined {
   return process.env.GEMINI_API_KEY ?? process.env.gemini_api_key ?? process.env.Gemini_api_key;
 }
 
-export async function detectJewellery(opts: { imageUrl?: string; hint?: string; timeoutMs?: number }): Promise<Detected> {
+/** Normalise an owner-set category/subcategory name to a known CATS keyword when possible, so the
+ *  detected label agrees with the catalogue (a "Kundan Necklace" subcategory → "necklace"). */
+function normaliseKnown(known?: string): string | null {
+  const t = (known ?? "").toLowerCase().trim();
+  if (!t) return null;
+  return CATS.find((c) => t.includes(c)) ?? null;
+}
+
+export async function detectJewellery(opts: { imageUrl?: string; hint?: string; knownCategory?: string; timeoutMs?: number }): Promise<Detected> {
   const fallback = keywordDetect(opts.hint ?? "");
+  // The owner's catalogue is the source of truth for the piece's TYPE. When we know it, lock the
+  // detected category to it — the vision model only refines material/style/attributes. This stops a
+  // vision mis-read (necklace seen as "bracelet") from ever mislabelling or misframing the piece.
+  const known = normaliseKnown(opts.knownCategory) ?? normaliseKnown(opts.hint);
+  if (known) fallback.category = known;
   const key = geminiKey();
   if (!key || !opts.imageUrl) return fallback;
 
@@ -61,7 +74,9 @@ export async function detectJewellery(opts: { imageUrl?: string; hint?: string; 
     const text = (j?.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text ?? "").join("");
     const parsed = JSON.parse(text);
     return {
-      category: String(parsed.category ?? fallback.category),
+      // Known catalogue type wins over the vision guess for the category (see above); vision still
+      // supplies the richer material / style / attribute detail.
+      category: known ?? String(parsed.category ?? fallback.category),
       material: String(parsed.material ?? fallback.material),
       style: String(parsed.style ?? fallback.style),
       attributes: Array.isArray(parsed.attributes) ? parsed.attributes.map(String).slice(0, 6) : fallback.attributes,

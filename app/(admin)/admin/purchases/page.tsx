@@ -38,7 +38,7 @@ export default async function Purchases() {
                 <tr key={p.id} className="border-t border-sand/50">
                   <td className="py-2"><a href={`/admin/purchase/${p.id}`} className="text-emerald nav-link">{p.bill_no || String(p.id).slice(0, 6).toUpperCase()} ↗</a></td>
                   <td className="py-2 text-muted">{p.supplier?.name}{p.supplier?.city ? ` · ${p.supplier.city}` : ""}</td>
-                  <td className="py-2 text-right font-medium">{formatPaise(p.total)}</td>
+                  <td className="py-2 text-right font-medium"><span className="sensitive">{formatPaise(p.total)}</span></td>
                 </tr>
               ))}
             </tbody>

@@ -52,8 +52,14 @@ export async function updateProductAction(formData: FormData): Promise<UpdateRes
   const type = String(formData.get("type") ?? "simple");
   const status = String(formData.get("status") ?? "published");
   const basePriceRupees = Number(formData.get("base_price_rupees") ?? 0);
-  // Stock is intentionally NOT edited from the Basic tab — it changes only via purchase/sales bills
-  // or the Inventory tab (which logs a ledger row). This prevents accidental tally breakage.
+  let qty = Math.max(0, Math.floor(Number(formData.get("qty") ?? 0)));
+  // For a CONFIGURABLE (colours) product, stock lives on each variant — the product total is the
+  // SUM of its variants and is edited per-colour on the Variants tab. So never overwrite it with the
+  // Basic-tab number (that would desync the total from the real per-colour stock); recompute it.
+  if (type === "configurable") {
+    const { data: vs } = await sb.from("variants").select("qty").eq("product_id", existing.id);
+    qty = ((vs as any[]) ?? []).reduce((s, x) => s + (x.qty ?? 0), 0);
+  }
 
   if (!name) return { ok: false, error: "Name is required" };
   if (!categoryId) return { ok: false, error: "Category is required" };

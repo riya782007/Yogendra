@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
 import { updateProductAction } from "@/app/actions/updateProduct";
 import { suggestProductTitleAction } from "@/app/actions/aiContent";
+import { computePrices, type PricingFormula } from "@/lib/pricing";
 
 type Cat = { id: string; name: string; slug: string };
 export type EditorProduct = {
@@ -41,7 +42,7 @@ export function ProductEditor({
 }: {
   product: EditorProduct;
   categories: Cat[];
-  formula: { retailMultiplier: number; mrpMultiplier: number; wholesaleMarkupPct: number };
+  formula: PricingFormula;
   /** Override-aware effective prices (rupees). `custom` = explicit prices are pinned, so the
    *  formula below is NOT what the product actually sells for. */
   effective?: { retail: number; mrp: number; wholesale: number; custom: boolean };
@@ -52,21 +53,36 @@ export function ProductEditor({
   const [saving, setSaving] = useState(false);
   const [title, setTitle] = useState(product.title);
   const [name, setName] = useState(product.name);
+  const [description, setDescription] = useState(product.description);
+  // Owner's spec keywords (e.g. "necklace set, earrings, maang tikka, uncut kundan") → the AI uses
+  // these to build a BlytheDIVA-style title + description.
+  const [specKeywords, setSpecKeywords] = useState("");
   const [suggesting, setSuggesting] = useState(false);
 
   async function suggestTitle() {
     setSuggesting(true);
     const catName = categories.find((c) => c.id === product.categoryId)?.name;
-    const res = await suggestProductTitleAction({ name, category: catName });
+    const keywords = specKeywords.split(/[,\n]/).map((k) => k.trim()).filter(Boolean);
+    const res = await suggestProductTitleAction({ name, category: catName, keywords, sku: product.sku });
     setSuggesting(false);
-    if (res.ok && res.title) { setTitle(res.title); toast("Title suggested ✨"); }
-    else toast(res.error ?? "Couldn't suggest a title", "error");
+    if (res.ok && res.title) {
+      setTitle(res.title);
+      if (res.description) setDescription(res.description);
+      // Tell the owner which engine wrote it: "OpenAI" means the API key is live; "offline template"
+      // means it fell back (key missing/invalid on the deployment) so he can fix the env variable.
+      const engine = res.fallbackUsed || res.provider === "deterministic" ? "offline template" : (res.provider === "openai" ? "OpenAI ✨" : res.provider ?? "AI");
+      // When the product photo was fed to the model, let the owner know the copy is based on the image.
+      toast(`Title & description written by ${engine}${res.usedImage ? " — from the product photo 📸" : ""}`);
+    } else toast(res.error ?? "Couldn't suggest a title", "error");
   }
 
   const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
-  const retail = base * formula.retailMultiplier;
-  const mrp = base * formula.mrpMultiplier;
-  const wholesale = base * (1 + formula.wholesaleMarkupPct / 100);
+  // Use the SINGLE shared pricing engine (honours the build-up chain / overrides), so this preview
+  // always matches the Pricing tab, catalogue and storefront — never the old flat multipliers.
+  const ps = computePrices(Math.round((Number(base) || 0) * 100), formula);
+  const retail = ps.retailPrice / 100;
+  const mrp = ps.mrp / 100;
+  const wholesale = ps.wholesaleRate / 100;
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -147,12 +163,16 @@ export function ProductEditor({
             />
           </div>
           <div>
-            <label className={label}>Stock quantity <span className="text-muted font-normal">🔒 locked</span></label>
-            <div className={`${field} bg-cream/50 flex items-center justify-between`} aria-readonly>
-              <span className="text-ink font-medium">{product.qty}</span>
-              <span className="text-[11px] text-muted">read-only</span>
-            </div>
-            <p className="text-[11px] text-muted mt-1">Stock changes only via purchase/sales bills or the <b>Inventory</b> tab (logged with a reason) — so your tally can&apos;t break by accident.</p>
+            <label className={label}>Stock quantity</label>
+            {product.type === "configurable" ? (
+              <>
+                <input name="qty" type="number" value={product.qty} readOnly tabIndex={-1}
+                  className={`${field} bg-cream/60 text-muted cursor-not-allowed`} />
+                <p className="text-[11px] text-muted mt-1">Total across all colours. Edit each colour&apos;s stock on the <b>Variants</b> tab — this updates automatically.</p>
+              </>
+            ) : (
+              <input name="qty" type="number" min={0} step="1" defaultValue={product.qty} className={field} />
+            )}
           </div>
         </div>
 
@@ -181,19 +201,27 @@ export function ProductEditor({
         <h2 className="font-display text-xl text-ink mb-1">Storefront content</h2>
         <p className="text-xs text-muted mb-4">What the customer reads on the product page.</p>
         <div className="space-y-4">
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className={`${label} mb-0`}>Display title</label>
+          {/* Spec keywords → AI title + description in BlytheDIVA house style */}
+          <div className="rounded-xl border border-emerald/30 bg-emerald-mist/20 p-3">
+            <label className={`${label} mb-1`}>Jewellery specifications <span className="text-muted/70">— 3–4 keywords for the AI</span></label>
+            <input value={specKeywords} onChange={(e) => setSpecKeywords(e.target.value)}
+              placeholder="e.g. necklace set, uncut kundan, earrings, maang tikka"
+              className={field} />
+            <div className="flex items-center gap-2 mt-2">
               <button type="button" onClick={suggestTitle} disabled={suggesting}
-                className="text-xs px-2.5 py-1 rounded-full bg-emerald-mist text-emerald-dark hover:bg-emerald-mist/70 disabled:opacity-50">
-                {suggesting ? "Thinking…" : "✨ Suggest title"}
+                className="text-xs px-3 py-1.5 rounded-full bg-emerald text-white hover:bg-emerald-dark disabled:opacity-50">
+                {suggesting ? "Writing…" : "✨ Generate title & description"}
               </button>
+              <span className="text-[11px] text-muted">Looks at the product photo + these specs, the name &amp; category. Says which pieces the set includes; no SKU in the title.</span>
             </div>
+          </div>
+          <div>
+            <label className={label}>Display title</label>
             <input name="title" value={title} onChange={(e) => setTitle(e.target.value)} className={field} />
           </div>
           <div>
             <label className={label}>Description</label>
-            <textarea name="description" defaultValue={product.description} rows={6} className={field} />
+            <textarea name="description" value={description} onChange={(e) => setDescription(e.target.value)} rows={6} className={field} />
           </div>
           <div>
             <label className={label}>Tags <span className="text-muted/70">(one per line or comma-separated — shown as chips & used for filtering)</span></label>

@@ -3,9 +3,10 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getStorefront, getCategories } from "@/lib/supabase/queries";
+import { getStorefront, getCategories, getActivePromotions } from "@/lib/supabase/queries";
 import { supabaseServer } from "@/lib/supabase/server";
 import { ProductCard } from "@/components/site/ProductCard";
+import { PromoHero } from "@/components/site/PromoHero";
 import { Reveal } from "@/components/site/Reveal";
 import { Back } from "@/components/site/Back";
 import { FiltersPanel } from "@/components/site/FiltersPanel";
@@ -15,8 +16,8 @@ export async function generateMetadata({ params }: { params: { slug: string } })
   const name = params.slug.charAt(0).toUpperCase() + params.slug.slice(1);
   return {
     title: `${name} — Artificial Jewellery`,
-    description: `Shop ${name.toLowerCase()} from Blythe Diva, Sadar Bazar Delhi. Premium artificial ${name.toLowerCase()} with COD and free shipping over ₹999.`,
-    keywords: [name, "artificial jewellery", "Sadar Bazar", "Delhi"],
+    description: `Shop ${name.toLowerCase()} from Blythe Diva. Premium artificial ${name.toLowerCase()} with COD and free shipping over ₹999.`,
+    keywords: [name, "artificial jewellery", "imitation jewellery", "online"],
   };
 }
 
@@ -24,8 +25,9 @@ type SP = { sort?: string; min?: string; max?: string; stock?: string; sub?: str
 
 export default async function CategoryPage({ params, searchParams }: { params: { slug: string }; searchParams: SP }) {
   const sb = supabaseServer();
-  const [{ products, formula }, allCats] = await Promise.all([getStorefront(), getCategories()]);
+  const [{ products, formula }, allCats, allPromos] = await Promise.all([getStorefront(), getCategories(), getActivePromotions("retail")]);
   const cat = allCats.find((c) => c.slug === params.slug);
+  const catPromos = (allPromos ?? []).filter((p) => p.category?.slug === params.slug);
   let items = products.filter((p) => p.category.slug === params.slug);
   if (!cat && items.length === 0) notFound();
   const catName = items[0]?.category.name ?? cat?.name ?? params.slug;
@@ -139,6 +141,7 @@ export default async function CategoryPage({ params, searchParams }: { params: {
         <Back label="Back" />
         <div className="text-xs text-muted"><Link href="/shop" className="hover:text-emerald">Home</Link> / <span className="text-ink">{catName}</span></div>
       </div>
+      {catPromos.length > 0 && <div className="rounded-2xl overflow-hidden mb-6 shadow-card"><PromoHero promos={catPromos} /></div>}
       <Reveal>
         <header className="text-center my-8">
           <p className="text-gold-dark tracking-[0.25em] uppercase text-xs">Collection</p>

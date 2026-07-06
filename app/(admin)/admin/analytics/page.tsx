@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 
 export const metadata = { title: "Owner Console · Analytics & SEO" };
 
-const SITE = process.env.NEXT_PUBLIC_SITE_URL ?? "https://yogendra-ry342315-6737s-projects.vercel.app";
+const SITE = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://yogendra-ten.vercel.app").replace(/\/$/, "");
 const GA_ID = process.env.NEXT_PUBLIC_GA4_ID;
 const PID = process.env.NEXT_PUBLIC_GA4_PROPERTY_ID; // numeric GA4 property id (optional, for deep links)
 const gaBase = PID ? `https://analytics.google.com/analytics/web/#/p${PID}` : "https://analytics.google.com/";

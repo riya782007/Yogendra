@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase/server";
 import { formatPaise } from "@/lib/pricing";
+import { fulfillBackorderAction } from "@/app/actions/billing";
 
 export const metadata = { title: "Owner Console · Backorders" };
 
@@ -65,11 +66,12 @@ export default async function Backorders() {
                   <th className="p-3">Channel</th>
                   <th className="p-3">Status</th>
                   <th className="p-3 text-right">Amount</th>
+                  <th className="p-3 text-right">Fulfil</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 && (
-                  <tr><td colSpan={6} className="p-4 text-muted">No backorders — every sale so far was within stock. 🎉</td></tr>
+                  <tr><td colSpan={7} className="p-4 text-muted">No backorders — every sale so far was within stock. 🎉</td></tr>
                 )}
                 {rows.map((r) => {
                   const paid = r.amount_paid ?? 0;
@@ -87,6 +89,12 @@ export default async function Backorders() {
                       <td className="p-3"><span className={`px-2 py-0.5 rounded-full text-xs capitalize ${CH_STYLE[r.channel] ?? "bg-cream text-muted"}`}>{r.channel}</span></td>
                       <td className="p-3"><span className={`px-2 py-0.5 rounded-full text-xs ${cls[st]}`}>{st}</span></td>
                       <td className="p-3 text-right font-medium">{formatPaise(r.total)}</td>
+                      <td className="p-3 text-right">
+                        <form action={fulfillBackorderAction}>
+                          <input type="hidden" name="id" value={r.id} />
+                          <button className="px-2.5 py-1 rounded-full bg-emerald text-white text-xs font-medium hover:bg-emerald-dark whitespace-nowrap" title="Stock has arrived — mark this backorder fulfilled and count it as a normal sale">✓ Convert to sale</button>
+                        </form>
+                      </td>
                     </tr>
                   );
                 })}

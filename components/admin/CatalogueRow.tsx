@@ -4,13 +4,14 @@ import Link from "next/link";
 import { CatalogueRowActions } from "@/components/admin/CatalogueRowActions";
 import { GeneratePhotoButton } from "@/components/admin/GeneratePhotoButton";
 import { DeleteProductButton } from "@/components/admin/DeleteProductButton";
+import { ProductTags } from "@/components/admin/ProductTags";
 
 type V = { sku: string; color: string | null; qty: number };
 export type CatalogueRowProduct = {
   id: string; sku: string; name: string; status: string;
   image: string | null; categoryName: string; categorySlug: string;
   qty: number; priceLabel: string; offerPct: number; hasOffer: boolean;
-  hasAi: boolean; variants: V[];
+  hasAi: boolean; variants: V[]; adminTags: string[]; wholesaleLabel: string;
 };
 
 /** One catalogue row: a clean summary line (photo · name · category · price) that EXPANDS on click
@@ -24,6 +25,7 @@ export function CatalogueRow({
   genContent: (fd: FormData) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  const [showWholesale, setShowWholesale] = useState(false);
   const published = p.status === "published";
 
   return (
@@ -42,13 +44,34 @@ export function CatalogueRow({
         </td>
         <td className="p-3 text-muted whitespace-nowrap">{p.categoryName} · {p.sku}</td>
         <td className="p-3"><span className="font-semibold">{p.priceLabel}</span>{p.hasOffer && <span className="text-xs text-rose ml-1">{p.offerPct}% off</span>}</td>
+        <td className="p-2" onClick={(e) => e.stopPropagation()}>
+          <ProductTags sku={p.sku} initial={p.adminTags} canEdit={canEdit} compact stopClick />
+        </td>
         <td className="p-3 text-right text-muted">{open ? "▴" : "▾"}</td>
       </tr>
 
       {open && (
         <tr className="bg-cream/30">
-          <td colSpan={5} className="px-4 py-4">
+          <td colSpan={6} className="px-4 py-4">
             <div className="flex flex-wrap gap-x-10 gap-y-5">
+              {/* Pricing — retail is shown in the row; wholesale is tap-to-reveal (kept private). */}
+              <div className="min-w-[150px]">
+                <p className="text-[11px] uppercase tracking-wide text-muted mb-1.5">Pricing</p>
+                <p className="text-sm text-ink">Retail <span className="font-semibold">{p.priceLabel}</span></p>
+                <button
+                  type="button"
+                  onClick={() => setShowWholesale((s) => !s)}
+                  className="mt-1 inline-flex items-center gap-1.5 rounded-lg border border-sand px-2.5 py-1 text-sm hover:border-emerald"
+                  title={showWholesale ? "Hide wholesale price" : "Tap to reveal wholesale price"}
+                >
+                  <span className="text-muted text-[11px]">Wholesale</span>
+                  {showWholesale
+                    ? <span className="font-semibold text-emerald-dark">{p.wholesaleLabel}</span>
+                    : <span className="font-mono tracking-widest text-muted">••••</span>}
+                  <span className="text-[10px] text-muted">{showWholesale ? "🙈" : "👁 tap"}</span>
+                </button>
+              </div>
+
               {/* Image & publish */}
               <div>
                 <p className="text-[11px] uppercase tracking-wide text-muted mb-1.5">Image &amp; publish</p>

@@ -15,8 +15,10 @@ type Movement = {
   ref_id: string | null; created_at: string; invoice_no?: string | null;
   party?: string | null;
   hold?: boolean;
+  variant?: { color: string | null; sku: string | null } | null;
   doc: { href: string; label: string } | null;
 };
+type VariantSummary = { id: string; sku: string; color: string | null; qty: number; purchased: number; sold: number; net: number };
 type Ledger = {
   header: { id: string; sku: string; name: string; image: string | null; category: string | null;
     supplier: string | null; currentStock: number; reserved: number; available: number;
@@ -26,6 +28,7 @@ type Ledger = {
     reserved: number; available: number; currentStock: number; daysSinceLastSale: number | null;
     turnover: number; avgMonthlySales: number };
   reservations: { id: string; customer: string; qty: number; status: string; created_at: string }[];
+  variants: VariantSummary[];
   movements: Movement[];
   totalMovements: number;
   nextOffset: number | null;
@@ -62,6 +65,7 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [filter, setFilter] = useState("all");
+  const [colour, setColour] = useState(""); // "" = all colours; else filter movements to that variant colour
   const [q, setQ] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -90,12 +94,13 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
     const s = q.trim().toLowerCase();
     return rows.filter((r) => {
       if (kinds.length && !kinds.includes(r.kind)) return false;
+      if (colour && (r.variant?.color ?? "") !== colour) return false;
       if (from && r.created_at < from) return false;
       if (to && r.created_at > to + "T23:59:59") return false;
       if (!s) return true;
-      return [r.invoice_no, r.ref_id, r.source, r.reason, r.created_by, r.kind, r.party].some((v) => (v ?? "").toString().toLowerCase().includes(s));
+      return [r.invoice_no, r.ref_id, r.source, r.reason, r.created_by, r.kind, r.party, r.variant?.color, r.variant?.sku].some((v) => (v ?? "").toString().toLowerCase().includes(s));
     });
-  }, [rows, filter, q, from, to]);
+  }, [rows, filter, colour, q, from, to]);
 
   // Group by calendar day, with that day's closing balance (newest row's running balance).
   const groups = useMemo(() => {
@@ -105,9 +110,9 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
   }, [filtered]);
 
   function exportCsv() {
-    const head = ["Date", "Time", "Type", "Change", "Balance", "Invoice/Bill", "Reference", "By", "Note"];
+    const head = ["Date", "Time", "Type", "Change", "Balance", "Invoice/Bill", "Party", "Reference", "By", "Note"];
     const lines = rows.map((r) => [day(r.created_at), time(r.created_at), r.kind, r.delta, r.hold ? "reserved" : (r.runningBalance ?? ""),
-      r.invoice_no ?? "", r.ref_id ?? "", r.created_by ?? "", (r.reason ?? r.source ?? "").replace(/[\n,]/g, " ")]);
+      r.invoice_no ?? "", r.party ?? "", r.ref_id ?? "", r.created_by ?? "", (r.reason ?? r.source ?? "").replace(/[\n,]/g, " ")]);
     const csv = [head, ...lines].map((row) => row.map((c) => `"${String(c)}"`).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     const a = document.createElement("a"); a.href = url; a.download = `ledger-${data?.header.sku ?? productId}.csv`; a.click();
@@ -165,18 +170,42 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
               <div className="bg-white rounded-xl border border-sand p-2.5"><p className="text-[10px] uppercase tracking-wide text-muted">Avg/month</p><p className="text-lg font-semibold text-ink">{a!.avgMonthlySales}</p></div>
             </div>
 
-            {/* Reservation panel */}
+            {/* Estimates panel — every quote for this product (any status), clickable through to the
+                estimate; only OPEN ones reserve stock. */}
             {data.reservations.length > 0 && (
               <div className="mx-4 mb-3 rounded-xl border border-gold/40 bg-gold/5 p-3">
-                <p className="text-xs font-semibold text-gold-dark mb-1.5">🔖 Reserved by estimates · {h!.reserved} pcs · available after reservation {h!.available}</p>
+                <p className="text-xs font-semibold text-gold-dark mb-1.5">🔖 Estimates · {h!.reserved} pcs reserved (open) · available {h!.available}</p>
                 <ul className="divide-y divide-gold/20">
-                  {data.reservations.map((r) => (
-                    <li key={r.id} className="py-1.5 flex items-center justify-between gap-2 text-xs">
-                      <span className="min-w-0 truncate"><Link href={`/admin/estimate/${r.id}`} className="text-emerald nav-link font-medium">EST-{r.id.slice(0, 8).toUpperCase()}</Link> · {r.customer} · {day(r.created_at)}</span>
-                      <span className="text-gold-dark font-semibold whitespace-nowrap">{r.qty} pcs · {r.status}</span>
+                  {data.reservations.map((r, i) => (
+                    <li key={r.id + "-" + i} className="py-1.5 flex items-center justify-between gap-2 text-xs">
+                      <span className="min-w-0 truncate">
+                        <Link href={`/admin/estimate/${r.id}`} className="text-emerald nav-link font-medium">EST-{r.id.slice(0, 8).toUpperCase()}</Link>
+                        {" · "}{r.customer}{(r as any).variant ? ` · ${(r as any).variant}` : ""} · {day(r.created_at)}
+                      </span>
+                      <span className="text-gold-dark font-semibold whitespace-nowrap">{r.qty} pcs · {fmt((r as any).lineTotal)} · {r.status}</span>
                     </li>
                   ))}
                 </ul>
+              </div>
+            )}
+
+            {/* By colour / variant — the movement of every variant so the owner can decide per colour. */}
+            {data.variants.length > 0 && (
+              <div className="mx-4 mb-3 rounded-xl border border-sand bg-white p-3">
+                <p className="text-xs font-semibold text-ink mb-2">By colour · tap to filter the timeline below</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  <button onClick={() => setColour("")} className={`rounded-lg border p-2 text-left ${colour === "" ? "border-emerald ring-1 ring-emerald/40" : "border-sand hover:border-gold"}`}>
+                    <p className="text-[11px] font-medium text-ink">All colours</p>
+                    <p className="text-[10px] text-muted">Stock {h!.currentStock} · sold {a!.sold} · bought {a!.purchased}</p>
+                  </button>
+                  {data.variants.map((v) => (
+                    <button key={v.id} onClick={() => setColour((c) => (c === (v.color ?? "") ? "" : (v.color ?? "")))}
+                      className={`rounded-lg border p-2 text-left ${colour === (v.color ?? "") && colour !== "" ? "border-emerald ring-1 ring-emerald/40" : "border-sand hover:border-gold"}`}>
+                      <p className="text-[11px] font-medium text-ink truncate">{v.color ?? "—"} <span className="font-mono text-[9px] text-muted">{v.sku}</span></p>
+                      <p className="text-[10px] text-muted">Stock <b className={v.qty <= 2 ? "text-rose" : "text-ink"}>{v.qty}</b> · sold {v.sold} · bought {v.purchased}</p>
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -209,9 +238,13 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
                     {items.map((r) => (
                       <div key={r.id} className="p-2.5 flex items-center gap-3 text-sm">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] capitalize ${KIND_STYLE[r.kind] ?? "bg-cream text-muted"}`}>{r.kind}</span>
+                        {r.variant?.color && <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-cream text-ink border border-sand whitespace-nowrap">{r.variant.color}</span>}
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs text-ink truncate">{r.invoice_no ? <b>{r.invoice_no} · </b> : ""}{r.party ? <span className="text-ink">{r.party} · </span> : ""}{r.reason ?? r.source ?? "—"}</p>
-                          <p className="text-[10px] text-muted">{time(r.created_at)}{r.created_by ? ` · ${r.created_by}` : ""}{r.doc ? " · " : ""}{r.doc && <Link href={r.doc.href} className="text-emerald nav-link">{r.doc.label}</Link>}</p>
+                          <p className="text-xs text-ink truncate">{r.invoice_no ? <b>{r.invoice_no} · </b> : ""}{r.reason ?? r.source ?? "—"}</p>
+                          <p className="text-[10px] text-muted">
+                            {r.party && <b className="text-ink">{r.kind === "purchase" ? "From" : "To"} {r.party}</b>}
+                            {r.party ? " · " : ""}{time(r.created_at)}{r.created_by ? ` · ${r.created_by}` : ""}{r.doc ? " · " : ""}{r.doc && <Link href={r.doc.href} className="text-emerald nav-link">{r.doc.label}</Link>}
+                          </p>
                         </div>
                         {r.hold ? (
                           <>

@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import type { MetadataRoute } from "next";
 import { getSitemapData } from "@/lib/supabase/queries";
 
-const BASE = process.env.NEXT_PUBLIC_SITE_URL ?? "https://yogendra-ry342315-6737s-projects.vercel.app";
+const BASE = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://yogendra-ten.vercel.app").replace(/\/$/, "");
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const { products, categories } = await getSitemapData();

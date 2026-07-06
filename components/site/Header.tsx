@@ -26,37 +26,44 @@ export function Header({ categories }: { categories: Cat[] }) {
             <div className="relative group">
               <button className="nav-link py-2">Shop by Category</button>
               <div className="absolute left-1/2 -translate-x-1/2 top-full pt-3 opacity-0 invisible translate-y-1 group-hover:opacity-100 group-hover:visible group-hover:translate-y-0 transition-all duration-200">
-                <div className="bg-white rounded-2xl shadow-luxe p-4 grid grid-cols-2 gap-x-5 gap-y-3 w-[460px] border border-sand/60 max-h-[70vh] overflow-y-auto">
-                  {categories.map((c) => (
-                    <div key={c.slug} className="min-w-0">
-                      <Link href={`/shop/c/${c.slug}`}
-                        className="block px-3 py-1.5 rounded-lg font-medium text-ink hover:bg-emerald-mist hover:text-emerald transition-colors truncate">
-                        {c.name}
-                      </Link>
-                      {c.subcategories && c.subcategories.length > 0 && (
-                        <div className="pl-3 mt-0.5 space-y-0.5">
-                          {c.subcategories.map((s) => (
-                            <Link key={s.slug} href={`/shop/c/${c.slug}?sub=${s.slug}`}
-                              className="block px-2 py-1 rounded text-xs text-muted hover:text-emerald hover:bg-cream transition-colors truncate">
-                              {s.name}
-                            </Link>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  <Link href="/shop" className="px-3 py-2 rounded-lg text-gold-dark font-medium hover:bg-cream col-span-2">View all designs →</Link>
+                <div className="bg-white rounded-2xl shadow-luxe p-5 w-[min(720px,92vw)] border border-sand/60 max-h-[75vh] overflow-y-auto">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-5">
+                    {categories.map((c) => (
+                      <div key={c.slug} className="min-w-0">
+                        <Link href={`/shop/c/${c.slug}`} className="block text-sm font-semibold text-ink hover:text-emerald transition-colors truncate">{c.name}</Link>
+                        {c.subcategories && c.subcategories.length > 0 && (
+                          <ul className="mt-1.5 space-y-1">
+                            {c.subcategories.slice(0, 6).map((s) => (
+                              <li key={s.slug}>
+                                <Link href={`/shop/c/${c.slug}?sub=${s.slug}`} className="block text-xs text-muted hover:text-emerald transition-colors truncate">{s.name}</Link>
+                              </li>
+                            ))}
+                            {c.subcategories.length > 6 && (
+                              <li><Link href={`/shop/c/${c.slug}`} className="block text-xs text-gold-dark hover:underline">+{c.subcategories.length - 6} more →</Link></li>
+                            )}
+                          </ul>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-5 pt-3 border-t border-sand/60 flex items-center justify-between">
+                    <Link href="/shop" className="text-sm text-gold-dark font-medium hover:underline">View all designs →</Link>
+                    <span className="flex items-center gap-4 text-xs text-muted">
+                      <Link href="/shop#new-arrivals" className="hover:text-emerald">New Arrivals</Link>
+                      <Link href="/shop#bestsellers" className="hover:text-emerald">Bestsellers</Link>
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
-            <Link href="/shop?sort=new" className="nav-link py-2">New Arrivals</Link>
-            <Link href="/shop?sort=bestseller" className="nav-link py-2">Bestsellers</Link>
+            <Link href="/shop#new-arrivals" className="nav-link py-2">New Arrivals</Link>
+            <Link href="/shop#bestsellers" className="nav-link py-2">Bestsellers</Link>
             <Link href="/reels" className="nav-link py-2">Reels</Link>
           </nav>
 
           <div className="flex items-center gap-2 sm:gap-3 text-ink">
             <SearchBox />
-            <Link href="/account" aria-label="Track order / Account" title="Track order"
+            <Link href="/account" aria-label="My account" title="My account"
               className="hidden sm:grid place-items-center p-2 rounded-full hover:bg-cream hover:text-emerald transition-colors"><IconUser /></Link>
             <WishlistWidget />
             <CartWidget />

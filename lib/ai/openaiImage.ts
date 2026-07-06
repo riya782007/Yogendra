@@ -88,3 +88,61 @@ export async function generateImageOpenAI(opts: {
     clearTimeout(t);
   }
 }
+
+/**
+ * editImageOpenAI — surgical, instruction-driven edit of an existing image (the OpenAI fallback
+ * for the "Fix a detail" flow). Sends MULTIPLE images to /images/edits: image 0 is the one being
+ * edited (usually the generated shot, or a marked copy), and any further images are references
+ * (the original raw product photo) so the true design is preserved. `input_fidelity: high` keeps
+ * the rest of the image intact.
+ */
+export async function editImageOpenAI(opts: {
+  prompt: string;
+  images: { base64: string; mime?: string }[];
+  aspectRatio?: string;
+  timeoutMs?: number;
+}): Promise<OpenAIImageResult> {
+  const key = openaiKey();
+  if (!key) return { ok: false, reason: "no_key" };
+  if (!opts.images.length) return { ok: false, reason: "no_image", error: "no input image" };
+
+  const model = MODEL();
+  const size = sizeFor(opts.aspectRatio);
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), opts.timeoutMs ?? 120_000);
+  try {
+    const form = new FormData();
+    form.append("model", model);
+    form.append("prompt", opts.prompt);
+    form.append("size", size);
+    form.append("quality", "high");
+    form.append("input_fidelity", "high");
+    opts.images.forEach((im, i) => {
+      const mime = im.mime ?? "image/png";
+      const ext = mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg";
+      form.append("image[]", new Blob([Buffer.from(im.base64, "base64")], { type: mime }), `img${i}.${ext}`);
+    });
+    const res = await fetch("https://api.openai.com/v1/images/edits", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}` },
+      body: form,
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const txt = (await res.text()).slice(0, 400);
+      const err = `[openai:${model}] HTTP ${res.status}: ${txt}`;
+      console.error("[openai-image] edit", err);
+      return { ok: false, reason: "api_error", error: err };
+    }
+    const json: any = await res.json();
+    const b64 = json?.data?.[0]?.b64_json;
+    if (!b64) return { ok: false, reason: "no_image", error: `[openai:${model}] no b64_json in response` };
+    return { ok: true, base64: b64, mime: "image/png", model: `openai:${model}` };
+  } catch (e) {
+    const err = `[openai] ${e instanceof Error ? e.message : String(e)}`;
+    console.error("[openai-image] edit", err);
+    return { ok: false, reason: "api_error", error: err };
+  } finally {
+    clearTimeout(t);
+  }
+}

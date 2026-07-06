@@ -3,6 +3,7 @@ import { useState, useMemo, useRef, useEffect, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import { formatPaise } from "@/lib/pricing";
 import { posSaleAction } from "@/app/actions/orders";
+import { quickAddEmployeeAction } from "@/app/actions/employees";
 import { QtyField } from "@/components/admin/QtyField";
 
 type P = { sku: string; name: string; price: number; wholesale: number; mrp: number; category: string; qty: number };
@@ -10,9 +11,10 @@ type Line = { sku: string; name: string; price: number; wholesale: number; mrp: 
 type Cust = { id: string; name: string; phone: string; type: string; gstin: string };
 const TIER_LABEL: Record<string, string> = { retail: "R", wholesale: "W" };
 type Method = { id: string; name: string; kind: string };
+type Emp = { id: string; name: string };
 type PayLine = { methodId: string; amount: string };
 
-export function POSClient({ products, customers = [], methods = [] }: { products: P[]; customers?: Cust[]; methods?: Method[] }) {
+export function POSClient({ products, customers = [], methods = [], employees = [] }: { products: P[]; customers?: Cust[]; methods?: Method[]; employees?: Emp[] }) {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [scanMsg, setScanMsg] = useState<{ text: string; ok: boolean } | null>(null);
@@ -23,8 +25,29 @@ export function POSClient({ products, customers = [], methods = [] }: { products
   const [expanded, setExpanded] = useState<string | null>(null);
   const [cust, setCust] = useState({ name: "", phone: "" });
   const [custType, setCustType] = useState<"retail" | "wholesale">("retail");
+  const [salesEmp, setSalesEmp] = useState(""); // who dealt with the customer (performance attribution)
+  // Local, editable roster so a staffer can add their name here and be selected immediately.
+  const [emps, setEmps] = useState<Emp[]>(employees);
+  const [addingEmp, setAddingEmp] = useState(false);
+  const [newEmpName, setNewEmpName] = useState("");
+  const [empBusy, setEmpBusy] = useState(false);
+  const empRef = useRef<HTMLSelectElement>(null);
+  /** Add (or reuse) a salesperson by name from the POS box, then select them for this sale. */
+  async function addEmp() {
+    const n = newEmpName.trim();
+    if (!n) return;
+    setEmpBusy(true);
+    const r = await quickAddEmployeeAction(n);
+    setEmpBusy(false);
+    if (r.ok && r.id) {
+      setEmps((prev) => (prev.some((e) => e.id === r.id) ? prev : [...prev, { id: r.id!, name: r.name || n }]));
+      setSalesEmp(r.id); setNewEmpName(""); setAddingEmp(false); setErr("");
+    } else setErr(r.error ?? "Could not add employee");
+  }
   const [custPanel, setCustPanel] = useState(false);
   const [billType, setBillType] = useState<"gst" | "cash">("gst");
+  // Exclusive = GST added on top of the price; Inclusive = the shown price already contains GST.
+  const [gstMode, setGstMode] = useState<"exclusive" | "inclusive">("exclusive");
   const [gstin, setGstin] = useState("");
   const [addr, setAddr] = useState("");
   const [globalDisc, setGlobalDisc] = useState("");
@@ -41,14 +64,22 @@ export function POSClient({ products, customers = [], methods = [] }: { products
   const pct = (v: string) => { const n = Number(v); return Number.isFinite(n) && n > 0 && n < 100 ? n : 0; };
   const gDisc = pct(globalDisc);
   const baseUnit = (l: Line | P) => (custType === "wholesale" && l.wholesale > 0 ? l.wholesale : l.price);
-  const effUnit = (l: Line) => {
+  // rawUnit = the ORIGINAL unit rate shown in the Rate column (a manual override, else the tier rate).
+  // It does NOT change when a discount is applied — the discount only affects the Amount.
+  const rawUnit = (l: Line) => {
     const ov = l.override.trim();
     if (ov !== "" && Number.isFinite(Number(ov)) && Number(ov) >= 0) return Math.round(Number(ov) * 100);
-    const d = l.disc.trim() !== "" ? pct(l.disc) : gDisc;
-    const base = baseUnit(l);
+    return baseUnit(l);
+  };
+  const lineDiscPct = (l: Line) => (l.disc.trim() !== "" ? pct(l.disc) : gDisc);
+  // effUnit = the discounted unit that actually bills (Amount = effUnit × qty). Discount applies on
+  // top of the Rate (override or tier), so Rate stays original and Amount reflects the discount.
+  const effUnit = (l: Line) => {
+    const d = lineDiscPct(l);
+    const base = rawUnit(l);
     return d > 0 ? Math.round((base * (100 - d)) / 100) : base;
   };
-  const mrpUnit = (l: Line) => Math.max(l.mrp || 0, effUnit(l));
+  const mrpUnit = (l: Line) => Math.max(l.mrp || 0, rawUnit(l));
 
   const [custQ, setCustQ] = useState("");
   const custMatches = useMemo(() => {
@@ -80,12 +111,13 @@ export function POSClient({ products, customers = [], methods = [] }: { products
   const discountTotal = Math.max(0, mrpTotal - itemsTotal);
   const total = itemsTotal + chargesTotal;
   const GST_RATE = 3;
-  // GST mode follows the tier (owner rule): WHOLESALE = exclusive → GST added ON TOP of the total;
-  // RETAIL = inclusive → GST is already inside the price, so nothing is added (shown for reference).
-  const gstExclusive = billType === "gst" && custType === "wholesale";
-  const gstAddOn = gstExclusive ? Math.round((total * GST_RATE) / 100) : 0;
-  const gstIncluded = billType === "gst" && !gstExclusive ? total - Math.round((total * 100) / (100 + GST_RATE)) : 0;
-  const grandTotal = total + gstAddOn;
+  const isGst = billType === "gst";
+  // Exclusive: GST added ON TOP of `total`. Inclusive: `total` already contains GST, so the tax is
+  // the portion inside it (total − total/1.03) and the customer pays exactly `total`.
+  const gstOnBill = !isGst ? 0
+    : gstMode === "inclusive" ? (total - Math.round(total / (1 + GST_RATE / 100)))
+    : Math.round((total * GST_RATE) / 100);
+  const grandTotal = isGst && gstMode === "inclusive" ? total : total + gstOnBill;
   const received = payLines.reduce((s, l) => s + (Number(l.amount) || 0) * 100, 0);
   const remaining = grandTotal - received;
   const addPayLine = () => setPayLines((p) => [...p, { methodId: methods[0]?.id ?? "", amount: "" }]);
@@ -109,21 +141,29 @@ export function POSClient({ products, customers = [], methods = [] }: { products
 
   async function complete() {
     if (busy || lines.length === 0) return;
+    // Require attribution so every bill lands on an employee's tally (the whole point of tracking).
+    if (!salesEmp) {
+      setErr('Pick who made this sale under "Sold by" — or add their name — before recording the bill.');
+      setAddingEmp(emps.length === 0); // if the roster is empty, open the add-name box straight away
+      empRef.current?.focus();
+      return;
+    }
     setBusy(true); setErr("");
     const validPays = payLines.filter((l) => l.methodId && (Number(l.amount) || 0) > 0).map((l) => ({ methodId: l.methodId, amount: Number(l.amount) || 0 }));
     const res = await posSaleAction({
       items: lines.map((l) => {
         const ov = l.override.trim();
         const hasOv = ov !== "" && Number.isFinite(Number(ov)) && Number(ov) >= 0;
-        if (hasOv) return { sku: l.sku, qty: l.qty, priceRupees: Number(ov) };
-        const d = l.disc.trim() !== "" ? pct(l.disc) : gDisc;
-        if (d > 0) return { sku: l.sku, qty: l.qty, priceRupees: effUnit(l) / 100 };
+        const d = lineDiscPct(l);
+        // When a rate is overridden OR a discount applies, bill the NET unit and also record the
+        // ORIGINAL rate (listRupees) so the invoice can show Rate → Disc → Amount.
+        if (hasOv || d > 0) return { sku: l.sku, qty: l.qty, priceRupees: effUnit(l) / 100, listRupees: rawUnit(l) / 100 };
         return { sku: l.sku, qty: l.qty };
       }),
       customer: cust, payment: "cash",
-      billType, buyerGstin: billType === "gst" ? gstin : "", buyerAddress: addr,
+      billType, gstMode: billType === "gst" ? gstMode : undefined, buyerGstin: billType === "gst" ? gstin : "", buyerAddress: addr,
       ...(validPays.length ? { payments: validPays } : {}),
-      allowOversell: allowBackorder, tier: custType,
+      allowOversell: allowBackorder, tier: custType, salesEmployeeId: salesEmp || undefined,
       backorder: allowBackorder && lines.some((l) => l.qty > l.stock),
       packingRupees: Number(packing) || 0, courierRupees: Number(courier) || 0, adjustmentRupees: Number(adjustment) || 0,
     });
@@ -157,6 +197,17 @@ export function POSClient({ products, customers = [], methods = [] }: { products
             <button key={v} onClick={() => setBillType(v)} className={`px-3 py-2 transition-colors ${billType === v ? "bg-ink text-white" : "text-muted hover:bg-cream"}`}>{label}</button>
           ))}
         </div>
+        {/* GST exclusive/inclusive — only relevant on a tax invoice. */}
+        {billType === "gst" && (
+          <div className="inline-flex items-center gap-1.5 shrink-0">
+            <span className="text-[11px] text-muted">GST</span>
+            <div className="inline-flex rounded-lg border border-sand overflow-hidden text-xs">
+              {([["exclusive", "Exclusive (add on top)"], ["inclusive", "Inclusive (in price)"]] as const).map(([v, label]) => (
+                <button key={v} onClick={() => setGstMode(v)} className={`px-2.5 py-2 transition-colors ${gstMode === v ? "bg-emerald text-white" : "text-muted hover:bg-cream"}`}>{label}</button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Unified product search + scan (F3, autofocus) */}
         <div className="relative flex-1 min-w-[220px]">
@@ -179,6 +230,29 @@ export function POSClient({ products, customers = [], methods = [] }: { products
             </div>
           )}
           {scanMsg && <p className={`text-[11px] mt-0.5 absolute ${scanMsg.ok ? "text-emerald-dark" : "text-rose"}`}>{scanMsg.text}</p>}
+        </div>
+
+        {/* Salesperson (employee sales attribution) — REQUIRED so every bill is tracked. Staff can
+            pick from the roster or add their own name on the spot. */}
+        <div className="shrink-0">
+          <div className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm ${salesEmp ? "border-emerald" : "border-gold"}`}>
+            <span className="text-muted text-xs whitespace-nowrap">☺ Sold by<span className="text-rose" title="Required">*</span></span>
+            <select ref={empRef} value={salesEmp} onChange={(e) => setSalesEmp(e.target.value)} className="bg-transparent outline-none text-ink max-w-[130px]">
+              <option value="">— select —</option>
+              {emps.map((emp) => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
+            </select>
+            <button type="button" onClick={() => setAddingEmp((v) => !v)} className="text-emerald-dark text-xs hover:underline whitespace-nowrap" title="Add a new salesperson">＋ New</button>
+          </div>
+          {addingEmp && (
+            <div className="mt-1 flex items-center gap-1">
+              <input value={newEmpName} onChange={(e) => setNewEmpName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addEmp(); } }}
+                placeholder="Type your name" autoFocus
+                className="rounded-lg border border-sand px-2 py-1 text-xs w-32 outline-none focus:border-emerald" />
+              <button type="button" onClick={addEmp} disabled={empBusy || !newEmpName.trim()}
+                className="text-xs px-2 py-1 rounded-lg bg-ink text-white disabled:opacity-50">{empBusy ? "…" : "Add"}</button>
+            </div>
+          )}
         </div>
 
         {/* Compact customer chip (F2) */}
@@ -261,7 +335,7 @@ export function POSClient({ products, customers = [], methods = [] }: { products
                         </div>
                       </td>
                       <td className="px-2 py-1.5 text-right align-middle">
-                        <input value={l.override} onChange={(e) => setOverride(l.sku, e.target.value)} inputMode="decimal" placeholder={String(Math.round(effUnit(l) / 100))}
+                        <input value={l.override} onChange={(e) => setOverride(l.sku, e.target.value)} inputMode="decimal" placeholder={String(Math.round(baseUnit(l) / 100))}
                           className={`w-20 text-right rounded border border-transparent hover:border-sand focus:border-emerald px-1 py-0.5 outline-none ${l.override.trim() !== "" ? "text-emerald-dark font-medium" : "text-ink"}`} />
                       </td>
                       <td className="px-2 py-1.5 text-right align-middle">
@@ -322,8 +396,7 @@ export function POSClient({ products, customers = [], methods = [] }: { products
           {discountTotal > 0 && <div className="flex justify-between text-sm"><span className="text-muted">Discount</span><span className="text-emerald-dark">− {formatPaise(discountTotal)}</span></div>}
           <div className="flex justify-between text-sm"><span className="text-muted">Net (items)</span><span className="text-ink/80">{formatPaise(itemsTotal)}</span></div>
           {chargesTotal !== 0 && <div className="flex justify-between text-sm"><span className="text-muted">Other charges</span><span className="text-ink/80">{chargesTotal > 0 ? "+ " : ""}{formatPaise(chargesTotal)}</span></div>}
-          {gstAddOn > 0 && <div className="flex justify-between text-sm"><span className="text-muted">GST @{GST_RATE}% <span className="text-[11px] text-wine">· added (wholesale)</span></span><span className="text-ink/80">+ {formatPaise(gstAddOn)}</span></div>}
-          {gstIncluded > 0 && <div className="flex justify-between text-sm"><span className="text-muted">incl. GST @{GST_RATE}% <span className="text-[11px] text-emerald-dark">· within price (retail)</span></span><span className="text-muted">{formatPaise(gstIncluded)}</span></div>}
+          {gstOnBill > 0 && <div className="flex justify-between text-sm"><span className="text-muted">GST @{GST_RATE}%{isGst && gstMode === "inclusive" ? " (incl.)" : ""}</span><span className="text-ink/80">{isGst && gstMode === "inclusive" ? "" : "+ "}{formatPaise(gstOnBill)}</span></div>}
           <div className="flex justify-between items-baseline pt-1.5 border-t border-sand/60"><span className="text-muted">Payable</span><span className="text-2xl font-semibold text-ink">{formatPaise(grandTotal)}</span></div>
 
           {/* Payment (F4) */}

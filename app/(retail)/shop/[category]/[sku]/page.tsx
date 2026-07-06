@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getProductBySku, getPricingFormula, getProductReviews, getRecommendations } from "@/lib/supabase/queries";
+import { getProductBySku, getPricingFormula, getProductReviews, getRecommendations, isStorefrontImage } from "@/lib/supabase/queries";
 import { resolveProductContent } from "@/lib/content";
 import { liveOffer } from "@/lib/offers";
 import { formatPaise, resolvePrices, overridesOf } from "@/lib/pricing";
@@ -48,11 +48,19 @@ export default async function ProductPage({ params }: Params) {
     const label = [v.color, v.size, v.polish].filter(Boolean).join(" · ") || v.sku;
     return { sku: v.sku, label, image: (v.image_paths?.[0] ?? null) as string | null, price: vo.price, qty: v.qty ?? 0 };
   });
-  // Gallery shows product photos + every variant photo, all zoomable.
+  // Gallery shows AI-generated product photos + every variant photo, all zoomable. The raw upload
+  // (kind 'source'/'flatlay') is kept for the Fix-a-detail editor but never shown to customers.
   const galleryImages = [
-    ...((p.images ?? []) as any[]),
+    ...((p.images ?? []) as any[]).filter((i: any) => isStorefrontImage(i.kind)),
     ...((p.variants ?? []) as any[]).flatMap((v: any) => (((v.image_paths ?? []) as string[]) || []).map((path) => ({ path, kind: v.color }))),
   ];
+  // Owner-chosen storefront cover leads the gallery (so the hero matches the card thumbnail).
+  const coverPath = typeof (p as any).thumbnail_path === "string" && (p as any).thumbnail_path.startsWith("http") ? (p as any).thumbnail_path : null;
+  if (coverPath) {
+    const i = galleryImages.findIndex((g: any) => g.path === coverPath);
+    if (i > 0) galleryImages.unshift(galleryImages.splice(i, 1)[0]);
+    else if (i === -1) galleryImages.unshift({ path: coverPath, kind: "cover" });
+  }
   const waText = `Please place an order for ${p.name} (SKU:${p.sku})`;
   const waHref = `https://wa.me/919873151767?text=${encodeURIComponent(waText)}`;
   
@@ -60,7 +68,8 @@ export default async function ProductPage({ params }: Params) {
   const jsonLd = {
     "@context": "https://schema.org", "@type": "Product", name: p.name, sku: p.sku, category: catName,
     description: content.seo.metaDescription, keywords: content.seo.keywords.join(", "), brand: { "@type": "Brand", name: "Blythe Diva" },
-    aggregateRating: { "@type": "AggregateRating", ratingValue: reviews.avg, reviewCount: reviews.count },
+    // Only advertise a rating when real reviews exist — a fake aggregateRating is a Google penalty risk.
+    ...(reviews.count > 0 ? { aggregateRating: { "@type": "AggregateRating", ratingValue: reviews.avg, reviewCount: reviews.count } } : {}),
     offers: { "@type": "Offer", priceCurrency: "INR", price: (o.price / 100).toFixed(2), availability: p.qty > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock" },
   };
 
@@ -125,10 +134,14 @@ export default async function ProductPage({ params }: Params) {
       <section id="reviews" className="mt-16 grid md:grid-cols-3 gap-8">
         <div className="md:col-span-1">
           <h2 className="font-display text-3xl text-ink">Customer Reviews</h2>
-          <div className="mt-3 flex items-end gap-3">
-            <span className="text-5xl font-semibold text-ink">{reviews.avg}</span>
-            <div className="pb-1"><Stars rating={reviews.avg} /><p className="text-xs text-muted mt-1">{reviews.count} verified reviews</p></div>
-          </div>
+          {reviews.count > 0 ? (
+            <div className="mt-3 flex items-end gap-3">
+              <span className="text-5xl font-semibold text-ink">{reviews.avg}</span>
+              <div className="pb-1"><Stars rating={reviews.avg} count={reviews.count} /><p className="text-xs text-muted mt-1">{reviews.count} verified review{reviews.count === 1 ? "" : "s"}</p></div>
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-muted">No reviews yet — be the first to review this piece.</p>
+          )}
           <div className="mt-4 space-y-1.5">
             {[5, 4, 3, 2, 1].map((s) => {
               const pct = reviews.count ? Math.round(((reviews.dist[s] ?? 0) / reviews.count) * 100) : 0;

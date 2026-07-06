@@ -6,7 +6,6 @@ import { AnimatedNumber } from "@/components/admin/AnimatedNumber";
 import { BarChart } from "@/components/admin/BarChart";
 import { Donut } from "@/components/admin/Donut";
 import { ExpandableReport } from "@/components/admin/ExpandableReport";
-import { PrivacyShield } from "@/components/admin/PrivacyShield";
 
 const CH_LABEL: Record<string, string> = { retail: "Online retail", wholesale: "Wholesale", pos: "Counter (POS)" };
 const PRESETS = [{ key: "today", label: "Today" }, { key: "week", label: "This week" }, { key: "month", label: "This month" }];
@@ -61,7 +60,6 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
       {searchParams.denied && (
         <div className="mb-4 rounded-xl bg-rose/10 text-rose px-4 py-2.5 text-sm">Your role doesn't have access to <b>{searchParams.denied}</b>. Ask the owner if you need it.</div>
       )}
-      <PrivacyShield>
       {/* Hero */}
       <div className="relative rounded-3xl overflow-hidden mb-6 bg-gradient-to-br from-ink via-[#2c2238] to-emerald-dark text-cream p-6 sm:p-8 shadow-luxe">
         <div className="absolute -right-10 -top-10 w-48 h-48 rounded-full bg-gold/20 blur-2xl" />
@@ -129,11 +127,12 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
         </div>
       </div>
 
-      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+      <div className="grid md:grid-cols-3 lg:grid-cols-5 gap-4 mb-5">
         <Tile label="Total Products" sub={`${d.newProducts} new`}><AnimatedNumber value={d.totalProducts} /></Tile>
         <Tile label="Categories"><AnimatedNumber value={d.categories} /></Tile>
-        <Tile label="Dead Stock" accent={d.dead ? "text-rose" : undefined} sub="capital tied up"><AnimatedNumber value={d.dead} /></Tile>
-        <Tile label="Low Stock" accent={d.low ? "text-gold-dark" : undefined} sub={`${d.inactive} inactive`}><AnimatedNumber value={d.low} /></Tile>
+        <Tile label="Dead Stock" accent={d.dead ? "text-rose" : undefined} sub="no movement · capital tied up"><AnimatedNumber value={d.dead} /></Tile>
+        <Tile label="Low Stock" accent={d.low ? "text-gold-dark" : undefined} sub="at/under reorder level"><AnimatedNumber value={d.low} /></Tile>
+        <Tile label="Inactive" accent={d.inactive ? "text-muted" : undefined} sub="never sold"><AnimatedNumber value={d.inactive} /></Tile>
       </div>
 
       <div className="grid md:grid-cols-3 gap-4">
@@ -169,7 +168,6 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
           <Link href="/admin/inventory" className="block mt-4 text-sm text-emerald nav-link">View full inventory →</Link>
         </div>
       </div>
-      </PrivacyShield>
     </main>
   );
 }

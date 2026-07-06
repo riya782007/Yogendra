@@ -77,12 +77,18 @@ body {
   body { background: #fff !important; }
   .print-area { box-shadow: none !important; }
 
-  /* Barcode labels: column count driven by the chosen paper size (--bc-cols). */
-  @page { size: A4; margin: 6mm; }
+  /* Barcode labels — an exact cols×rows grid that FILLS one A4 sheet with uniform 8mm margins.
+     Column count (--bc-cols) and rows-per-sheet (--bc-rows) come from the chosen paper preset, so
+     e.g. 65-up = 5×13 lands exactly on one sheet with clean, even borders and never spills over. */
+  @page { size: A4; margin: 8mm; }
   .barcode-grid {
     display: grid !important;
-    grid-template-columns: repeat(var(--bc-cols, 8), 1fr) !important;
-    gap: 1mm !important;
+    grid-template-columns: repeat(var(--bc-cols, 5), 1fr) !important;
+    /* Fixed row height (computed so rows + gaps fill the 281mm printable height exactly) and small
+       gutters between labels — matches the owner's existing sheet: separated labels, no boxes. */
+    grid-auto-rows: var(--bc-rowh, 19.77mm) !important;
+    column-gap: var(--bc-colgap, 3mm) !important;
+    row-gap: var(--bc-rowgap, 2mm) !important;
   }
   .barcode-label {
     padding: 0.8mm !important;
@@ -101,7 +107,9 @@ body {
   .barcode-label .bc-price { font-size: 7pt; }
   .barcode-label svg { height: 10mm !important; width: 100% !important; }
 }
-/* on-screen label sizing */
+/* on-screen label sizing + preview outline (removed on print, where labels are borderless) */
 .barcode-label .bc-name { font-size: 10px; }
 .barcode-label .bc-sku { font-size: 10px; margin-top: 2px; }
 .barcode-label .bc-price { font-size: 11px; }
+.barcode-grid { column-gap: 3mm; row-gap: 2mm; }
+.barcode-label { border: 1px dashed #e7e2d9; padding: 3px; display: flex; flex-direction: column; align-items: center; justify-content: center; }

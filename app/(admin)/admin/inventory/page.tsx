@@ -35,7 +35,7 @@ export default async function Inventory({ searchParams }: { searchParams: { dead
   return (
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
       <h1 className="font-display text-4xl text-ink mb-1">Inventory Intelligence</h1>
-      <p className="text-sm text-muted mb-5">Rule: no movement in <b>{deadDays}</b> days OR ≤ <b>{lowQty}</b> pcs. Change it and the classification updates live.</p>
+      <p className="text-sm text-muted mb-5">Rule: <b>Dead</b> = no movement in <b>{deadDays}</b> days · <b>Low</b> = ≤ <b>{lowQty}</b> pcs · <b>Inactive</b> = never sold or moved even once (checked first — an item can only be Dead or Low once it's had at least one movement). Change the numbers below and the classification updates live.</p>
 
       <StockAdjust />
 

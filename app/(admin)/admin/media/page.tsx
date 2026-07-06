@@ -1,8 +1,7 @@
 export const dynamic = "force-dynamic";
-import Link from "next/link";
 import { getProductsWithMedia } from "@/lib/supabase/queries";
 import { geminiConfigured } from "@/lib/ai/gemini";
-import { MediaCard } from "@/components/admin/MediaCard";
+import { MediaSearchGrid } from "@/components/admin/MediaSearchGrid";
 
 export const metadata = { title: "Owner Console · Product Photos" };
 
@@ -17,14 +16,7 @@ export default async function Media() {
         {ready ? "● AI photo generation connected — generate professional photos from raw shots (Gemini, with OpenAI fallback)." : "○ Not connected — add GEMINI_API_KEY or OPENAI_API_KEY to enable photo generation. You can still upload raw photos now."}
       </div>
       <p className="text-xs text-muted mb-3">Open a product's <b>AI Studio</b> to generate a hero, angles &amp; enhancements with art-direction controls.</p>
-      <div className="grid md:grid-cols-2 gap-4">
-        {products.map((p) => (
-          <div key={p.id} className="relative">
-            <Link href={`/admin/media/${(p as any).id}`} className="absolute right-3 top-3 z-10 px-2.5 py-1 rounded-full bg-ink text-white text-xs hover:bg-ink/90">✦ AI Studio</Link>
-            <MediaCard p={p as any} geminiReady={ready} />
-          </div>
-        ))}
-      </div>
+      <MediaSearchGrid products={products as any} ready={ready} />
     </main>
   );
 }

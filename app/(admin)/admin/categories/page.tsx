@@ -72,7 +72,9 @@ export default async function Categories({ searchParams }: { searchParams: { q?:
             designCount={counts.get(c.id) ?? 0}
             subCount={c.subcategories.length}
             defaultOpen={!!q}
-            actions={canEdit ? <DeleteCategoryButton id={c.id} name={c.name} productCount={counts.get(c.id) ?? 0} /> : null}
+            actions={canEdit ? (
+              <DeleteCategoryButton id={c.id} name={c.name} productCount={counts.get(c.id) ?? 0} />
+            ) : null}
           >
             {/* Subcategories */}
             <div className="flex flex-col gap-1.5 mb-3">

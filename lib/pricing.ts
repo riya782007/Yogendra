@@ -30,7 +30,42 @@ export type PricingFormula = {
   mrpPct?: number;
   /** Minimum wholesale order value in paise (gate on the wholesale cart). */
   wholesaleMinOrder?: number;
+  /** Global quantity-break tiers: buy N+ of a line → % off that line's wholesale rate. */
+  wholesaleTiers?: WholesaleTier[];
 };
+
+/** A single global quantity break, e.g. { minQty: 12, pctOff: 5 } = 12+ pcs get 5% off. */
+export type WholesaleTier = { minQty: number; pctOff: number };
+
+/**
+ * Best (highest) % off a given line quantity qualifies for, across all tiers.
+ * Pure + shared by the storefront display and mirrored by the DB RPC that records the order.
+ */
+export function tierPctOff(tiers: WholesaleTier[] | undefined, qty: number): number {
+  if (!tiers?.length || qty <= 0) return 0;
+  let pct = 0;
+  for (const t of tiers) {
+    const min = Number(t?.minQty);
+    const off = Number(t?.pctOff);
+    if (Number.isFinite(min) && Number.isFinite(off) && qty >= min && off > pct) pct = off;
+  }
+  return Math.max(0, Math.min(100, pct));
+}
+
+/** Apply a tier % to a unit price (paise), rounded to the nearest paise — matches the RPC. */
+export function applyTier(unitPaise: number, pctOff: number): number {
+  if (!pctOff) return unitPaise;
+  return Math.max(0, Math.round(unitPaise * (1 - pctOff / 100)));
+}
+
+/** Normalise/sort tiers ascending by minQty, dropping invalid rows. */
+export function cleanTiers(raw: unknown): WholesaleTier[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((r: any) => ({ minQty: Math.floor(Number(r?.minQty ?? r?.min_qty)), pctOff: Number(r?.pctOff ?? r?.pct_off) }))
+    .filter((t) => Number.isFinite(t.minQty) && t.minQty >= 1 && Number.isFinite(t.pctOff) && t.pctOff > 0 && t.pctOff <= 100)
+    .sort((a, b) => a.minQty - b.minQty);
+}
 
 export type PriceSet = {
   /** rate charged to wholesale buyers, in paise */
@@ -52,15 +87,59 @@ function roundToNearest(valuePaise: number, stepPaise: number): number {
   if (!stepPaise || stepPaise <= 0) return Math.round(valuePaise);
   return Math.round(valuePaise / stepPaise) * stepPaise;
 }
-/** Round to the nearest price ENDING IN 9 rupees (e.g. 326 → 329) — the owner's retail rule. */
-function roundTo9Paise(paise: number): number {
-  const r = paise / 100;
-  return Math.max(9, Math.round((r - 9) / 10) * 10 + 9) * 100;
+
+/**
+ * Charm-round a RETAIL selling price (paise) UP to the next whole rupee ending in 9.
+ * The owner's rule: the final retail price must end in 9 (₹126 → ₹129, ₹130 → ₹139).
+ * We round UP (never down) so the charm price never dips below the formula's output and
+ * margin is protected. A value already ending in 9 is left as-is.
+ */
+export function roundRetailCharmPaise(valuePaise: number): number {
+  if (!Number.isFinite(valuePaise) || valuePaise <= 0) return valuePaise;
+  const rupees = Math.max(1, Math.round(valuePaise / 100));
+  const bumpToNine = ((9 - (rupees % 10)) + 10) % 10; // smallest add so it ends in 9
+  return (rupees + bumpToNine) * 100;
 }
-/** Round to the nearest multiple of 5 rupees (e.g. 407.5 → 410) — the owner's MRP rule. */
-function roundTo5Paise(paise: number): number {
-  const r = paise / 100;
-  return Math.max(5, Math.round(r / 5) * 5) * 100;
+
+/**
+ * Round a printed MRP (paise) to the nearest whole rupee ending in 0 or 5 (a multiple of 5).
+ * If a retail floor is given, the MRP is never printed below the selling price — it is bumped
+ * up to the next multiple of 5 at or above retail (keeps MRP ≥ retail, so the strike-through
+ * price always looks right and passes validation).
+ */
+export function roundMrpTo5Paise(valuePaise: number, retailFloorPaise?: number): number {
+  if (!Number.isFinite(valuePaise) || valuePaise <= 0) return valuePaise;
+  let rupees = Math.round(valuePaise / 100 / 5) * 5;
+  if (rupees <= 0) rupees = 5;
+  let out = rupees * 100;
+  if (typeof retailFloorPaise === "number" && Number.isFinite(retailFloorPaise) && out < retailFloorPaise) {
+    const floorRupees = Math.ceil(retailFloorPaise / 100);
+    out = Math.ceil(floorRupees / 5) * 5 * 100; // next multiple of 5 ≥ retail
+  }
+  return out;
+}
+
+/**
+ * The pricing build-up, in paise, following the owner's costing sheet EXACTLY.
+ * Starting from the base WHOLESALE price (W = what the client sells to resellers at):
+ *   1. free shipping   → W × (1 + shipping%)
+ *   2. packing         → + packingFlat (a flat ₹ amount)
+ *   3. promotion       → + promotionFlat (a flat ₹ amount)
+ *   4. reseller margin → × (1 + reseller%)
+ *   5. reseller-referral discount → × (1 + customer%)   ==> RETAIL (selling price)
+ *   6. mrp markup      → × (1 + mrp%)                    ==> MRP (struck-through)
+ * Wholesale rate = W itself (no markup — the entered value IS the reseller price).
+ */
+function buildupStages(base: number, formula: PricingFormula) {
+  const p = (n?: number) => 1 + (Number(n) || 0) / 100;
+  const wholesale = base;
+  const afterShipping = base * p(formula.shippingPct);
+  const afterPacking = afterShipping + (Number(formula.packingFlat) || 0);
+  const afterPromotion = afterPacking + (Number(formula.promotionFlat) || 0);
+  const afterReseller = afterPromotion * p(formula.resellerPct);
+  const retail = afterReseller * p(formula.customerDiscountPct);
+  const mrp = retail * p(formula.mrpPct);
+  return { wholesale, afterShipping, afterPacking, afterPromotion, afterReseller, retail, mrp };
 }
 
 /**
@@ -71,43 +150,46 @@ function roundTo5Paise(paise: number): number {
 export function computePrices(baseWholesalePaise: number, formula: PricingFormula): PriceSet {
   const base = Number.isFinite(baseWholesalePaise) ? baseWholesalePaise : NaN;
 
-  // Module 4 — %-build-up chain (mirrors the DB `bd_price()` exactly):
-  // cost → +shipping% → +packing% → +promotion% (landed) → +reseller% (wholesale)
-  //      → +customer_discount% (retail) → +mrp% (MRP).
+  // Module 4 — %-build-up chain (mirrors the DB `bd_price()` and the costing sheet exactly).
+  // Final display rule (owner's request): RETAIL always ends in 9, MRP always ends in 0/5.
   if (formula.useBuildup) {
-    const p = (n?: number) => 1 + (Number(n) || 0) / 100;
-    // Owner's rule (final): the value entered on a product IS the wholesale billing price.
-    // Retail = wholesale + customer step % (ends ₹9). MRP = retail + markup % (nearest ₹5).
-    const wholesale = base;
-    const retail = wholesale * p(formula.customerDiscountPct);
-    const printedMrp = retail * p(formula.mrpPct);
+    const s = buildupStages(base, formula);
+    const retailPrice = roundRetailCharmPaise(s.retail);
     return {
-      wholesaleRate: roundToNearest(wholesale, formula.roundToPaise),
-      retailPrice: roundTo9Paise(retail),
-      mrp: roundTo5Paise(printedMrp),
+      wholesaleRate: roundToNearest(s.wholesale, formula.roundToPaise),
+      retailPrice,
+      mrp: roundMrpTo5Paise(s.mrp, retailPrice),
     };
   }
 
   const wholesaleRate = roundToNearest(base * (1 + formula.wholesaleMarkupPct / 100), formula.roundToPaise);
-  const retailPrice = roundToNearest(base * formula.retailMultiplier, formula.roundToPaise);
-  const mrp = roundToNearest(base * formula.mrpMultiplier, formula.roundToPaise);
+  const retailPrice = roundRetailCharmPaise(base * formula.retailMultiplier);
+  const mrp = roundMrpTo5Paise(base * formula.mrpMultiplier, retailPrice);
 
   return { wholesaleRate, retailPrice, mrp };
 }
 
 /**
  * Step-by-step build-up breakdown for the pricing settings preview (display-only).
- * Returns each stage's running value in paise so the owner can see his sheet reproduced.
+ * Returns each stage's running value in paise so the owner sees his sheet reproduced.
  */
 export function buildupBreakdown(baseWholesalePaise: number, formula: PricingFormula) {
   const base = Number.isFinite(baseWholesalePaise) ? baseWholesalePaise : 0;
-  const p = (n?: number) => 1 + (Number(n) || 0) / 100;
-  // The entered value IS the wholesale billing price. Retail & MRP build on top.
-  const wholesale = base;
-  const retailRaw = wholesale * p(formula.customerDiscountPct);
-  const retail = roundTo9Paise(retailRaw);            // + customer % = RETAIL (ends ₹9)
-  const mrp = roundTo5Paise(retailRaw * p(formula.mrpPct)); // + mrp % = MRP (nearest ₹5)
-  return { base, wholesale, retail, mrp };
+  const s = buildupStages(base, formula);
+  const round = formula.roundToPaise;
+  // Intermediate stages show the raw running total; the FINAL retail/mrp use the charm rounding
+  // (retail → ends in 9, mrp → ends in 0/5) so the preview matches what the storefront prints.
+  const retail = roundRetailCharmPaise(s.retail);
+  return {
+    base,
+    wholesale: roundToNearest(s.wholesale, round),
+    afterShipping: roundToNearest(s.afterShipping, round),
+    afterPacking: roundToNearest(s.afterPacking, round),
+    afterPromotion: roundToNearest(s.afterPromotion, round),
+    afterReseller: roundToNearest(s.afterReseller, round),
+    retail,
+    mrp: roundMrpTo5Paise(s.mrp, retail),
+  };
 }
 
 /**

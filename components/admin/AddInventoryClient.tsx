@@ -81,8 +81,9 @@ export function AddInventoryClient({
   const [parentRetail, setParentRetail] = useState(true);
   const [parentWholesale, setParentWholesale] = useState(true);
 
-  const [attr, setAttr] = useState<Attr>("color");
-  const [pick, setPick] = useState<string[]>([]); // selected master values for `attr`
+  // Selected master values PER attribute. Variants become the CROSS-PRODUCT of whatever is chosen,
+  // so the owner can build e.g. colour × polish combinations in one go (not just one attribute).
+  const [picks, setPicks] = useState<Record<Attr, string[]>>({ color: [], size: [], polish: [] });
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<Row[]>([]);
   const [busy, setBusy] = useState(false);
@@ -101,9 +102,11 @@ export function AddInventoryClient({
     }
     return [...new Set((variantOptions[a] ?? []).map((s) => s.trim()).filter(Boolean))].sort((x, y) => x.localeCompare(y));
   };
-  const options = useMemo(() => masterFor(attr), [attr, variantOptions, colorCodes]);
-  const pickSet = new Set(pick.map((s) => s.toLowerCase()));
-  const filtered = q.trim() ? options.filter((o) => o.toLowerCase().includes(q.trim().toLowerCase())) : options;
+  const masters = useMemo(() => ({ color: masterFor("color"), size: masterFor("size"), polish: masterFor("polish") }), [variantOptions, colorCodes]);
+  const filterOpts = (a: Attr) => (q.trim() ? masters[a].filter((o) => o.toLowerCase().includes(q.trim().toLowerCase())) : masters[a]);
+  // How many variant rows the current selection will produce (product of each chosen attribute's count).
+  const comboCount = (["color", "size", "polish"] as Attr[]).reduce((n, a) => (picks[a].length ? n * picks[a].length : n), 1);
+  const anyPicked = (["color", "size", "polish"] as Attr[]).some((a) => picks[a].length > 0);
 
   const catName = cats.find((c) => c.id === catId)?.name;
 
@@ -117,25 +120,39 @@ export function AddInventoryClient({
     return `${parent}-${suffix}`;
   };
 
-  function togglePick(v: string) {
+  function togglePick(a: Attr, v: string) {
     const lc = v.toLowerCase();
-    setPick((p) => (p.some((x) => x.toLowerCase() === lc) ? p.filter((x) => x.toLowerCase() !== lc) : [...p, v]));
+    setPicks((p) => {
+      const cur = p[a];
+      const next = cur.some((x) => x.toLowerCase() === lc) ? cur.filter((x) => x.toLowerCase() !== lc) : [...cur, v];
+      return { ...p, [a]: next };
+    });
   }
 
-  /** Generate one variant row per selected value of the chosen attribute. Existing rows with
-   *  the same value are preserved (so re-generating doesn't wipe entered prices/stock). */
+  /** Generate a variant row for every COMBINATION of the selected colours, sizes & polishes
+   *  (the cross-product). Existing rows with the same colour+size+polish are preserved, so
+   *  re-generating never wipes entered prices/stock. */
   function generateRows() {
-    if (pick.length === 0) { toast(`Select at least one ${attr}`, "error"); return; }
+    const dims = (["color", "size", "polish"] as Attr[])
+      .map((a) => ({ a, vals: picks[a] }))
+      .filter((d) => d.vals.length > 0);
+    if (dims.length === 0) { toast("Select at least one colour, size or polish", "error"); return; }
+    // Cartesian product of the chosen attributes.
+    let combos: Partial<Record<Attr, string>>[] = [{}];
+    for (const d of dims) {
+      const next: Partial<Record<Attr, string>>[] = [];
+      for (const c of combos) for (const v of d.vals) next.push({ ...c, [d.a]: v });
+      combos = next;
+    }
     const total = Math.max(0, Number(initialStock) || 0);
-    const per = pick.length ? Math.floor(total / pick.length) : 0;
-    setRows((prev) => pick.map((v) => {
-      const existing = prev.find((r) => (r[attr] || "").toLowerCase() === v.toLowerCase());
+    const per = combos.length ? Math.floor(total / combos.length) : 0;
+    const eq = (x?: string, y?: string) => (x || "").toLowerCase() === (y || "").toLowerCase();
+    setRows((prev) => combos.map((combo) => {
+      const existing = prev.find((r) => eq(r.color, combo.color) && eq(r.size, combo.size) && eq(r.polish, combo.polish));
       if (existing) return existing;
-      const seed: Partial<Row> = { qty: per ? String(per) : "" };
-      if (attr === "color") seed.color = v; else if (attr === "size") seed.size = v; else seed.polish = v;
-      return newRow(seed);
+      return newRow({ qty: per ? String(per) : "", color: combo.color || "", size: combo.size || "", polish: combo.polish || "" });
     }));
-    toast(`Built ${pick.length} variant${pick.length === 1 ? "" : "s"} — set stock, price & publishing`);
+    toast(`Built ${combos.length} variant${combos.length === 1 ? "" : "s"} — set stock, price & publishing`);
   }
 
   const updateRow = (i: number, patch: Partial<Row>) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
@@ -232,7 +249,7 @@ export function AddInventoryClient({
       toast(`${res.sku} ${mode === "publish" ? "created & published" : "saved as draft"} ✓`);
       // Save & continue → clear for the next product. Save draft → keep nothing lingering either.
       setName(""); setBasePrice(""); setInitialStock(""); setSku(""); setType("simple"); setSubId(""); setStyleId("");
-      setPick([]); setRows([]); setQ("");
+      setPicks({ color: [], size: [], polish: [] }); setRows([]); setQ("");
       if (fileRef.current) fileRef.current.value = "";
     } catch (e) {
       toast(e instanceof Error ? e.message : "Something went wrong", "error");
@@ -376,38 +393,38 @@ export function AddInventoryClient({
       {/* ============ VARIANT WIZARD (configurable only) ============ */}
       {type === "configurable" && (
         <section className="bg-white rounded-2xl p-6 shadow-card">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div>
-              <p className="text-sm font-semibold text-ink"><span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald text-white text-xs mr-2">1</span>How do you want to create variants?</p>
-              <div className="mt-3 space-y-2">
-                {(["color", "size", "polish"] as Attr[]).map((a) => (
-                  <label key={a} className={`flex items-start gap-2.5 rounded-xl border p-3 cursor-pointer transition-colors ${attr === a ? "border-emerald bg-emerald-mist/40" : "border-sand hover:border-emerald/50"}`}>
-                    <input type="radio" name="attr" checked={attr === a} onChange={() => { setAttr(a); setPick([]); }} className="accent-emerald mt-0.5" />
-                    <span><span className="text-sm text-ink capitalize">{a === "polish" ? "Polish / Finish" : a}</span><br /><span className="text-xs text-muted">Variants will be created based on different {attrLabel[a]}.</span></span>
-                  </label>
-                ))}
-              </div>
+          <div>
+            <p className="text-sm font-semibold text-ink"><span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald text-white text-xs mr-2">1</span>Pick the colours, sizes &amp; polishes for this design</p>
+            <p className="text-xs text-muted mt-1">Select values under any of these — you can combine them. If you choose more than one attribute we create a variant for every combination (e.g. 2 colours × 2 polishes = 4 variants). Choose from existing master values only.</p>
+            <input className={`${input} mt-3`} placeholder="🔎 Search options…" value={q} onChange={(e) => setQ(e.target.value)} />
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {(["color", "size", "polish"] as Attr[]).map((a) => {
+                const opts = filterOpts(a);
+                return (
+                  <div key={a} className="rounded-xl border border-sand p-3">
+                    <p className="text-xs font-semibold text-ink capitalize mb-2">
+                      {a === "polish" ? "Polish / Finish" : a}
+                      {picks[a].length > 0 && <span className="ml-1 text-emerald-dark font-normal">· {picks[a].length} selected</span>}
+                    </p>
+                    <div className="max-h-40 overflow-y-auto flex flex-wrap gap-1.5 pr-1">
+                      {masters[a].length === 0 && <p className="text-[11px] text-muted py-1">No {attrLabel[a]} in master yet — add them under <Link href="/admin/colours" className="text-emerald nav-link">master data</Link>.</p>}
+                      {opts.map((o) => {
+                        const on = picks[a].some((x) => x.toLowerCase() === o.toLowerCase());
+                        return (
+                          <button key={o} type="button" onClick={() => togglePick(a, o)}
+                            className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${on ? "border-emerald bg-emerald text-white" : "border-sand text-muted hover:border-emerald"}`}>
+                            {on ? "✓ " : ""}{o}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-
-            <div>
-              <p className="text-sm font-semibold text-ink"><span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald text-white text-xs mr-2">2</span>Select {attrLabel[attr]} <span className="text-muted font-normal text-xs">(choose from existing only)</span></p>
-              <input className={`${input} mt-3`} placeholder={`🔎 Search existing ${attrLabel[attr]}…`} value={q} onChange={(e) => setQ(e.target.value)} />
-              <div className="mt-2 max-h-40 overflow-y-auto flex flex-wrap gap-1.5 pr-1">
-                {options.length === 0 && <p className="text-xs text-muted py-2">No {attrLabel[attr]} in master yet — add them under <Link href="/admin/colours" className="text-emerald nav-link">Colours / master data</Link>.</p>}
-                {filtered.map((o) => {
-                  const on = pickSet.has(o.toLowerCase());
-                  return (
-                    <button key={o} type="button" onClick={() => togglePick(o)}
-                      className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${on ? "border-emerald bg-emerald text-white" : "border-sand text-muted hover:border-emerald"}`}>
-                      {on ? "✓ " : ""}{o}
-                    </button>
-                  );
-                })}
-              </div>
-              {pick.length > 0 && (
-                <button type="button" onClick={generateRows} className="mt-3 px-4 py-2 rounded-xl bg-ink text-white text-sm">Generate {pick.length} variant{pick.length === 1 ? "" : "s"} →</button>
-              )}
-            </div>
+            {anyPicked && (
+              <button type="button" onClick={generateRows} className="mt-3 px-4 py-2 rounded-xl bg-ink text-white text-sm">Generate {comboCount} variant{comboCount === 1 ? "" : "s"} →</button>
+            )}
           </div>
 
           {/* ---- Variants table ---- */}
@@ -419,7 +436,7 @@ export function AddInventoryClient({
                 <table className="w-full text-sm border-collapse">
                   <thead>
                     <tr className="bg-cream text-[11px] uppercase tracking-wide text-muted">
-                      <th className="text-left font-medium px-3 py-2">{attr}</th>
+                      <th className="text-left font-medium px-3 py-2">Variant</th>
                       <th className="text-left font-medium px-3 py-2">SKU</th>
                       <th className="text-center font-medium px-3 py-2">Stock *</th>
                       <th className="text-center font-medium px-3 py-2 border-l border-sand" colSpan={3}>Wholesale</th>
@@ -436,7 +453,7 @@ export function AddInventoryClient({
                   <tbody>
                     {rows.map((r, i) => (
                       <tr key={r.key} className="border-t border-sand/70">
-                        <td className="px-3 py-2 capitalize text-ink whitespace-nowrap">{r[attr] || <span className="text-muted">—</span>}</td>
+                        <td className="px-3 py-2 capitalize text-ink whitespace-nowrap">{[r.color, r.size, r.polish].filter(Boolean).join(" · ") || <span className="text-muted">—</span>}</td>
                         <td className="px-3 py-2"><input className={`${cell} font-mono`} placeholder={previewSku(r)} value={r.sku} onChange={(e) => updateRow(i, { sku: e.target.value })} /></td>
                         <td className="px-2 py-2 w-20"><input className={`${cell} text-center`} type="number" min={0} step={1} placeholder="0" value={r.qty} onChange={(e) => updateRow(i, { qty: e.target.value })} /></td>
                         {/* Wholesale */}

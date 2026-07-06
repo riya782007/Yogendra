@@ -1,8 +1,9 @@
 export const dynamic = "force-dynamic";
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { getStorefront, getWholesaleOrderHistory, getCategories } from "@/lib/supabase/queries";
+import { getStorefront, getWholesaleOrderHistory, getCategories, getActivePromotions } from "@/lib/supabase/queries";
 import { supabaseServer } from "@/lib/supabase/server";
+import { PromoHero } from "@/components/site/PromoHero";
 import { resolvePrices, overridesOf } from "@/lib/pricing";
 import { getWholesaleSession } from "@/lib/wholesale";
 import { WholesaleCatalog } from "@/components/site/WholesaleCatalog";
@@ -31,21 +32,47 @@ export default async function TradeDashboard() {
   for (const r of ((imgRows as any[]) ?? []).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))) {
     if (typeof r.path === "string" && r.path.startsWith("http") && !imgBy.has(r.product_id)) imgBy.set(r.product_id, r.path);
   }
-  const list = products.map((p) => {
+  // Variants (colours): a wholesale buyer orders specific colours, so configurable designs are
+  // expanded into one orderable row PER colour (its own SKU + stock); simple products stay single.
+  const pIds = (products as any[]).map((p) => (p as any).id).filter(Boolean);
+  const { data: vRows } = pIds.length
+    ? await sb.from("variants").select("product_id,sku,color,qty,image_paths").in("product_id", pIds)
+    : { data: [] as any[] };
+  const varsBy = new Map<string, any[]>();
+  for (const v of ((vRows as any[]) ?? [])) { const a = varsBy.get(v.product_id) ?? []; a.push(v); varsBy.set(v.product_id, a); }
+
+  const list = (products as any[]).flatMap((p) => {
     const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));
-    return {
-      sku: p.sku, name: p.name, category: p.category.name, qty: p.qty,
-      price: ps.wholesaleRate, mrp: ps.mrp, image: imgBy.get((p as any).id) ?? null,
-    };
+    const parentImg = imgBy.get((p as any).id) ?? null;
+    const vs = varsBy.get((p as any).id) ?? [];
+    if (vs.length > 0) {
+      return vs.map((v) => ({
+        sku: v.sku, name: p.name, category: p.category.name, colour: v.color ?? null,
+        qty: v.qty ?? 0, price: ps.wholesaleRate, mrp: ps.mrp,
+        image: (Array.isArray(v.image_paths) ? v.image_paths.find((x: string) => typeof x === "string" && x.startsWith("http")) : null) ?? parentImg,
+      }));
+    }
+    return [{ sku: p.sku, name: p.name, category: p.category.name, colour: null, qty: p.qty, price: ps.wholesaleRate, mrp: ps.mrp, image: parentImg }];
   });
+
+  // Owner's UPI collection details for direct QR payment (no Razorpay → owner keeps 100%).
+  const { data: pmRows } = await sb.from("payment_methods").select("name,upi_id,qr_code_url,kind,is_default").eq("active", true);
+  const pms = ((pmRows as any[]) ?? []).filter((m) => m.upi_id || m.qr_code_url);
+  const upi = pms.find((m) => m.is_default) ?? pms.find((m) => String(m.kind ?? "").toLowerCase().includes("upi")) ?? pms[0] ?? null;
+  const payInfo = upi ? { payeeName: (upi.name as string) ?? "Blythe Diva", upiId: (upi.upi_id as string) ?? null, qrUrl: (upi.qr_code_url as string) ?? null } : null;
+
   const history = await getWholesaleOrderHistory(session.id).catch(() => []);
+  // What this dealer still owes across their recent wholesale orders (transparency + gentle nudge).
+  const outstanding = (history as any[]).reduce((s, h) => s + Math.max(0, (h.total ?? 0) - (h.amountPaid ?? 0)), 0);
   const categories = (await getCategories()).map((c) => ({ id: c.id, name: c.name }));
+  const promos = await getActivePromotions("wholesale").catch(() => []);
 
   return (
     <div className="max-w-7xl mx-auto px-5 py-8">
+      {promos.length > 0 && <div className="rounded-2xl overflow-hidden mb-6 shadow-card"><PromoHero promos={promos} /></div>}
       <h1 className="font-display text-4xl text-ink mb-1">Dealer Dashboard</h1>
       <p className="text-sm text-muted mb-6">Factory-direct trade rates. Enter quantities and place your order — ₹{minRupees} minimum. Your margin vs MRP is shown on every line.</p>
-      <WholesaleCatalog products={list} customerName={session.name} minOrder={minOrder} history={history} />
+      <WholesaleCatalog products={list} customerName={session.name} minOrder={minOrder} history={history} payInfo={payInfo} outstanding={outstanding} tiers={formula.wholesaleTiers ?? []} />
 
       {/* Trade partners can offer their own designs for us to stock. */}
       <section className="mt-12 border-t border-sand pt-8">

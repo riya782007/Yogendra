@@ -53,7 +53,7 @@ export function CollapsibleCategory({
           </span>
         </button>
         <div className="flex items-center gap-3 shrink-0">
-          <span className="text-sm text-emerald font-medium whitespace-nowrap">{designCount} designs</span>
+          <span className="text-sm text-emerald font-medium whitespace-nowrap">{designCount} design{designCount === 1 ? "" : "s"}</span>
           {actions}
         </div>
       </div>

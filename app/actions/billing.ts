@@ -2,9 +2,11 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
-import { requirePerm } from "@/lib/auth";
+import { requirePerm, getSession } from "@/lib/auth";
 import { getPricingFormula } from "@/lib/supabase/queries";
 import { resolvePrices, overridesOf } from "@/lib/pricing";
+
+const OWNER_OTP = () => process.env.OWNER_OTP ?? "482913";
 
 /** Recompute an estimate's total from its current line items. */
 async function recomputeEstimateTotal(sb: ReturnType<typeof supabaseServer>, estimateId: string) {
@@ -81,11 +83,22 @@ export async function addEstimateLineAction(formData: FormData): Promise<void> {
   const qty = Math.max(1, Math.floor(Number(formData.get("qty") ?? 1)));
   if (!estimateId || !sku) return;
   const sb = supabaseServer();
-  const { data: p } = await sb.from("products").select("id,base_wholesale,wholesale_override,retail_override,mrp_override").ilike("sku", sku).maybeSingle();
-  if (!p) return;
+  // Resolve the SKU to a specific variant first (so the estimate records the exact colour),
+  // then fall back to a bare product SKU.
+  const { data: v } = await sb.from("variants").select("id,product_id,wholesale_override,retail_override,product:products(base_wholesale,wholesale_override,retail_override,mrp_override)").ilike("sku", sku).maybeSingle();
+  let productId: string, variantId: string | null = null, base: number, ov: any;
+  if (v) {
+    const vp = (v as any).product;
+    productId = (v as any).product_id; variantId = (v as any).id; base = vp.base_wholesale;
+    ov = { wholesale_override: (v as any).wholesale_override ?? vp.wholesale_override, retail_override: (v as any).retail_override ?? vp.retail_override, mrp_override: vp.mrp_override };
+  } else {
+    const { data: p } = await sb.from("products").select("id,base_wholesale,wholesale_override,retail_override,mrp_override").ilike("sku", sku).maybeSingle();
+    if (!p) return;
+    productId = (p as any).id; base = (p as any).base_wholesale; ov = overridesOf(p);
+  }
   const formula = await getPricingFormula();
-  const unit = resolvePrices((p as any).base_wholesale, formula, overridesOf(p)).retailPrice;
-  await sb.from("estimate_items").insert({ estimate_id: estimateId, product_id: (p as any).id, qty, unit_price: unit, line_total: unit * qty });
+  const unit = resolvePrices(base, formula, ov).retailPrice;
+  await sb.from("estimate_items").insert({ estimate_id: estimateId, product_id: productId, variant_id: variantId, qty, unit_price: unit, line_total: unit * qty });
   await recomputeEstimateTotal(sb, estimateId);
   revalidatePath(`/admin/estimate/${estimateId}`);
 }
@@ -113,9 +126,9 @@ export async function createEstimateAction(input: { items: { sku: string; qty: n
     // Match estimate_items back to the inputs by SKU.
     const priced = input.items.filter((i) => i.priceRupees != null && Number.isFinite(i.priceRupees) && (i.priceRupees as number) >= 0);
     if (priced.length) {
-      const { data: its } = await sb.from("estimate_items").select("id, qty, product:products(sku)").eq("estimate_id", estimateId);
+      const { data: its } = await sb.from("estimate_items").select("id, qty, product:products(sku), variant:variants(sku)").eq("estimate_id", estimateId);
       const bySku = new Map<string, { id: string; qty: number }>();
-      for (const it of ((its as any[]) ?? [])) { const sku = (it as any).product?.sku; if (sku) bySku.set(String(sku).toUpperCase(), { id: it.id, qty: it.qty }); }
+      for (const it of ((its as any[]) ?? [])) { const sku = (it as any).variant?.sku ?? (it as any).product?.sku; if (sku) bySku.set(String(sku).toUpperCase(), { id: it.id, qty: it.qty }); }
       for (const i of priced) {
         const m = bySku.get(i.sku.toUpperCase());
         if (!m) continue;
@@ -188,12 +201,56 @@ export async function reopenEstimateAction(formData: FormData) {
   revalidatePath("/admin/estimates");
 }
 
-export async function recordReturnAction(input: { orderId: string; reason: string; items: { product_id: string; qty: number }[] }): Promise<{ ok: boolean; qty?: number; error?: string }> {
+/** Convert a backorder into a fulfilled sale once stock has arrived — clears the backorder flag so
+ *  it drops off the Backorders list and counts as a normal completed sale. */
+export async function fulfillBackorderAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("billing.sell"))) return;
+  const id = String(formData.get("id") ?? "").trim();
+  if (!id) return;
+  await supabaseServer().from("orders").update({ is_backorder: false }).eq("id", id);
+  revalidatePath("/admin/backorders"); revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard");
+}
+
+export async function recordReturnAction(input: { orderId: string; reason: string; items: { product_id: string; variantSku?: string; qty: number }[] }): Promise<{ ok: boolean; qty?: number; error?: string; pending?: boolean }> {
   if (!(await requirePerm("billing.refund"))) return { ok: false, error: "Your role can't process returns/refunds." };
   if (!input.items?.length) return { ok: false, error: "Select items to return" };
   if (!input.reason?.trim()) return { ok: false, error: "Capture a return reason" };
-  const { data, error } = await supabaseServer().rpc("record_sales_return", { p_order_id: input.orderId, p_reason: input.reason, p_items: input.items });
+  const sb = supabaseServer();
+
+  // A sales return restocks goods and reverses money — so STAFF cannot finalise one on their own.
+  // Only the owner may. A staff request is raised as an approval the owner clears with the OTP on
+  // /admin/approvals; on approval the return is executed there (see decideApprovalAction).
+  if (!getSession().isOwner) {
+    await sb.from("approvals").insert({
+      action: "sales_return",
+      payload: { orderId: input.orderId, reason: input.reason, items: input.items.map((i) => ({ product_id: i.product_id, qty: i.qty, variantSku: i.variantSku ?? null })) },
+      status: "pending",
+      otp_hash: `h:${OWNER_OTP()}`,
+    });
+    revalidatePath("/admin/approvals");
+    return { ok: true, pending: true };
+  }
+
+  // The RPC restocks by product_id; variantSku is carried for display/audit (variant-exact restock TBD).
+  const p_items = input.items.map((i) => ({ product_id: i.product_id, qty: i.qty }));
+  const { data, error } = await sb.rpc("record_sales_return", { p_order_id: input.orderId, p_reason: input.reason, p_items });
   if (error) return { ok: false, error: error.message };
   revalidatePath("/admin/returns"); revalidatePath("/admin/dashboard");
   return { ok: true, qty: (data as any)?.qty };
+}
+
+/**
+ * Cancel a whole order (e.g. a dealer or retail COD order the customer backed out of).
+ * Restocks every line, reverses the sale in the ledger, and marks the order "cancelled".
+ * Money-reversing, so it is OWNER-ONLY — staff can't self-cancel.
+ */
+export async function cancelOrderAction(orderId: string, reason?: string): Promise<{ ok: boolean; error?: string; already?: boolean }> {
+  if (!getSession().isOwner) return { ok: false, error: "Only the owner can cancel an order." };
+  if (!orderId) return { ok: false, error: "Missing order." };
+  const sb = supabaseServer();
+  const { data, error } = await sb.rpc("cancel_order", { p_order_id: orderId, p_reason: (reason ?? "").trim() || "Cancelled" });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/admin/sales"); revalidatePath("/admin/backorders"); revalidatePath("/admin/dashboard");
+  revalidatePath(`/admin/invoice/${orderId}`);
+  return { ok: true, already: !!(data as any)?.already };
 }

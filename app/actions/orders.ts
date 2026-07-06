@@ -1,5 +1,6 @@
 "use server";
 import { supabaseServer } from "@/lib/supabase/server";
+import { isWalkInPlaceholder } from "@/lib/supabase/queries";
 import { requirePerm } from "@/lib/auth";
 import { sendPurchase } from "@/lib/ga4";
 import { notifyOrderPlaced } from "@/lib/whatsapp";
@@ -33,16 +34,18 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
 }
 
 export async function posSaleAction(input: {
-  items: { sku: string; qty: number; priceRupees?: number }[];
+  items: { sku: string; qty: number; priceRupees?: number; listRupees?: number }[];
   customer: { name?: string; phone?: string };
   payment: string;
   billType?: "gst" | "cash";
+  gstMode?: "exclusive" | "inclusive"; // exclusive = GST added on top; inclusive = price already contains GST
   buyerGstin?: string;
   buyerAddress?: string;
   amountPaidRupees?: number; // partial/advance; defaults to full
   allowOversell?: boolean; // owner opt-in to bill beyond stock (backorder)
   backorder?: boolean; // this sale was billed beyond available stock (surfaces in /admin/backorders)
   tier?: "retail" | "wholesale"; // price list to bill at (#16)
+  salesEmployeeId?: string; // who dealt with the customer (employee performance attribution)
   payCashRupees?: number; // split tender — cash portion (#14/#37) [legacy]
   payBankRupees?: number; // split tender — UPI/card/bank portion (#14/#37) [legacy]
   packingRupees?: number; // extra charge — packing (GST-applicable)
@@ -87,7 +90,12 @@ export async function posSaleAction(input: {
           if (v) { variantId = (v as any).id; productId = (v as any).product_id; }
         }
         if (!productId) continue; // can't map — leave the catalogue price on that line
-        let upd = sb.from("order_items").update({ unit_price: unit, line_total: unit * o.qty }).eq("order_id", orderId).eq("product_id", productId);
+        // Original (pre-discount) rate for the invoice's Rate → Disc → Amount display. Only stored
+        // when it's actually higher than the billed net, so a plain override doesn't fake a discount.
+        const list = Number.isFinite(o.listRupees as number) ? Math.round((o.listRupees as number) * 100) : 0;
+        const patch: Record<string, number> = { unit_price: unit, line_total: unit * o.qty };
+        if (list > unit) patch.unit_mrp = list;
+        let upd = sb.from("order_items").update(patch).eq("order_id", orderId).eq("product_id", productId);
         upd = variantId ? upd.eq("variant_id", variantId) : upd.is("variant_id", null);
         await upd;
       }
@@ -114,28 +122,41 @@ export async function posSaleAction(input: {
   // A GST tax invoice is exclusive → the customer pays total + GST. Cap/allow the recorded payment
   // up to this GRAND total (not the pre-tax total), so a fully-paid GST bill records the tax-
   // inclusive amount and the printed invoice shows no phantom balance for the tax.
+  // Round to the nearest ₹1 to MATCH the invoice's Grand Total (which shows a round-off line and is
+  // what the customer actually hands over) — otherwise a full cash payment leaves a paise-level
+  // phantom balance. This is the exact number the invoice prints as "Grand Total".
   const GST_RATE = 3;
-  // GST mode follows the customer TIER: WHOLESALE = exclusive (thin margins → GST added ON TOP of
-  // the collected total), RETAIL = inclusive (the shelf price already contains GST, nothing added).
-  const isWholesale = input.tier === "wholesale";
-  const gstMode: "exclusive" | "inclusive" | null = billType === "gst" ? (isWholesale ? "exclusive" : "inclusive") : null;
-  const grandTotalPaise = gstMode === "exclusive" ? (total as number) + Math.round(((total as number) * GST_RATE) / 100) : (total as number);
+  const gstMode = input.gstMode === "inclusive" ? "inclusive" : "exclusive";
+  // Exclusive: customer pays total + GST. Inclusive: the price already includes GST, so the grand
+  // total IS `total` (the tax is the portion inside it). Round to the nearest ₹1 (matches the invoice).
+  const grandRawPaise = billType !== "gst" ? (total as number)
+    : gstMode === "inclusive" ? (total as number)
+    : (total as number) + Math.round(((total as number) * GST_RATE) / 100);
+  const grandTotalPaise = Math.round(grandRawPaise / 100) * 100;
 
   // Upsert into the customer directory (by phone) and link the order to it.
+  // Anonymous walk-ins ("Cash (R)/(W)", no phone) are NOT added to the directory — they're just a
+  // bill label (owner: "walk in ko 1 manke chalo"). The order still keeps customer_name for the bill.
   let customerId: string | null = null;
   const ph = input.customer?.phone?.trim();
   const nm = input.customer?.name?.trim();
-  if (ph || nm) {
-    const { data: existing } = ph ? await sb.from("customers").select("id").eq("phone", ph).maybeSingle() : { data: null };
+  if (ph && !isWalkInPlaceholder(nm, ph)) {
+    const { data: existing } = await sb.from("customers").select("id").eq("phone", ph).maybeSingle();
     if (existing) {
       customerId = (existing as any).id;
       if (input.buyerGstin?.trim()) await sb.from("customers").update({ gstin: input.buyerGstin.trim() }).eq("id", customerId);
-    } else if (nm || ph) {
+    } else {
       const { data: created } = await sb.from("customers")
-        .insert({ name: nm || ph || "Walk-in", phone: ph || null, gstin: input.buyerGstin?.trim() || null, address: input.buyerAddress?.trim() || null, type: "retail" })
+        .insert({ name: nm || ph, phone: ph, gstin: input.buyerGstin?.trim() || null, address: input.buyerAddress?.trim() || null, type: "retail" })
         .select("id").maybeSingle();
       customerId = (created as any)?.id ?? null;
     }
+  } else if (nm && !isWalkInPlaceholder(nm, ph)) {
+    // Named customer with no phone the owner deliberately typed — still worth keeping in the directory.
+    const { data: created } = await sb.from("customers")
+      .insert({ name: nm, phone: null, gstin: input.buyerGstin?.trim() || null, address: input.buyerAddress?.trim() || null, type: "retail" })
+      .select("id").maybeSingle();
+    customerId = (created as any)?.id ?? null;
   }
 
   // ---- Tender resolution -----------------------------------------------------------------
@@ -185,10 +206,12 @@ export async function posSaleAction(input: {
 
   await sb.from("orders").update({
     bill_type: billType,
+    gst_mode: billType === "gst" ? gstMode : null,
     buyer_gstin: input.buyerGstin?.trim() || null,
     buyer_address: input.buyerAddress?.trim() || null,
     buyer_state: buyerState,
     customer_id: customerId,
+    sales_employee_id: input.salesEmployeeId?.trim() || null,
     total,
     amount_paid: amountPaid,
     payment_mode: payMode,

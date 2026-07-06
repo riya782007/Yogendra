@@ -87,7 +87,7 @@ export default async function CashBook({ searchParams }: { searchParams: { tende
         {cards.map((c) => (
           <div key={c.label} className={`${card} ${c.tone ?? ""}`}>
             <p className="text-xs uppercase tracking-wide text-muted">{c.label}</p>
-            <p className={`text-2xl font-semibold mt-1 ${c.value < 0 ? "text-rose" : "text-ink"}`}>{formatPaise(c.value)}</p>
+            <p className={`sensitive text-2xl font-semibold mt-1 ${c.value < 0 ? "text-rose" : "text-ink"}`}>{formatPaise(c.value)}</p>
           </div>
         ))}
       </div>
@@ -119,12 +119,12 @@ export default async function CashBook({ searchParams }: { searchParams: { tende
         {/* Range totals */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
           {tender !== "bank" && <>
-            <div className={`${card} bg-emerald-mist/30`}><p className="text-xs uppercase tracking-wide text-muted">Cash in</p><p className="text-xl font-semibold text-emerald-dark mt-1">{formatPaise(sum.cashIn)}</p></div>
-            <div className={card}><p className="text-xs uppercase tracking-wide text-muted">Cash out</p><p className="text-xl font-semibold text-rose mt-1">{formatPaise(sum.cashOut)}</p></div>
+            <div className={`${card} bg-emerald-mist/30`}><p className="text-xs uppercase tracking-wide text-muted">Cash in</p><p className="sensitive text-xl font-semibold text-emerald-dark mt-1">{formatPaise(sum.cashIn)}</p></div>
+            <div className={card}><p className="text-xs uppercase tracking-wide text-muted">Cash out</p><p className="sensitive text-xl font-semibold text-rose mt-1">{formatPaise(sum.cashOut)}</p></div>
           </>}
           {tender !== "cash" && <>
-            <div className={`${card} bg-blue-50`}><p className="text-xs uppercase tracking-wide text-muted">Bank / UPI in</p><p className="text-xl font-semibold text-emerald-dark mt-1">{formatPaise(sum.bankIn)}</p></div>
-            <div className={card}><p className="text-xs uppercase tracking-wide text-muted">Bank / UPI out</p><p className="text-xl font-semibold text-rose mt-1">{formatPaise(sum.bankOut)}</p></div>
+            <div className={`${card} bg-blue-50`}><p className="text-xs uppercase tracking-wide text-muted">Bank / UPI in</p><p className="sensitive text-xl font-semibold text-emerald-dark mt-1">{formatPaise(sum.bankIn)}</p></div>
+            <div className={card}><p className="text-xs uppercase tracking-wide text-muted">Bank / UPI out</p><p className="sensitive text-xl font-semibold text-rose mt-1">{formatPaise(sum.bankOut)}</p></div>
           </>}
         </div>
 
@@ -136,7 +136,7 @@ export default async function CashBook({ searchParams }: { searchParams: { tende
               {methodRows.map((r) => (
                 <div key={r.method} className="rounded-xl border border-sand bg-cream/40 px-4 py-2">
                   <p className="text-xs text-muted">{r.method}</p>
-                  <p className="text-lg font-semibold text-ink">{formatPaise(r.total)}</p>
+                  <p className="sensitive text-lg font-semibold text-ink">{formatPaise(r.total)}</p>
                 </div>
               ))}
             </div>
@@ -187,12 +187,12 @@ export default async function CashBook({ searchParams }: { searchParams: { tende
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <div className={`${card} bg-emerald-mist/30`}>
               <p className="text-xs uppercase tracking-wide text-muted">Cash in hand (legacy)</p>
-              <p className="text-2xl font-semibold text-ink mt-1">{formatPaise(b.cashBalance)}</p>
+              <p className="sensitive text-2xl font-semibold text-ink mt-1">{formatPaise(b.cashBalance)}</p>
               <p className="text-[11px] text-muted mt-1">Open {formatPaise(b.opening_cash)} · in {formatPaise(b.cashIn)} · out {formatPaise(b.cashOut)}</p>
             </div>
             <div className={`${card} bg-blue-50`}>
               <p className="text-xs uppercase tracking-wide text-muted">Bank / UPI (legacy)</p>
-              <p className="text-2xl font-semibold text-ink mt-1">{formatPaise(b.bankBalance)}</p>
+              <p className="sensitive text-2xl font-semibold text-ink mt-1">{formatPaise(b.bankBalance)}</p>
               <p className="text-[11px] text-muted mt-1">Open {formatPaise(b.opening_bank)} · in {formatPaise(b.bankIn)} · out {formatPaise(b.bankOut)}</p>
             </div>
           </div>

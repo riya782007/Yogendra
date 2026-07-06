@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { getProductsPage, getPricingFormula, getCategories } from "@/lib/supabase/queries";
 import { liveOffer } from "@/lib/offers";
-import { formatPaise } from "@/lib/pricing";
+import { formatPaise, resolvePrices, overridesOf } from "@/lib/pricing";
 import { geminiConfigured } from "@/lib/ai/gemini";
 import { aiProvidersStatus } from "@/lib/ai/listingAgent";
 import { generateContentAction, generateAllContentAction } from "@/app/actions/aiContent";
@@ -81,13 +81,14 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
         <table className="w-full text-sm">
           <thead className="bg-cream text-muted text-left">
             <tr>
-              <th className="p-3">Photo</th><th className="p-3">Product</th><th className="p-3">Category · No.</th><th className="p-3">Price (live)</th><th className="p-3 text-right"> </th>
+              <th className="p-3">Photo</th><th className="p-3">Product</th><th className="p-3">Category · No.</th><th className="p-3">Price (live)</th><th className="p-3">Updates <span className="font-normal normal-case text-[10px]">· internal</span></th><th className="p-3 text-right"> </th>
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan={5} className="p-4 text-muted">No products match.</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={6} className="p-4 text-muted">No products match.</td></tr>}
             {rows.map((p: any) => {
               const o = liveOffer(p.base_wholesale, formula);
+              const wholesaleRate = resolvePrices(p.base_wholesale, formula, overridesOf(p)).wholesaleRate;
               return (
                 <CatalogueRow
                   key={p.id}
@@ -96,6 +97,7 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
                     image: p.image ?? null, categoryName: p.category?.name ?? "", categorySlug: p.category?.slug ?? "all",
                     qty: p.qty ?? 0, priceLabel: formatPaise(o.price), offerPct: o.offerPct, hasOffer: o.hasOffer,
                     hasAi: !!(p.generated_content && p.generated_content.title), variants: p.variants ?? [],
+                    adminTags: p.admin_tags ?? [], wholesaleLabel: formatPaise(wholesaleRate),
                   }}
                   canEdit={canEdit} canAi={canAi} canDelete={canDelete} canPublish={canPublish}
                   genContent={genContent}

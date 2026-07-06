@@ -80,7 +80,7 @@ export default async function EstimatePrint({ params }: { params: { id: string }
               {items.map((it: any, i: number) => (
                 <tr key={i} className="border-b border-sand/60">
                   <td className={`${td} text-muted`}>{i + 1}</td>
-                  <td className={`${td} text-ink`}>{it.product?.name}<span className="text-muted text-xs"> · {it.product?.sku}</span></td>
+                  <td className={`${td} text-ink`}>{it.product?.name}{it.variant?.color ? <span className="text-ink"> · {it.variant.color}</span> : ""}<span className="text-muted text-xs"> · {it.variant?.sku ?? it.product?.sku}</span></td>
                   <td className={`${td} text-right`}>{it.qty}</td>
                   <td className={`${td} text-right`}>{formatPaise(it.unit_price)}</td>
                   <td className={`${td} text-right`}>{formatPaise(it.line_total)}</td>
@@ -123,7 +123,7 @@ export default async function EstimatePrint({ params }: { params: { id: string }
                 <form key={it.id} action={updateEstimateLineAction} className="flex items-end gap-2">
                   <input type="hidden" name="item_id" value={it.id} />
                   <input type="hidden" name="estimate_id" value={estimate.id} />
-                  <span className="flex-1 text-sm text-ink truncate self-center">{it.product?.name} <span className="text-muted font-mono text-xs">{it.product?.sku}</span></span>
+                  <span className="flex-1 text-sm text-ink truncate self-center">{it.product?.name}{it.variant?.color ? <span className="text-ink"> · {it.variant.color}</span> : ""} <span className="text-muted font-mono text-xs">{it.variant?.sku ?? it.product?.sku}</span></span>
                   <label className="text-[11px] text-muted">Qty<input name="qty" type="number" min={1} defaultValue={it.qty} className={`${inp} w-16 text-center block mt-0.5`} /></label>
                   <label className="text-[11px] text-muted">Rate ₹<input name="price" type="number" min={0} step="0.01" defaultValue={(it.unit_price / 100).toFixed(2)} className={`${inp} w-24 text-right block mt-0.5`} /></label>
                   <button className="px-3 py-2 rounded-xl bg-ink/5 text-ink text-xs hover:bg-ink/10">Save qty</button>

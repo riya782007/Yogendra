@@ -85,13 +85,35 @@ export function BarcodeSheet({ products }: { products: P[] }) {
   const input = "w-full rounded-xl border border-sand px-4 py-2.5 text-sm bg-white outline-none focus:border-emerald";
   const cell = "w-24 rounded-lg border border-sand px-2 py-1 text-sm text-right outline-none focus:border-emerald";
 
-  const money = (v: string) => {
-    const s = (v ?? "").trim();
-    if (!s) return "";
-    return opts.currency ? `₹${s}` : s;
+  // Retail printed with a fixed ".51" suffix — the owner's way of masking the true price inside the
+  // code. e.g. 120 -> "120.51", 319 -> "319.51". (Any decimals the owner typed are dropped first.)
+  const codeRetail = (v: string) => {
+    const int = (v ?? "").trim().split(".")[0].replace(/[^\d]/g, "");
+    return int ? `${int}.51` : "";
   };
-  const priceLine = (r: Row) => [opts.price && money(r.price), opts.special && money(r.special), opts.wholesale && money(r.wholesale)]
-    .filter((x) => x && x !== "").join("  ");
+  // Wholesale / cost printed as a private code (7·price·7) so a customer glancing at the tag can't
+  // read the trade price — staff decode it at a glance. e.g. 100 -> "71007".
+  const codeWholesale = (v: string) => {
+    const n = Math.round(Number((v ?? "").trim()));
+    return Number.isFinite(n) && n > 0 ? `7${n}7` : "";
+  };
+  // The owner's coded price string — concatenated with NO separators:
+  //   {retail}.51  +  {fixed special = 23}  +  7{wholesale}7
+  // e.g. retail 229, wholesale 120 -> "229.51" + "23" + "71207" = "229.512371207".
+  // The fixed "23" is STRUCTURAL glue in the code — it always sits between the retail part and the
+  // cost code whenever both are shown, independent of the "Show Special Price" display toggle.
+  const priceLine = (r: Row) => {
+    const retail = opts.price ? codeRetail(r.price) : "";
+    const whole = opts.wholesale ? codeWholesale(r.wholesale) : "";
+    const special = (r.special.trim() || SPECIAL_FIXED);
+    // Both segments shown → embed the special connector between them (the owner's masked tag).
+    if (retail && whole) return retail + special + whole;
+    // Only one segment (or the explicit Show-Special toggle) → fall back gracefully.
+    let out = retail;
+    if (opts.special) out += special;
+    out += whole;
+    return out;
+  };
 
   return (
     <div>
@@ -173,7 +195,7 @@ export function BarcodeSheet({ products }: { products: P[] }) {
           <div>
             <p className="text-xs font-medium text-muted mb-1">Barcode Options</p>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
-              {([["sku", "Show SKU"], ["name", "Show Product Name"], ["price", "Show Price"], ["special", "Show Special Price"], ["wholesale", "Show Wholesale Price"], ["currency", "Show Currency"]] as const).map(([k, label]) => (
+              {([["sku", "Show SKU"], ["name", "Show Product Name"], ["price", "Show Price"], ["special", "Show Special Price"], ["wholesale", "Show cost code (7·x·7)"], ["currency", "Show Currency"]] as const).map(([k, label]) => (
                 <label key={k} className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={(opts as any)[k]} onChange={(e) => setOpts((o) => ({ ...o, [k]: e.target.checked }))} className="accent-emerald" />
                   {label}
@@ -233,10 +255,10 @@ export function BarcodeSheet({ products }: { products: P[] }) {
             {labels.map((it, i) => {
               const line = priceLine(it);
               return (
-                <div key={i} className="barcode-label border border-sand text-center bg-white break-inside-avoid">
+                <div key={i} className="barcode-label text-center bg-white break-inside-avoid">
                   {opts.name && <p className="bc-name font-semibold text-ink truncate">{it.name}</p>}
-                  <Barcode value={it.sku} height={30} unit={1.1} />
-                  {opts.sku && <p className="bc-sku tracking-widest text-ink">{it.sku}</p>}
+                  <Barcode value={it.sku} height={28} unit={cols >= 8 ? 0.85 : 1.1} />
+                  {opts.sku && <p className="bc-sku tracking-wide text-ink">SKU {it.sku}</p>}
                   {line && <p className="bc-price font-medium text-ink">{line}</p>}
                 </div>
               );

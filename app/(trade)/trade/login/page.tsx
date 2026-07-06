@@ -20,7 +20,7 @@ export default async function TradeLogin({ searchParams }: { searchParams: { err
         <div className="relative max-w-2xl">
           <p className="text-gold-light tracking-[0.3em] uppercase text-xs">Blythe Diva · Trade</p>
           <h1 className="font-display text-4xl sm:text-5xl mt-2 leading-tight break-words">Dealer Portal</h1>
-          <p className="text-cream/70 mt-3">Factory-direct rates from Sadar Bazar. Approved dealers sign in to see trade pricing and place orders.</p>
+          <p className="text-cream/70 mt-3">Factory-direct trade rates. Approved dealers sign in to see wholesale pricing and place orders.</p>
         </div>
       </section>
 

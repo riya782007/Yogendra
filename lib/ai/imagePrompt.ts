@@ -96,6 +96,46 @@ OUTPUT FRAMING: Render the final image in ${aspectNote}, the jewellery centered 
 OUTPUT: A clean product photograph with NO text, NO watermark, NO logo and NO graphic overlays anywhere.`;
 }
 
+/**
+ * Build the prompt for a SURGICAL "fix a detail" edit. The owner marks the wrong region and types
+ * what it should be; we edit ONLY that area and re-anchor it to the ORIGINAL raw reference so the
+ * corrected detail matches the real manufactured piece — everything else stays pixel-identical.
+ */
+export function buildRefinePrompt(opts: {
+  instruction: string;
+  /** true when the original raw product photo is supplied as a reference for the true design. */
+  hasReference: boolean;
+  /** true when the image being edited carries a visible marker/outline around the target area. */
+  hasMarker: boolean;
+  productName?: string;
+  typeLabel?: string;
+}): string {
+  const piece = (opts.typeLabel || "jewellery piece").trim();
+  const named = opts.productName?.trim() ? ` ("${opts.productName.trim()}")` : "";
+  return [
+    `You are retouching an existing e-commerce photograph of a REAL, manufactured ${piece}${named}. This is a precise LOCAL edit, NOT a new image.`,
+    `INPUT IMAGES (in order):`,
+    opts.hasMarker
+      ? `  • IMAGE 1 — the photo to edit, with a bright outline/mark drawn around the EXACT area to change. The mark only shows you WHERE to edit; do NOT render the mark in your output.`
+      : `  • IMAGE 1 — the photo to edit.`,
+    `  • IMAGE 2 — the same generated photo, clean (no mark).`,
+    opts.hasReference ? `  • IMAGE 3 — the ORIGINAL raw product photo: the GROUND TRUTH for the piece's true design (real shape, stones, beads, colour, proportions).` : ``,
+    ``,
+    `THE EDIT:`,
+    opts.hasMarker
+      ? `Change ONLY the marked area. Leave every pixel outside the mark exactly as it is.`
+      : `Change ONLY the specific detail described below. Leave the rest of the image exactly as it is.`,
+    `Owner's correction (do exactly this): "${opts.instruction.trim()}"`,
+    opts.hasReference
+      ? `Reproduce the corrected detail to MATCH THE ORIGINAL REFERENCE (IMAGE 3) exactly — its real shape, stone/bead layout, colour and proportions. Do not invent anything not present in the reference.`
+      : `Keep the correction consistent with the rest of the piece; do not invent new elements.`,
+    ``,
+    `KEEP EVERYTHING ELSE PIXEL-IDENTICAL: the model, face crop, pose, hands, framing, zoom, lighting, background, colours and all other parts of the jewellery must remain exactly as in IMAGE 1. Do NOT re-pose, re-light, re-crop, recolour or regenerate the whole scene. Make the smallest change that satisfies the correction.`,
+    `ABSOLUTELY NO TEXT, watermark, logo, or editing mark anywhere in the final image.`,
+    `Output the COMPLETE edited photograph at the same composition and aspect ratio as IMAGE 1.`,
+  ].filter(Boolean).join("\n");
+}
+
 // ===================== AI Photography Studio (Product Photos) =====================
 export type ShotType =
   | "hero" | "model" | "closeup" | "lifestyle" | "side" | "angle45" | "back" | "detail"
@@ -111,7 +151,7 @@ export const SHOT_META: Record<ShotType, { label: string; frame: string; aspect:
   angle45:       { label: "45°", frame: "a close 45-degree crop of the worn piece, jewellery large and tack-sharp, face minimal/cropped", aspect: "4:5" },
   back:          { label: "Back View", frame: "a back view showing the clasp / nape drape of the piece", aspect: "4:5" },
   detail:        { label: "Detail Shot", frame: "a detail shot isolating the craftsmanship — clasp, motif and stone setting", aspect: "1:1" },
-  branded_stand: { label: "On Stand", frame: "the jewellery displayed ALONE on an elegant matte jewellery display stand / bust (a necklace draped on a neck bust, earrings on an ear stand, a bangle on a T-bar, a ring on a ring cone), premium boutique presentation on a soft neutral studio backdrop, tasteful soft shadow", aspect: "1:1", productOnly: true, extra: "Leave a clean, empty margin of space at the BOTTOM of the frame (no jewellery there) so a brand wordmark can be placed under the piece afterwards." },
+  branded_stand: { label: "On Stand", frame: "the jewellery displayed ALONE on an elegant matte jewellery display stand / bust (a necklace draped on a neck bust, earrings on an ear stand, a bangle on a T-bar, a ring on a ring cone), premium boutique presentation on a soft neutral studio backdrop, tasteful soft shadow", aspect: "1:1", productOnly: true, extra: "The bust/stand should have a clean lower area where the brand wordmark is printed on it (see the wordmark rule) — like a real boutique display nameplate." },
   catalog_white: { label: "Catalog White", frame: "a clean catalog product shot of the jewellery ALONE on a pure white seamless background", aspect: "1:1", productOnly: true },
   transparent:   { label: "Transparent PNG", frame: "the jewellery ALONE perfectly isolated on a flat pure-white background with crisp clean edges, ready to cut out", aspect: "1:1", productOnly: true },
   social_crop:   { label: "Social Crop", frame: "a square social-media crop, model and jewellery centred with comfortable breathing room", aspect: "1:1" },
@@ -129,6 +169,9 @@ export type StudioSettings = {
 
 const FIDELITY = `This is a REAL, manufactured jewellery product the customer will physically receive — the design in your output MUST be a pixel-faithful reproduction of the attached reference image. Same metal colour & finish, same gemstone cut/colour/size/placement, same engravings, links, clasps and proportions. Do NOT redesign, restyle, embellish or "improve" the piece.`;
 const NO_TEXT = `ABSOLUTELY NO TEXT of any kind anywhere — no words, letters, numbers, captions, labels, logos, watermarks, price tags or UI. Every surface must be free of writing.`;
+// For the branded "On Stand" shot the ONE allowed piece of text is the boutique wordmark, printed
+// on the display bust itself (part of the photograph, like a real jewellery-shop nameplate).
+const BRAND_WORDMARK = `BRAND WORDMARK — the ONLY text allowed in the image: render the lowercase wordmark "blythediva" as if elegantly printed / softly embossed ON the display bust or stand itself — centred on the bust, just BELOW the jewellery — in a refined thin serif, small and tasteful (a subtle boutique nameplate, NOT a big overlay or caption). It must sit on the physical stand as part of the photo, never floating in empty space beneath the frame. Spell it EXACTLY "blythediva" — all lowercase, one word, correctly spelled. Absolutely NO other text, letters, numbers, tags, logos or watermarks anywhere else.`;
 
 // The client's #1 art-direction rule: shoot CLOSE, crop tight on the piece, the model's face is
 // NOT the subject. This block is injected into every model (worn) prompt so the jewellery — not the
@@ -149,9 +192,12 @@ function settingsBlock(s: StudioSettings): string {
 
 /** Build a studio prompt for a specific SHOT TYPE with art-direction overrides + detected attrs. */
 export function buildStudioPrompt(opts: {
-  category: string; subcategory?: string; shotType: ShotType; settings?: StudioSettings;
+  category: string; subcategory?: string; productName?: string; variantColor?: string; shotType: ShotType; settings?: StudioSettings;
   detected?: { category?: string; material?: string; style?: string; attributes?: string[] } | null;
   index?: number; style?: "auto" | "indian" | "western";
+  /** When true, recolour the piece to the variant's colour NAME. Default false = the reference PHOTO
+   *  wins (reproduce its true colour), so a green photo stays green even if the label says "Black". */
+  forceColour?: boolean;
 }): { prompt: string; aspect: ImageAspect } {
   const meta = SHOT_META[opts.shotType] ?? SHOT_META.hero;
   const i = opts.index ?? 0;
@@ -160,22 +206,44 @@ export function buildStudioPrompt(opts: {
   const western = opts.style === "western" ? true : opts.style === "indian" ? false : isWesternStyle(styleHint);
   const subject = (western ? WESTERN_SUBJECTS : SUBJECTS)[i % 2];
   const background = s.background?.trim() || BACKGROUNDS[i % BACKGROUNDS.length];
+  // Where the piece is worn is decided by the product's OWN category/subcategory only.
   const shot = shotTypeFor(opts.subcategory || opts.category);
+  const identity = categoryIdentity(opts.category, opts.subcategory);
+  const typeLabel = (opts.subcategory || opts.category || "piece of jewellery").trim();
+  const productLine = opts.productName?.trim() ? `"${opts.productName.trim()}"` : "this piece";
+  const worn = !meta.productOnly; // stand / catalog / transparent / remove_bg = product-only, NEVER on a person
+  const colour = opts.variantColor?.trim();
   const aspectNote = meta.aspect === "1:1"
     ? "a SQUARE 1:1 aspect ratio (e.g. 1024x1024)"
     : "a VERTICAL PORTRAIT 4:5 aspect ratio (e.g. 1080x1350), comfortable margins so nothing is cropped";
-  const detectedNote = opts.detected
-    ? `\nDETECTED PIECE: ${[opts.detected.category, opts.detected.material, opts.detected.style, ...(opts.detected.attributes ?? [])].filter(Boolean).join(", ")}.`
+  // PRODUCT IDENTITY — the single most important instruction. It fixes WHAT the piece is and, per shot
+  // type, whether it is worn (model shots) or shown alone on a stand (product-only shots) — so a
+  // necklace is a necklace, and a "stand" shot is never rendered on a human.
+  const identityBlock = worn
+    ? `PRODUCT IDENTITY (highest priority — obey exactly): The piece is ${productLine}, a ${typeLabel}. ${identity}. You MUST photograph, place and frame it AS a ${typeLabel}, worn in the correct location for that jewellery type — NEVER on a different body part and NEVER as a different category of jewellery (e.g. do not render a necklace as a bracelet/bangle, or earrings as a ring). If any detected/reference cue disagrees with this, IGNORE it and follow this identity.`
+    : `PRODUCT IDENTITY (highest priority — obey exactly): The piece is ${productLine}, a ${typeLabel}. This is a PRODUCT-ONLY shot: show the jewellery BY ITSELF — absolutely NO model, NO person, NO hands, NO body parts, and NOT worn. Present it on an appropriate display prop for a ${typeLabel} (a necklace on a neck bust/stand, earrings on an ear stand, a bangle/bracelet on a T-bar, a ring on a ring cone) or laid flat, whichever suits a ${typeLabel}. Keep it unmistakably a ${typeLabel}.`;
+  // Variant colourway. Default: the reference PHOTO is the source of truth — reproduce its actual
+  // colour exactly (a green photo stays green even if the label says "Black"). Only when the owner
+  // explicitly asks to recolour (forceColour) do we repaint the piece to the colour NAME.
+  const colourBlock = colour
+    ? (opts.forceColour
+        ? `\nVARIANT COLOURWAY (recolour requested): This is the "${colour}" option. Repaint the piece's colour to ${colour} — the metal tone, stones, beads and enamel must read clearly as ${colour} — while keeping the EXACT same design, shape, stone layout and proportions as the reference.`
+        : `\nVARIANT COLOURWAY: This is the "${colour}" option, but the REFERENCE PHOTO is the source of truth — reproduce the piece's colour EXACTLY as it appears in the reference. Do NOT recolour to match the label; if the photo and the "${colour}" label disagree, follow the PHOTO.`)
     : "";
+  // Only material/style/attribute FLAVOUR from vision detection is surfaced — the detected CATEGORY is
+  // deliberately dropped so a vision mis-read can never override the identity above.
+  const flavour = [opts.detected?.material, opts.detected?.style, ...(opts.detected?.attributes ?? [])].filter(Boolean).join(", ");
+  const detectedNote = flavour ? `\nSURFACE QUALITIES (material/style flavour only — do NOT change the piece's type): ${flavour}.` : "";
   const subjectBlock = meta.productOnly
-    ? `PRESENTATION: the jewellery laid out / standing cleanly as the single hero, sharply in focus, on ${background}. No model, no hands.`
+    ? `PRESENTATION: ${meta.frame}. The ${typeLabel} is the single hero, sharply in focus, on ${background}. NO model, NO person, NO hands — product only.`
     : `SUBJECT (a display stand for the jewellery — keep her minimal, face not featured): ${subject}.${western ? " Polished international look." : " Clearly Indian/South Asian."} Skin bright, luminous, well-exposed.
-SHOT TYPE: ${meta.frame} — worn at ${shot}.
+SHOT TYPE: ${meta.frame} — worn at ${shot} (this is a ${typeLabel}).
 ${FRAMING}
 BACKGROUND & MOOD: ${background}. ${s.mood?.trim() || "Calm, aspirational, luxury Indian brand feel."}`;
 
   const prompt = `${FIDELITY}
-${detectedNote}
+
+${identityBlock}${colourBlock}${detectedNote}
 
 ${subjectBlock}
 
@@ -183,9 +251,11 @@ THE JEWELLERY IS THE HERO: it must be the brightest, sharpest, most eye-catching
 LIGHTING: ${s.lighting?.trim() || "bright, clean, high-key studio beauty lighting"}; crisp directional key on the jewellery; no dark/muddy tones, no heavy face shadows, no blown highlights.
 TECHNICAL: photorealistic, ${s.lens?.trim() || "85mm lens look"}, ${s.focus?.trim() || "shallow depth of field, jewellery tack-sharp"}, high resolution, natural skin texture, professional colour grading.${meta.extra ? `\nENHANCEMENT: ${meta.extra}` : ""}${settingsBlock(s)}
 
-${NO_TEXT}
+${opts.shotType === "branded_stand" ? BRAND_WORDMARK : NO_TEXT}
 OUTPUT FRAMING: render in ${aspectNote}.
-OUTPUT: a clean photograph with NO text, NO watermark, NO logo and NO graphic overlays.`;
+OUTPUT: ${opts.shotType === "branded_stand"
+    ? `a clean product photograph with the "blythediva" wordmark printed on the stand as described, and NO other text, watermark or logo.`
+    : `a clean photograph with NO text, NO watermark, NO logo and NO graphic overlays.`}`;
   return { prompt, aspect: meta.aspect };
 }
 

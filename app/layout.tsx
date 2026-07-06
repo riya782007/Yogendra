@@ -4,8 +4,8 @@ import { Analytics } from "@/components/Analytics";
 import { ToastProvider } from "@/components/ui/Toast";
 
 export const metadata: Metadata = {
-  title: { default: "Blythe Diva — Artificial Jewellery, Sadar Bazar Delhi", template: "%s | Blythe Diva" },
-  description: "Premium artificial jewellery — Kundan, Meenakari, Temple & more. Retail & wholesale from Blythe Diva, Sadar Bazar, Delhi.",
+  title: { default: "Blythe Diva — Premium Artificial Jewellery", template: "%s | Blythe Diva" },
+  description: "Premium artificial jewellery — Kundan, Meenakari, Temple & more. Retail & wholesale from Blythe Diva.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

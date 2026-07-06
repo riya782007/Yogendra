@@ -2,6 +2,7 @@
 import "server-only";
 import { supabaseServer } from "./server";
 import type { PricingFormula } from "../pricing";
+import { cleanTiers } from "../pricing";
 
 /**
  * Sanitise a user search term before putting it in a PostgREST `.or(...ilike...)` filter.
@@ -15,6 +16,17 @@ function escLike(s: string): string {
 export type DbCategory = { id: string; name: string; slug: string };
 export type DbVariant = { id: string; color: string | null; sku: string; qty: number; image_paths: string[]; size?: string | null; polish?: string | null; wholesale_override?: number | null; retail_override?: number | null; mrp_override?: number | null };
 export type DbImage = { id: string; path: string; kind: string | null; sort: number };
+
+/**
+ * The storefront must show ONLY AI-generated images, never the owner's raw upload. Raw photos are
+ * stored with kind 'source'/'flatlay' and are kept (the "Fix a detail" editor needs them as the
+ * true-design reference), so every customer-facing image read filters them out through this guard.
+ * Generated images (kind 'model','angle','hero', branded, or legacy null) always pass.
+ */
+const STOREFRONT_HIDDEN_IMAGE_KINDS = new Set(["source", "flatlay"]);
+export function isStorefrontImage(kind?: string | null): boolean {
+  return !STOREFRONT_HIDDEN_IMAGE_KINDS.has((kind ?? "").toLowerCase());
+}
 export type DbProduct = {
   id: string; category_id: string; sku: string; name: string;
   type: "simple" | "configurable"; base_wholesale: number; qty: number;
@@ -42,6 +54,7 @@ export async function getPricingFormula(): Promise<PricingFormula> {
     customerDiscountPct: Number(data?.customer_discount_pct ?? 5),
     mrpPct: Number(data?.mrp_pct ?? 25),
     wholesaleMinOrder: Number(data?.wholesale_min_order ?? 300000),
+    wholesaleTiers: cleanTiers(data?.wholesale_tiers),
   };
 }
 
@@ -102,7 +115,7 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
   const sb = supabaseServer();
   const pageSize = opts.pageSize ?? 25;
   const page = Math.max(1, opts.page ?? 1);
-  let query = sb.from("products").select("id,sku,name,qty,base_wholesale,type,status,generated_content,category:categories(id,name,slug)", { count: "exact" });
+  let query = sb.from("products").select("id,sku,name,qty,base_wholesale,type,status,generated_content,admin_tags,thumbnail_path,category:categories(id,name,slug)", { count: "exact" });
   if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.or(`name.ilike.%${s}%,sku.ilike.%${s}%`); }
   if (opts.category && opts.category !== "all") {
     const { data: cat } = await sb.from("categories").select("id").eq("slug", opts.category).maybeSingle();
@@ -119,20 +132,27 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
   if (ids.length) {
     const [{ data: imgs }, { data: vrows }] = await Promise.all([
       sb.from("product_images").select("product_id,path,sort").in("product_id", ids).order("sort", { ascending: true }),
-      sb.from("variants").select("product_id,sku,color,qty").in("product_id", ids),
+      sb.from("variants").select("product_id,sku,color,qty,image_paths").in("product_id", ids),
     ]);
     const byP = new Map<string, string>();
     for (const im of ((imgs as any[]) ?? [])) {
       if (!im.path || !String(im.path).startsWith("http")) continue;
       if (!byP.has(im.product_id)) byP.set(im.product_id, im.path);
     }
+    // Fall back to a VARIANT's photo when the product itself has none — a piece may have been shot
+    // per-colour (variant image) without a product-level hero, and the catalogue should still show it.
+    const vImgByP = new Map<string, string>();
     const vByP = new Map<string, { sku: string; color: string | null; qty: number }[]>();
     for (const v of ((vrows as any[]) ?? [])) {
       const a = vByP.get(v.product_id) ?? [];
       a.push({ sku: v.sku, color: v.color ?? null, qty: v.qty ?? 0 });
       vByP.set(v.product_id, a);
+      if (!vImgByP.has(v.product_id) && Array.isArray(v.image_paths)) {
+        const hit = v.image_paths.find((x: string) => typeof x === "string" && x.startsWith("http"));
+        if (hit) vImgByP.set(v.product_id, hit);
+      }
     }
-    for (const r of rows) { r.image = byP.get(r.id) ?? null; r.variants = vByP.get(r.id) ?? []; }
+    for (const r of rows) { r.image = (typeof r.thumbnail_path === "string" && r.thumbnail_path.startsWith("http") ? r.thumbnail_path : null) ?? byP.get(r.id) ?? vImgByP.get(r.id) ?? null; r.variants = vByP.get(r.id) ?? []; }
   }
   return { rows, total: count ?? 0, page, pageSize };
 }
@@ -198,7 +218,7 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
   // deployed DB, PostgREST fails the WHOLE query and returns null — which blanks the whole catalogue
   // (the bug). So fall back to a BASIC select (core fields + category + images) that cannot fail.
   // Same resilience pattern as getProductBySku.
-  const RICH = "id,sku,name,qty,base_wholesale,wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,generated_content,category:categories(name,slug),subcategory:subcategories(name,slug),images:product_images(path,kind,sort),product_labels(label_id,labels(name))";
+  const RICH = "id,sku,name,qty,base_wholesale,wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,generated_content,thumbnail_path,category:categories(name,slug),subcategory:subcategories(name,slug),images:product_images(path,kind,sort),product_labels(label_id,labels(name))";
   const BASIC = "id,sku,name,qty,base_wholesale,wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,generated_content,category:categories(name,slug)";
 
   let { data, error } = await build(RICH);
@@ -216,11 +236,24 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       for (const p of rows) (p as any).images = byP.get((p as any).id) ?? [];
     }
   }
-  return ((data as any[]) ?? []).map((p): CatalogCard => {
+  // Variant-image fallback: a piece may only have per-colour (variant) photos and no product-level
+  // hero — the card should still show an image instead of a blank tile.
+  const cardRows = (data as any[]) ?? [];
+  const vImgByP = new Map<string, string>();
+  const cardIds = cardRows.map((p) => p.id).filter(Boolean);
+  if (cardIds.length) {
+    const { data: vimgs } = await sb.from("variants").select("product_id,image_paths").in("product_id", cardIds);
+    for (const v of ((vimgs as any[]) ?? [])) {
+      if (vImgByP.has(v.product_id) || !Array.isArray(v.image_paths)) continue;
+      const hit = v.image_paths.find((x: string) => typeof x === "string" && x.startsWith("http"));
+      if (hit) vImgByP.set(v.product_id, hit);
+    }
+  }
+  return cardRows.map((p): CatalogCard => {
     const ov = overridesOf(p);
     const o = _liveOffer(p.base_wholesale, formula, ov);
     const set = _resolvePrices(p.base_wholesale, formula, ov);
-    const imgs = (p.images ?? []).filter((i: any) => typeof i.path === "string" && i.path.startsWith("http")).sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0));
+    const imgs = (p.images ?? []).filter((i: any) => typeof i.path === "string" && i.path.startsWith("http") && isStorefrontImage(i.kind)).sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0));
     const seo = (p.generated_content as any)?.seo ?? {};
     // Labels come through the join as product_labels[{ label_id, labels: { name } }]; flatten to names.
     const labelNames = ((p.product_labels ?? []) as any[])
@@ -233,7 +266,8 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       // Trade price is emitted ONLY for authorised callers; omitted from retail JSON entirely.
       ...(opts.includeWholesalePricing ? { wholesale: set.wholesaleRate } : {}),
       qty: p.qty, price: o.price, mrp: o.mrp, offerPct: o.offerPct, hasOffer: o.hasOffer,
-      image: imgs[0]?.path ?? null,
+      // Owner-chosen cover wins; else first generated image; else a variant photo.
+      image: (typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http") ? p.thumbnail_path : null) ?? imgs[0]?.path ?? vImgByP.get(p.id) ?? null,
       tags: ((p.generated_content as any)?.tags ?? []).slice(0, 6),
       keywords: (seo.keywords ?? []).slice(0, 6),
       labels: labelNames.slice(0, 6),
@@ -243,13 +277,103 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
 }
 
 // ---------- customer directory (real customers table) ----------
+/** Placeholder "walk-in" names used at the counter for anonymous cash sales — these should NOT
+ *  clutter the customer directory (the owner: "walk in ko 1 manke chalo"). */
+const WALKIN_NAMES = new Set(["cash (w)", "cash (r)", "walk-in", "walk in", "walkin"]);
+export function isWalkInPlaceholder(name?: string | null, phone?: string | null): boolean {
+  const n = (name ?? "").trim().toLowerCase();
+  return !((phone ?? "").trim()) && (n === "" || WALKIN_NAMES.has(n));
+}
+
 export async function getCustomersDb(opts: { q?: string; type?: string }) {
   const sb = supabaseServer();
   let query = sb.from("customers").select("id,name,phone,type,gstin,city,credit_balance,created_at");
   if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.or(`name.ilike.%${s}%,phone.ilike.%${s}%,gstin.ilike.%${s}%`); }
   if (opts.type && opts.type !== "all") query = query.eq("type", opts.type);
   const { data } = await query.order("name");
-  return (data as any[]) ?? [];
+  // Collapse anonymous walk-ins: they're bill placeholders, not real directory contacts.
+  return ((data as any[]) ?? []).filter((c) => !isWalkInPlaceholder(c.name, c.phone));
+}
+
+// ---------- employees (salespeople) + sales attribution (0037) ----------
+export type Employee = { id: string; name: string; phone: string | null; title: string | null; active: boolean };
+
+/** Roster of employees. `activeOnly` for the POS salesperson picker. */
+export async function getEmployees(opts: { activeOnly?: boolean } = {}): Promise<Employee[]> {
+  const sb = supabaseServer();
+  let q = sb.from("employees").select("id,name,phone,title,active").order("active", { ascending: false }).order("name");
+  if (opts.activeOnly) q = q.eq("active", true);
+  const { data } = await q;
+  return (((data as any[]) ?? []) as Employee[]);
+}
+
+/** Per-employee sales performance over an optional date range (paise). Every employee is returned
+ *  (even with 0 sales), highest sales first — the basis for performance-based rewards. */
+export async function getEmployeePerformance(range?: { from?: string; to?: string }): Promise<{ id: string; name: string; active: boolean; orders: number; sales: number; collected: number }[]> {
+  const sb = supabaseServer();
+  const emps = await getEmployees({});
+  let q = sb.from("orders").select("sales_employee_id,total,amount_paid,created_at").not("sales_employee_id", "is", null);
+  if (range?.from) q = q.gte("created_at", range.from);
+  if (range?.to) q = q.lte("created_at", range.to);
+  const { data } = await q;
+  const agg = new Map<string, { orders: number; sales: number; collected: number }>();
+  for (const o of ((data as any[]) ?? [])) {
+    const cur = agg.get(o.sales_employee_id) ?? { orders: 0, sales: 0, collected: 0 };
+    cur.orders += 1; cur.sales += (o.total ?? 0); cur.collected += (o.amount_paid ?? 0);
+    agg.set(o.sales_employee_id, cur);
+  }
+  return emps
+    .map((e) => ({ id: e.id, name: e.name, active: e.active, ...(agg.get(e.id) ?? { orders: 0, sales: 0, collected: 0 }) }))
+    .sort((a, b) => b.sales - a.sales);
+}
+
+/** Individual attributed sales (date + customer + amount) for the owner's employee ledger.
+ *  Every bill tied to a salesperson in the period, newest first — so the owner can audit each sale. */
+export async function getEmployeeSalesLedger(range?: { from?: string; to?: string }, limit = 300): Promise<{ id: string; invoice_no: string | null; employee: string; customer: string; total: number; amountPaid: number; billType: string; channel: string; created_at: string }[]> {
+  const sb = supabaseServer();
+  const emps = await getEmployees({});
+  const nameById = new Map(emps.map((e) => [e.id, e.name]));
+  let q = sb.from("orders")
+    .select("id,invoice_no,sales_employee_id,customer_name,total,amount_paid,bill_type,channel,created_at")
+    .not("sales_employee_id", "is", null)
+    .order("created_at", { ascending: false }).limit(limit);
+  if (range?.from) q = q.gte("created_at", range.from);
+  if (range?.to) q = q.lte("created_at", range.to);
+  const { data } = await q;
+  return ((data as any[]) ?? []).map((o) => ({
+    id: o.id as string,
+    invoice_no: (o.invoice_no ?? null) as string | null,
+    employee: (nameById.get(o.sales_employee_id) ?? "—") as string,
+    customer: (o.customer_name || "Walk-in") as string,
+    total: (o.total ?? 0) as number,
+    amountPaid: (o.amount_paid ?? 0) as number,
+    billType: (o.bill_type ?? "") as string,
+    channel: (o.channel ?? "") as string,
+    created_at: o.created_at as string,
+  }));
+}
+
+/** Per-customer spend + order count + last-order date over an optional date range (paise), keyed by
+ *  customer_id. Powers promotional targeting on the Customers page (who hit / is near a target). */
+export async function getCustomerSpend(range?: { from?: string; to?: string }): Promise<Map<string, { spend: number; orders: number; last: string | null }>> {
+  const sb = supabaseServer();
+  // Count EVERY bill the customer took — cash memos AND GST invoices — at the amount they actually
+  // spent (the GST-inclusive grand total, matching the ledger and the printed bill). GST bills store
+  // `total` pre-tax, so add the 3% GST rounded to ₹1; cash memos have no tax.
+  let q = sb.from("orders").select("customer_id,total,bill_type,created_at").not("customer_id", "is", null);
+  if (range?.from) q = q.gte("created_at", range.from);
+  if (range?.to) q = q.lte("created_at", range.to);
+  const { data } = await q;
+  const m = new Map<string, { spend: number; orders: number; last: string | null }>();
+  for (const o of ((data as any[]) ?? [])) {
+    const t = o.total ?? 0;
+    const grand = o.bill_type === "cash" ? t : Math.round((t + Math.round(t * 0.03)) / 100) * 100;
+    const cur = m.get(o.customer_id) ?? { spend: 0, orders: 0, last: null as string | null };
+    cur.spend += grand; cur.orders += 1;
+    if (!cur.last || o.created_at > cur.last) cur.last = o.created_at;
+    m.set(o.customer_id, cur);
+  }
+  return m;
 }
 
 /** Creditors — customers who owe a balance, aggregated across all their bills (outstanding =
@@ -400,6 +524,32 @@ export async function getBankMethodTotals(): Promise<{ method: string; total: nu
   return [...map.entries()].map(([method, total]) => ({ method, total })).sort((a, b) => b.total - a.total);
 }
 
+/** Storefront account: a signed-in shopper's own orders (matched by their mobile), newest first. */
+export async function getCustomerOrders(phone10: string): Promise<{ id: string; invoice_no: string | null; total: number; amount_paid: number; status: string | null; bill_type: string | null; channel: string | null; created_at: string }[]> {
+  const p = (phone10 ?? "").replace(/\D/g, "").slice(-10);
+  if (p.length !== 10) return [];
+  const sb = supabaseServer();
+  const { data } = await sb.from("orders")
+    .select("id,invoice_no,total,amount_paid,status,bill_type,channel,created_at,customer_phone")
+    .ilike("customer_phone", `%${p}`)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  return ((data as any[]) ?? []).map((o) => ({
+    id: o.id, invoice_no: o.invoice_no ?? null, total: o.total ?? 0, amount_paid: o.amount_paid ?? 0,
+    status: o.status ?? null, bill_type: o.bill_type ?? null, channel: o.channel ?? null, created_at: o.created_at,
+  }));
+}
+
+/** Storefront account: the customer's saved profile (name/phone), or null. */
+export async function getCustomerProfile(phone10: string): Promise<{ name: string | null; phone: string | null } | null> {
+  const p = (phone10 ?? "").replace(/\D/g, "").slice(-10);
+  if (p.length !== 10) return null;
+  const sb = supabaseServer();
+  const { data } = await sb.from("customers").select("name,phone").ilike("phone", `%${p}`).limit(1);
+  const c = (data as any[])?.[0];
+  return c ? { name: c.name ?? null, phone: c.phone ?? null } : { name: null, phone: p };
+}
+
 export async function getCustomerById(id: string) {
   const sb = supabaseServer();
   const { data: c } = await sb.from("customers").select("*").eq("id", id).maybeSingle();
@@ -519,12 +669,26 @@ export async function getLastPurchaseCosts(): Promise<{ byProduct: Record<string
 export async function getWholesaleOrderHistory(customerId: string) {
   const sb = supabaseServer();
   const { data: orders } = await sb.from("orders")
-    .select("id,total,created_at,invoice_no, order_items(qty, product:products(sku,name))")
+    .select("id,total,amount_paid,status,payment_ref,created_at,invoice_no, order_items(qty, product:products(sku,name))")
     .eq("customer_id", customerId).eq("channel", "wholesale")
     .order("created_at", { ascending: false }).limit(20);
   return ((orders as any[]) ?? []).map((o) => ({
-    id: o.id as string, total: (o.total ?? 0) as number, created_at: o.created_at as string, invoice_no: (o.invoice_no ?? null) as string | null,
+    id: o.id as string, total: (o.total ?? 0) as number, amountPaid: (o.amount_paid ?? 0) as number,
+    status: (o.status ?? "placed") as string, paymentRef: (o.payment_ref ?? null) as string | null,
+    created_at: o.created_at as string, invoice_no: (o.invoice_no ?? null) as string | null,
     items: ((o.order_items as any[]) ?? []).map((it) => ({ sku: it.product?.sku as string, name: it.product?.name as string, qty: it.qty as number })).filter((x) => x.sku),
+  }));
+}
+
+/** Wholesale RFQs — dealer quote requests for the owner to price (newest first). */
+export async function getWholesaleQuoteRequests() {
+  const sb = supabaseServer();
+  const { data } = await sb.from("wholesale_quote_requests")
+    .select("id,dealer_name,dealer_phone,details,status,created_at")
+    .order("created_at", { ascending: false }).limit(200);
+  return ((data as any[]) ?? []).map((r) => ({
+    id: r.id as string, dealerName: (r.dealer_name ?? "Dealer") as string, dealerPhone: (r.dealer_phone ?? null) as string | null,
+    details: (r.details ?? "") as string, status: (r.status ?? "open") as string, created_at: r.created_at as string,
   }));
 }
 
@@ -789,6 +953,33 @@ export async function getProductEstimateReservations(productId: string): Promise
     .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
 }
 
+/**
+ * EVERY estimate that includes this product — ANY status (open / converted / cash_billed) — for the
+ * movement history so quotes are tracked with date, party, variant, qty and price, and are clickable
+ * through to the estimate. (getProductEstimateReservations only returns the OPEN soft-holds.)
+ */
+export async function getProductEstimates(productId: string): Promise<{ id: string; customer: string | null; status: string; qty: number; unitPrice: number; lineTotal: number; variant: string | null; created_at: string }[]> {
+  if (!productId) return [];
+  const sb = supabaseServer();
+  const { data } = await sb
+    .from("estimate_items")
+    .select("qty,unit_price,line_total, variant:variants(color), estimate:estimates(id,customer_name,status,created_at)")
+    .eq("product_id", productId);
+  return ((data as any[]) ?? [])
+    .filter((r) => r.estimate)
+    .map((r) => ({
+      id: r.estimate.id as string,
+      customer: (r.estimate.customer_name as string | null) ?? null,
+      status: (r.estimate.status as string) ?? "open",
+      qty: (r.qty as number) ?? 0,
+      unitPrice: (r.unit_price as number) ?? 0,
+      lineTotal: (r.line_total as number) ?? (((r.unit_price as number) ?? 0) * ((r.qty as number) ?? 0)),
+      variant: (r.variant?.color as string | null) ?? null,
+      created_at: r.estimate.created_at as string,
+    }))
+    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+}
+
 // Pillar 5 — the single Stock Movement History register: every in/out across all products,
 // each row carrying ref_id so its purchase/sale bill opens straight from here.
 export async function getStockMovements(opts: { page?: number; pageSize?: number; kind?: string; q?: string; from?: string; to?: string }) {
@@ -808,11 +999,25 @@ export async function getStockMovements(opts: { page?: number; pageSize?: number
   // generic reference (orders/purchases/estimates), not a PostgREST FK, so we look it up in one
   // extra query and map it back rather than embedding.
   const saleRefs = [...new Set(rows.filter((r) => r.kind === "sale" && r.ref_id).map((r) => r.ref_id))];
+  const purchaseRefs = [...new Set(rows.filter((r) => r.kind === "purchase" && r.ref_id).map((r) => r.ref_id))];
+  const estimateRefs = [...new Set(rows.filter((r) => r.kind === "estimate" && r.ref_id).map((r) => r.ref_id))];
+  // party = the person/firm involved (customer on a sale/estimate, supplier on a purchase). The owner
+  // needs this to trace "who did I sell/buy this to/from" months later.
+  const partyBy = new Map<string, string>();
   if (saleRefs.length) {
-    const { data: ords } = await sb.from("orders").select("id,invoice_no").in("id", saleRefs as string[]);
-    const byId = new Map(((ords as any[]) ?? []).map((o) => [o.id, o.invoice_no]));
-    for (const r of rows) if (r.kind === "sale" && r.ref_id) r.invoice_no = byId.get(r.ref_id) ?? null;
+    const { data: ords } = await sb.from("orders").select("id,invoice_no,customer_name").in("id", saleRefs as string[]);
+    const byId = new Map(((ords as any[]) ?? []).map((o) => [o.id, o]));
+    for (const r of rows) if (r.kind === "sale" && r.ref_id) { const o = byId.get(r.ref_id); r.invoice_no = o?.invoice_no ?? null; if (o?.customer_name) partyBy.set(r.ref_id, o.customer_name); }
   }
+  if (purchaseRefs.length) {
+    const { data: purs } = await sb.from("purchases").select("id, supplier:suppliers(name)").in("id", purchaseRefs as string[]);
+    for (const p of ((purs as any[]) ?? [])) if (p.supplier?.name) partyBy.set(p.id, p.supplier.name);
+  }
+  if (estimateRefs.length) {
+    const { data: ests } = await sb.from("estimates").select("id,customer_name").in("id", estimateRefs as string[]);
+    for (const e of ((ests as any[]) ?? [])) if (e.customer_name) partyBy.set(e.id, e.customer_name);
+  }
+  for (const r of rows) r.party = r.ref_id ? (partyBy.get(r.ref_id) ?? null) : null;
   return { rows, total: count ?? 0, page, pageSize };
 }
 
@@ -845,10 +1050,11 @@ export type LedgerMovement = {
   id: string; kind: string; delta: number; runningBalance: number | null;
   source: string | null; reason: string | null; created_by: string | null;
   ref_id: string | null; created_at: string; invoice_no?: string | null;
-  /** Customer name (sales) or supplier name (purchases) for this movement. */
+  /** Customer name (sales/estimates) or supplier name (purchases) for this movement. */
   party?: string | null;
   /** True for estimate/reservation holds — soft commitments that do NOT change the stock balance. */
   hold?: boolean;
+  variant?: { color: string | null; sku: string | null } | null;
   doc: { href: string; label: string } | null;
 };
 
@@ -871,14 +1077,33 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   //     that hasn't added ref_id / created_by yet (falls back to the always-present columns). ---
   let allRows: any[] = [];
   const rich = await sb.from("stock_adjustments")
-    .select("id,delta,kind,source,reason,ref_id,created_by,created_at")
+    .select("id,delta,kind,source,reason,ref_id,created_by,created_at,variant_id")
     .eq("product_id", productId).order("created_at", { ascending: true }).order("id", { ascending: true });
   if (rich.error) {
     const basic = await sb.from("stock_adjustments")
-      .select("id,delta,kind,source,reason,created_at")
+      .select("id,delta,kind,source,reason,created_at,variant_id")
       .eq("product_id", productId).order("created_at", { ascending: true });
     allRows = (basic.data as any[]) ?? [];
   } else allRows = (rich.data as any[]) ?? [];
+
+  // --- variants of this product: attach colour to each movement + build a per-colour breakdown so
+  //     the owner can see the stock movement of every variant, not just the product total. ---
+  const { data: varRows } = await sb.from("variants").select("id,sku,color,qty").eq("product_id", productId);
+  const variantById = new Map<string, { id: string; sku: string; color: string | null; qty: number }>();
+  for (const v of ((varRows as any[]) ?? [])) variantById.set(v.id, { id: v.id, sku: v.sku, color: v.color ?? null, qty: v.qty ?? 0 });
+  const vAgg = new Map<string, { purchased: number; sold: number; net: number }>();
+  for (const r of allRows) {
+    if (!r.variant_id) continue;
+    const a2 = vAgg.get(r.variant_id) ?? { purchased: 0, sold: 0, net: 0 };
+    const d = r.delta ?? 0;
+    if (r.kind === "purchase") a2.purchased += Math.max(0, d);
+    if (r.kind === "sale") a2.sold += Math.abs(Math.min(0, d));
+    a2.net += d;
+    vAgg.set(r.variant_id, a2);
+  }
+  const variants = [...variantById.values()]
+    .map((v) => ({ ...v, purchased: vAgg.get(v.id)?.purchased ?? 0, sold: vAgg.get(v.id)?.sold ?? 0, net: vAgg.get(v.id)?.net ?? 0 }))
+    .sort((a, b) => (a.color ?? "").localeCompare(b.color ?? ""));
 
   // Running balance is ANCHORED to the actual on-hand stock (products.qty — the source of truth that
   // POS sales and purchase bills update atomically). We set the NEWEST movement's closing balance to
@@ -897,17 +1122,15 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   // --- related documents (batch lookups) ---
   const saleRefs = [...new Set(allRows.filter((r) => r.kind === "sale" && r.ref_id).map((r) => r.ref_id))];
   const purchaseRefs = [...new Set(allRows.filter((r) => r.kind === "purchase" && r.ref_id).map((r) => r.ref_id))];
+  const estimateRefs = [...new Set(allRows.filter((r) => r.kind === "estimate" && r.ref_id).map((r) => r.ref_id))];
   const invoiceBy = new Map<string, string>();
   const billBy = new Map<string, string>();
-  const partyBy = new Map<string, string>();   // sale → customer name, purchase → supplier name
-  if (saleRefs.length) {
-    const { data } = await sb.from("orders").select("id,invoice_no,customer_name").in("id", saleRefs as string[]);
-    for (const o of (data as any[]) ?? []) { invoiceBy.set(o.id, o.invoice_no); if (o.customer_name) partyBy.set(o.id, o.customer_name); }
-  }
-  if (purchaseRefs.length) {
-    const { data } = await sb.from("purchases").select("id,bill_no, supplier:suppliers(name)").in("id", purchaseRefs as string[]);
-    for (const o of (data as any[]) ?? []) { billBy.set(o.id, o.bill_no); const nm = (o as any).supplier?.name; if (nm) partyBy.set(o.id, nm); }
-  }
+  // Party = who the movement was with — the customer on a sale/estimate, the supplier on a purchase.
+  // Surfaced on every timeline row so the owner can trace "sold 2 to Riya" without opening the bill.
+  const partyBy = new Map<string, string>();
+  if (saleRefs.length) { const { data } = await sb.from("orders").select("id,invoice_no,customer_name").in("id", saleRefs as string[]); for (const o of (data as any[]) ?? []) { invoiceBy.set(o.id, o.invoice_no); if (o.customer_name) partyBy.set(o.id, o.customer_name); } }
+  if (purchaseRefs.length) { const { data } = await sb.from("purchases").select("id,bill_no, supplier:suppliers(name)").in("id", purchaseRefs as string[]); for (const o of (data as any[]) ?? []) { billBy.set(o.id, o.bill_no); if (o.supplier?.name) partyBy.set(o.id, o.supplier.name); } }
+  if (estimateRefs.length) { const { data } = await sb.from("estimates").select("id,customer_name").in("id", estimateRefs as string[]); for (const o of (data as any[]) ?? []) { if (o.customer_name) partyBy.set(o.id, o.customer_name); } }
 
   const docFor = (r: any): { href: string; label: string } | null => {
     if (!r.ref_id) return null;
@@ -918,17 +1141,26 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     return null;
   };
 
-  // --- estimate reservations (soft holds) — fetched up-front so they can ALSO appear in the timeline ---
+  // --- estimates for this product (ANY status, with variant + price) — every quote is tracked in the
+  //     ledger and the timeline; only OPEN estimates soft-hold stock. ---
   const { data: resv } = await sb.from("estimate_items")
-    .select("qty, estimate:estimates(id,customer_name,status,created_at)")
+    .select("qty,unit_price,line_total, variant:variants(color), estimate:estimates(id,customer_name,status,created_at)")
     .eq("product_id", productId);
   const resvRows = ((resv as any[]) ?? []).filter((r) => r.estimate);
-  // Open holds still commit stock — shown in the header/panel and counted in `reserved`.
   const reservations = resvRows
-    .filter((r) => r.estimate.status === "open")
-    .map((r) => ({ id: r.estimate.id as string, customer: (r.estimate.customer_name as string) ?? "Walk-in", qty: (r.qty as number) ?? 0, status: r.estimate.status as string, created_at: r.estimate.created_at as string }))
+    .map((r) => ({
+      id: r.estimate.id as string,
+      customer: (r.estimate.customer_name as string) ?? "Walk-in",
+      qty: (r.qty as number) ?? 0,
+      unitPrice: (r.unit_price as number) ?? 0,
+      lineTotal: (r.line_total as number) ?? (((r.unit_price as number) ?? 0) * ((r.qty as number) ?? 0)),
+      variant: (r.variant?.color as string | null) ?? null,
+      status: r.estimate.status as string,
+      created_at: r.estimate.created_at as string,
+    }))
     .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
-  const reserved = reservations.reduce((s, r) => s + r.qty, 0);
+  // Availability is only reduced by OPEN estimates (converted/billed ones already became sales).
+  const reserved = reservations.filter((r) => r.status === "open").reduce((s, r) => s + r.qty, 0);
 
   // Real stock movements → display rows (carry the anchored running balance).
   const realDisplay: LedgerMovement[] = allRows.map((r) => ({
@@ -937,7 +1169,9 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     ref_id: r.ref_id ?? null, created_at: r.created_at,
     invoice_no: r.kind === "sale" ? (invoiceBy.get(r.ref_id) ?? null) : r.kind === "purchase" ? (billBy.get(r.ref_id) ?? null) : null,
     party: r.ref_id ? (partyBy.get(r.ref_id) ?? null) : null,
-    hold: false, doc: docFor(r),
+    hold: false,
+    variant: r.variant_id ? { color: variantById.get(r.variant_id)?.color ?? null, sku: variantById.get(r.variant_id)?.sku ?? null } : null,
+    doc: docFor(r),
   }));
   // Estimate holds → timeline rows. They do NOT change the running balance (soft commitment), so
   // runningBalance stays null and delta carries the reserved qty for display only.
@@ -947,6 +1181,7 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     source: null, reason: `Reserved ${r.qty ?? 0} pcs · estimate ${r.estimate.status ?? ""}`.trim(),
     created_by: null, ref_id: r.estimate.id as string, created_at: r.estimate.created_at as string,
     invoice_no: null, party: (r.estimate.customer_name as string) ?? null, hold: true,
+    variant: (r.variant?.color as string | null) ? { color: r.variant.color as string, sku: null } : null,
     doc: { href: `/admin/estimate/${r.estimate.id}`, label: "Open estimate →" },
   }));
 
@@ -992,6 +1227,7 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     },
     analytics: { opening, purchased, sold, returned, adjusted, reserved, available, currentStock, daysSinceLastSale, turnover, avgMonthlySales },
     reservations,
+    variants,
     movements,
     totalMovements,
     nextOffset: offset + limit < totalMovements ? offset + limit : null,
@@ -1069,7 +1305,7 @@ export type ProductPim = NonNullable<Awaited<ReturnType<typeof getProductForPim>
 export async function getStudioData(productId: string) {
   if (!productId) return null;
   const sb = supabaseServer();
-  const { data: p } = await sb.from("products").select("id,sku,name,status, category:categories(name,slug)").eq("id", productId).maybeSingle();
+  const { data: p } = await sb.from("products").select("id,sku,name,status,thumbnail_path, category:categories(name,slug)").eq("id", productId).maybeSingle();
   if (!p) return null;
   const prod = p as any;
   const { data: imgs } = await sb.from("product_images").select("id,path,kind,sort,generation_id").eq("product_id", productId).order("sort");
@@ -1080,11 +1316,11 @@ export async function getStudioData(productId: string) {
   const raw = images.find((i) => i.kind === "source" || i.kind === "flatlay") ?? null;
   const published = images.filter((i) => i.path.startsWith("http")).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0));
   const detected = generations.find((g) => g.detected)?.detected ?? null;
-  const variants = ((vars as any[]) ?? []).map((v) => ({
-    id: v.id, sku: v.sku, color: v.color ?? null,
-    image: (Array.isArray(v.image_paths) ? v.image_paths.find((x: string) => typeof x === "string" && x.startsWith("http")) : null) ?? null,
-  }));
-  return { product: prod, raw, images: published, generations, variants, detected };
+  const variants = ((vars as any[]) ?? []).map((v) => {
+    const vImgs = (Array.isArray(v.image_paths) ? v.image_paths : []).filter((x: string) => typeof x === "string" && x.startsWith("http"));
+    return { id: v.id, sku: v.sku, color: v.color ?? null, image: vImgs[0] ?? null, images: vImgs as string[] };
+  });
+  return { product: prod, raw, images: published, generations, variants, detected, thumbnailPath: prod.thumbnail_path ?? null };
 }
 export type StudioData = NonNullable<Awaited<ReturnType<typeof getStudioData>>>;
 
@@ -1185,6 +1421,28 @@ export type StoreProduct = DbProduct & {
   category: DbCategory; rating: number; reviews: number; isNew: boolean; image?: string | null;
 };
 
+// ---------- promotional posters / festive campaigns (0036) ----------
+export type Promotion = { id: string; title: string | null; image_path: string; cta_href: string | null; aspect: string | null; category?: { slug?: string; name?: string } | null };
+
+/** Published promo posters for a storefront scope, newest first. */
+export async function getActivePromotions(scope: "retail" | "wholesale"): Promise<Promotion[]> {
+  const sb = supabaseServer();
+  let q = sb.from("promotions")
+    .select("id,title,image_path,cta_href,aspect, category:categories(slug,name)")
+    .eq("status", "published")
+    .order("created_at", { ascending: false });
+  q = scope === "retail" ? q.eq("show_retail", true) : q.eq("show_wholesale", true);
+  const { data } = await q;
+  return ((data as any[]) ?? []).filter((p) => typeof p.image_path === "string" && p.image_path.startsWith("http")) as Promotion[];
+}
+
+/** Admin: every campaign for the promotions page. */
+export async function getPromotionsAdmin() {
+  const sb = supabaseServer();
+  const { data } = await sb.from("promotions").select("*, category:categories(slug,name)").order("created_at", { ascending: false }).limit(60);
+  return ((data as any[]) ?? []);
+}
+
 export async function getStorefront(
   opts: { includeDrafts?: boolean; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean } = {},
 ): Promise<{ products: StoreProduct[]; formula: PF }> {
@@ -1195,7 +1453,7 @@ export async function getStorefront(
   const [{ data: prods }, { data: revs }, { data: pimgs }, { data: vimgs }, formula] = await Promise.all([
     pq,
     sb.from("reviews").select("product_id, rating"),
-    sb.from("product_images").select("product_id, path, sort").order("sort", { ascending: true }),
+    sb.from("product_images").select("product_id, path, sort, kind").order("sort", { ascending: true }),
     sb.from("variants").select("product_id, image_paths"),
     getPricingFormula(),
   ]);
@@ -1208,6 +1466,7 @@ export async function getStorefront(
   const imgByProduct = new Map<string, string>();
   for (const r of (pimgs as any[]) ?? []) {
     if (!r.path || !String(r.path).startsWith("http")) continue;
+    if (!isStorefrontImage(r.kind)) continue; // hide the raw upload — only AI-generated images on the shop
     if (!imgByProduct.has(r.product_id)) imgByProduct.set(r.product_id, r.path);
   }
   for (const v of (vimgs as any[]) ?? []) {
@@ -1221,7 +1480,9 @@ export async function getStorefront(
     const rating = a && a.n ? a.sum / a.n : 4.6;
     const reviews = a?.n ?? 0;
     const isNew = p.created_at ? now - new Date(p.created_at).getTime() < 1000 * 60 * 60 * 24 * 21 : false;
-    return { ...p, image: imgByProduct.get(p.id) ?? null, rating: Math.round(rating * 10) / 10, reviews, isNew };
+    // Owner-chosen storefront cover (any product/variant image) wins over the automatic pick.
+    const cover = (typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http")) ? p.thumbnail_path : null;
+    return { ...p, image: cover ?? imgByProduct.get(p.id) ?? null, rating: Math.round(rating * 10) / 10, reviews, isNew };
   });
   if (!opts.includeWholesaleOnly) products = products.filter((p: any) => !p.wholesale_only);
   // Wholesale storefront hides retail-only items (admin/POS pass excludeRetailOnly=false → see all).
@@ -1336,8 +1597,8 @@ export async function getOrder(id: string) {
   // Join the VARIANT too (sku + colour) so the printed bill shows exactly what was sold — e.g.
   // "…Necklace Set – Navy Blue" with SKU KN5441-NBlue (the "green not showing" issue). Resilient:
   // if the variant embed can't resolve, fall back to product-only so the invoice never blanks.
-  const RICH = "qty,unit_price,line_total,product:products(name,sku),variant:variants(sku,color)";
-  const BASIC = "qty,unit_price,line_total,product:products(name,sku)";
+  const RICH = "qty,unit_price,unit_mrp,line_total,product:products(name,sku),variant:variants(sku,color)";
+  const BASIC = "qty,unit_price,unit_mrp,line_total,product:products(name,sku)";
   const rich = await sb.from("order_items").select(RICH).eq("order_id", id);
   let items: any[] | null = (rich.data as any) ?? null;
   if (rich.error || items == null) {
@@ -1370,13 +1631,13 @@ export async function getEstimate(id: string) {
   const sb = supabaseServer();
   const { data: estimate } = await sb.from("estimates").select("*").eq("id", id).maybeSingle();
   if (!estimate) return null;
-  const { data: items } = await sb.from("estimate_items").select("id,qty,unit_price,line_total,product:products(name,sku)").eq("estimate_id", id);
+  const { data: items } = await sb.from("estimate_items").select("id,qty,unit_price,line_total,product:products(name,sku),variant:variants(sku,color)").eq("estimate_id", id);
   return { estimate, items: (items as any[]) ?? [] };
 }
 export async function getRecentOrders(limit = 12) {
   const sb = supabaseServer();
   const { data } = await sb.from("orders")
-    .select("id,total,channel,payment_mode,customer_name,created_at,order_items(qty,product:products(id,name,sku))")
+    .select("id,total,channel,payment_mode,customer_name,created_at,order_items(qty,product:products(id,name,sku),variant:variants(sku,color))")
     .order("created_at", { ascending: false }).limit(limit);
   return (data as any[]) ?? [];
 }
@@ -1424,8 +1685,8 @@ export async function getPurchaseById(id: string) {
   if (!p) return null;
   // Show the variant (colour + variant SKU) alongside the mapped product. Resilient: if the variant
   // embed isn't available on a given DB, fall back to the product-only select so nothing blanks.
-  const RICH_PI = "supplier_sku,qty,unit_cost, product:products(sku,name), variant:variants(sku,color)";
-  const BASIC_PI = "supplier_sku,qty,unit_cost, product:products(sku,name)";
+  const RICH_PI = "id,supplier_sku,qty,unit_cost,mapped_product_id, product:products(sku,name), variant:variants(sku,color)";
+  const BASIC_PI = "id,supplier_sku,qty,unit_cost,mapped_product_id, product:products(sku,name)";
   const richPi = await sb.from("purchase_items").select(RICH_PI).eq("purchase_id", id);
   let items: any[] | null = (richPi.data as any) ?? null;
   if (richPi.error || items == null) {
@@ -1434,7 +1695,12 @@ export async function getPurchaseById(id: string) {
   }
   const { data: pending } = await sb.from("approvals").select("id").eq("action", "delete_purchase").eq("status", "pending").contains("payload", { purchase_id: id }).maybeSingle();
   const { data: suppliers } = await sb.from("suppliers").select("id,name,city").order("name");
-  return { purchase: p, items: items ?? [], deletionPending: !!pending, suppliers: (suppliers as any[]) ?? [] };
+  // Products list for re-mapping any unmapped line (owner picks the design the supplier item is).
+  const hasUnmapped = ((items as any[]) ?? []).some((it: any) => !it.mapped_product_id);
+  const { data: products } = hasUnmapped
+    ? await sb.from("products").select("id,name,sku").order("sku")
+    : { data: [] as any[] };
+  return { purchase: p, items: items ?? [], deletionPending: !!pending, suppliers: (suppliers as any[]) ?? [], products: (products as any[]) ?? [] };
 }
 
 export async function searchProducts(q: string) {
@@ -1491,12 +1757,15 @@ export async function getActivityLog(limit = 60) {
 // ---------- CRM + abandoned carts + SEO ----------
 export async function getCustomers() {
   const sb = supabaseServer();
-  const { data } = await sb.from("orders").select("customer_name,customer_phone,total,created_at");
+  const { data } = await sb.from("orders").select("customer_name,customer_phone,total,bill_type,created_at");
   const map = new Map<string, { name: string; phone: string | null; orders: number; spent: number; last: string }>();
   for (const o of (data as any[]) ?? []) {
     const name = (o.customer_name ?? "").trim(); if (!name) continue;
+    if (isWalkInPlaceholder(name, o.customer_phone)) continue; // walk-in cash placeholders aren't directory customers
+    const t = o.total ?? 0;
+    const grand = o.bill_type === "cash" ? t : Math.round((t + Math.round(t * 0.03)) / 100) * 100; // amount actually spent (incl. GST)
     const c = map.get(name) ?? { name, phone: o.customer_phone ?? null, orders: 0, spent: 0, last: o.created_at };
-    c.orders++; c.spent += o.total ?? 0; if (o.created_at > c.last) c.last = o.created_at; if (!c.phone) c.phone = o.customer_phone ?? null;
+    c.orders++; c.spent += grand; if (o.created_at > c.last) c.last = o.created_at; if (!c.phone) c.phone = o.customer_phone ?? null;
     map.set(name, c);
   }
   return [...map.values()].sort((a, b) => b.spent - a.spent);
@@ -1602,11 +1871,30 @@ export async function getAdminReels() {
 // ---------- product media manager ----------
 export async function getProductsWithMedia() {
   const sb = supabaseServer();
-  const { data } = await sb.from("products")
-    .select("id,sku,name,category:categories(name,slug), images:product_images(id,path,kind,sort)")
-    .eq("status", "published").order("sku");
-  return ((data as any[]) ?? []).map((p) => ({
-    id: p.id, sku: p.sku, name: p.name, category: p.category?.name ?? "—", categorySlug: p.category?.slug ?? "all",
+  // Product Photos is where the owner ADDS photos to a piece — so it must include newly created
+  // DRAFTS (which don't have photos yet), not just published items. Exclude only archived/deleted.
+  // product_status enum = draft | published | flagged (there is NO archived/deleted state — deletion is
+  // a hard delete). Filtering with NOT IN (archived,deleted) made Postgres fail casting those unknown
+  // labels to the enum, so the whole query errored and the list came back EMPTY. Include every real
+  // status (drafts included, so freshly-created pieces show up here to receive their first photo).
+  const { data, error } = await sb.from("products")
+    .select("id,sku,name,status,category:categories(name,slug), images:product_images(id,path,kind,sort)")
+    .in("status", ["draft", "published", "flagged"]).order("sku");
+  if (error) console.error("getProductsWithMedia:", error.message);
+  const base = ((data as any[]) ?? []).map((p) => ({
+    id: p.id, sku: p.sku, name: p.name, status: p.status, category: p.category?.name ?? "—", categorySlug: p.category?.slug ?? "all",
     images: (p.images ?? []).filter((i: any) => typeof i.path === "string" && i.path.startsWith("http")).sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0)),
+    variants: [] as { sku: string; color: string | null }[],
   }));
+  // Attach each product's variant SKUs + colours so Product Photos can be searched by colour.
+  const ids = base.map((p) => p.id);
+  if (ids.length) {
+    const { data: vrows } = await sb.from("variants").select("product_id,sku,color").in("product_id", ids);
+    const byP = new Map<string, { sku: string; color: string | null }[]>();
+    for (const v of ((vrows as any[]) ?? [])) {
+      const a = byP.get(v.product_id) ?? []; a.push({ sku: v.sku, color: v.color ?? null }); byP.set(v.product_id, a);
+    }
+    for (const p of base) p.variants = byP.get(p.id) ?? [];
+  }
+  return base;
 }

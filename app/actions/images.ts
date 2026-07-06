@@ -71,17 +71,12 @@ export async function generateOneAction(sku: string, keywords?: string): Promise
   const { data: pub } = sb.storage.from(BUCKET).getPublicUrl(path);
   await sb.from("product_images").insert({ product_id: p.id, path: pub.publicUrl, kind: "model", sort: -1 });
 
-  // The polished model shot replaces the raw photo everywhere: auto-delete every raw
-  // (source/flatlay) image — both its storage object and its DB row — so only the
-  // AI-generated image (and any owner-added angles) is ever shown on the storefront/admin.
-  const raws = (p.images ?? []).filter((i: any) => i.kind === "source" || i.kind === "flatlay");
-  if (raws.length) {
-    const objectPaths = raws
-      .map((i: any) => storagePathFromPublicUrl(i.path))
-      .filter((x): x is string => !!x);
-    if (objectPaths.length) await sb.storage.from(BUCKET).remove(objectPaths).catch(() => {});
-    await sb.from("product_images").delete().in("id", raws.map((i: any) => i.id));
-  }
+  // The polished model shot becomes the PRIMARY (sort -1). We deliberately KEEP the raw
+  // (source/flatlay) photo now — it is the ground-truth reference the "Fix a detail" editor
+  // re-feeds to correct drifted details, so it must never be destroyed. Customers never see it:
+  // every storefront image read hides kind 'source'/'flatlay' (isStorefrontImage in
+  // lib/supabase/queries.ts), so only AI-generated images appear on the shop while the owner
+  // still has the raw in the Photo Studio.
 
   revalidatePath(`/shop/${p.category.slug}/${sku}`);
   revalidatePath("/admin/catalogue");

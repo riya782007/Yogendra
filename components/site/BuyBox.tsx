@@ -70,7 +70,7 @@ export function BuyBox({ variants = [], waHref, item }: {
             {variants.map((v, i) => {
               const on = i === vi;
               return (
-                <button key={v.sku} onClick={() => { setVi(i); }} title={v.label}
+                <button key={v.sku} onClick={() => { setVi(i); setQty(1); }} title={v.label}
                   className={`relative w-16 rounded-xl border p-1 text-center transition-all ${on ? "border-emerald ring-2 ring-emerald/30" : "border-sand hover:border-gold"} ${v.qty <= 0 ? "opacity-50" : ""}`}>
                   <div className="aspect-square rounded-lg overflow-hidden bg-cream grid place-items-center">
                     {v.image ? <img src={v.image} alt={v.label} className="w-full h-full object-cover" /> : <span className="text-[10px] text-muted px-1 leading-tight">{v.label}</span>}

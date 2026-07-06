@@ -1,5 +1,5 @@
 export const dynamic = "force-dynamic";
-import { getStorefront, getCustomersDb, getPaymentMethods } from "@/lib/supabase/queries";
+import { getStorefront, getCustomersDb, getPaymentMethods, getEmployees } from "@/lib/supabase/queries";
 import { supabaseServer } from "@/lib/supabase/server";
 import { POSClient } from "@/components/admin/POSClient";
 import { resolvePrices, overridesOf } from "@/lib/pricing";
@@ -9,11 +9,12 @@ export const metadata = { title: "Owner Console · Billing (POS)" };
 export default async function Billing() {
   const sb = supabaseServer();
   // POS can bill anything in the catalogue — including unpublished drafts (#23) and wholesale-only lines.
-  const [{ products, formula }, customers, { data: variants }, methods] = await Promise.all([
+  const [{ products, formula }, customers, { data: variants }, methods, employees] = await Promise.all([
     getStorefront({ includeDrafts: true, includeWholesaleOnly: true }),
     getCustomersDb({}),
     sb.from("variants").select("sku,color,qty,product_id,wholesale_override,retail_override,mrp_override"),
     getPaymentMethods({ activeOnly: true }),
+    getEmployees({ activeOnly: true }),
   ]);
   // Variant SKUs (e.g. KPC64-MEH) are what's printed on the physical labels — so the counter
   // must scan/search them too. For products that HAVE variants we list each colour; products
@@ -42,7 +43,7 @@ export default async function Billing() {
     <main className="p-8 bg-cream/40 min-h-screen">
       <h1 className="font-display text-4xl text-ink mb-1">Billing · Point of Sale</h1>
       <p className="text-sm text-muted mb-6">Ring up a counter sale. Stock and books update the instant you complete it.</p>
-      <POSClient products={list} customers={custList} methods={methods.map((m) => ({ id: m.id, name: m.name, kind: m.kind }))} />
+      <POSClient products={list} customers={custList} methods={methods.map((m) => ({ id: m.id, name: m.name, kind: m.kind }))} employees={employees.map((e) => ({ id: e.id, name: e.name }))} />
     </main>
   );
 }

@@ -40,7 +40,7 @@ export function ProductCard({ p, formula, index = 0 }: { p: CardProduct; formula
       </div>
 
       <div className="p-4">
-        <p className="text-[10px] uppercase tracking-[0.15em] text-gold-dark">{p.category.name}</p>
+        {p.category.name && p.category.name.toLowerCase() !== "uncategorized" && <p className="text-[10px] uppercase tracking-[0.15em] text-gold-dark">{p.category.name}</p>}
         <h3 className="text-sm font-medium text-ink leading-snug mt-0.5 line-clamp-1 group-hover:text-emerald transition-colors">{p.name}</h3>
         <div className="mt-1"><Stars rating={p.rating} count={p.reviews} /></div>
         <div className="mt-2 flex items-baseline gap-2">

@@ -9,8 +9,8 @@ import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 import { logActivity } from "@/lib/audit";
-import { buildStudioPrompt, type ShotType, type StudioSettings } from "@/lib/ai/imagePrompt";
-import { generateImage, geminiConfigured } from "@/lib/ai/gemini";
+import { buildStudioPrompt, buildRefinePrompt, SHOT_META, type ShotType, type StudioSettings } from "@/lib/ai/imagePrompt";
+import { generateImage, editImage, geminiConfigured } from "@/lib/ai/gemini";
 import { detectJewellery } from "@/lib/ai/detect";
 
 const BUCKET = "product-media";
@@ -29,15 +29,33 @@ async function fetchAsBase64(url: string): Promise<{ base64: string; mime: strin
 export async function generateStudioImageAction(input: {
   productId: string; shotType: ShotType; settings?: StudioSettings; variantId?: string;
   style?: "auto" | "indian" | "western";
+  /** true = recolour the piece to the variant's colour NAME; default/false = trust the raw photo. */
+  matchColorName?: boolean;
 }): Promise<GenOut> {
   if (!(await requirePerm("catalog.ai"))) return { ok: false, reason: "not_permitted" };
   const { productId, shotType } = input;
   if (!productId || !shotType) return { ok: false, reason: "bad_input" };
   const sb = supabaseServer();
 
-  const { data: p } = await sb.from("products").select("id,sku,name, category:categories(name,slug)").eq("id", productId).maybeSingle();
+  // Keep the product fetch MINIMAL and robust — do NOT embed subcategories here: if that relation
+  // is even slightly out of sync in the deployed DB, the whole query returns null and generation
+  // wrongly reports "Product not found". Subcategory is loaded separately & guarded below.
+  const { data: p } = await sb.from("products")
+    .select("id,sku,name,subcategory_id, category:categories(name,slug)")
+    .eq("id", productId).maybeSingle();
   if (!p) return { ok: false, reason: "not_found" };
   const prod = p as any;
+
+  // Best-effort subcategory (name + AI model style). Wrapped so any failure leaves generation working,
+  // just falling back to the parent category for framing.
+  let sub: { name?: string; image_style?: string } = {};
+  if (prod.subcategory_id) {
+    try {
+      const { data: sc } = await sb.from("subcategories").select("name,image_style").eq("id", prod.subcategory_id).maybeSingle();
+      if (sc) sub = sc as any;
+    } catch { /* ignore — category framing still applies */ }
+  }
+  prod.subcategory = sub;
 
   // When a variant is chosen, prefer THAT colour's own photo as the reference so the AI reproduces
   // the exact colourway. Fall back to the product's raw upload / any product image otherwise.
@@ -47,7 +65,10 @@ export async function generateStudioImageAction(input: {
     const { data: v } = await sb.from("variants").select("color,image_paths").eq("id", input.variantId).maybeSingle();
     variantColor = (v as any)?.color ?? null;
     const vImgs = (v as any)?.image_paths;
-    refUrl = (Array.isArray(vImgs) ? vImgs.find((x: string) => typeof x === "string" && x.startsWith("http")) : null) ?? null;
+    // Prefer the MOST RECENTLY uploaded variant photo, so an "Upload raw" the owner just added is
+    // the one the AI works from (uploads append to the end of image_paths).
+    const httpImgs = Array.isArray(vImgs) ? vImgs.filter((x: string) => typeof x === "string" && x.startsWith("http")) : [];
+    refUrl = httpImgs.length ? httpImgs[httpImgs.length - 1] : null;
   }
   if (!refUrl) {
     const { data: imgs } = await sb.from("product_images").select("id,path,kind").eq("product_id", productId);
@@ -58,12 +79,25 @@ export async function generateStudioImageAction(input: {
 
   if (!geminiConfigured()) return { ok: false, reason: "no_key" };
 
-  // Auto-detect the piece (Gemini vision → keyword fallback) to choose the strategy.
-  const hint = [prod.name, prod.category?.name, variantColor].filter(Boolean).join(" ");
-  const detected = await detectJewellery({ imageUrl: refUrl, hint });
+  // Auto-detect the piece (Gemini vision → keyword fallback). NOTE: `hint` is ONLY used to help
+  // the detector — it is never passed as the authoritative category/subcategory (that comes from
+  // the product record below), so a mis-detection can never turn a necklace into a bangle.
+  const hint = [prod.name, prod.category?.name, prod.subcategory?.name, variantColor].filter(Boolean).join(" ");
+  const detected = await detectJewellery({ imageUrl: refUrl, hint, knownCategory: prod.subcategory?.name || prod.category?.name });
 
+  // The product's OWN category/subcategory/name/style is the ground truth for how the piece must be
+  // framed and worn — Gemini's vision guess (`detected`) may only add material/style flavour, never
+  // override where the piece sits on the body.
   const { prompt, aspect } = buildStudioPrompt({
-    category: prod.category?.name ?? "necklace", subcategory: hint, shotType, settings: input.settings, detected, style: input.style,
+    category: prod.category?.name ?? "necklace",
+    subcategory: prod.subcategory?.name ?? "",
+    productName: prod.name,
+    variantColor: variantColor ?? undefined,
+    forceColour: input.matchColorName === true,
+    shotType,
+    settings: input.settings,
+    detected,
+    style: (input.style ?? (prod.subcategory?.image_style as ("auto" | "indian" | "western" | undefined))),
   });
 
   const refImg = await fetchAsBase64(refUrl);
@@ -91,6 +125,125 @@ export async function generateStudioImageAction(input: {
   await logActivity({ action: "photo_generated", ref: prod.sku, detail: `${shotType} v${version} (${result.model})` });
   revalidatePath(`/admin/media/${productId}`);
   return { ok: true, id: (row as any)?.id, url: pub.publicUrl, provider: result.model };
+}
+
+/**
+ * Refine (surgical "fix a detail") — the owner marks a wrong area on a generated candidate and
+ * types what it should be. We edit ONLY that region, re-anchored to the ORIGINAL raw reference,
+ * and save the result as a NEW candidate linked to its parent. NON-DESTRUCTIVE: the original
+ * candidate is untouched, so the owner can compare and revert.
+ *
+ * `markedBase64` is the candidate image with the owner's outline drawn on it (composited in the
+ * browser). `region` is the normalised {x,y,w,h} (0..1) of the marked box, stored for history.
+ */
+export async function refineGenerationAction(input: {
+  generationId: string;
+  instruction: string;
+  markedBase64?: string;
+  markedMime?: string;
+  region?: { x: number; y: number; w: number; h: number } | null;
+}): Promise<GenOut> {
+  if (!(await requirePerm("catalog.ai"))) return { ok: false, reason: "not_permitted" };
+  const instruction = (input.instruction ?? "").trim();
+  if (!input.generationId || !instruction) return { ok: false, reason: "bad_input" };
+  if (!geminiConfigured()) return { ok: false, reason: "no_key" };
+  const sb = supabaseServer();
+
+  const { data: g } = await sb.from("image_generations").select("*").eq("id", input.generationId).maybeSingle();
+  const gen = g as any;
+  if (!gen || !gen.output_path) return { ok: false, reason: "not_found" };
+
+  // Build the image stack fed to the editor, in priority order:
+  //   1. the marked copy (WHERE to edit) — if the owner drew a box,
+  //   2. the clean generated candidate (the image being edited),
+  //   3. the ORIGINAL raw reference (the true design — the fidelity anchor).
+  const images: { base64: string; mime?: string }[] = [];
+  const hasMarker = !!input.markedBase64;
+  if (hasMarker) images.push({ base64: input.markedBase64!, mime: input.markedMime ?? "image/png" });
+  const outImg = await fetchAsBase64(gen.output_path);
+  if (outImg) images.push({ base64: outImg.base64, mime: outImg.mime });
+
+  // The fix must reproduce the UPLOADED photo's true details. Use this generation's own reference,
+  // and if it doesn't carry one (older rows), fall back to the product's current raw upload
+  // (kind 'source'/'flatlay') — the exact photo the owner uploaded — so the correction is always
+  // anchored to the real piece, never guessed from the generated image alone.
+  let hasReference = false;
+  let refUrl: string | null = gen.raw_image_path ?? null;
+  if (!refUrl) {
+    const { data: imgs } = await sb.from("product_images").select("path,kind").eq("product_id", gen.product_id);
+    const all = ((imgs as any[]) ?? []).filter((i) => typeof i.path === "string" && i.path.startsWith("http"));
+    refUrl = (all.find((i) => i.kind === "source" || i.kind === "flatlay") ?? all.find((i) => i.kind === "source"))?.path ?? null;
+  }
+  if (refUrl) {
+    const ref = await fetchAsBase64(refUrl);
+    if (ref) { images.push({ base64: ref.base64, mime: ref.mime }); hasReference = true; }
+  }
+  if (!images.length) return { ok: false, reason: "no_source" };
+
+  const meta = SHOT_META[gen.shot_type as ShotType] ?? SHOT_META.hero;
+  const { data: prod } = await sb.from("products").select("sku,name, category:categories(name)").eq("id", gen.product_id).maybeSingle();
+  const prow = prod as any;
+  const prompt = buildRefinePrompt({
+    instruction, hasReference, hasMarker,
+    productName: prow?.name, typeLabel: prow?.category?.name,
+  });
+
+  const result = await editImage({ prompt, images, aspectRatio: meta.aspect });
+  if (!result.ok) return { ok: false, reason: result.reason, error: result.error };
+
+  await sb.storage.createBucket(BUCKET, { public: true }).catch(() => {});
+  const ext = result.mime.includes("png") ? "png" : "jpg";
+  const path = `${prow?.sku ?? gen.product_id}/${gen.shot_type}-fix-${Date.now()}.${ext}`;
+  const up = await sb.storage.from(BUCKET).upload(path, Buffer.from(result.base64, "base64"), { contentType: result.mime, upsert: true });
+  if (up.error) return { ok: false, reason: "upload_failed", error: up.error.message };
+  const { data: pub } = sb.storage.from(BUCKET).getPublicUrl(path);
+
+  const { count } = await sb.from("image_generations").select("id", { count: "exact", head: true }).eq("product_id", gen.product_id).eq("shot_type", gen.shot_type);
+  const { data: row } = await sb.from("image_generations").insert({
+    product_id: gen.product_id, variant_id: gen.variant_id ?? null, raw_image_path: gen.raw_image_path,
+    output_path: pub.publicUrl, shot_type: gen.shot_type, prompt, settings: gen.settings ?? {}, detected: gen.detected ?? null,
+    provider: result.model, version: (count ?? 0) + 1, status: "candidate", created_by: "owner",
+    parent_id: gen.id, edit_instruction: instruction, edit_region: input.region ?? null,
+  }).select("id").maybeSingle();
+
+  await logActivity({ action: "photo_refined", ref: prow?.sku ?? gen.product_id, detail: `${gen.shot_type} fix (${result.model})` });
+  revalidatePath(`/admin/media/${gen.product_id}`);
+  return { ok: true, id: (row as any)?.id, url: pub.publicUrl, provider: result.model };
+}
+
+/**
+ * Set the storefront COVER (card thumbnail) to a specific image the owner picked — which may be a
+ * product image OR any colour/variant photo. We validate the URL actually belongs to this product
+ * (it's one of its product_images or a variant's image_paths) so a stray URL can't be injected,
+ * then store it on products.thumbnail_path. Pass an empty url to clear it (revert to automatic).
+ */
+export async function setProductThumbnailAction(input: { productId: string; url: string }): Promise<{ ok: boolean; reason?: string }> {
+  if (!(await requirePerm("catalog.edit")) && !(await requirePerm("catalog.ai"))) return { ok: false, reason: "not_permitted" };
+  const { productId } = input;
+  const url = (input.url ?? "").trim();
+  if (!productId) return { ok: false, reason: "bad_input" };
+  const sb = supabaseServer();
+
+  if (url) {
+    // Confirm the chosen image really belongs to this product before pinning it as the cover.
+    const [{ data: imgs }, { data: vars }] = await Promise.all([
+      sb.from("product_images").select("path").eq("product_id", productId),
+      sb.from("variants").select("image_paths").eq("product_id", productId),
+    ]);
+    const owned = new Set<string>();
+    for (const i of ((imgs as any[]) ?? [])) if (typeof i.path === "string") owned.add(i.path);
+    for (const v of ((vars as any[]) ?? [])) for (const p of (Array.isArray(v.image_paths) ? v.image_paths : [])) if (typeof p === "string") owned.add(p);
+    if (!owned.has(url)) return { ok: false, reason: "not_an_image_of_this_product" };
+  }
+
+  const { error } = await sb.from("products").update({ thumbnail_path: url || null }).eq("id", productId);
+  if (error) return { ok: false, reason: error.message };
+
+  const { data: prod } = await sb.from("products").select("sku, category:categories(slug)").eq("id", productId).maybeSingle();
+  const sku = (prod as any)?.sku; const slug = (prod as any)?.category?.slug ?? "all";
+  revalidatePath("/shop"); revalidatePath("/admin/catalogue"); revalidatePath(`/admin/media/${productId}`);
+  if (sku) revalidatePath(`/shop/${slug}/${sku}`);
+  return { ok: true };
 }
 
 /** A/B status: favorite | rejected | archived | candidate (restore). */
@@ -186,11 +339,21 @@ export async function uploadBrandedImageAction(input: {
 export async function detectJewelleryAction(productId: string): Promise<{ ok: boolean; detected?: any }> {
   if (!(await requirePerm("catalog.ai"))) return { ok: false };
   const sb = supabaseServer();
-  const { data: p } = await sb.from("products").select("id,name, category:categories(name), images:product_images(path,kind)").eq("id", productId).maybeSingle();
+  // No subcategory embed here — products→subcategories is ambiguous for PostgREST (direct FK AND
+  // product_subcategory_map), which would error the whole query. Look it up separately & guarded.
+  const { data: p } = await sb.from("products").select("id,name,subcategory_id, category:categories(name), images:product_images(path,kind)").eq("id", productId).maybeSingle();
   if (!p) return { ok: false };
   const prod = p as any;
+  let subName: string | null = null;
+  if (prod.subcategory_id) {
+    try { const { data: sc } = await sb.from("subcategories").select("name").eq("id", prod.subcategory_id).maybeSingle(); subName = (sc as any)?.name ?? null; } catch { /* category framing still applies */ }
+  }
   const ref = (prod.images ?? []).find((i: any) => typeof i.path === "string" && i.path.startsWith("http"));
-  const detected = await detectJewellery({ imageUrl: ref?.path, hint: [prod.name, prod.category?.name].filter(Boolean).join(" ") });
+  const detected = await detectJewellery({
+    imageUrl: ref?.path,
+    hint: [prod.name, prod.category?.name, subName].filter(Boolean).join(" "),
+    knownCategory: subName || prod.category?.name,
+  });
   revalidatePath(`/admin/media/${productId}`);
   return { ok: true, detected };
 }
