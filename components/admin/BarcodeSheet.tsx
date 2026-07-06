@@ -65,9 +65,10 @@ export function BarcodeSheet({ products }: { products: P[] }) {
     "--bc-bw": `${barW}%`,
   };
 
-  // Barcode-only rule (owner): the printed retail Price carries a fixed +₹0.51 tax add-on — the
-  // actual product/storefront price is NOT changed. Editable, so the owner can still override it.
-  const toRow = (p: P): Row => ({ sku: p.sku, name: p.name, qty: 1, price: rup((p.price ?? 0) + 51), special: "", wholesale: rup(p.wholesale) });
+  // Special price is a FIXED constant (23) across all products — the owner's coded scheme. The
+  // retail's ".51" tax add-on is applied by codeRetail at print time (product price is untouched).
+  const SPECIAL_FIXED = "23";
+  const toRow = (p: P): Row => ({ sku: p.sku, name: p.name, qty: 1, price: rup(p.price), special: SPECIAL_FIXED, wholesale: rup(p.wholesale) });
   const add = (p: P) => { setRows((prev) => (prev.find((x) => x.sku === p.sku) ? prev : [...prev, toRow(p)])); setQ(""); };
   /** Variant SKUs are what the POS scans — a design with colours should print one per variant. */
   const addAllVariants = (parentSku: string) => {
