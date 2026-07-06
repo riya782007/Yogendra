@@ -1,0 +1,5 @@
+-- 0046 — applied live via MCP on 2026-07-06. Kept for the record.
+-- record_sales_return rewired: (1) variant-EXACT restock (colour row rises; product = Σ variants),
+-- (2) per-line return CAP (sold − already returned; window closes when exhausted),
+-- (3) credit-note money reversal INCLUDING the GST charged on exclusive GST bills, stored on
+--     returns.amount (+ returns.gst_extra) so customer outstanding falls by the true refund value.

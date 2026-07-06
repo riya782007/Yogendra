@@ -11,7 +11,7 @@ import { useRouter } from "next/navigation";
 import { formatPaise } from "@/lib/pricing";
 import { fetchOrderForReturnAction, recordReturnAction } from "@/app/actions/billing";
 
-type Item = { qty: number; product: { id: string; name: string; sku: string }; variant: { sku: string; color: string | null } | null };
+type Item = { qty: number; returned: number; returnable: number; product: { id: string; name: string; sku: string }; variant: { sku: string; color: string | null } | null };
 const lineKey = (it: Item) => `${it.product.id}::${it.variant?.sku ?? ""}`;
 
 export function SalesReturnButton({ orderId, invoiceNo }: { orderId: string; invoiceNo?: string | null }) {
@@ -64,30 +64,47 @@ export function SalesReturnButton({ orderId, invoiceNo }: { orderId: string; inv
             {loading && <p className="text-sm text-muted py-3">Loading bill lines…</p>}
             {!loading && items && (
               <>
+                {items.every((it) => it.returnable <= 0) ? (
+                  <p className="text-sm text-emerald-dark bg-emerald-mist rounded-xl px-3 py-2 mt-2">
+                    ✓ Everything on this bill has already been returned — the return window is closed.
+                  </p>
+                ) : (
                 <div className="mt-2 space-y-1">
                   {items.map((it) => {
                     const k = lineKey(it);
+                    const closed = it.returnable <= 0;
                     return (
-                      <div key={k} className="flex items-center gap-3 text-sm border-b border-sand/60 py-2">
+                      <div key={k} className={`flex items-center gap-3 text-sm border-b border-sand/60 py-2 ${closed ? "opacity-60" : ""}`}>
                         <span className="flex-1 min-w-0 truncate">
                           {it.product.name}{it.variant?.color ? <span className="text-ink"> · {it.variant.color}</span> : ""}
-                          <span className="text-muted"> · {it.variant?.sku ?? it.product.sku} · sold {it.qty}</span>
+                          <span className="text-muted"> · {it.variant?.sku ?? it.product.sku} · sold {it.qty}{it.returned > 0 ? ` · ${it.returned} returned` : ""}</span>
                         </span>
-                        <label className="text-xs text-muted">return</label>
-                        <input type="number" min={0} max={it.qty} value={qty[k] ?? 0}
-                          onChange={(e) => setQty({ ...qty, [k]: Math.min(it.qty, Math.max(0, Number(e.target.value))) })}
-                          className="w-16 rounded-lg border border-sand px-2 py-1 text-sm" />
+                        {closed ? (
+                          <span className="text-[11px] text-emerald-dark whitespace-nowrap">✓ fully returned</span>
+                        ) : (
+                          <>
+                            <label className="text-xs text-muted">return (max {it.returnable})</label>
+                            <input type="number" min={0} max={it.returnable} value={qty[k] ?? 0}
+                              onChange={(e) => setQty({ ...qty, [k]: Math.min(it.returnable, Math.max(0, Number(e.target.value))) })}
+                              className="w-16 rounded-lg border border-sand px-2 py-1 text-sm" />
+                          </>
+                        )}
                       </div>
                     );
                   })}
                 </div>
-                <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (damaged, wrong colour, customer changed mind…)"
-                  className="w-full rounded-xl border border-sand px-3.5 py-2.5 text-sm bg-white outline-none focus:border-emerald mt-3" />
+                )}
+                {items.some((it) => it.returnable > 0) && (
+                  <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (damaged, wrong colour, customer changed mind…)"
+                    className="w-full rounded-xl border border-sand px-3.5 py-2.5 text-sm bg-white outline-none focus:border-emerald mt-3" />
+                )}
                 <div className="flex items-center justify-between gap-2 mt-4">
                   <span className="text-xs text-muted">{msg}</span>
                   <div className="flex gap-2">
-                    <button onClick={() => setOpen(false)} disabled={busy} className="px-4 py-2 rounded-xl bg-ink/5 text-ink text-sm hover:bg-ink/10 disabled:opacity-50">Cancel</button>
-                    <button onClick={submit} disabled={busy} className="px-4 py-2 rounded-xl bg-rose text-white text-sm hover:opacity-90 disabled:opacity-50">{busy ? "Recording…" : "Record return"}</button>
+                    <button onClick={() => setOpen(false)} disabled={busy} className="px-4 py-2 rounded-xl bg-ink/5 text-ink text-sm hover:bg-ink/10 disabled:opacity-50">{items.every((it) => it.returnable <= 0) ? "Close" : "Cancel"}</button>
+                    {items.some((it) => it.returnable > 0) && (
+                      <button onClick={submit} disabled={busy} className="px-4 py-2 rounded-xl bg-rose text-white text-sm hover:opacity-90 disabled:opacity-50">{busy ? "Recording…" : "Record return"}</button>
+                    )}
                   </div>
                 </div>
               </>

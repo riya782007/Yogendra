@@ -218,16 +218,30 @@ export async function fulfillBackorderAction(formData: FormData): Promise<void> 
 
 /** Lines of ONE order, shaped for the inline return dialog on the Sales page — so a return can be
  *  recorded straight from the bill row without hunting for it in a separate module. */
-export async function fetchOrderForReturnAction(orderId: string): Promise<{ ok: boolean; error?: string; order?: { id: string; total: number; customer_name: string | null; created_at: string; items: { qty: number; product: { id: string; name: string; sku: string }; variant: { sku: string; color: string | null } | null }[] } }> {
+export async function fetchOrderForReturnAction(orderId: string): Promise<{ ok: boolean; error?: string; order?: { id: string; total: number; customer_name: string | null; created_at: string; items: { qty: number; returned: number; returnable: number; product: { id: string; name: string; sku: string }; variant: { sku: string; color: string | null } | null }[] } }> {
   if (!(await requirePerm("billing.refund"))) return { ok: false, error: "Your role can't process returns." };
   const id = (orderId ?? "").trim();
   if (!id) return { ok: false, error: "Missing order" };
-  const { data, error } = await supabaseServer().from("orders")
-    .select("id,total,customer_name,created_at, order_items(qty, product:products(id,name,sku), variant:variants(sku,color))")
+  const sb2 = supabaseServer();
+  const { data, error } = await sb2.from("orders")
+    .select("id,total,customer_name,created_at, order_items(qty, variant_id, product:products(id,name,sku), variant:variants(id,sku,color))")
     .eq("id", id).maybeSingle();
   if (error || !data) return { ok: false, error: error?.message ?? "Order not found" };
   const o = data as any;
-  return { ok: true, order: { id: o.id, total: o.total ?? 0, customer_name: o.customer_name ?? null, created_at: o.created_at, items: ((o.order_items as any[]) ?? []).map((it) => ({ qty: it.qty ?? 0, product: it.product, variant: it.variant ?? null })) } };
+  // Already-returned per (product, variant) on THIS bill — summed from its return movements, so the
+  // dialog can cap each line at (sold − returned) and CLOSE the window once fully returned.
+  const { data: rets } = await sb2.from("stock_adjustments")
+    .select("product_id,variant_id,delta").eq("ref_id", id).eq("kind", "return");
+  const retBy = new Map<string, number>();
+  for (const r of ((rets as any[]) ?? [])) {
+    const k = `${r.product_id}::${r.variant_id ?? ""}`;
+    retBy.set(k, (retBy.get(k) ?? 0) + (r.delta ?? 0));
+  }
+  return { ok: true, order: { id: o.id, total: o.total ?? 0, customer_name: o.customer_name ?? null, created_at: o.created_at,
+    items: ((o.order_items as any[]) ?? []).map((it) => {
+      const returned = retBy.get(`${it.product?.id}::${it.variant_id ?? ""}`) ?? 0;
+      return { qty: it.qty ?? 0, returned, returnable: Math.max(0, (it.qty ?? 0) - returned), product: it.product, variant: it.variant ?? null };
+    }) } };
 }
 
 export async function recordReturnAction(input: { orderId: string; reason: string; items: { product_id: string; variantSku?: string; qty: number }[] }): Promise<{ ok: boolean; qty?: number; error?: string; pending?: boolean }> {
@@ -250,8 +264,16 @@ export async function recordReturnAction(input: { orderId: string; reason: strin
     return { ok: true, pending: true };
   }
 
-  // The RPC restocks by product_id; variantSku is carried for display/audit (variant-exact restock TBD).
-  const p_items = input.items.map((i) => ({ product_id: i.product_id, qty: i.qty }));
+  // Variant-EXACT return: resolve each line's variantSku to its variants.id so the RPC restocks
+  // the precise colour (the old code dropped variantSku — colour rows never rose, product totals
+  // desynced from Σ variants, and the client's tally broke).
+  const skus = [...new Set(input.items.map((i) => (i.variantSku ?? "").trim()).filter(Boolean))];
+  const vBySku = new Map<string, string>();
+  if (skus.length) {
+    const { data: vs } = await sb.from("variants").select("id,sku").in("sku", skus);
+    for (const v of ((vs as any[]) ?? [])) vBySku.set(String(v.sku).toUpperCase(), v.id);
+  }
+  const p_items = input.items.map((i) => ({ product_id: i.product_id, qty: i.qty, variant_id: i.variantSku ? (vBySku.get(i.variantSku.toUpperCase()) ?? null) : null }));
   const { data, error } = await sb.rpc("record_sales_return", { p_order_id: input.orderId, p_reason: input.reason, p_items });
   if (error) return { ok: false, error: error.message };
   revalidatePath("/admin/returns"); revalidatePath("/admin/dashboard");

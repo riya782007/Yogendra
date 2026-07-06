@@ -376,14 +376,42 @@ export async function getCustomerSpend(range?: { from?: string; to?: string }): 
   return m;
 }
 
+
+/** The rupee amount a customer actually OWES on one bill:
+ *  grand total (bill total + GST charged ON TOP for exclusive GST bills, rounded to ₹1 exactly
+ *  like the printed invoice) − amount paid − return credits (credit notes incl. their GST share).
+ *  Fixes the client's two escalations: "GST chhod diya" (outstanding rose by the pre-tax total)
+ *  and returns never reducing what the customer owes. */
+export function orderReceivable(o: { total?: number | null; amount_paid?: number | null; bill_type?: string | null; gst_mode?: string | null }, returnCredit = 0): number {
+  const total = o.total ?? 0;
+  const grand = o.bill_type === "gst" && (o.gst_mode ?? "exclusive") !== "inclusive"
+    ? Math.round((total + Math.round((total * 3) / 100)) / 100) * 100
+    : total;
+  return Math.max(0, grand - (o.amount_paid ?? 0) - returnCredit);
+}
+
+/** Σ return credit (returns.amount, incl. GST share) per order id, for a set of orders. */
+export async function returnCreditsByOrder(orderIds: string[]): Promise<Map<string, number>> {
+  const m = new Map<string, number>();
+  if (!orderIds.length) return m;
+  const sb = supabaseServer();
+  const { data } = await sb.from("returns").select("ref_order_id,amount").eq("kind", "sales").in("ref_order_id", orderIds);
+  for (const r of ((data as any[]) ?? [])) {
+    if (!r.ref_order_id) continue;
+    m.set(r.ref_order_id, (m.get(r.ref_order_id) ?? 0) + (r.amount ?? 0));
+  }
+  return m;
+}
 /** Creditors — customers who owe a balance, aggregated across all their bills (outstanding =
  *  Σ bill total − amount paid). Important for wholesale credit tracking. */
 export async function getCreditors(): Promise<{ id: string | null; name: string; phone: string; outstanding: number; bills: number }[]> {
   const sb = supabaseServer();
-  const { data } = await sb.from("orders").select("customer_id,customer_name,customer_phone,total,amount_paid");
+  const { data } = await sb.from("orders").select("id,customer_id,customer_name,customer_phone,total,amount_paid,bill_type,gst_mode,status");
+  const rows0 = ((data as any[]) ?? []).filter((o) => o.status !== "cancelled");
+  const credits = await returnCreditsByOrder(rows0.map((o) => o.id));
   const map = new Map<string, { id: string | null; name: string; phone: string; outstanding: number; bills: number }>();
-  for (const o of ((data as any[]) ?? [])) {
-    const due = (o.total ?? 0) - (o.amount_paid ?? 0);
+  for (const o of rows0) {
+    const due = orderReceivable(o, credits.get(o.id) ?? 0);
     if (due <= 0) continue;
     const key = o.customer_id ? `id:${o.customer_id}` : o.customer_phone ? `ph:${o.customer_phone}` : o.customer_name ? `nm:${o.customer_name}` : null;
     if (!key) continue;
@@ -557,7 +585,7 @@ export async function getCustomerById(id: string) {
   // Order history: linked customer_id plus any POS sales saved with the same phone.
   // (Two separate queries merged — avoids putting a raw phone into an or() filter.)
   const phone = (c as any).phone;
-  const sel = "id,total,amount_paid,invoice_no,channel,bill_type,payment_mode,status,created_at,customer_id,customer_phone";
+  const sel = "id,total,amount_paid,invoice_no,channel,bill_type,gst_mode,payment_mode,status,created_at,customer_id,customer_phone";
   const byId = await sb.from("orders").select(sel).eq("customer_id", id).order("created_at", { ascending: false }).limit(100);
   const byPhone = phone ? await sb.from("orders").select(sel).eq("customer_phone", phone).order("created_at", { ascending: false }).limit(100) : { data: [] as any[] };
   const seen = new Set<string>();
@@ -569,9 +597,10 @@ export async function getCustomerById(id: string) {
   // unpaid invoices roll up automatically. The DB column `credit_balance` is now a
   // *manual override* (advance received, store credit, hand-entered adjustment) — kept as
   // a fallback so existing data continues to display.
+  const custCredits = await returnCreditsByOrder(list.map((o: any) => o.id));
   const outstandingFromOrders = list
     .filter((o: any) => o.status !== "cancelled" && o.status !== "void")
-    .reduce((s: number, o: any) => s + Math.max(0, (o.total ?? 0) - (o.amount_paid ?? 0)), 0);
+    .reduce((s: number, o: any) => s + orderReceivable(o, custCredits.get(o.id) ?? 0), 0);
   return {
     customer: c,
     orders: list,
