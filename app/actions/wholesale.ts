@@ -7,6 +7,7 @@ import { requirePerm } from "@/lib/auth";
 import { getWholesaleSession } from "@/lib/wholesale";
 import { getPricingFormula } from "@/lib/supabase/queries";
 import { sendWhatsAppText } from "@/lib/whatsapp";
+import { wholesaleShippingPaise, WHOLESALE_COD_FEE_PAISE } from "@/lib/wholesaleShipping";
 
 const COOKIE = { httpOnly: true, sameSite: "lax" as const, secure: true, path: "/", maxAge: 60 * 60 * 12 };
 
@@ -66,18 +67,6 @@ export async function regenWholesaleCodeAction(formData: FormData) {
  * keeps 100% of the revenue. The dealer submits the UPI reference (UTR); we record it on the order
  * and WhatsApp the owner to verify the payment and dispatch.
  */
-/** Owner's fixed wholesale shipping slabs (paise in → paise out).
- *  3k–7k → ₹300 · 7k–12k → ₹400 · 12k–20k → ₹600 · 20k–30k → ₹900 · above ₹30k → quoted
- *  separately by the store (0 here; flagged in the owner's WhatsApp + dealer's confirmation). */
-export function wholesaleShippingPaise(totalPaise: number): number {
-  if (totalPaise > 3000000) return 0;                 // above ₹30,000 — store quotes shipping
-  if (totalPaise > 2000000) return 90000;             // ₹20,001–30,000 → ₹900
-  if (totalPaise > 1200000) return 60000;             // ₹12,001–20,000 → ₹600
-  if (totalPaise > 700000) return 40000;              // ₹7,001–12,000 → ₹400
-  return 30000;                                       // ₹3,000–7,000 → ₹300 (min order is ₹3,000)
-}
-export const WHOLESALE_COD_FEE_PAISE = 12000;         // flat ₹120 per COD order
-
 export async function placeWholesaleOrderAction(
   items: { sku: string; qty: number }[],
   opts?: { paymentRef?: string; cod?: boolean },
