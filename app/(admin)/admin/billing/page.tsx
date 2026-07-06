@@ -24,13 +24,13 @@ export default async function Billing() {
     const a = varsByProduct.get(v.product_id) ?? [];
     a.push(v); varsByProduct.set(v.product_id, a);
   }
-  const list: { sku: string; name: string; price: number; wholesale: number; mrp: number; category: string; qty: number }[] = [];
+  const list: { sku: string; name: string; price: number; wholesale: number; mrp: number; category: string; qty: number; parentSku?: string; parentName?: string }[] = [];
   for (const p of products as any[]) {
     const vs = varsByProduct.get(p.id) ?? [];
     if (vs.length) {
       for (const v of vs) {
         const ps = resolvePrices(p.base_wholesale, formula, overridesOf(v), overridesOf(p));
-        list.push({ sku: v.sku, name: `${p.name}${v.color ? " · " + v.color : ""}`, price: ps.retailPrice, wholesale: ps.wholesaleRate, mrp: ps.mrp, category: p.category.name, qty: v.qty ?? 0 });
+        list.push({ sku: v.sku, name: `${p.name}${v.color ? " · " + v.color : ""}`, price: ps.retailPrice, wholesale: ps.wholesaleRate, mrp: ps.mrp, category: p.category.name, qty: v.qty ?? 0, parentSku: p.sku, parentName: p.name });
       }
     } else {
       const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));

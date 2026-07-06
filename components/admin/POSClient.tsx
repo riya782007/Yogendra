@@ -6,7 +6,7 @@ import { posSaleAction } from "@/app/actions/orders";
 import { quickAddEmployeeAction } from "@/app/actions/employees";
 import { QtyField } from "@/components/admin/QtyField";
 
-type P = { sku: string; name: string; price: number; wholesale: number; mrp: number; category: string; qty: number };
+type P = { sku: string; name: string; price: number; wholesale: number; mrp: number; category: string; qty: number; parentSku?: string; parentName?: string };
 type Line = { sku: string; name: string; price: number; wholesale: number; mrp: number; qty: number; stock: number; override: string; disc: string };
 type Cust = { id: string; name: string; phone: string; type: string; gstin: string };
 const TIER_LABEL: Record<string, string> = { retail: "R", wholesale: "W" };
@@ -106,6 +106,30 @@ export function POSClient({ products, customers = [], methods = [], employees = 
     const s = q.toLowerCase();
     return products.filter((p) => p.name.toLowerCase().includes(s) || p.sku.toLowerCase().includes(s) || p.category.toLowerCase().includes(s)).slice(0, 8);
   }, [q, products]);
+
+  // Parents represented in the current matches that have 2+ variant colours — offered as ONE
+  // "add all colours" row so a 10-colour design never needs 10 separate picks.
+  const matchParents = useMemo(() => {
+    const seen = new Map<string, { sku: string; name: string; count: number }>();
+    for (const m of matches) {
+      if (!m.parentSku) continue;
+      const cur = seen.get(m.parentSku);
+      if (cur) continue;
+      const count = products.filter((p) => p.parentSku === m.parentSku).length;
+      if (count >= 2) seen.set(m.parentSku, { sku: m.parentSku, name: m.parentName ?? m.name, count });
+    }
+    return [...seen.values()].slice(0, 3);
+  }, [matches, products]);
+
+  function addAllVariants(parentSku: string) {
+    const vars = products.filter((p) => p.parentSku === parentSku);
+    setLines((prev) => {
+      const have = new Set(prev.map((l) => l.sku));
+      const added = vars.filter((v) => !have.has(v.sku)).map((v) => ({ sku: v.sku, name: v.name, price: v.price, wholesale: v.wholesale, mrp: v.mrp, qty: 1, stock: v.qty, override: "", disc: "" }));
+      return [...prev, ...added];
+    });
+    setQ("");
+  }
 
   const toPaise = (v: string) => { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) : 0; };
   const chargesTotal = Math.max(0, toPaise(packing)) + Math.max(0, toPaise(courier)) + toPaise(adjustment);
@@ -226,6 +250,13 @@ export function POSClient({ products, customers = [], methods = [], employees = 
           </div>
           {matches.length > 0 && (
             <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl shadow-luxe border border-sand overflow-hidden">
+              {/* One-tap bulk add: every colour of a matched design in a single click. */}
+              {matchParents.map((pp) => (
+                <button key={`all-${pp.sku}`} onClick={() => { addAllVariants(pp.sku); searchRef.current?.focus(); }} className="w-full text-left px-3 py-2 text-sm bg-emerald-mist/60 hover:bg-emerald-mist flex justify-between items-center border-b border-sand/60">
+                  <span className="truncate font-medium text-emerald-dark">➕ All {pp.count} colours — {pp.name}</span>
+                  <span className="text-[11px] text-emerald-dark/70 shrink-0 ml-2">adds {pp.count} lines</span>
+                </button>
+              ))}
               {matches.map((p) => (
                 <button key={p.sku} onClick={() => { addLine(p); searchRef.current?.focus(); }} className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-mist flex justify-between items-center">
                   <span className="truncate">{p.name} <span className="text-muted">· {p.sku}</span> <span className={`text-[11px] ${p.qty <= 0 ? "text-rose" : "text-muted"}`}>({p.qty})</span></span>

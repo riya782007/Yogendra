@@ -39,13 +39,13 @@ export default async function Estimates({ searchParams }: { searchParams: { tab?
   // search shows the exact colour — e.g. "Rajwada Necklace · Green (KN132-GREEN)" — not just the parent.
   const varsByProduct = new Map<string, any[]>();
   for (const v of ((variants ?? []) as any[])) { const a = varsByProduct.get(v.product_id) ?? []; a.push(v); varsByProduct.set(v.product_id, a); }
-  const list: { sku: string; name: string; price: number; wholesale: number }[] = [];
+  const list: { sku: string; name: string; price: number; wholesale: number; parentSku?: string; parentName?: string }[] = [];
   for (const p of products as any[]) {
     const vs = varsByProduct.get(p.id) ?? [];
     if (vs.length) {
       for (const v of vs) {
         const ps = resolvePrices(p.base_wholesale, formula, overridesOf(v), overridesOf(p));
-        list.push({ sku: v.sku, name: `${p.name}${v.color ? " · " + v.color : ""}`, price: ps.retailPrice, wholesale: ps.wholesaleRate });
+        list.push({ sku: v.sku, name: `${p.name}${v.color ? " · " + v.color : ""}`, price: ps.retailPrice, wholesale: ps.wholesaleRate, parentSku: p.sku, parentName: p.name });
       }
     } else {
       const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));
