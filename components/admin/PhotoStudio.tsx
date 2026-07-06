@@ -190,9 +190,18 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
   const [pose, setPose] = useState("");
   const [makeup, setMakeup] = useState("");
   const [mood, setMood] = useState("");
+  // FULL-SET support: which pieces this SKU includes (necklace + earrings + maang tikka + ring…)
+  // and the owner's free-text shoot brief. Both are saved with every generation's settings, so we
+  // seed them from the most recent generation — the owner sets them once per product.
+  const lastWithSet = (data.generations ?? []).find((g: any) => (g.settings?.setPieces?.length ?? 0) > 0 || g.settings?.customPrompt);
+  const [setPieces, setSetPieces] = useState<string[]>(lastWithSet?.settings?.setPieces ?? []);
+  const [customPrompt, setCustomPrompt] = useState<string>(lastWithSet?.settings?.customPrompt ?? "");
+  const [customPiece, setCustomPiece] = useState("");
+  const PIECES = ["Necklace", "Earrings", "Maang Tikka", "Ring", "Bracelet", "Bangles", "Nath", "Kamarband"];
+  const togglePiece = (v: string) => setSetPieces((p) => p.some((x) => x.toLowerCase() === v.toLowerCase()) ? p.filter((x) => x.toLowerCase() !== v.toLowerCase()) : [...p, v]);
 
   const styleParam: "auto" | "indian" | "western" = modelStyle.startsWith("Western") ? "western" : modelStyle.startsWith("Indian") ? "indian" : "auto";
-  const settings = () => ({ lighting, modelStyle, background, focus, ethnicity, pose, makeup, mood, emphasis: focus });
+  const settings = () => ({ lighting, modelStyle, background, focus, ethnicity, pose, makeup, mood, emphasis: focus, setPieces, customPrompt });
 
   const candidatesOf = (shot: string) => data.generations.filter((g) => g.shot_type === shot && g.output_path && g.status !== "rejected" && g.status !== "archived");
   const heroCandidates = candidatesOf("hero");
@@ -386,6 +395,28 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
             {/* Regenerate settings */}
             <div>
               <p className="text-[11px] font-medium text-ink mb-1.5">Regenerate settings</p>
+
+              {/* FULL SET — tick every piece this SKU includes so the AI keeps ALL of them in frame
+                  (fixes generations cropping out the maang tikka / ring from a set). */}
+              <p className="text-[10px] text-muted">Pieces included in this SKU {setPieces.length >= 2 && <span className="text-emerald-dark font-medium">· full set of {setPieces.length} — all kept in frame</span>}</p>
+              <div className="flex flex-wrap gap-1 mt-1 mb-1.5">
+                {PIECES.map((o) => {
+                  const on = setPieces.some((x) => x.toLowerCase() === o.toLowerCase());
+                  return <button key={o} type="button" onClick={() => togglePiece(o)} className={`text-[10px] px-2 py-0.5 rounded-full border ${on ? "bg-emerald text-white border-emerald" : "border-sand text-muted hover:border-emerald"}`}>{on ? "✓ " : ""}{o}</button>;
+                })}
+                {setPieces.filter((x) => !PIECES.some((o) => o.toLowerCase() === x.toLowerCase())).map((o) => (
+                  <button key={o} type="button" onClick={() => togglePiece(o)} className="text-[10px] px-2 py-0.5 rounded-full border bg-emerald text-white border-emerald">✓ {o}</button>
+                ))}
+                <input value={customPiece} onChange={(e) => setCustomPiece(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && customPiece.trim()) { togglePiece(customPiece.trim()); setCustomPiece(""); } }}
+                  placeholder="+ other piece ⏎" className="text-[10px] px-2 py-0.5 rounded-full border border-dashed border-sand outline-none focus:border-emerald w-24" />
+              </div>
+
+              {/* Owner's shoot brief — appended verbatim to every generation prompt. */}
+              <textarea value={customPrompt} onChange={(e) => setCustomPrompt(e.target.value)} rows={2}
+                placeholder="Shoot brief (optional) — e.g. replicate the raw photo's layout exactly; show the full set laid on ivory silk; tikka centred on the parting…"
+                className={`${sel} mb-1.5 resize-y`} />
+
               <label className="text-[10px] text-muted">Lighting style<select value={lighting} onChange={(e) => setLighting(e.target.value)} className={`${sel} mt-0.5`}>{LIGHTING.map((o) => <option key={o}>{o}</option>)}</select></label>
               <label className="text-[10px] text-muted block mt-1.5">Model style<select value={modelStyle} onChange={(e) => setModelStyle(e.target.value)} className={`${sel} mt-0.5`}>{MODEL_STYLE.map((o) => <option key={o}>{o}</option>)}</select></label>
               <label className="text-[10px] text-muted block mt-1.5">Background<select value={background} onChange={(e) => setBackground(e.target.value)} className={`${sel} mt-0.5`}>{BACKGROUND.map((o) => <option key={o}>{o}</option>)}</select></label>
