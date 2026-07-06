@@ -216,6 +216,20 @@ export async function fulfillBackorderAction(formData: FormData): Promise<void> 
   redirect("/admin/backorders?ok=1");
 }
 
+/** Lines of ONE order, shaped for the inline return dialog on the Sales page — so a return can be
+ *  recorded straight from the bill row without hunting for it in a separate module. */
+export async function fetchOrderForReturnAction(orderId: string): Promise<{ ok: boolean; error?: string; order?: { id: string; total: number; customer_name: string | null; created_at: string; items: { qty: number; product: { id: string; name: string; sku: string }; variant: { sku: string; color: string | null } | null }[] } }> {
+  if (!(await requirePerm("billing.refund"))) return { ok: false, error: "Your role can't process returns." };
+  const id = (orderId ?? "").trim();
+  if (!id) return { ok: false, error: "Missing order" };
+  const { data, error } = await supabaseServer().from("orders")
+    .select("id,total,customer_name,created_at, order_items(qty, product:products(id,name,sku), variant:variants(sku,color))")
+    .eq("id", id).maybeSingle();
+  if (error || !data) return { ok: false, error: error?.message ?? "Order not found" };
+  const o = data as any;
+  return { ok: true, order: { id: o.id, total: o.total ?? 0, customer_name: o.customer_name ?? null, created_at: o.created_at, items: ((o.order_items as any[]) ?? []).map((it) => ({ qty: it.qty ?? 0, product: it.product, variant: it.variant ?? null })) } };
+}
+
 export async function recordReturnAction(input: { orderId: string; reason: string; items: { product_id: string; variantSku?: string; qty: number }[] }): Promise<{ ok: boolean; qty?: number; error?: string; pending?: boolean }> {
   if (!(await requirePerm("billing.refund"))) return { ok: false, error: "Your role can't process returns/refunds." };
   if (!input.items?.length) return { ok: false, error: "Select items to return" };
