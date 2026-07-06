@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { isRealImage } from "@/components/Placeholder";
 
 const GRAD = "linear-gradient(135deg,#E7C9D2,#F2EADA,#E2C887)";
@@ -142,7 +143,12 @@ function Lightbox({ images, start, name, onClose }: { images: { path: string }[]
   }
 
   const zoomed = scale > 1;
-  return (
+  // PORTAL to <body>: the product page wraps sections in scroll-reveal animations that apply a CSS
+  // transform, and a transformed ancestor hijacks position:fixed — the lightbox was getting trapped
+  // inside the gallery box, letting the page's buttons/variant chips paint on top of the enlarged
+  // photo. Rendering at the document root makes it a true full-screen overlay above everything.
+  if (typeof document === "undefined") return null;
+  return createPortal(
     <div className="fixed inset-0 z-[100] bg-ink/92 backdrop-blur-sm grid place-items-center animate-fadeIn" onClick={onClose}>
       <button onClick={onClose} aria-label="Close" className="absolute top-4 right-5 z-10 text-cream/80 hover:text-white text-3xl leading-none">✕</button>
       <div
@@ -177,6 +183,7 @@ function Lightbox({ images, start, name, onClose }: { images: { path: string }[]
       <p className="absolute bottom-4 left-0 right-0 text-center text-cream/70 text-xs">
         {zoomed ? "Drag to move around · tap to reset" : "Scroll, tap, or +/− to zoom in"} · {idx + 1}/{images.length}
       </p>
-    </div>
+    </div>,
+    document.body
   );
 }
