@@ -842,11 +842,13 @@ export async function getOpenEstimateReservations(limit = 50) {
 // running balance, pulls open-estimate reservations, resolves related documents, and rolls up
 // analytics — for the drawer opened by clicking any Stock Movement row.
 export type LedgerMovement = {
-  id: string; kind: string; delta: number; runningBalance: number;
+  id: string; kind: string; delta: number; runningBalance: number | null;
   source: string | null; reason: string | null; created_by: string | null;
   ref_id: string | null; created_at: string; invoice_no?: string | null;
   /** Customer name (sales) or supplier name (purchases) for this movement. */
   party?: string | null;
+  /** True for estimate/reservation holds — soft commitments that do NOT change the stock balance. */
+  hold?: boolean;
   doc: { href: string; label: string } | null;
 };
 
@@ -891,7 +893,6 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     allRows[i].runningBalance = running;
     running -= allRows[i].delta ?? 0;
   }
-  const totalMovements = allRows.length;
 
   // --- related documents (batch lookups) ---
   const saleRefs = [...new Set(allRows.filter((r) => r.kind === "sale" && r.ref_id).map((r) => r.ref_id))];
@@ -917,26 +918,43 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     return null;
   };
 
-  // newest-first for display, sliced for lazy pagination
-  const desc = [...allRows].reverse();
-  const movements: LedgerMovement[] = desc.slice(offset, offset + limit).map((r) => ({
+  // --- estimate reservations (soft holds) — fetched up-front so they can ALSO appear in the timeline ---
+  const { data: resv } = await sb.from("estimate_items")
+    .select("qty, estimate:estimates(id,customer_name,status,created_at)")
+    .eq("product_id", productId);
+  const resvRows = ((resv as any[]) ?? []).filter((r) => r.estimate);
+  // Open holds still commit stock — shown in the header/panel and counted in `reserved`.
+  const reservations = resvRows
+    .filter((r) => r.estimate.status === "open")
+    .map((r) => ({ id: r.estimate.id as string, customer: (r.estimate.customer_name as string) ?? "Walk-in", qty: (r.qty as number) ?? 0, status: r.estimate.status as string, created_at: r.estimate.created_at as string }))
+    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  const reserved = reservations.reduce((s, r) => s + r.qty, 0);
+
+  // Real stock movements → display rows (carry the anchored running balance).
+  const realDisplay: LedgerMovement[] = allRows.map((r) => ({
     id: r.id, kind: r.kind ?? "adjustment", delta: r.delta ?? 0, runningBalance: r.runningBalance ?? 0,
     source: r.source ?? null, reason: r.reason ?? null, created_by: r.created_by ?? r.source ?? null,
     ref_id: r.ref_id ?? null, created_at: r.created_at,
     invoice_no: r.kind === "sale" ? (invoiceBy.get(r.ref_id) ?? null) : r.kind === "purchase" ? (billBy.get(r.ref_id) ?? null) : null,
     party: r.ref_id ? (partyBy.get(r.ref_id) ?? null) : null,
-    doc: docFor(r),
+    hold: false, doc: docFor(r),
+  }));
+  // Estimate holds → timeline rows. They do NOT change the running balance (soft commitment), so
+  // runningBalance stays null and delta carries the reserved qty for display only.
+  const holdDisplay: LedgerMovement[] = resvRows.map((r) => ({
+    id: `est-${r.estimate.id}-${r.qty}-${r.estimate.created_at}`,
+    kind: "estimate", delta: -(r.qty ?? 0), runningBalance: null,
+    source: null, reason: `Reserved ${r.qty ?? 0} pcs · estimate ${r.estimate.status ?? ""}`.trim(),
+    created_by: null, ref_id: r.estimate.id as string, created_at: r.estimate.created_at as string,
+    invoice_no: null, party: (r.estimate.customer_name as string) ?? null, hold: true,
+    doc: { href: `/admin/estimate/${r.estimate.id}`, label: "Open estimate →" },
   }));
 
-  // --- reservations (open estimates = soft holds, not in the ledger) ---
-  const { data: resv } = await sb.from("estimate_items")
-    .select("qty, estimate:estimates(id,customer_name,status,created_at)")
-    .eq("product_id", productId);
-  const reservations = ((resv as any[]) ?? [])
-    .filter((r) => r.estimate && r.estimate.status === "open")
-    .map((r) => ({ id: r.estimate.id as string, customer: (r.estimate.customer_name as string) ?? "Walk-in", qty: (r.qty as number) ?? 0, status: r.estimate.status as string, created_at: r.estimate.created_at as string }))
-    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
-  const reserved = reservations.reduce((s, r) => s + r.qty, 0);
+  // Combined newest-first timeline (real movements + estimate holds), sliced for lazy pagination.
+  const timeline = [...realDisplay, ...holdDisplay]
+    .sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0));
+  const totalMovements = timeline.length;
+  const movements: LedgerMovement[] = timeline.slice(offset, offset + limit);
 
   // --- supplier + cost from purchase history ---
   const { data: pis } = await sb.from("purchase_items")

@@ -10,10 +10,11 @@ import Link from "next/link";
 import { fetchProductLedgerAction } from "@/app/actions/ledger";
 
 type Movement = {
-  id: string; kind: string; delta: number; runningBalance: number;
+  id: string; kind: string; delta: number; runningBalance: number | null;
   source: string | null; reason: string | null; created_by: string | null;
   ref_id: string | null; created_at: string; invoice_no?: string | null;
   party?: string | null;
+  hold?: boolean;
   doc: { href: string; label: string } | null;
 };
 type Ledger = {
@@ -105,7 +106,7 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
 
   function exportCsv() {
     const head = ["Date", "Time", "Type", "Change", "Balance", "Invoice/Bill", "Reference", "By", "Note"];
-    const lines = rows.map((r) => [day(r.created_at), time(r.created_at), r.kind, r.delta, r.runningBalance,
+    const lines = rows.map((r) => [day(r.created_at), time(r.created_at), r.kind, r.delta, r.hold ? "reserved" : (r.runningBalance ?? ""),
       r.invoice_no ?? "", r.ref_id ?? "", r.created_by ?? "", (r.reason ?? r.source ?? "").replace(/[\n,]/g, " ")]);
     const csv = [head, ...lines].map((row) => row.map((c) => `"${String(c)}"`).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
@@ -202,7 +203,7 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
                 <div key={d}>
                   <div className="flex items-center justify-between mb-1.5">
                     <p className="text-xs font-semibold text-ink">{d}</p>
-                    <p className="text-[11px] text-muted">Closing balance <b className="text-ink">{items[0]?.runningBalance}</b></p>
+                    <p className="text-[11px] text-muted">Closing balance <b className="text-ink">{items.find((x) => x.runningBalance != null)?.runningBalance ?? "—"}</b></p>
                   </div>
                   <div className="rounded-xl border border-sand bg-white divide-y divide-sand/60">
                     {items.map((r) => (
@@ -212,8 +213,17 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
                           <p className="text-xs text-ink truncate">{r.invoice_no ? <b>{r.invoice_no} · </b> : ""}{r.party ? <span className="text-ink">{r.party} · </span> : ""}{r.reason ?? r.source ?? "—"}</p>
                           <p className="text-[10px] text-muted">{time(r.created_at)}{r.created_by ? ` · ${r.created_by}` : ""}{r.doc ? " · " : ""}{r.doc && <Link href={r.doc.href} className="text-emerald nav-link">{r.doc.label}</Link>}</p>
                         </div>
-                        <span className={`font-semibold tabular-nums ${r.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{r.delta > 0 ? "+" : ""}{r.delta}</span>
-                        <span className="text-xs text-muted tabular-nums w-14 text-right">→ {r.runningBalance}</span>
+                        {r.hold ? (
+                          <>
+                            <span className="font-semibold tabular-nums text-gold-dark">⏳ {Math.abs(r.delta)}</span>
+                            <span className="text-[10px] text-gold-dark/80 tabular-nums w-14 text-right">reserved</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className={`font-semibold tabular-nums ${r.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{r.delta > 0 ? "+" : ""}{r.delta}</span>
+                            <span className="text-xs text-muted tabular-nums w-14 text-right">→ {r.runningBalance}</span>
+                          </>
+                        )}
                       </div>
                     ))}
                   </div>

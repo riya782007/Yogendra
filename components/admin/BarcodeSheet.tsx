@@ -41,6 +41,12 @@ export function BarcodeSheet({ products }: { products: P[] }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [paper, setPaper] = useState("65");
   const [opts, setOpts] = useState({ sku: true, name: false, price: true, special: false, wholesale: true, currency: false });
+  // Printer fine-tuning — physical label sheets and printers vary slightly, so these let the owner
+  // nudge the layout live: top margin, row height (fixes cumulative drift where lower rows slip off
+  // their labels), and barcode bar width. Defaults are 0 nudge and a slightly narrower 92% bar.
+  const [adjTop, setAdjTop] = useState(0);   // mm added to the top margin
+  const [adjRow, setAdjRow] = useState(0);   // mm added to EACH row's height
+  const [barW, setBarW] = useState(92);      // printed bar width as % of the label
 
   const matches = useMemo(
     () => (q.trim() ? products.filter((p) => (p.name + p.sku).toLowerCase().includes(q.toLowerCase())).slice(0, 10) : []),
@@ -53,9 +59,10 @@ export function BarcodeSheet({ products }: { products: P[] }) {
   // consume these so every label sits on its die-cut position and all rows fit on ONE A4 sheet.
   const sheetVars = {
     "--bc-cols": cols,
-    "--bc-lw": `${G.lw}mm`, "--bc-lh": `${G.lh}mm`,
+    "--bc-lw": `${G.lw}mm`, "--bc-lh": `${(G.lh + adjRow).toFixed(2)}mm`,
     "--bc-gx": `${G.gx}mm`, "--bc-gy": `${G.gy}mm`,
-    "--bc-mt": `${G.mt}mm`, "--bc-ml": `${G.ml}mm`,
+    "--bc-mt": `${(G.mt + adjTop).toFixed(2)}mm`, "--bc-ml": `${G.ml}mm`,
+    "--bc-bw": `${barW}%`,
   };
 
   // Barcode-only rule (owner): the printed retail Price carries a fixed +₹0.51 tax add-on — the
@@ -176,6 +183,28 @@ export function BarcodeSheet({ products }: { products: P[] }) {
           </div>
         </div>
 
+        {/* Printer alignment fine-tuning — nudge if labels don't sit perfectly on the physical sheet */}
+        <div className="mt-4 pt-4 border-t border-sand">
+          <p className="text-xs font-medium text-muted mb-2">Printer alignment <span className="text-muted/70 font-normal">— tweak only if the print is slightly off the labels</span></p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+            <label className="text-xs text-muted">
+              Top margin <span className="text-ink font-medium">{(G.mt + adjTop).toFixed(1)}mm</span>
+              <input type="range" min={-6} max={6} step={0.5} value={adjTop} onChange={(e) => setAdjTop(Number(e.target.value))} className="w-full accent-emerald" />
+              <span className="text-[10px] text-muted/70">move all labels down / up</span>
+            </label>
+            <label className="text-xs text-muted">
+              Row height <span className="text-ink font-medium">{(G.lh + adjRow).toFixed(1)}mm</span>
+              <input type="range" min={-3} max={3} step={0.1} value={adjRow} onChange={(e) => setAdjRow(Number(e.target.value))} className="w-full accent-emerald" />
+              <span className="text-[10px] text-muted/70">fixes lower rows drifting off</span>
+            </label>
+            <label className="text-xs text-muted">
+              Barcode width <span className="text-ink font-medium">{barW}%</span>
+              <input type="range" min={70} max={100} step={1} value={barW} onChange={(e) => setBarW(Number(e.target.value))} className="w-full accent-emerald" />
+              <span className="text-[10px] text-muted/70">narrower bars per label</span>
+            </label>
+          </div>
+        </div>
+
         <div className="flex items-center justify-between flex-wrap gap-3 mt-5">
           <div className="text-sm text-muted">Total Barcodes <span className="text-ink font-semibold text-base">{labels.length}</span>{labels.length > 0 && <> · ~{Math.ceil(labels.length / per)} sheet{Math.ceil(labels.length / per) === 1 ? "" : "s"}</>}</div>
           {labels.length > 0 && (
@@ -197,6 +226,7 @@ export function BarcodeSheet({ products }: { products: P[] }) {
               .bc-sheet.print-area { position: fixed !important; inset: 0 !important; width: 210mm !important; height: 297mm !important; margin: 0 !important; padding: var(--bc-mt) var(--bc-ml) 0 var(--bc-ml) !important; box-sizing: border-box !important; }
               .bc-sheet .barcode-grid { display: grid !important; grid-template-columns: repeat(var(--bc-cols), var(--bc-lw)) !important; column-gap: var(--bc-gx) !important; row-gap: var(--bc-gy) !important; justify-content: start !important; align-content: start !important; }
               .bc-sheet .barcode-label { width: var(--bc-lw) !important; height: var(--bc-lh) !important; box-sizing: border-box !important; overflow: hidden !important; }
+              .bc-sheet .barcode-label svg { width: var(--bc-bw) !important; display: block !important; margin: 0 auto !important; }
             }
           `}</style>
           <div className="barcode-grid grid gap-1" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` } as any}>
