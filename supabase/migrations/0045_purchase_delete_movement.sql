@@ -1,0 +1,5 @@
+-- 0045 — applied live via MCP on 2026-07-06. Kept for the record.
+-- (a) delete_purchase: variant-exact stock reversal + visible stock_adjustments row per line
+--     (kind purchase_return, source 'Purchase deleted') so deletions show in Stock Movement.
+-- (b) fulfill_backorder: legacy backorders (billed pre-0044, stock/revenue already taken at
+--     billing) just release into Sales — no double deduction.
