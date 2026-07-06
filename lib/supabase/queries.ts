@@ -878,8 +878,19 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     allRows = (basic.data as any[]) ?? [];
   } else allRows = (rich.data as any[]) ?? [];
 
-  let bal = 0;
-  for (const r of allRows) { bal += r.delta ?? 0; r.runningBalance = bal; }
+  // Running balance is ANCHORED to the actual on-hand stock (products.qty — the source of truth that
+  // POS sales and purchase bills update atomically). We set the NEWEST movement's closing balance to
+  // the current stock, then walk backwards subtracting each delta. This guarantees (a) the top of the
+  // ledger always equals the real stock the owner sees, and (b) every row chains exactly
+  // (row.balance − row.delta = the row below it). The old "sum forward from 0" drifted whenever an
+  // opening count or a PIM stock edit changed qty without leaving a matching ledger row.
+  const deltaSum = allRows.reduce((s, r) => s + (r.delta ?? 0), 0);
+  const currentStock = prod.qty ?? deltaSum;
+  let running = currentStock;
+  for (let i = allRows.length - 1; i >= 0; i--) {
+    allRows[i].runningBalance = running;
+    running -= allRows[i].delta ?? 0;
+  }
   const totalMovements = allRows.length;
 
   // --- related documents (batch lookups) ---
@@ -948,7 +959,6 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   const sold = allRows.filter((r) => r.kind === "sale").reduce((s, r) => s + Math.abs(Math.min(0, r.delta ?? 0)), 0);
   const returned = allRows.filter((r) => ["return", "purchase_return"].includes(r.kind)).reduce((s, r) => s + Math.abs(r.delta ?? 0), 0);
   const adjusted = allRows.filter((r) => ["adjustment", "damage", "correction"].includes(r.kind)).reduce((s, r) => s + (r.delta ?? 0), 0);
-  const currentStock = prod.qty ?? bal;
   const available = currentStock - reserved;
   const daysSinceLastSale = lastSale ? Math.floor((Date.now() - new Date(lastSale).getTime()) / 86400000) : null;
   const firstAt = allRows[0]?.created_at ? new Date(allRows[0].created_at) : null;
