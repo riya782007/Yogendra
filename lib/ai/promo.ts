@@ -5,7 +5,7 @@
  * `refinedPrompt` (done in the server action). Server-only.
  */
 import "server-only";
-import { openaiChat } from "./providers";
+import { openaiChat, openaiConfigured, geminiChat, geminiTextConfigured } from "./providers";
 
 export type PromoBrief = { title: string; refinedPrompt: string; categorySlug: string | null };
 
@@ -38,7 +38,9 @@ export async function refinePromoPrompt(input: {
     `   Do NOT invent a fake third-party logo; you MAY include the wordmark "BlytheDIVA" subtly. Spell every word exactly. Keep on-image text minimal and correctly spelled.`,
   ].filter(Boolean).join("\n");
 
-  const raw = await openaiChat({ system: REFINE_SYSTEM, user, json: true, timeoutMs: 30_000 });
+  // OpenAI when enabled; Gemini otherwise (OpenAI billing capped) — refine keeps working either way.
+  const chatFn = openaiConfigured() ? openaiChat : geminiTextConfigured() ? geminiChat : openaiChat;
+  const raw = await chatFn({ system: REFINE_SYSTEM, user, json: true, timeoutMs: 30_000 });
   const j = JSON.parse(raw);
   return {
     title: String(j.title ?? "Festive Campaign").slice(0, 80),

@@ -55,7 +55,13 @@ async function chat(endpoint: string, key: string, model: string, a: ChatArgs): 
 }
 
 export function groqConfigured() { return !!groqKey(); }
-export function openaiConfigured() { return !!openaiKey(); }
+
+/** OpenAI is DISABLED by default while the account's billing hard limit is active (every call
+ *  fails with billing_hard_limit_reached). Once billing is sorted, set OPENAI_ENABLED=1 in the
+ *  Vercel env to restore ALL OpenAI usage (chat, titles, CRM, refine) — no code change needed.
+ *  Gemini/Groq handle everything in the meantime. */
+export function openaiEnabled() { return (process.env.OPENAI_ENABLED ?? "").trim() === "1"; }
+export function openaiConfigured() { return !!openaiKey() && openaiEnabled(); }
 
 export async function groqChat(a: ChatArgs): Promise<string> {
   const key = groqKey(); if (!key) throw new Error("no groq key");
@@ -63,6 +69,7 @@ export async function groqChat(a: ChatArgs): Promise<string> {
   return chat("https://api.groq.com/openai/v1/chat/completions", key, model, a);
 }
 export async function openaiChat(a: ChatArgs): Promise<string> {
+  if (!openaiEnabled()) throw new Error("OpenAI disabled (billing hard limit) — set OPENAI_ENABLED=1 once billing is sorted");
   const key = openaiKey(); if (!key) throw new Error("no openai key");
   const model = env("OPENAI_MODEL") ?? "gpt-4o-mini";
   return chat("https://api.openai.com/v1/chat/completions", key, model, a);

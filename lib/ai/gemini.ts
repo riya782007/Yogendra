@@ -47,7 +47,8 @@ function openaiKeyPresent(): boolean {
  *  image generation. When OpenAI billing is sorted, set OPENAI_IMAGES_ENABLED=1 in Vercel env to
  *  restore the automatic fallback — no code change needed. */
 function openaiFallbackEnabled(): boolean {
-  return (process.env.OPENAI_IMAGES_ENABLED ?? "").trim() === "1" && openaiKeyPresent();
+  const on = (v?: string) => (v ?? "").trim() === "1";
+  return (on(process.env.OPENAI_IMAGES_ENABLED) || on(process.env.OPENAI_ENABLED)) && openaiKeyPresent();
 }
 
 /** True if EITHER provider can generate images (Gemini primary, OpenAI fallback). */

@@ -5,7 +5,7 @@
  */
 import "server-only";
 import { AiGateway, z } from "./gateway";
-import { groqChat, openaiChat, groqConfigured, openaiConfigured } from "./providers";
+import { groqChat, openaiChat, geminiChat, groqConfigured, openaiConfigured, geminiTextConfigured } from "./providers";
 import { templateContent, type GeneratedContent, type ProductLike } from "../content";
 
 const schema = z.object({
@@ -70,10 +70,10 @@ export function buildGateway() {
   // Groq is a free secondary if present; deterministic template is the always-there final hop.
   return new AiGateway({
     primary: {
-      name: "openai",
-      // OpenAI is vision-capable (gpt-4o-mini), so when the owner's product photo is present we
-      // attach it — the model reads the piece off the image, not just the typed text.
-      run: async (call: any) => JSON.parse(await openaiChat({
+      name: openaiConfigured() ? "openai" : "gemini",
+      // Vision-capable primary: OpenAI (gpt-4o-mini) when enabled, otherwise Gemini — both read the
+      // owner's product photo. Gemini carries titles while OpenAI billing is capped.
+      run: async (call: any) => JSON.parse(await (openaiConfigured() ? openaiChat : geminiChat)({
         system: "You are BlytheDIVA's product copywriter. Return only valid minified JSON.",
         user: call._prompt, json: true,
         imageBase64: call._product?.imageBase64, imageMime: call._product?.imageMime,
