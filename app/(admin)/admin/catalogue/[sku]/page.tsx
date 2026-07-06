@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
+import { ProductHistoryLedger } from "@/components/admin/ProductHistoryLedger";
 import {
   getProductBySku, getCategories, getPricingFormula, getSubcategories, getStyles,
   getProductSalesStats, getStockHistory, getProductEstimates, getVariantOptions, getLabels, getColorCodeMap,
@@ -415,26 +416,10 @@ export default async function ProductPage({ params, searchParams }: { params: { 
         <div className={card}><p className="text-xs uppercase tracking-wide text-muted">Photos</p><p className="text-xl font-semibold text-ink mt-1">{photoCount}</p></div>
       </div>
       <div className={card}>
-        <h3 className="font-medium text-ink mb-3">Stock movements</h3>
-        {history.length === 0 ? <p className="text-sm text-muted">No stock adjustments recorded yet.</p> : (
-          <ul className="divide-y divide-sand/60">
-            {history.map((h, i) => (
-              <li key={i} className="py-2.5 flex items-center justify-between gap-3 text-sm">
-                <span className={`font-medium tabular-nums ${h.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{h.delta > 0 ? "+" : ""}{h.delta}</span>
-                <span className="flex-1 text-ink truncate">
-                  {h.kind && <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded mr-1.5 ${h.kind === "damage" ? "bg-rose/10 text-rose" : h.kind === "purchase" ? "bg-emerald-mist text-emerald-dark" : h.kind === "sale" ? "bg-gold/15 text-gold-dark" : "bg-cream text-muted"}`}>{h.kind}</span>}
-                  {h.source ?? "Adjustment"}{h.reason ? <span className="text-muted"> — {h.reason}</span> : null}
-                </span>
-                {(h as any).ref_id && (h.kind === "sale" || h.kind === "purchase") ? (
-                  <Link href={h.kind === "sale" ? `/admin/invoice/${(h as any).ref_id}` : `/admin/purchase/${(h as any).ref_id}`} className="text-emerald nav-link whitespace-nowrap text-xs">
-                    {h.kind === "sale" ? "View bill →" : "View purchase →"}
-                  </Link>
-                ) : null}
-                <span className="text-muted whitespace-nowrap">{timeAgo(h.created_at)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
+        {/* Shared movement history (same engine as the Stock Ledger drawer): every sale, purchase,
+            adjustment AND estimate — each with date, party, VARIANT COLOUR, qty, unit price and its
+            bill/estimate link. Replaces the old plain list that showed none of that. */}
+        <ProductHistoryLedger productId={p.id} />
       </div>
       {estReservations.length > 0 && (
         <div className={card}>
