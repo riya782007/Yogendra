@@ -155,15 +155,19 @@ export function POSClient({ products, customers = [], methods = [], employees = 
   function setLineDisc(sku: string, val: string) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, disc: val } : l)); }
   function rm(sku: string) { setLines((p) => p.filter((l) => l.sku !== sku)); }
 
-  /** One box for scan + search: Enter adds the exact SKU match, else the first result. */
+  /** One box for scan + search. Enter adds ONLY a safe match:
+   *  1) the EXACT SKU, else 2) the single result when exactly one matches.
+   *  It never grabs "the first of many" — a scanner misread (e.g. KN10…) must NOT silently
+   *  bill some other design that merely contains the same letters (the CCKN9582 bug). */
   function submitSearch() {
     const code = q.trim();
     if (!code) return;
     const exact = products.find((x) => x.sku.toLowerCase() === code.toLowerCase());
-    const p = exact ?? matches[0];
-    if (p) { addLine(p); setScanMsg({ text: `✓ ${p.name} · ${p.qty} in stock${p.qty <= 0 ? " (OUT)" : ""}`, ok: p.qty > 0 }); }
-    else setScanMsg({ text: `✕ No product “${code}”`, ok: false });
-    setQ(""); searchRef.current?.focus();
+    const p = exact ?? (matches.length === 1 ? matches[0] : undefined);
+    if (p) { addLine(p); setScanMsg({ text: `✓ ${p.name} · ${p.qty} in stock${p.qty <= 0 ? " (OUT)" : ""}`, ok: p.qty > 0 }); setQ(""); }
+    else if (matches.length > 1) { setScanMsg({ text: `✕ “${code}” is not an exact SKU — ${matches.length} similar items, pick one from the list`, ok: false }); }
+    else { setScanMsg({ text: `✕ No product “${code}” — check the label/SKU`, ok: false }); setQ(""); }
+    searchRef.current?.focus();
   }
 
   async function complete() {

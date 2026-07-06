@@ -146,17 +146,20 @@ export function BarcodeSheet({ products }: { products: P[] }) {
   // e.g. retail 229, wholesale 120 -> "229.51" + "23" + "71207" = "229.512371207".
   // The fixed "23" is STRUCTURAL glue in the code — it always sits between the retail part and the
   // cost code whenever both are shown, independent of the "Show Special Price" display toggle.
+  // Non-breaking spaces so the gaps actually PRINT (HTML collapses normal runs of spaces):
+  // wide gap after retail, single gap before the 7…7 cost code → e.g. "329.51   23 71907".
+  const GAP_WIDE = "\u00A0\u00A0\u00A0";
+  const GAP = "\u00A0";
   const priceLine = (r: Row) => {
     const retail = opts.price ? codeRetail(r.price) : "";
     const whole = opts.wholesale ? codeWholesale(r.wholesale) : "";
     const special = (r.special.trim() || SPECIAL_FIXED);
-    // Both segments shown → embed the special connector between them (the owner's masked tag).
-    if (retail && whole) return retail + special + whole;
-    // Only one segment (or the explicit Show-Special toggle) → fall back gracefully.
-    let out = retail;
-    if (opts.special) out += special;
-    out += whole;
-    return out;
+    // Both segments shown → retail, special connector, cost code — visibly separated for quick
+    // reading at the counter while staying one line on the label.
+    if (retail && whole) return retail + GAP_WIDE + special + GAP + whole;
+    // Only one segment (or the explicit Show-Special toggle) → same separators, graceful.
+    const parts = [retail, opts.special ? special : "", whole].filter(Boolean);
+    return parts.join(GAP_WIDE);
   };
 
   return (
