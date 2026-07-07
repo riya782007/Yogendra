@@ -1281,8 +1281,25 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     doc: { href: `/admin/estimate/${r.estimate.id}`, label: "Open estimate →" },
   }));
 
-  // Combined newest-first timeline (real movements + estimate holds), sliced for lazy pagination.
-  const timeline = [...realDisplay, ...holdDisplay]
+  // HONEST BASELINE: if the real stock (products.qty) differs from the sum of every logged
+  // movement, that residual used to hide inside the first row's balance (an Opening of +21 would
+  // mysteriously show "→ 23"). Surface it as an explicit OLDEST row instead, so the owner sees
+  // exactly where stock existed without a logged movement (e.g. a direct stock edit / pre-ledger
+  // count) and every row's before → change → after chains transparently.
+  const residual = currentStock - deltaSum;
+  const baselineRow: LedgerMovement[] = residual !== 0 && allRows.length > 0 ? [{
+    id: "baseline",
+    kind: "adjustment", delta: residual, runningBalance: residual,
+    source: "Baseline", created_by: null, ref_id: null,
+    reason: residual > 0
+      ? `${residual} pc${residual === 1 ? "" : "s"} existed before/outside the logged movements (direct stock edit or pre-ledger count)`
+      : `${Math.abs(residual)} pc${residual === -1 ? "" : "s"} left stock without a logged movement (direct stock edit)`,
+    created_at: new Date(new Date(allRows[0].created_at).getTime() - 1000).toISOString(),
+    invoice_no: null, party: null, hold: false, variant: null, price: null, doc: null,
+  }] : [];
+
+  // Combined newest-first timeline (real movements + estimate holds + baseline), sliced for lazy pagination.
+  const timeline = [...realDisplay, ...holdDisplay, ...baselineRow]
     .sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0));
   const totalMovements = timeline.length;
   const movements: LedgerMovement[] = timeline.slice(offset, offset + limit);

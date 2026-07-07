@@ -41,6 +41,7 @@ const day = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "2
 const time = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
 
 const KIND_STYLE: Record<string, string> = {
+  baseline: "bg-cream text-muted",
   sale: "bg-gold/15 text-gold-dark", purchase: "bg-emerald-mist text-emerald-dark",
   damage: "bg-rose/10 text-rose", opening: "bg-blue-100 text-blue-700",
   adjustment: "bg-cream text-muted", estimate: "bg-gold/10 text-gold-dark",
@@ -111,8 +112,8 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
   }, [filtered]);
 
   function exportCsv() {
-    const head = ["Date", "Time", "Type", "Change", "Balance", "Unit Price", "Invoice/Bill", "Party", "Reference", "By", "Note"];
-    const lines = rows.map((r) => [day(r.created_at), time(r.created_at), r.kind, r.delta, r.hold ? "reserved" : (r.runningBalance ?? ""),
+    const head = ["Date", "Time", "Type", "Before", "Change", "Balance", "Unit Price", "Invoice/Bill", "Party", "Reference", "By", "Note"];
+    const lines = rows.map((r) => [day(r.created_at), time(r.created_at), r.kind, r.hold ? "" : ((r.runningBalance ?? 0) - r.delta), r.delta, r.hold ? "reserved" : (r.runningBalance ?? ""),
       r.price != null ? (r.price / 100).toFixed(2) : "",
       r.invoice_no ?? "", r.party ?? "", r.ref_id ?? "", r.created_by ?? "", (r.reason ?? r.source ?? "").replace(/[\n,]/g, " ")]);
     const csv = [head, ...lines].map((row) => row.map((c) => `"${String(c)}"`).join(",")).join("\n");
@@ -257,7 +258,10 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
                         ) : (
                           <>
                             <span className={`font-semibold tabular-nums ${r.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{r.delta > 0 ? "+" : ""}{r.delta}</span>
-                            <span className="text-xs text-muted tabular-nums w-14 text-right">→ {r.runningBalance}</span>
+                            {/* Lucid balance trail: what it WAS → what happened → what it IS now. */}
+                            <span className="text-xs text-muted tabular-nums w-20 text-right whitespace-nowrap" title={`Was ${(r.runningBalance ?? 0) - r.delta}, ${r.delta > 0 ? "added" : "removed"} ${Math.abs(r.delta)}, now ${r.runningBalance}`}>
+                              {(r.runningBalance ?? 0) - r.delta} → <b className="text-ink">{r.runningBalance}</b>
+                            </span>
                           </>
                         )}
                       </div>
