@@ -5,20 +5,22 @@ export const dynamic = "force-dynamic";
  * money value (credit note to customer / debit note to supplier).
  */
 import Link from "next/link";
-import { getRecentOrders, getReturnsDetailed } from "@/lib/supabase/queries";
+import { getRecentOrders, getRecentPurchases, getReturnsDetailed } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { ReturnClient } from "@/components/admin/ReturnClient";
+import { PurchaseReturnClient } from "@/components/admin/PurchaseReturnClient";
 
 export const metadata = { title: "Owner Console · Returns" };
 
 export default async function Returns() {
-  const [orders, returns] = await Promise.all([getRecentOrders(12), getReturnsDetailed(40)]);
+  const [orders, purchases, returns] = await Promise.all([getRecentOrders(12), getRecentPurchases(), getReturnsDetailed(40)]);
   return (
     <main className="p-8 bg-cream/40 min-h-screen max-w-5xl">
       <h1 className="font-display text-4xl text-ink mb-1">Returns — Sales &amp; Purchases</h1>
       <p className="text-sm text-muted mb-2">Sales returns credit the customer and restock the exact colour; purchase returns send goods back to the supplier as a debit note. Every movement is capped per bill — the same pieces can never be returned twice.</p>
-      <p className="text-xs text-gold-dark bg-gold/10 rounded-lg px-3 py-2 mb-4 inline-block">Staff-created sales returns go to Approvals for the owner&apos;s OTP. Purchase returns are recorded on the purchase bill itself — open <Link href="/admin/purchases" className="underline">Purchases</Link> → the bill → <b>↩ Return to supplier</b>. Sales returns can also start from any bill row on <Link href="/admin/sales" className="underline">Sales Records</Link>.</p>
+      <p className="text-xs text-gold-dark bg-gold/10 rounded-lg px-3 py-2 mb-4 inline-block">Staff-created sales returns go to Approvals for the owner&apos;s OTP. Purchase returns can be recorded right below, or from any purchase bill (<b>↩ Return to supplier</b>). Sales returns can also start from any bill row on <Link href="/admin/sales" className="underline">Sales Records</Link>.</p>
       <ReturnClient orders={orders as any} />
+      <PurchaseReturnClient purchases={purchases as any} />
 
       <h2 className="font-medium text-ink mb-3">Recent returns · sales &amp; purchase</h2>
       <div className="overflow-x-auto rounded-2xl border border-sand bg-white shadow-card">

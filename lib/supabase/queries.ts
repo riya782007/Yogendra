@@ -1167,18 +1167,21 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   const { data: varRows } = await sb.from("variants").select("id,sku,color,qty").eq("product_id", productId);
   const variantById = new Map<string, { id: string; sku: string; color: string | null; qty: number }>();
   for (const v of ((varRows as any[]) ?? [])) variantById.set(v.id, { id: v.id, sku: v.sku, color: v.color ?? null, qty: v.qty ?? 0 });
-  const vAgg = new Map<string, { purchased: number; sold: number; net: number }>();
+  const vAgg = new Map<string, { purchased: number; sold: number; returned: number; net: number }>();
   for (const r of allRows) {
     if (!r.variant_id) continue;
-    const a2 = vAgg.get(r.variant_id) ?? { purchased: 0, sold: 0, net: 0 };
+    const a2 = vAgg.get(r.variant_id) ?? { purchased: 0, sold: 0, returned: 0, net: 0 };
     const d = r.delta ?? 0;
     if (r.kind === "purchase") a2.purchased += Math.max(0, d);
     if (r.kind === "sale") a2.sold += Math.abs(Math.min(0, d));
+    // Returns are part of every colour's story: customer returns come back IN (+), supplier
+    // returns go OUT (−) — the client's "variant ledger" must show them, not just the totals.
+    if (r.kind === "return" || r.kind === "purchase_return") a2.returned += Math.abs(d);
     a2.net += d;
     vAgg.set(r.variant_id, a2);
   }
   const variants = [...variantById.values()]
-    .map((v) => ({ ...v, purchased: vAgg.get(v.id)?.purchased ?? 0, sold: vAgg.get(v.id)?.sold ?? 0, net: vAgg.get(v.id)?.net ?? 0 }))
+    .map((v) => ({ ...v, purchased: vAgg.get(v.id)?.purchased ?? 0, sold: vAgg.get(v.id)?.sold ?? 0, returned: vAgg.get(v.id)?.returned ?? 0, net: vAgg.get(v.id)?.net ?? 0 }))
     .sort((a, b) => (a.color ?? "").localeCompare(b.color ?? ""));
 
   // Running balance is ANCHORED to the actual on-hand stock (products.qty — the source of truth that

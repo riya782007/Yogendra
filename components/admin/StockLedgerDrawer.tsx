@@ -204,7 +204,7 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
                     <button key={v.id} onClick={() => setColour((c) => (c === (v.color ?? "") ? "" : (v.color ?? "")))}
                       className={`rounded-lg border p-2 text-left ${colour === (v.color ?? "") && colour !== "" ? "border-emerald ring-1 ring-emerald/40" : "border-sand hover:border-gold"}`}>
                       <p className="text-[11px] font-medium text-ink truncate">{v.color ?? "—"} <span className="font-mono text-[9px] text-muted">{v.sku}</span></p>
-                      <p className="text-[10px] text-muted">Stock <b className={v.qty <= 2 ? "text-rose" : "text-ink"}>{v.qty}</b> · sold {v.sold} · bought {v.purchased}</p>
+                      <p className="text-[10px] text-muted">Stock <b className={v.qty <= 2 ? "text-rose" : "text-ink"}>{v.qty}</b> · sold {v.sold} · bought {v.purchased}{(v as any).returned > 0 ? ` · ret ${(v as any).returned}` : ""}</p>
                     </button>
                   ))}
                 </div>

@@ -9,7 +9,7 @@ import { useRouter } from "next/navigation";
 import { formatPaise } from "@/lib/pricing";
 import { fetchPurchaseForReturnAction, recordPurchaseReturnAction } from "@/app/actions/purchases";
 
-type Item = { productId: string; variantId: string | null; name: string; sku: string; color: string | null; qty: number; returned: number; returnable: number; unitCost: number };
+type Item = { productId: string; variantId: string | null; name: string; sku: string; color: string | null; qty: number; returned: number; returnable: number; unitCost: number; backorderQty?: number };
 const key = (it: Item) => `${it.productId}::${it.variantId ?? ""}`;
 
 export function PurchaseReturnButton({ purchaseId, billNo }: { purchaseId: string; billNo?: string | null }) {
@@ -75,6 +75,7 @@ export function PurchaseReturnButton({ purchaseId, billNo }: { purchaseId: strin
                           <span className="flex-1 min-w-0 truncate">
                             {it.name}{it.color ? <span className="text-ink"> · {it.color}</span> : ""}
                             <span className="text-muted"> · {it.sku} · bought {it.qty} @ {formatPaise(it.unitCost)}{it.returned > 0 ? ` · ${it.returned} returned` : ""}</span>
+                            {(it.backorderQty ?? 0) > 0 && <span className="ml-2 px-1.5 py-0.5 rounded-full text-[10px] bg-gold/15 text-gold-dark whitespace-nowrap" title="Open backorders still need these pieces — fulfil them before sending stock back">⚠ {it.backorderQty} needed by open backorders</span>}
                           </span>
                           {closed ? (
                             <span className="text-[11px] text-emerald-dark whitespace-nowrap">✓ fully returned</span>

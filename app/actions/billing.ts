@@ -277,7 +277,9 @@ export async function recordReturnAction(input: { orderId: string; reason: strin
   const p_items = input.items.map((i) => ({ product_id: i.product_id, qty: i.qty, variant_id: i.variantSku ? (vBySku.get(i.variantSku.toUpperCase()) ?? null) : null }));
   const { data, error } = await sb.rpc("record_sales_return", { p_order_id: input.orderId, p_reason: input.reason, p_items });
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/admin/returns"); revalidatePath("/admin/dashboard");
+  revalidatePath("/admin/returns"); revalidatePath("/admin/dashboard"); revalidatePath("/admin/sales");
+  revalidatePath("/admin/stock-movements"); revalidatePath("/admin/catalogue"); revalidatePath("/admin/inventory");
+  revalidatePath("/admin/creditors"); revalidatePath("/shop"); revalidatePath("/admin/customers");
   return { ok: true, qty: (data as any)?.qty };
 }
 
