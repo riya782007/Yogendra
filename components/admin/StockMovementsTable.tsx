@@ -21,12 +21,13 @@ const KIND_STYLE: Record<string, string> = {
   sale: "bg-gold/15 text-gold-dark", purchase: "bg-emerald-mist text-emerald-dark",
   damage: "bg-rose/10 text-rose", opening: "bg-blue-100 text-blue-700",
   adjustment: "bg-cream text-muted", estimate: "bg-gold/10 text-gold-dark",
+  return: "bg-blue-50 text-blue-700", purchase_return: "bg-wine/10 text-wine",
 };
 
 function docFor(r: Row): { href: string; label: string } | null {
   if (!r.ref_id) return null;
-  if (r.kind === "sale") return { href: `/admin/invoice/${r.ref_id}`, label: "View bill →" };
-  if (r.kind === "purchase") return { href: `/admin/purchase/${r.ref_id}`, label: "View purchase →" };
+  if (r.kind === "sale" || r.kind === "return") return { href: `/admin/invoice/${r.ref_id}`, label: r.kind === "return" ? "View original bill →" : "View bill →" };
+  if (r.kind === "purchase" || r.kind === "purchase_return") return { href: `/admin/purchase/${r.ref_id}`, label: r.kind === "purchase_return" ? "View original purchase →" : "View purchase →" };
   if (r.kind === "estimate") return { href: `/admin/estimate/${r.ref_id}`, label: "View estimate →" };
   return null;
 }

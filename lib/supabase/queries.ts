@@ -1041,16 +1041,17 @@ export async function getStockMovements(opts: { page?: number; pageSize?: number
   // Attach the bill/invoice number to each sale row (ref_id → orders.invoice_no). ref_id is a
   // generic reference (orders/purchases/estimates), not a PostgREST FK, so we look it up in one
   // extra query and map it back rather than embedding.
-  const saleRefs = [...new Set(rows.filter((r) => r.kind === "sale" && r.ref_id).map((r) => r.ref_id))];
-  const purchaseRefs = [...new Set(rows.filter((r) => r.kind === "purchase" && r.ref_id).map((r) => r.ref_id))];
+  // Customer returns reference the ORDER; purchase returns reference the PURCHASE — both need
+  // their party and rate resolved just like plain sales/purchases (the owner traces returns too).
+  const saleRefs = [...new Set(rows.filter((r) => (r.kind === "sale" || r.kind === "return") && r.ref_id).map((r) => r.ref_id))];
+  const purchaseRefs = [...new Set(rows.filter((r) => (r.kind === "purchase" || r.kind === "purchase_return") && r.ref_id).map((r) => r.ref_id))];
   const estimateRefs = [...new Set(rows.filter((r) => r.kind === "estimate" && r.ref_id).map((r) => r.ref_id))];
-  // party = the person/firm involved (customer on a sale/estimate, supplier on a purchase). The owner
-  // needs this to trace "who did I sell/buy this to/from" months later.
+  // party = the person/firm involved (customer on a sale/estimate/return, supplier on a purchase).
   const partyBy = new Map<string, string>();
   if (saleRefs.length) {
     const { data: ords } = await sb.from("orders").select("id,invoice_no,customer_name").in("id", saleRefs as string[]);
     const byId = new Map(((ords as any[]) ?? []).map((o) => [o.id, o]));
-    for (const r of rows) if (r.kind === "sale" && r.ref_id) { const o = byId.get(r.ref_id); r.invoice_no = o?.invoice_no ?? null; if (o?.customer_name) partyBy.set(r.ref_id, o.customer_name); }
+    for (const r of rows) if ((r.kind === "sale" || r.kind === "return") && r.ref_id) { const o = byId.get(r.ref_id); r.invoice_no = o?.invoice_no ?? null; if (o?.customer_name) partyBy.set(r.ref_id, o.customer_name); }
   }
   if (purchaseRefs.length) {
     const { data: purs } = await sb.from("purchases").select("id, supplier:suppliers(name)").in("id", purchaseRefs as string[]);
@@ -1215,8 +1216,8 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   }
 
   // --- related documents (batch lookups) ---
-  const saleRefs = [...new Set(allRows.filter((r) => r.kind === "sale" && r.ref_id).map((r) => r.ref_id))];
-  const purchaseRefs = [...new Set(allRows.filter((r) => r.kind === "purchase" && r.ref_id).map((r) => r.ref_id))];
+  const saleRefs = [...new Set(allRows.filter((r) => (r.kind === "sale" || r.kind === "return") && r.ref_id).map((r) => r.ref_id))];
+  const purchaseRefs = [...new Set(allRows.filter((r) => (r.kind === "purchase" || r.kind === "purchase_return") && r.ref_id).map((r) => r.ref_id))];
   const estimateRefs = [...new Set(allRows.filter((r) => r.kind === "estimate" && r.ref_id).map((r) => r.ref_id))];
   const invoiceBy = new Map<string, string>();
   const billBy = new Map<string, string>();

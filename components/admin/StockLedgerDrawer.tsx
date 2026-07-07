@@ -42,6 +42,7 @@ const day = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "2
 const time = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
 
 const KIND_STYLE: Record<string, string> = {
+  purchase_return: "bg-wine/10 text-wine",
   baseline: "bg-cream text-muted",
   sale: "bg-gold/15 text-gold-dark", purchase: "bg-emerald-mist text-emerald-dark",
   damage: "bg-rose/10 text-rose", opening: "bg-blue-100 text-blue-700",
