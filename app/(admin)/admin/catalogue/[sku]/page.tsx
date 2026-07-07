@@ -15,7 +15,7 @@ import VariantAiPhoto from "@/components/admin/VariantAiPhoto";
 import { requirePerm, getSession, can } from "@/lib/auth";
 import { addVariantAction, updateVariantAction, deleteVariantAction } from "@/app/actions/variants";
 import { VariantPhotos } from "@/components/admin/VariantPhotos";
-import { setProductVisibilityAction, moveProductToSubcategoryAction, moveProductToStyleAction, savePricingAction, setWholesaleOnlyAction, toggleProductLabelAction } from "@/app/actions/catalog";
+import { setProductVisibilityAction, moveProductToSubcategoryAction, moveProductToStyleAction, savePricingAction, setWholesaleOnlyAction, toggleProductLabelAction, setDefaultVariantFormAction } from "@/app/actions/catalog";
 
 const LABEL_CHIP: Record<string, string> = {
   emerald: "bg-emerald-mist text-emerald-dark", gold: "bg-gold/15 text-gold-dark",
@@ -263,8 +263,19 @@ export default async function ProductPage({ params, searchParams }: { params: { 
               ].filter(Boolean).join("-")}`
             : null;
           const needsNormalise = !!canonicalSku && canonicalSku !== v.sku;
+          const isDefault = (p as any).default_variant_id === v.id;
           return (
-            <div key={v.id} className="rounded-xl border border-sand/70 p-3">
+            <div key={v.id} className={`rounded-xl border p-3 ${isDefault ? "border-gold bg-gold/5" : "border-sand/70"}`}>
+              {/* DEFAULT VARIANT — which colour customers see FIRST on the storefront (pre-selected,
+                  its photo leads the gallery). One star per product; tap to move it. */}
+              <form action={setDefaultVariantFormAction} className="inline-flex items-center gap-1.5 mb-1.5">
+                <input type="hidden" name="product_id" value={(p as any).id} />
+                <input type="hidden" name="variant_id" value={isDefault ? "" : v.id} />
+                <input type="hidden" name="sku" value={p.sku} />
+                <button title={isDefault ? "This colour opens first on the storefront (tap to clear)" : "Make this the colour customers see first on the storefront"}
+                  className={`text-base leading-none ${isDefault ? "text-gold-dark" : "text-sand hover:text-gold-dark"}`}>★</button>
+                <span className={`text-[10px] ${isDefault ? "text-gold-dark font-medium" : "text-muted"}`}>{isDefault ? "Default on storefront" : "Set as storefront default"}</span>
+              </form>
               <form action={updateVariantAction} className="flex flex-wrap items-end gap-2">
                 <input type="hidden" name="id" value={v.id} />
                 <input type="hidden" name="product_sku" value={p.sku} />

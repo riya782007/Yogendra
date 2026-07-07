@@ -35,6 +35,16 @@ export async function setDefaultVariantAction(productId: string, variantId: stri
   return { ok: true };
 }
 
+/** Form wrapper for the catalogue page's ★ control (server component → plain <form action>). */
+export async function setDefaultVariantFormAction(formData: FormData): Promise<void> {
+  const productId = String(formData.get("product_id") ?? "").trim();
+  const variantId = String(formData.get("variant_id") ?? "").trim() || null;
+  const sku = String(formData.get("sku") ?? "").trim();
+  if (!productId) return;
+  await setDefaultVariantAction(productId, variantId);
+  if (sku) revalidatePath(`/admin/catalogue/${sku}`);
+}
+
 export async function deleteCategoryAction(id: string): Promise<{ ok: boolean; moved?: number; error?: string }> {
   if (!(await requirePerm("catalog.edit"))) return { ok: false, error: "Your role can't edit the catalogue." };
   id = (id ?? "").trim();
