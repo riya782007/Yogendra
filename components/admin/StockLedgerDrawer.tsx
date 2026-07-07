@@ -17,6 +17,7 @@ type Movement = {
   hold?: boolean;
   variant?: { color: string | null; sku: string | null } | null;
   price?: number | null;
+  variantBalance?: number | null;
   doc: { href: string; label: string } | null;
 };
 type VariantSummary = { id: string; sku: string; color: string | null; qty: number; purchased: number; sold: number; net: number };
@@ -112,8 +113,9 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
   }, [filtered]);
 
   function exportCsv() {
-    const head = ["Date", "Time", "Type", "Before", "Change", "Balance", "Unit Price", "Invoice/Bill", "Party", "Reference", "By", "Note"];
+    const head = ["Date", "Time", "Type", "Before", "Change", "Balance", "Colour", "Colour Balance", "Unit Price", "Invoice/Bill", "Party", "Reference", "By", "Note"];
     const lines = rows.map((r) => [day(r.created_at), time(r.created_at), r.kind, r.hold ? "" : ((r.runningBalance ?? 0) - r.delta), r.delta, r.hold ? "reserved" : (r.runningBalance ?? ""),
+      r.variant?.color ?? "", r.variantBalance ?? "",
       r.price != null ? (r.price / 100).toFixed(2) : "",
       r.invoice_no ?? "", r.party ?? "", r.ref_id ?? "", r.created_by ?? "", (r.reason ?? r.source ?? "").replace(/[\n,]/g, " ")]);
     const csv = [head, ...lines].map((row) => row.map((c) => `"${String(c)}"`).join(",")).join("\n");
@@ -235,7 +237,9 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
                 <div key={d}>
                   <div className="flex items-center justify-between mb-1.5">
                     <p className="text-xs font-semibold text-ink">{d}</p>
-                    <p className="text-[11px] text-muted">Closing balance <b className="text-ink">{items.find((x) => x.runningBalance != null)?.runningBalance ?? "—"}</b></p>
+                    <p className="text-[11px] text-muted">Closing {colour ? `${colour} stock` : "balance"} <b className="text-ink">{colour
+                      ? (items.find((x) => x.variantBalance != null)?.variantBalance ?? "—")
+                      : (items.find((x) => x.runningBalance != null)?.runningBalance ?? "—")}</b></p>
                   </div>
                   <div className="rounded-xl border border-sand bg-white divide-y divide-sand/60">
                     {items.map((r) => (
@@ -258,10 +262,17 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
                         ) : (
                           <>
                             <span className={`font-semibold tabular-nums ${r.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{r.delta > 0 ? "+" : ""}{r.delta}</span>
-                            {/* Lucid balance trail: what it WAS → what happened → what it IS now. */}
-                            <span className="text-xs text-muted tabular-nums w-20 text-right whitespace-nowrap" title={`Was ${(r.runningBalance ?? 0) - r.delta}, ${r.delta > 0 ? "added" : "removed"} ${Math.abs(r.delta)}, now ${r.runningBalance}`}>
-                              {(r.runningBalance ?? 0) - r.delta} → <b className="text-ink">{r.runningBalance}</b>
-                            </span>
+                            {/* Lucid balance trail: what it WAS → what happened → what it IS now.
+                                With a colour filter on, the trail is that COLOUR's own stock chain. */}
+                            {(() => {
+                              const bal = colour ? (r.variantBalance ?? null) : (r.runningBalance ?? null);
+                              if (bal == null) return <span className="text-xs text-muted w-20 text-right">—</span>;
+                              return (
+                                <span className="text-xs text-muted tabular-nums w-20 text-right whitespace-nowrap" title={`${colour ? `${colour} stock` : "Stock"} was ${bal - r.delta}, ${r.delta > 0 ? "added" : "removed"} ${Math.abs(r.delta)}, now ${bal}`}>
+                                  {bal - r.delta} → <b className="text-ink">{bal}</b>
+                                </span>
+                              );
+                            })()}
                           </>
                         )}
                       </div>

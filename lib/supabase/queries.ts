@@ -1131,6 +1131,8 @@ export type LedgerMovement = {
   variant?: { color: string | null; sku: string | null } | null;
   /** Unit price of this movement (paise): sale/estimate = billed rate, purchase = unit cost. */
   price?: number | null;
+  /** Running balance of THIS movement's variant (colour) — anchored to the variant's own stock. */
+  variantBalance?: number | null;
   doc: { href: string; label: string } | null;
 };
 
@@ -1197,6 +1199,20 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     allRows[i].runningBalance = running;
     running -= allRows[i].delta ?? 0;
   }
+  // PER-COLOUR running balance (client: "a Pink +10 must show Pink's 10, not the product's 30"):
+  // each variant's chain is anchored to ITS OWN current stock and walked backwards through only
+  // its movements. Shown in the drawer whenever a colour filter is active.
+  {
+    const vRun = new Map<string, number>();
+    for (const [vid, v] of variantById) vRun.set(vid, v.qty ?? 0);
+    for (let i = allRows.length - 1; i >= 0; i--) {
+      const vid = allRows[i].variant_id;
+      if (!vid || !vRun.has(vid)) { allRows[i].variantBalance = null; continue; }
+      const bal = vRun.get(vid)!;
+      allRows[i].variantBalance = bal;
+      vRun.set(vid, bal - (allRows[i].delta ?? 0));
+    }
+  }
 
   // --- related documents (batch lookups) ---
   const saleRefs = [...new Set(allRows.filter((r) => r.kind === "sale" && r.ref_id).map((r) => r.ref_id))];
@@ -1257,7 +1273,8 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   }
 
   // Real stock movements → display rows (carry the anchored running balance).
-  const realDisplay: LedgerMovement[] = allRows.map((r) => ({
+  const realDisplay: (LedgerMovement & { _seq?: number })[] = allRows.map((r, _i) => ({
+    _seq: _i,
     id: r.id, kind: r.kind ?? "adjustment", delta: r.delta ?? 0, runningBalance: r.runningBalance ?? 0,
     source: r.source ?? null, reason: r.reason ?? null, created_by: r.created_by ?? r.source ?? null,
     ref_id: r.ref_id ?? null, created_at: r.created_at,
@@ -1266,6 +1283,7 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     hold: false,
     variant: r.variant_id ? { color: variantById.get(r.variant_id)?.color ?? null, sku: variantById.get(r.variant_id)?.sku ?? null } : null,
     price: r.ref_id ? (priceBy.get(priceKey(r.ref_id, r.variant_id ?? null)) ?? priceBy.get(priceKey(r.ref_id, null)) ?? null) : null,
+    variantBalance: (r.variantBalance as number | null) ?? null,
     doc: docFor(r),
   }));
   // Estimate holds → timeline rows. They do NOT change the running balance (soft commitment), so
@@ -1300,7 +1318,13 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
 
   // Combined newest-first timeline (real movements + estimate holds + baseline), sliced for lazy pagination.
   const timeline = [...realDisplay, ...holdDisplay, ...baselineRow]
-    .sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0));
+    .sort((a, b) => {
+      if (a.created_at < b.created_at) return 1;
+      if (a.created_at > b.created_at) return -1;
+      // Same instant (e.g. two lines of ONE bill): later ledger sequence stacks ON TOP, so the
+      // whole timeline reads newest-first uniformly and balances chain downwards without zig-zags.
+      return ((b as any)._seq ?? 0) - ((a as any)._seq ?? 0);
+    });
   const totalMovements = timeline.length;
   const movements: LedgerMovement[] = timeline.slice(offset, offset + limit);
 
