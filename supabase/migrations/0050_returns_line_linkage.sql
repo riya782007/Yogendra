@@ -1,0 +1,3 @@
+-- 0050 — applied live via MCP 2026-07-06: stock_adjustments.return_id uuid; both return RPCs
+-- (record_sales_return, record_purchase_return) stamp it so the Returns module shows the exact
+-- pieces + variant colours of every return.

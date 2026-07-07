@@ -1,30 +1,64 @@
 export const dynamic = "force-dynamic";
-import { getRecentOrders, getReturns } from "@/lib/supabase/queries";
+/**
+ * Returns — SALES and PURCHASE returns in ONE register (client request), each row showing the
+ * bill it was made against, the party, every returned piece WITH its variant colour, and the
+ * money value (credit note to customer / debit note to supplier).
+ */
+import Link from "next/link";
+import { getRecentOrders, getReturnsDetailed } from "@/lib/supabase/queries";
+import { formatPaise } from "@/lib/pricing";
 import { ReturnClient } from "@/components/admin/ReturnClient";
 
 export const metadata = { title: "Owner Console · Returns" };
 
 export default async function Returns() {
-  const [orders, returns] = await Promise.all([getRecentOrders(12), getReturns()]);
+  const [orders, returns] = await Promise.all([getRecentOrders(12), getReturnsDetailed(40)]);
   return (
-    <main className="p-8 bg-cream/40 min-h-screen max-w-4xl">
-      <h1 className="font-display text-4xl text-ink mb-1">Sales Returns</h1>
-      <p className="text-sm text-muted mb-2">Capture a reason, restore stock, and keep an audit trail — books stay accurate.</p>
-      <p className="text-xs text-gold-dark bg-gold/10 rounded-lg px-3 py-2 mb-6 inline-block">Staff-created returns require owner approval — they're sent to the Approvals page and processed once the owner clears them with the OTP.</p>
+    <main className="p-8 bg-cream/40 min-h-screen max-w-5xl">
+      <h1 className="font-display text-4xl text-ink mb-1">Returns — Sales &amp; Purchases</h1>
+      <p className="text-sm text-muted mb-2">Sales returns credit the customer and restock the exact colour; purchase returns send goods back to the supplier as a debit note. Every movement is capped per bill — the same pieces can never be returned twice.</p>
+      <p className="text-xs text-gold-dark bg-gold/10 rounded-lg px-3 py-2 mb-4 inline-block">Staff-created sales returns go to Approvals for the owner&apos;s OTP. Purchase returns are recorded on the purchase bill itself — open <Link href="/admin/purchases" className="underline">Purchases</Link> → the bill → <b>↩ Return to supplier</b>. Sales returns can also start from any bill row on <Link href="/admin/sales" className="underline">Sales Records</Link>.</p>
       <ReturnClient orders={orders as any} />
 
-      <h2 className="font-medium text-ink mb-3">Recent returns</h2>
+      <h2 className="font-medium text-ink mb-3">Recent returns · sales &amp; purchase</h2>
       <div className="overflow-x-auto rounded-2xl border border-sand bg-white shadow-card">
         <table className="w-full text-sm">
-          <thead className="bg-cream text-muted text-left"><tr><th className="p-3">Ref</th><th className="p-3">Qty</th><th className="p-3">Reason</th><th className="p-3">When</th></tr></thead>
+          <thead className="bg-cream text-muted text-left"><tr>
+            <th className="p-3">Type</th><th className="p-3">Against bill</th><th className="p-3">Party</th>
+            <th className="p-3">Items · variant</th><th className="p-3 text-right">Qty</th>
+            <th className="p-3 text-right">Value</th><th className="p-3">Reason</th><th className="p-3">When</th>
+          </tr></thead>
           <tbody>
-            {returns.length === 0 && <tr><td colSpan={4} className="p-4 text-muted">No returns recorded.</td></tr>}
-            {returns.map((r: any) => (
-              <tr key={r.id} className="border-t border-sand/60">
-                <td className="p-3 text-muted">{String(r.id).slice(0, 8).toUpperCase()}</td>
-                <td className="p-3">{r.qty} pcs</td>
-                <td className="p-3 text-ink">{r.reason}</td>
-                <td className="p-3 text-muted">{new Date(r.created_at).toLocaleDateString("en-IN")}</td>
+            {returns.length === 0 && <tr><td colSpan={8} className="p-4 text-muted">No returns recorded.</td></tr>}
+            {returns.map((r) => (
+              <tr key={r.id} className="border-t border-sand/60 align-top">
+                <td className="p-3">
+                  <span className={`px-2 py-0.5 rounded-full text-xs whitespace-nowrap ${r.kind === "sales" ? "bg-gold/15 text-gold-dark" : "bg-blue-100 text-blue-700"}`}>
+                    {r.kind === "sales" ? "↩ Sales" : "⇤ Purchase"}
+                  </span>
+                </td>
+                <td className="p-3 whitespace-nowrap">
+                  {r.billHref ? <Link href={r.billHref} className="text-emerald nav-link font-medium">{r.billRef} ↗</Link> : <span className="text-muted">{r.billRef}</span>}
+                </td>
+                <td className="p-3 text-ink">{r.party}</td>
+                <td className="p-3 text-ink">
+                  {r.lines.length
+                    ? r.lines.map((l, i) => (
+                        <span key={i} className="inline-block mr-2 whitespace-nowrap">
+                          <span className="font-mono text-xs">{l.sku ?? "—"}</span>
+                          {l.color && <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-cream border border-sand text-ink">{l.color}</span>}
+                          <span className="text-muted"> ×{l.qty}</span>
+                        </span>
+                      ))
+                    : <span className="text-muted text-xs">—</span>}
+                </td>
+                <td className="p-3 text-right tabular-nums">{r.qty}</td>
+                <td className="p-3 text-right tabular-nums font-medium">
+                  {r.amount > 0 ? <span className={r.kind === "sales" ? "text-rose" : "text-emerald-dark"}>{formatPaise(r.amount)}</span> : <span className="text-muted">—</span>}
+                  {r.amount > 0 && <span className="block text-[10px] text-muted font-normal">{r.kind === "sales" ? "credit note" : "debit note"}</span>}
+                </td>
+                <td className="p-3 text-muted max-w-[180px] truncate">{r.reason ?? ""}</td>
+                <td className="p-3 text-muted whitespace-nowrap">{new Date(r.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" })}</td>
               </tr>
             ))}
           </tbody>

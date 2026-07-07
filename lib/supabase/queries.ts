@@ -1740,6 +1740,60 @@ export async function getReturns() {
   return (data as any[]) ?? [];
 }
 
+/** The Returns module's full picture — SALES and PURCHASE returns together, each with:
+ *  the bill it was made against (invoice / purchase bill, linkable), the party (customer /
+ *  supplier), the money value (credit or debit note), and EVERY line with its VARIANT colour.
+ *  Lines link via stock_adjustments.return_id (migration 0050); legacy rows (recorded before the
+ *  linkage existed) fall back to a ±20s window on the same bill so history still shows its items. */
+export async function getReturnsDetailed(limit = 40): Promise<{
+  id: string; kind: string; refId: string | null; billRef: string; billHref: string | null;
+  party: string; qty: number; amount: number; reason: string | null; created_at: string;
+  lines: { sku: string | null; color: string | null; qty: number }[];
+}[]> {
+  const sb = supabaseServer();
+  const { data } = await sb.from("returns")
+    .select("id,kind,ref_order_id,reason,qty,amount,created_at")
+    .order("created_at", { ascending: false }).limit(limit);
+  const rets = (data as any[]) ?? [];
+  if (!rets.length) return [];
+
+  const retIds = rets.map((r) => r.id);
+  const saleRefs = [...new Set(rets.filter((r) => r.kind === "sales" && r.ref_order_id).map((r) => r.ref_order_id))];
+  const purchRefs = [...new Set(rets.filter((r) => r.kind === "purchase" && r.ref_order_id).map((r) => r.ref_order_id))];
+  const allRefs = [...saleRefs, ...purchRefs];
+
+  const [{ data: moves }, { data: ords }, { data: purs }] = await Promise.all([
+    allRefs.length
+      ? sb.from("stock_adjustments").select("ref_id,return_id,sku,delta,created_at, variant:variants(color)")
+          .in("kind", ["return", "purchase_return"]).in("ref_id", allRefs)
+      : Promise.resolve({ data: [] as any[] }),
+    saleRefs.length ? sb.from("orders").select("id,invoice_no,customer_name").in("id", saleRefs) : Promise.resolve({ data: [] as any[] }),
+    purchRefs.length ? sb.from("purchases").select("id,bill_no, supplier:suppliers(name)").in("id", purchRefs) : Promise.resolve({ data: [] as any[] }),
+  ]);
+  const ordBy = new Map(((ords as any[]) ?? []).map((o) => [o.id, o]));
+  const purBy = new Map(((purs as any[]) ?? []).map((p) => [p.id, p]));
+  const allMoves = ((moves as any[]) ?? []);
+
+  return rets.map((r) => {
+    // Exact linkage first; legacy fallback = same bill within ±20s of the return record.
+    const t = new Date(r.created_at).getTime();
+    let mv = allMoves.filter((m) => m.return_id === r.id);
+    if (!mv.length) mv = allMoves.filter((m) => !m.return_id && m.ref_id === r.ref_order_id && Math.abs(new Date(m.created_at).getTime() - t) < 20000);
+    const lines = mv.map((m) => ({ sku: (m.sku as string | null) ?? null, color: (m.variant?.color as string | null) ?? null, qty: Math.abs(m.delta ?? 0) }));
+    const o = r.kind === "sales" ? ordBy.get(r.ref_order_id) : null;
+    const p = r.kind === "purchase" ? purBy.get(r.ref_order_id) : null;
+    return {
+      id: r.id as string, kind: r.kind as string, refId: (r.ref_order_id as string | null) ?? null,
+      billRef: (o?.invoice_no as string) || (p?.bill_no as string) || (r.ref_order_id ? String(r.ref_order_id).slice(0, 8).toUpperCase() : "—"),
+      billHref: r.ref_order_id ? (r.kind === "sales" ? `/admin/invoice/${r.ref_order_id}` : `/admin/purchase/${r.ref_order_id}`) : null,
+      party: (o?.customer_name as string) || (p?.supplier?.name as string) || "—",
+      qty: (r.qty as number) ?? 0, amount: (r.amount as number) ?? 0,
+      reason: (r.reason as string | null) ?? null, created_at: r.created_at as string,
+      lines,
+    };
+  });
+}
+
 // ---------- purchases ----------
 export async function getSuppliers() {
   const sb = supabaseServer();
