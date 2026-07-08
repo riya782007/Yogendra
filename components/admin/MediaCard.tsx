@@ -3,7 +3,6 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
 import { uploadProductImageAction, deleteProductImageAction, setHeroImageAction, uploadStorefrontPhotoAction } from "@/app/actions/media";
-import { getShotPromptAction } from "@/app/actions/studio";
 import { compressImage } from "@/lib/image";
 
 type Img = { id: string; path: string; kind: string | null; sort: number };
@@ -40,16 +39,9 @@ export function MediaCard({ p, geminiReady }: { p: P; geminiReady: boolean }) {
       setBusy("");
     }
   }
-  async function generate() {
-    setBusy("gen");
-    try {
-      const r = await getShotPromptAction({ productId: p.id, variantId: null, shotType: "model" });
-      if (r.ok && r.prompt) {
-        try { await navigator.clipboard.writeText(r.prompt); } catch { /* clipboard may be blocked */ }
-        window.open("https://gemini.google.com/app", "_blank", "noopener");
-        toast("Prompt copied — in Gemini: paste, attach the photo, send. Then use ⬆ Upload ready photo.", "success");
-      } else toast(r.error ?? "Could not build the prompt", "error");
-    } finally { setBusy(""); }
+  function generate() {
+    // The per-variant Gemini prompt boxes + upload live in the product's AI Studio.
+    router.push(`/admin/media/${p.id}`);
   }
   async function uploadReady(file: File | undefined) {
     if (!file) return;
@@ -96,8 +88,8 @@ export function MediaCard({ p, geminiReady }: { p: P; geminiReady: boolean }) {
         <input value={kw} onChange={(e) => setKw(e.target.value)} placeholder="+ details (e.g. polki, peacock motif)" maxLength={120}
           title="Optional: add 1–2 keywords to guide the AI on important jewellery details" aria-label="Extra keywords for AI"
           className="rounded-full border border-sand px-3 py-1.5 text-xs outline-none focus:border-emerald w-52" />
-        <button onClick={generate} disabled={busy === "gen"} title="Copy a professional prompt and open Gemini — make the photo there, then upload it back"
-          className="px-3 py-1.5 rounded-full bg-ink text-white text-xs font-medium hover:bg-ink/90 transition-colors disabled:opacity-50">{busy === "gen" ? "…" : "✦ Model prompt → Gemini"}</button>
+        <button onClick={generate} title="Open the AI Studio to make Model + Stand photos on Gemini for each colour"
+          className="px-3 py-1.5 rounded-full bg-ink text-white text-xs font-medium hover:bg-ink/90 transition-colors">✦ Make photos (Studio)</button>
 
         {/* Emergency / manual override: drop a finished photo straight onto the storefront. */}
         <input ref={readyRef} type="file" accept="image/*" className="hidden" onChange={(e) => uploadReady(e.target.files?.[0])} />

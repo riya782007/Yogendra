@@ -28,18 +28,32 @@ export function GeminiStudio({ data }: { data: Data }) {
   const p = data.product;
   const variants = data.variants ?? [];
   const [busy, setBusy] = useState("");
+  const [promptBox, setPromptBox] = useState<{ text: string; label: string } | null>(null);
   // Per (variantId|shotType) upload input refs.
   const upRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  async function copyPromptAndOpen(variantId: string | null, shotType: "model" | "branded_stand", label: string) {
+  // Fetch the tailored prompt and SHOW it (clipboard can't be written after an await — the browser
+  // drops the user-gesture — so we present the prompt with a Copy button that copies synchronously).
+  async function showPrompt(variantId: string | null, shotType: "model" | "branded_stand", label: string) {
     setBusy(`${variantId ?? "p"}-${shotType}`);
     try {
       const r = await getShotPromptAction({ productId: p.id, variantId, shotType });
       if (!r.ok || !r.prompt) { toast(r.error || "Could not build the prompt", "error"); return; }
-      try { await navigator.clipboard.writeText(r.prompt); } catch { /* clipboard may be blocked; still open */ }
-      window.open(GEMINI, "_blank", "noopener");
-      toast(`${label} prompt copied — in Gemini: paste (Ctrl+V), attach your photo, send.`, "success");
+      setPromptBox({ text: r.prompt, label });
     } finally { setBusy(""); }
+  }
+
+  function copyNow(text: string) {
+    try {
+      navigator.clipboard.writeText(text).then(() => toast("Prompt copied ✓", "success")).catch(() => fallbackCopy(text));
+    } catch { fallbackCopy(text); }
+  }
+  function fallbackCopy(text: string) {
+    try {
+      const ta = document.createElement("textarea"); ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.focus(); ta.select(); document.execCommand("copy"); document.body.removeChild(ta);
+      toast("Prompt copied ✓", "success");
+    } catch { toast("Select the text and copy it (Ctrl+C)", "error"); }
   }
 
   async function uploadToVariant(variantId: string, file: File | undefined) {
@@ -101,8 +115,8 @@ export function GeminiStudio({ data }: { data: Data }) {
         )}
 
         <div className="flex flex-wrap items-center gap-2">
-          <button onClick={() => copyPromptAndOpen(variantId, "model", "Model")} disabled={busy === kModel} className={promptBtn}>{busy === kModel ? "…" : "✦ Model prompt → Gemini"}</button>
-          <button onClick={() => copyPromptAndOpen(variantId, "branded_stand", "Stand")} disabled={busy === kStand} className={promptBtn}>{busy === kStand ? "…" : "✦ Stand prompt → Gemini"}</button>
+          <button onClick={() => showPrompt(variantId, "model", "Model")} disabled={busy === kModel} className={promptBtn}>{busy === kModel ? "…" : "✦ Model prompt → Gemini"}</button>
+          <button onClick={() => showPrompt(variantId, "branded_stand", "Stand")} disabled={busy === kStand} className={promptBtn}>{busy === kStand ? "…" : "✦ Stand prompt → Gemini"}</button>
           <input ref={(el) => { upRefs.current[kUp] = el; }} type="file" accept="image/*" className="hidden"
             onChange={(e) => variantId ? uploadToVariant(variantId, e.target.files?.[0]) : uploadToProduct(e.target.files?.[0])} />
           <button onClick={() => upRefs.current[kUp]?.click()} disabled={busy === `up-${variantId ?? "product"}`} className={upBtn}>⬆ Upload result</button>
@@ -143,6 +157,24 @@ export function GeminiStudio({ data }: { data: Data }) {
           ))
         )}
       </div>
+
+      {/* Prompt box: copy the prompt, then open Gemini, paste, attach the raw photo, send. */}
+      {promptBox && (
+        <div className="fixed inset-0 z-[90] bg-ink/60 backdrop-blur-sm grid place-items-center p-4" onClick={() => setPromptBox(null)}>
+          <div className="bg-white rounded-2xl shadow-luxe w-full max-w-lg p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-2">
+              <h3 className="font-display text-xl text-ink">{promptBox.label} photo prompt</h3>
+              <button onClick={() => setPromptBox(null)} className="text-muted hover:text-ink text-lg leading-none">✕</button>
+            </div>
+            <p className="text-xs text-muted mb-2">Copy this, open Gemini, <b>paste</b> it, <b>attach the raw photo</b>, and press send. Then download the result and <b>⬆ Upload result</b> here.</p>
+            <textarea readOnly value={promptBox.text} onFocus={(e) => e.currentTarget.select()} rows={9} className="w-full rounded-xl border border-sand px-3 py-2 text-xs text-ink/90 outline-none focus:border-emerald font-mono" />
+            <div className="flex items-center gap-2 mt-3">
+              <button onClick={() => copyNow(promptBox.text)} className="btn-primary flex-1 py-2.5 text-sm font-medium">Copy prompt</button>
+              <a href={GEMINI} target="_blank" rel="noreferrer" className="px-4 py-2.5 rounded-xl bg-ink text-white text-sm font-medium hover:bg-ink/90">Open Gemini ↗</a>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
