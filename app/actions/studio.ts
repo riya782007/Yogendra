@@ -39,17 +39,28 @@ export async function getShotPromptAction(input: { productId: string; variantId?
     const { data: v } = await sb.from("variants").select("color").eq("id", input.variantId).maybeSingle();
     variantColor = (v as any)?.color ?? undefined;
   }
-  const { prompt } = buildStudioPrompt({
-    category: prod.category?.name ?? "necklace",
-    subcategory: subName,
-    productName: prod.name,
-    variantColor,
-    shotType: input.shotType,
-    settings: { model: "Indian Model", lighting: "Soft Studio Light", background: "Warm Neutral" } as any,
-  });
-  // A short, explicit lead-in so a chat user (not an API) knows exactly what to do with their upload.
-  const lead = `I'm attaching ONE real photo of this ${subName || prod.category?.name || "jewellery"} piece${variantColor ? ` in the "${variantColor}" colour` : ""}. Create a professional e-commerce ${input.shotType === "branded_stand" ? "DISPLAY-STAND" : "ON-MODEL"} photograph of the SAME piece for my jewellery website. Follow these rules exactly:\n\n`;
-  return { ok: true, prompt: lead + prompt };
+  const piece = (subName || prod.category?.name || "jewellery piece").toLowerCase();
+  const colourNote = variantColor
+    ? ` This is the "${variantColor}" colourway — but reproduce the ACTUAL colours shown in my attached photo; if the photo and the label disagree, follow the PHOTO.`
+    : "";
+
+  // Tuned to a Sabyasachi / heritage-editorial reference: clean bright background, sleek Indian model,
+  // and the jewellery large, tack-sharp and dominant with EVERY piece of the set shown.
+  const look = input.shotType === "branded_stand"
+    ? `THE LOOK — DISPLAY STAND (no model, no person, no hands): present the piece on an elegant jewellery display bust/stand appropriate to a ${piece} (a neck bust for a necklace, an ear stand for earrings, a T-bar for a bangle), against a clean, bright, soft neutral-to-white studio background with soft even lighting. Render the lowercase wordmark "blythediva" softly and elegantly ON the bust, just below the piece, like a refined engraved boutique nameplate — small, tasteful, correctly spelled EXACTLY "blythediva", with NO other text anywhere.`
+    : `THE LOOK — ON MODEL (match this exact editorial style): an elegant young Indian woman as the model, hair pulled back in a sleek centre-parted low bun, soft natural neutral makeup, calm graceful expression, wearing a plain ivory/white V-neck blouse so the jewellery stands out. Clean, bright, soft neutral-white studio background, soft even editorial lighting. Premium fine-jewellery mood.`;
+
+  const prompt =
+`Act as a top-tier Indian fine-jewellery e-commerce photographer (Sabyasachi / heritage editorial style). I am attaching ONE real photo of a ${piece}. Create ONE professional ${input.shotType === "branded_stand" ? "display-stand" : "on-model"} product photograph of the EXACT same piece for a luxury jewellery website.
+
+REPRODUCE THE JEWELLERY EXACTLY (non-negotiable): every stone, bead, kundan/polki, meenakari/enamel, pearl, drop, colour, cut, motif, link, clasp and proportion must match my photo precisely.${colourNote} Do NOT redesign, recolour, add, remove or "improve" any element, and never invent stones or parts that aren't in my photo. If my photo shows a SET (e.g. necklace + earrings + maang tikka), EVERY component must appear in the frame, worn/shown together — none omitted or cropped.
+
+${look}
+
+FRAMING & FOCUS — JEWELLERY FIRST: frame close and tight (head-and-décolletage for a model) so the ${piece} is large, dominant and tack-sharp, with EVERY stone crisp and clearly visible. The jewellery is the hero; keep it in perfect focus. Do not shoot wide or full-body. No text, logos or watermarks${input.shotType === "branded_stand" ? " other than the 'blythediva' nameplate described above" : ""}.
+
+Output ONE high-resolution vertical (4:5) image, cleanly retouched and ready to publish.`;
+  return { ok: true, prompt };
 }
 
 async function fetchAsBase64(url: string): Promise<{ base64: string; mime: string } | null> {
