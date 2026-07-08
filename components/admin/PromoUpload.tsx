@@ -187,6 +187,30 @@ export function PromoUpload({ categories = [] }: { categories?: Cat[] }) {
           {msg && <p className={`text-sm ${msg.ok ? "text-emerald-dark" : "text-rose"}`}>{msg.t}</p>}
         </div>
       </div>
+
+      {/* Live preview — see exactly how it appears on the storefront before publishing */}
+      <div className="mt-5 pt-4 border-t border-sand">
+        <p className="text-[11px] uppercase tracking-wide text-muted mb-2">Live preview</p>
+        {type === "strip" ? (
+          <div className="bg-ink text-gold-light/90 text-xs py-2 px-4 rounded-lg overflow-hidden whitespace-nowrap">✦ {headline || "Your announcement message"} &nbsp;&nbsp; ✦ Free shipping over ₹999 &nbsp;&nbsp; ✦ Cash on Delivery</div>
+        ) : type === "popup" ? (
+          <div className="mx-auto max-w-[240px] bg-ivory rounded-2xl shadow-luxe overflow-hidden border border-sand">
+            <div className="aspect-[4/5] bg-cream">{preview ? (isVideo ? <video src={preview} className="w-full h-full object-cover" muted /> : <img src={preview} alt="" className="w-full h-full object-cover" />) : <div className="w-full h-full grid place-items-center text-[11px] text-muted">creative</div>}</div>
+            <div className="p-3 text-center">
+              {headline && <p className="font-display text-lg text-ink leading-tight">{headline}</p>}
+              {subtext && <p className="text-[11px] text-muted">{subtext}</p>}
+              {endsAt && <p className="text-[10px] text-ink mt-1">⏳ ends {new Date(endsAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</p>}
+              {code && <p className="mt-1 inline-block text-[11px] border border-dashed border-gold rounded-full px-2 py-0.5 text-gold-dark">Code: {code}</p>}
+              <div className="btn-primary text-[11px] py-1.5 mt-2 rounded-full text-center">{ctaLabel || "Shop the offer"}</div>
+            </div>
+          </div>
+        ) : (
+          <div className="relative rounded-xl overflow-hidden border border-sand aspect-[16/6] bg-cream">
+            {preview ? (isVideo ? <video src={preview} className="w-full h-full object-cover" muted /> : <img src={preview} alt="" className="w-full h-full object-cover" />) : <div className="w-full h-full grid place-items-center text-xs text-muted">banner creative</div>}
+            <span className="absolute bottom-2 right-2 bg-white/90 text-ink text-[10px] px-2 py-0.5 rounded-full">{ctaLabel || "Shop now →"}</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
