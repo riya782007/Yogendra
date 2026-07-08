@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { getWholesaleSession } from "@/lib/wholesale";
+import { getLivePromos } from "@/lib/supabase/queries";
 import { TradeHeader } from "@/components/trade/TradeHeader";
+import { PromoPopup } from "@/components/site/PromoPopup";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +15,7 @@ export const metadata: Metadata = {
 export default async function TradeLayout({ children }: { children: React.ReactNode }) {
   // Header is hidden on the login screen (no session yet); pages enforce their own auth.
   const session = await getWholesaleSession();
+  const popup = session ? (await getLivePromos("wholesale", "popup").catch(() => []))[0] ?? null : null;
   return (
     <div className="min-h-screen flex flex-col bg-ivory">
       {session && <TradeHeader dealerName={session.name} />}
@@ -20,6 +23,7 @@ export default async function TradeLayout({ children }: { children: React.ReactN
       <footer className="bg-ink text-cream/50 text-center text-xs py-6 mt-10">
         Blythe Diva · Trade Portal · Authorised dealers only
       </footer>
+      <PromoPopup promo={popup as any} />
     </div>
   );
 }

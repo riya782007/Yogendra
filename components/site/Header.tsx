@@ -8,12 +8,12 @@ import { IconUser } from "./Icons";
 
 type Cat = { name: string; slug: string; subcategories?: { name: string; slug: string }[] };
 
-export function Header({ categories }: { categories: Cat[] }) {
+export function Header({ categories, promoMessages = [] }: { categories: Cat[]; promoMessages?: string[] }) {
   // Hide the internal "Uncategorized" bucket from shoppers (owner: not a real category).
   categories = categories.filter((c) => c.name?.trim().toLowerCase() !== "uncategorized");
   return (
     <header className="sticky top-0 z-40">
-      <PromoBar />
+      <PromoBar extra={promoMessages} />
       <div className="bg-ivory/95 backdrop-blur border-b border-sand/70">
         <div className="max-w-7xl mx-auto px-5 h-16 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">

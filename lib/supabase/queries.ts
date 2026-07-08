@@ -1563,15 +1563,25 @@ export type StoreProduct = DbProduct & {
 export type Promotion = { id: string; title: string | null; image_path: string; cta_href: string | null; aspect: string | null; category?: { slug?: string; name?: string } | null };
 
 /** Published promo posters for a storefront scope, newest first. */
-export async function getActivePromotions(scope: "retail" | "wholesale"): Promise<Promotion[]> {
+/** Live promos for a scope + placement, respecting the schedule window (starts_at/ends_at). */
+export async function getLivePromos(scope: "retail" | "wholesale", placement: "hero" | "popup" | "strip"): Promise<any[]> {
   const sb = supabaseServer();
+  const now = new Date().toISOString();
   let q = sb.from("promotions")
-    .select("id,title,image_path,cta_href,aspect,media_type, category:categories(slug,name)")
-    .eq("status", "published")
+    .select("id,title,image_path,cta_href,cta_label,aspect,media_type,placement,headline,subtext,discount_code,starts_at,ends_at, category:categories(slug,name)")
+    .eq("status", "published").eq("placement", placement)
+    .or(`starts_at.is.null,starts_at.lte.${now}`)
+    .or(`ends_at.is.null,ends_at.gte.${now}`)
     .order("created_at", { ascending: false });
   q = scope === "retail" ? q.eq("show_retail", true) : q.eq("show_wholesale", true);
   const { data } = await q;
-  return ((data as any[]) ?? []).filter((p) => typeof p.image_path === "string" && p.image_path.startsWith("http")) as Promotion[];
+  const rows = ((data as any[]) ?? []);
+  // Hero & popup need a creative; strip is text-only.
+  return placement === "strip" ? rows : rows.filter((p) => typeof p.image_path === "string" && p.image_path.startsWith("http"));
+}
+
+export async function getActivePromotions(scope: "retail" | "wholesale"): Promise<Promotion[]> {
+  return (await getLivePromos(scope, "hero")) as Promotion[];
 }
 
 /** Admin: every campaign for the promotions page. */

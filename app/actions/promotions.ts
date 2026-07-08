@@ -154,33 +154,45 @@ export async function signPromoUploadAction(input: { filename: string; contentTy
  * a category, and/or the wholesale panel). This is the manual "banner manager" path — no AI.
  */
 export async function savePromoUploadAction(input: {
-  publicUrl: string; mediaType: "image" | "video"; title: string; ctaHref?: string;
+  publicUrl?: string; mediaType?: "image" | "video"; title: string; ctaHref?: string;
   showRetail: boolean; showWholesale: boolean; categorySlug?: string | null; aspect?: string;
+  placement?: "hero" | "popup" | "strip"; headline?: string; subtext?: string; ctaLabel?: string;
+  discountCode?: string; startsAt?: string | null; endsAt?: string | null;
 }): Promise<{ ok: boolean; error?: string }> {
   if (!(await requirePerm("marketing.manage"))) return { ok: false, error: "You don't have permission for promotions." };
-  if (!input.publicUrl?.startsWith("http")) return { ok: false, error: "Upload the creative first." };
   if (!input.title?.trim()) return { ok: false, error: "Give the promotion a title." };
+  const placement = input.placement === "popup" ? "popup" : input.placement === "strip" ? "strip" : "hero";
+  // A strip is pure text; hero & popup want a creative.
+  if (placement !== "strip" && !input.publicUrl?.startsWith("http")) return { ok: false, error: "Upload the creative image or video first." };
   const sb = supabaseServer();
   let categoryId: string | null = null;
   if (input.categorySlug) {
     const { data: c } = await sb.from("categories").select("id").eq("slug", input.categorySlug).maybeSingle();
     categoryId = (c as any)?.id ?? null;
   }
+  const iso = (s?: string | null) => { const v = (s ?? "").trim(); if (!v) return null; const d = new Date(v); return isNaN(d.getTime()) ? null : d.toISOString(); };
   const { error } = await sb.from("promotions").insert({
     title: input.title.trim().slice(0, 120),
-    image_path: input.publicUrl,
+    image_path: input.publicUrl || null,
     media_type: input.mediaType === "video" ? "video" : "image",
+    placement,
+    headline: (input.headline ?? "").trim().slice(0, 80) || null,
+    subtext: (input.subtext ?? "").trim().slice(0, 160) || null,
+    cta_label: (input.ctaLabel ?? "").trim().slice(0, 40) || null,
     cta_href: (input.ctaHref ?? "").trim() || null,
+    discount_code: (input.discountCode ?? "").trim().slice(0, 40).toUpperCase() || null,
+    starts_at: iso(input.startsAt),
+    ends_at: iso(input.endsAt),
     target_category_id: categoryId,
     show_retail: !!input.showRetail,
     show_wholesale: !!input.showWholesale,
-    aspect: input.aspect || "16:9",
+    aspect: input.aspect || (placement === "popup" ? "4:5" : "16:9"),
     status: "published",
     provider: "upload",
     created_by: "owner",
   });
   if (error) return { ok: false, error: error.message };
-  await logActivity({ action: "promo_uploaded", ref: input.title.slice(0, 40), detail: input.mediaType });
+  await logActivity({ action: "promo_uploaded", ref: input.title.slice(0, 40), detail: placement });
   revalidatePath("/admin/promotions"); revalidatePath("/shop"); revalidatePath("/wholesale"); revalidatePath("/trade");
   return { ok: true };
 }

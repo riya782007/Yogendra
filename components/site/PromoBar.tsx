@@ -4,8 +4,10 @@ const MESSAGES = [
   "✦ Cash on Delivery available",
   "✦ Anti-tarnish premium finish",
 ];
-export function PromoBar() {
-  const strip = [...MESSAGES, ...MESSAGES];
+/** `extra` = owner-published announcement-strip promos (headlines); they lead, defaults follow. */
+export function PromoBar({ extra = [] }: { extra?: string[] }) {
+  const base = extra.length ? [...extra.map((m) => (m.startsWith("✦") ? m : `✦ ${m}`)), ...MESSAGES] : MESSAGES;
+  const strip = [...base, ...base];
   return (
     <div className="bg-ink text-cream text-xs tracking-wide overflow-hidden py-2">
       <div className="marquee-track">

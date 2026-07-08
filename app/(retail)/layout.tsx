@@ -2,10 +2,11 @@ import { redirect } from "next/navigation";
 import { Header } from "@/components/site/Header";
 import { Footer } from "@/components/site/Footer";
 import { Assistant } from "@/components/site/Assistant";
-import { getCategoryTree } from "@/lib/supabase/queries";
+import { getCategoryTree, getLivePromos } from "@/lib/supabase/queries";
 import { getWholesaleSession } from "@/lib/wholesale";
 import { CartProvider } from "@/components/cart/CartContext";
 import { WishlistProvider } from "@/components/wishlist/WishlistContext";
+import { PromoPopup } from "@/components/site/PromoPopup";
 
 export const dynamic = "force-dynamic";
 
@@ -14,12 +15,19 @@ export default async function RetailLayout({ children }: { children: React.React
   if (await getWholesaleSession()) redirect("/trade");
   const tree = await getCategoryTree();
   const cats = tree.map((c) => ({ name: c.name, slug: c.slug, subcategories: c.subcategories.map((s) => ({ name: s.name, slug: s.slug })) }));
+  const [popupList, stripList] = await Promise.all([
+    getLivePromos("retail", "popup").catch(() => []),
+    getLivePromos("retail", "strip").catch(() => []),
+  ]);
+  const popup = popupList[0] ?? null;
+  const promoMessages = stripList.map((s: any) => (s.headline || s.title || "").trim()).filter(Boolean);
   return (
     <CartProvider><WishlistProvider><div className="min-h-screen flex flex-col bg-ivory">
-      <Header categories={cats} />
+      <Header categories={cats} promoMessages={promoMessages} />
       <main className="flex-1">{children}</main>
       <Footer categories={cats} />
       <Assistant />
+      <PromoPopup promo={popup as any} />
     </div></WishlistProvider></CartProvider>
   );
 }
