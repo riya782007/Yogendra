@@ -19,6 +19,7 @@
  * Until GEMINI_API_KEY is set: we go straight to the OpenAI fallback if its key exists.
  */
 import { generateImageOpenAI, editImageOpenAI } from "./openaiImage";
+import { fluxKontext, nvidiaConfigured } from "./nvidiaFlux";
 
 const PRIMARY = () => process.env.GEMINI_IMAGE_MODEL ?? "gemini-3-pro-image";
 
@@ -54,7 +55,7 @@ function openaiFallbackEnabled(): boolean {
 
 /** True if EITHER provider can generate images (Gemini primary, OpenAI fallback). */
 export function geminiConfigured(): boolean {
-  return !!process.env.GEMINI_API_KEY || openaiFallbackEnabled();
+  return !!process.env.GEMINI_API_KEY || openaiFallbackEnabled() || nvidiaConfigured();
 }
 
 /** Run the OpenAI fallback and adapt its result to GenImageResult. */
@@ -125,6 +126,20 @@ export async function generateImage(opts: {
   aspectRatio?: string;
   timeoutMs?: number;
 }): Promise<GenImageResult> {
+  // PRIMARY: NVIDIA FLUX Kontext — preserves the exact jewellery while producing an elegant model/
+  // stand shot, on the owner's free NVIDIA credits. Any failure falls straight through to Gemini →
+  // OpenAI, so this can only ever improve results, never break generation.
+  if (nvidiaConfigured()) {
+    const f = await fluxKontext({
+      prompt: opts.prompt,
+      referenceBase64: opts.referenceBase64,
+      referenceMime: opts.referenceMime,
+      timeoutMs: opts.timeoutMs ?? 20_000,
+    });
+    if (f.ok) return { ok: true, base64: f.base64, mime: f.mime, model: f.model };
+    console.warn("[flux] generate failed, falling back to Gemini:", f.reason, f.error ?? "");
+  }
+
   const key = process.env.GEMINI_API_KEY;
   // No Gemini key → go straight to the OpenAI fallback.
   if (!key) return openaiFallback(opts, "");

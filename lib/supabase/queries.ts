@@ -1969,7 +1969,11 @@ export async function getRetailers() {
 }
 export async function getAbandonedCarts() {
   const sb = supabaseServer();
-  const { data } = await sb.from("abandoned_carts").select("*").eq("recovered", false).order("created_at", { ascending: false });
+  // Only surface carts gone quiet for 20+ min — a shopper still browsing isn't "abandoned" yet.
+  const idleSince = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+  const { data } = await sb.from("abandoned_carts")
+    .select("*").eq("recovered", false).lt("updated_at", idleSince)
+    .order("updated_at", { ascending: false });
   return (data as any[]) ?? [];
 }
 export async function getSitemapData() {
