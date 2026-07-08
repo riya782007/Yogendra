@@ -42,7 +42,7 @@ export default async function CategoryPage({ params, searchParams }: { params: {
     cat ? sb.from("subcategories").select("id,name,slug,sort").eq("category_id", cat.id).order("sort").order("name") : Promise.resolve({ data: [] as any[] }),
     cat ? sb.from("styles").select("id,name,slug,sort").eq("category_id", cat.id).order("sort").order("name") : Promise.resolve({ data: [] as any[] }),
     catProductIds.length ? sb.from("variants").select("product_id,color").in("product_id", catProductIds) : Promise.resolve({ data: [] as any[] }),
-    catProductIds.length ? sb.from("product_labels").select("product_id, labels(name)").in("product_id", catProductIds) : Promise.resolve({ data: [] as any[] }),
+    catProductIds.length ? sb.from("product_labels").select("product_id, labels(name,storefront)").in("product_id", catProductIds) : Promise.resolve({ data: [] as any[] }),
   ]);
   const subs = (subsRes.data as any[]) ?? [];
   const styles = (stylesRes.data as any[]) ?? [];
@@ -73,6 +73,9 @@ export default async function CategoryPage({ params, searchParams }: { params: {
   const labelSet = new Set<string>();
   for (const r of ((labelsRes.data as any[]) ?? [])) {
     const nm = (r as any).labels?.name; if (!nm) continue;
+    // Only customer-facing labels appear as storefront Quick filters — internal admin notes
+    // (e.g. "inventory updated") are flagged storefront=false and skipped.
+    if ((r as any).labels?.storefront === false) continue;
     let set = labelByProduct.get(r.product_id); if (!set) { set = new Set(); labelByProduct.set(r.product_id, set); } set.add(nm);
     labelSet.add(nm);
   }

@@ -9,6 +9,8 @@ import { IconUser } from "./Icons";
 type Cat = { name: string; slug: string; subcategories?: { name: string; slug: string }[] };
 
 export function Header({ categories }: { categories: Cat[] }) {
+  // Hide the internal "Uncategorized" bucket from shoppers (owner: not a real category).
+  categories = categories.filter((c) => c.name?.trim().toLowerCase() !== "uncategorized");
   return (
     <header className="sticky top-0 z-40">
       <PromoBar />

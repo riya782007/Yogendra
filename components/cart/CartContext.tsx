@@ -17,8 +17,27 @@ const same = (a: CartItem, sku: string, color?: string) => a.sku === sku && (a.c
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
   const [open, setOpen] = useState(false);
-  useEffect(() => { try { const s = localStorage.getItem(KEY); if (s) setItems(JSON.parse(s)); } catch {} }, []);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => { try { const s = localStorage.getItem(KEY); if (s) setItems(JSON.parse(s)); } catch {} setLoaded(true); }, []);
   useEffect(() => { try { localStorage.setItem(KEY, JSON.stringify(items)); } catch {} }, [items]);
+
+  // Record the cart server-side (debounced) so unfinished carts show on the admin Abandoned Carts
+  // page. Fire-and-forget — analytics must never break the storefront.
+  useEffect(() => {
+    if (!loaded) return;
+    const total = items.reduce((s, i) => s + i.price * i.qty, 0);
+    const t = setTimeout(() => {
+      try {
+        fetch("/api/cart/track", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ items: items.map((i) => ({ sku: i.sku, name: i.name, qty: i.qty, price: i.price })), total }),
+          keepalive: true,
+        }).catch(() => {});
+      } catch {}
+    }, 2500);
+    return () => clearTimeout(t);
+  }, [items, loaded]);
 
   const add: Ctx["add"] = (i, qty = 1) => {
     setItems((prev) => {
