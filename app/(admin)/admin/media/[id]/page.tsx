@@ -4,9 +4,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 import { notFound, redirect } from "next/navigation";
 import { getStudioData } from "@/lib/supabase/queries";
-import { geminiConfigured } from "@/lib/ai/gemini";
 import { requirePerm } from "@/lib/auth";
-import { PhotoStudio } from "@/components/admin/PhotoStudio";
+import { GeminiStudio } from "@/components/admin/GeminiStudio";
 
 export const metadata = { title: "Owner Console · Product Photos" };
 
@@ -16,7 +15,7 @@ export default async function StudioPage({ params }: { params: { id: string } })
   if (!data) notFound();
   return (
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
-      <PhotoStudio data={data as any} ready={geminiConfigured()} />
+      <GeminiStudio data={data as any} />
     </main>
   );
 }

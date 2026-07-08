@@ -26,6 +26,15 @@ export function PromoUpload({ categories = [] }: { categories?: Cat[] }) {
 
   const isVideo = !!file && file.type.startsWith("video");
 
+  // Make the banner on Gemini (free) — copy a tailored prompt + open Gemini; owner uploads the result below.
+  function makeOnGemini() {
+    const offer = title.trim() || "our latest offer";
+    const prompt = `Design a professional, festive e-commerce PROMOTIONAL BANNER for a premium artificial-jewellery brand called "Blythe Diva". The promotion: ${offer}. Style: elegant Indian jewellery aesthetic, warm gold and maroon festive tones, a graceful model wearing kundan/polki jewellery, soft bokeh lights. Include the offer text "${offer}" in a refined elegant font and the brand name "BlytheDIVA" small in a top corner. Wide 16:9 landscape banner, high resolution, tasteful, NO spelling mistakes and no extra text. Output one ready-to-publish banner image.`;
+    try { navigator.clipboard.writeText(prompt).catch(() => {}); } catch { /* clipboard may be blocked */ }
+    window.open("https://gemini.google.com/app", "_blank", "noopener");
+    setMsg({ t: "Prompt copied — in Gemini: paste, press send, download the banner, then upload it here.", ok: true });
+  }
+
   function pick(f: File | undefined) {
     if (!f) return;
     setMsg(null);
@@ -94,6 +103,7 @@ export function PromoUpload({ categories = [] }: { categories?: Cat[] }) {
             )}
           </button>
           {file && <button onClick={() => { setFile(null); setPreview(""); if (fileRef.current) fileRef.current.value = ""; }} className="text-xs text-muted hover:text-rose mt-2">Remove file</button>}
+          <button onClick={makeOnGemini} className="mt-2 w-full px-3 py-1.5 rounded-full bg-ink text-white text-xs font-medium hover:bg-ink/90">✦ No creative? Make one on Gemini (free)</button>
         </div>
 
         {/* Right: details */}

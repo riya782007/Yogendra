@@ -17,6 +17,41 @@ const BUCKET = "product-media";
 
 export type GenOut = { ok: boolean; error?: string; reason?: string; id?: string; url?: string; provider?: string };
 
+/**
+ * Build the ready-to-paste Gemini prompt for a specific VARIANT + shot (model or branded stand).
+ * The owner copies this, opens Gemini, uploads the raw colour photo, and Gemini produces the shot.
+ * No image API is called here — this is just the (free) prompt text, tailored to the exact piece.
+ */
+export async function getShotPromptAction(input: { productId: string; variantId?: string | null; shotType: "model" | "branded_stand" }):
+  Promise<{ ok: boolean; prompt?: string; error?: string }> {
+  if (!(await requirePerm("catalog.ai")) && !(await requirePerm("catalog.view"))) return { ok: false, error: "Not permitted." };
+  const sb = supabaseServer();
+  const { data: p } = await sb.from("products").select("id,name,subcategory_id, category:categories(name,slug)").eq("id", input.productId).maybeSingle();
+  if (!p) return { ok: false, error: "Product not found." };
+  const prod = p as any;
+  let subName = "";
+  if (prod.subcategory_id) {
+    const { data: sc } = await sb.from("subcategories").select("name").eq("id", prod.subcategory_id).maybeSingle();
+    subName = (sc as any)?.name ?? "";
+  }
+  let variantColor: string | undefined;
+  if (input.variantId) {
+    const { data: v } = await sb.from("variants").select("color").eq("id", input.variantId).maybeSingle();
+    variantColor = (v as any)?.color ?? undefined;
+  }
+  const { prompt } = buildStudioPrompt({
+    category: prod.category?.name ?? "necklace",
+    subcategory: subName,
+    productName: prod.name,
+    variantColor,
+    shotType: input.shotType,
+    settings: { model: "Indian Model", lighting: "Soft Studio Light", background: "Warm Neutral" } as any,
+  });
+  // A short, explicit lead-in so a chat user (not an API) knows exactly what to do with their upload.
+  const lead = `I'm attaching ONE real photo of this ${subName || prod.category?.name || "jewellery"} piece${variantColor ? ` in the "${variantColor}" colour` : ""}. Create a professional e-commerce ${input.shotType === "branded_stand" ? "DISPLAY-STAND" : "ON-MODEL"} photograph of the SAME piece for my jewellery website. Follow these rules exactly:\n\n`;
+  return { ok: true, prompt: lead + prompt };
+}
+
 async function fetchAsBase64(url: string): Promise<{ base64: string; mime: string } | null> {
   try {
     const r = await fetch(url);
