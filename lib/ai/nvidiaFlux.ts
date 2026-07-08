@@ -104,9 +104,10 @@ export async function fluxKontext(opts: {
 
     if (opts.referenceBase64) {
       const mime = opts.referenceMime || "image/jpeg";
-      // Inline the reference when it's small; otherwise upload it as an NVCF asset (large inputs).
+      // Inline the reference when reasonably sized (covers compressed product photos); only very large
+      // inputs use the NVCF asset upload. Keeping refs inline avoids the multi-step asset flow.
       const bytes = Math.ceil((opts.referenceBase64.length * 3) / 4);
-      if (bytes <= 180_000) {
+      if (bytes <= 700_000) {
         body.image = `data:${mime};base64,${opts.referenceBase64}`;
       } else {
         const assetId = await uploadAsset(key, opts.referenceBase64, mime, controller.signal);
@@ -114,7 +115,8 @@ export async function fluxKontext(opts: {
         body.image = `data:${mime};asset_id,${assetId}`;
         headers["NVCF-INPUT-ASSET-REFERENCES"] = assetId;
       }
-      body.mode = "image-to-image";
+      // NOTE: FLUX Kontext infers image-to-image from the presence of `image`; it REJECTS a `mode`
+      // field ("extra_forbidden"), so we must not send one.
     }
 
     const res = await fetch(INVOKE_URL(), { method: "POST", headers, body: JSON.stringify(body), signal: controller.signal });

@@ -129,3 +129,58 @@ export async function deletePromoAction(formData: FormData): Promise<void> {
   await supabaseServer().from("promotions").delete().eq("id", id);
   revalidatePath("/admin/promotions"); revalidatePath("/shop"); revalidatePath("/wholesale");
 }
+
+// ---------- Owner-uploaded creatives (image OR video) — like a brand's banner manager ----------
+
+/**
+ * Mint a signed direct-upload URL so the browser uploads the creative STRAIGHT to storage — this
+ * bypasses the serverless request-body limit, so large images and short videos both work.
+ */
+export async function signPromoUploadAction(input: { filename: string; contentType: string }):
+  Promise<{ ok: boolean; signedUrl?: string; token?: string; path?: string; publicUrl?: string; error?: string }> {
+  if (!(await requirePerm("marketing.manage"))) return { ok: false, error: "You don't have permission for promotions." };
+  const sb = supabaseServer();
+  await sb.storage.createBucket(BUCKET, { public: true }).catch(() => {});
+  const safe = (input.filename || "creative").replace(/[^a-zA-Z0-9._-]/g, "_").slice(-60);
+  const path = `promos/${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${safe}`;
+  const { data, error } = await sb.storage.from(BUCKET).createSignedUploadUrl(path);
+  if (error || !data) return { ok: false, error: error?.message || "Could not start upload." };
+  const { data: pub } = sb.storage.from(BUCKET).getPublicUrl(path);
+  return { ok: true, signedUrl: data.signedUrl, token: data.token, path, publicUrl: pub.publicUrl };
+}
+
+/**
+ * Save an uploaded creative as a LIVE promotion and place it where the owner chose (storefront home,
+ * a category, and/or the wholesale panel). This is the manual "banner manager" path — no AI.
+ */
+export async function savePromoUploadAction(input: {
+  publicUrl: string; mediaType: "image" | "video"; title: string; ctaHref?: string;
+  showRetail: boolean; showWholesale: boolean; categorySlug?: string | null; aspect?: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  if (!(await requirePerm("marketing.manage"))) return { ok: false, error: "You don't have permission for promotions." };
+  if (!input.publicUrl?.startsWith("http")) return { ok: false, error: "Upload the creative first." };
+  if (!input.title?.trim()) return { ok: false, error: "Give the promotion a title." };
+  const sb = supabaseServer();
+  let categoryId: string | null = null;
+  if (input.categorySlug) {
+    const { data: c } = await sb.from("categories").select("id").eq("slug", input.categorySlug).maybeSingle();
+    categoryId = (c as any)?.id ?? null;
+  }
+  const { error } = await sb.from("promotions").insert({
+    title: input.title.trim().slice(0, 120),
+    image_path: input.publicUrl,
+    media_type: input.mediaType === "video" ? "video" : "image",
+    cta_href: (input.ctaHref ?? "").trim() || null,
+    target_category_id: categoryId,
+    show_retail: !!input.showRetail,
+    show_wholesale: !!input.showWholesale,
+    aspect: input.aspect || "16:9",
+    status: "published",
+    provider: "upload",
+    created_by: "owner",
+  });
+  if (error) return { ok: false, error: error.message };
+  await logActivity({ action: "promo_uploaded", ref: input.title.slice(0, 40), detail: input.mediaType });
+  revalidatePath("/admin/promotions"); revalidatePath("/shop"); revalidatePath("/wholesale"); revalidatePath("/trade");
+  return { ok: true };
+}

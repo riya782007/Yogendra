@@ -7,6 +7,7 @@ import { requirePerm } from "@/lib/auth";
 import { openaiConfigured, geminiTextConfigured } from "@/lib/ai/providers";
 import { geminiConfigured } from "@/lib/ai/gemini";
 import { PromotionsClient } from "@/components/admin/PromotionsClient";
+import { PromoUpload } from "@/components/admin/PromoUpload";
 
 export const metadata = { title: "Owner Console · Promotions" };
 
@@ -17,7 +18,12 @@ export default async function PromotionsPage() {
   return (
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
       <h1 className="font-display text-4xl text-ink mb-1">Promotions</h1>
-      <p className="text-sm text-muted mb-5">Create festive offer posters with AI and publish them to your storefront. Type a rough idea → ChatGPT refines it → Gemini designs the poster → choose where it goes live, and it lands in the hero of the best-suited section.</p>
+      <p className="text-sm text-muted mb-5">Upload your own banner (image or video) and publish it to your storefront or wholesale panel — or generate a festive poster with AI below.</p>
+
+      {/* Owner's manual banner manager — upload a creative + details, publish anywhere. */}
+      <PromoUpload categories={categories} />
+
+      <p className="text-sm font-medium text-gold-dark mb-3">…or generate a poster with AI, and manage your live campaigns below</p>
       <PromotionsClient categories={categories} promos={promos as any} ready={{ openai: openaiConfigured() || geminiTextConfigured(), gemini: geminiConfigured() }} />
     </main>
   );

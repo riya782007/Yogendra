@@ -1566,7 +1566,7 @@ export type Promotion = { id: string; title: string | null; image_path: string; 
 export async function getActivePromotions(scope: "retail" | "wholesale"): Promise<Promotion[]> {
   const sb = supabaseServer();
   let q = sb.from("promotions")
-    .select("id,title,image_path,cta_href,aspect, category:categories(slug,name)")
+    .select("id,title,image_path,cta_href,aspect,media_type, category:categories(slug,name)")
     .eq("status", "published")
     .order("created_at", { ascending: false });
   q = scope === "retail" ? q.eq("show_retail", true) : q.eq("show_wholesale", true);
