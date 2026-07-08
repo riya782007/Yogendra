@@ -1,0 +1,4 @@
+-- 0051 — applied live via MCP 2026-07-06: (a) one-time heal — configurable product totals
+-- re-derived from Σ variants (fixed KN1102 15→12, CCKN9582 63→62, KN1003 14→17, AA0028 100→0);
+-- (b) trigger trg_sync_product_qty on variants — ANY variant qty change recomputes the parent
+-- product total, so colours and totals can never desync again.

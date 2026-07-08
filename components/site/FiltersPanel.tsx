@@ -10,14 +10,17 @@ export function FiltersPanel({
   activeCount,
   activeChips = [],
   clearHref,
+  defaultOpen = false,
   children,
 }: {
   activeCount: number;
   activeChips?: { label: string; href: string }[];
   clearHref?: string;
+  /** Open on first paint (desktop storefront parity with the old site's always-visible filters). */
+  defaultOpen?: boolean;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
 
   return (
     <div className="mb-6">

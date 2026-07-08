@@ -55,7 +55,16 @@ async function chat(endpoint: string, key: string, model: string, a: ChatArgs): 
 }
 
 export function groqConfigured() { return !!groqKey(); }
-export function openaiConfigured() { return !!openaiKey(); }
+
+/** OpenAI is ENABLED by default (billing was refilled 2026-07-06). If its billing cap is ever hit
+ *  again, set OPENAI_DISABLED=1 in the Vercel env to park it — Gemini/Groq then carry everything,
+ *  exactly as during the July 2026 outage. (OPENAI_ENABLED=1 also force-enables, for back-compat.) */
+export function openaiEnabled() {
+  const off = (process.env.OPENAI_DISABLED ?? "").trim() === "1";
+  const forceOn = (process.env.OPENAI_ENABLED ?? "").trim() === "1";
+  return forceOn || !off;
+}
+export function openaiConfigured() { return !!openaiKey() && openaiEnabled(); }
 
 export async function groqChat(a: ChatArgs): Promise<string> {
   const key = groqKey(); if (!key) throw new Error("no groq key");
@@ -63,6 +72,7 @@ export async function groqChat(a: ChatArgs): Promise<string> {
   return chat("https://api.groq.com/openai/v1/chat/completions", key, model, a);
 }
 export async function openaiChat(a: ChatArgs): Promise<string> {
+  if (!openaiEnabled()) throw new Error("OpenAI disabled via OPENAI_DISABLED=1 — remove that env var to re-enable");
   const key = openaiKey(); if (!key) throw new Error("no openai key");
   const model = env("OPENAI_MODEL") ?? "gpt-4o-mini";
   return chat("https://api.openai.com/v1/chat/completions", key, model, a);

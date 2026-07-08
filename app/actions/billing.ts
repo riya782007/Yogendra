@@ -1,6 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { orderReceivable, returnCreditsByOrder } from "@/lib/supabase/queries";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm, getSession } from "@/lib/auth";
 import { getPricingFormula } from "@/lib/supabase/queries";
@@ -207,8 +208,41 @@ export async function fulfillBackorderAction(formData: FormData): Promise<void> 
   if (!(await requirePerm("billing.sell"))) return;
   const id = String(formData.get("id") ?? "").trim();
   if (!id) return;
-  await supabaseServer().from("orders").update({ is_backorder: false }).eq("id", id);
+  // fulfill_backorder is ALL-OR-NOTHING: it re-checks stock on every line (blocks with a clear
+  // error if still short), THEN moves stock + logs the sale movements + posts revenue + releases
+  // the bill into the sales record. The old flag-flip skipped all of that.
+  const { error } = await supabaseServer().rpc("fulfill_backorder", { p_order_id: id });
   revalidatePath("/admin/backorders"); revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard");
+  if (error) redirect(`/admin/backorders?err=${encodeURIComponent(error.message)}`);
+  redirect("/admin/backorders?ok=1");
+}
+
+/** Lines of ONE order, shaped for the inline return dialog on the Sales page — so a return can be
+ *  recorded straight from the bill row without hunting for it in a separate module. */
+export async function fetchOrderForReturnAction(orderId: string): Promise<{ ok: boolean; error?: string; order?: { id: string; total: number; customer_name: string | null; created_at: string; items: { qty: number; returned: number; returnable: number; product: { id: string; name: string; sku: string }; variant: { sku: string; color: string | null } | null }[] } }> {
+  if (!(await requirePerm("billing.refund"))) return { ok: false, error: "Your role can't process returns." };
+  const id = (orderId ?? "").trim();
+  if (!id) return { ok: false, error: "Missing order" };
+  const sb2 = supabaseServer();
+  const { data, error } = await sb2.from("orders")
+    .select("id,total,customer_name,created_at, order_items(qty, variant_id, product:products(id,name,sku), variant:variants(id,sku,color))")
+    .eq("id", id).maybeSingle();
+  if (error || !data) return { ok: false, error: error?.message ?? "Order not found" };
+  const o = data as any;
+  // Already-returned per (product, variant) on THIS bill — summed from its return movements, so the
+  // dialog can cap each line at (sold − returned) and CLOSE the window once fully returned.
+  const { data: rets } = await sb2.from("stock_adjustments")
+    .select("product_id,variant_id,delta").eq("ref_id", id).eq("kind", "return");
+  const retBy = new Map<string, number>();
+  for (const r of ((rets as any[]) ?? [])) {
+    const k = `${r.product_id}::${r.variant_id ?? ""}`;
+    retBy.set(k, (retBy.get(k) ?? 0) + (r.delta ?? 0));
+  }
+  return { ok: true, order: { id: o.id, total: o.total ?? 0, customer_name: o.customer_name ?? null, created_at: o.created_at,
+    items: ((o.order_items as any[]) ?? []).map((it) => {
+      const returned = retBy.get(`${it.product?.id}::${it.variant_id ?? ""}`) ?? 0;
+      return { qty: it.qty ?? 0, returned, returnable: Math.max(0, (it.qty ?? 0) - returned), product: it.product, variant: it.variant ?? null };
+    }) } };
 }
 
 export async function recordReturnAction(input: { orderId: string; reason: string; items: { product_id: string; variantSku?: string; qty: number }[] }): Promise<{ ok: boolean; qty?: number; error?: string; pending?: boolean }> {
@@ -231,11 +265,21 @@ export async function recordReturnAction(input: { orderId: string; reason: strin
     return { ok: true, pending: true };
   }
 
-  // The RPC restocks by product_id; variantSku is carried for display/audit (variant-exact restock TBD).
-  const p_items = input.items.map((i) => ({ product_id: i.product_id, qty: i.qty }));
+  // Variant-EXACT return: resolve each line's variantSku to its variants.id so the RPC restocks
+  // the precise colour (the old code dropped variantSku — colour rows never rose, product totals
+  // desynced from Σ variants, and the client's tally broke).
+  const skus = [...new Set(input.items.map((i) => (i.variantSku ?? "").trim()).filter(Boolean))];
+  const vBySku = new Map<string, string>();
+  if (skus.length) {
+    const { data: vs } = await sb.from("variants").select("id,sku").in("sku", skus);
+    for (const v of ((vs as any[]) ?? [])) vBySku.set(String(v.sku).toUpperCase(), v.id);
+  }
+  const p_items = input.items.map((i) => ({ product_id: i.product_id, qty: i.qty, variant_id: i.variantSku ? (vBySku.get(i.variantSku.toUpperCase()) ?? null) : null }));
   const { data, error } = await sb.rpc("record_sales_return", { p_order_id: input.orderId, p_reason: input.reason, p_items });
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/admin/returns"); revalidatePath("/admin/dashboard");
+  revalidatePath("/admin/returns"); revalidatePath("/admin/dashboard"); revalidatePath("/admin/sales");
+  revalidatePath("/admin/stock-movements"); revalidatePath("/admin/catalogue"); revalidatePath("/admin/inventory");
+  revalidatePath("/admin/creditors"); revalidatePath("/shop"); revalidatePath("/admin/customers");
   return { ok: true, qty: (data as any)?.qty };
 }
 
@@ -253,4 +297,55 @@ export async function cancelOrderAction(orderId: string, reason?: string): Promi
   revalidatePath("/admin/sales"); revalidatePath("/admin/backorders"); revalidatePath("/admin/dashboard");
   revalidatePath(`/admin/invoice/${orderId}`);
   return { ok: true, already: !!(data as any)?.already };
+}
+
+/**
+ * PAYMENT-IN from a customer (client point 16): the owner receives ₹X (cash/UPI/bank) against a
+ * customer's outstanding and it auto-allocates OLDEST BILL FIRST — amount_paid rises per bill
+ * (GST-inclusive receivable, net of return credits), pay_cash/pay_bank feed Bank & Cash, and the
+ * customer's outstanding falls everywhere (customer page, creditors, sales status chips).
+ */
+export async function receiveCustomerPaymentAction(input: { customerId?: string | null; phone?: string | null; amountRupees: number; method: "cash" | "upi" | "bank"; note?: string }): Promise<{ ok: boolean; allocated?: { invoice: string; paise: number }[]; leftoverPaise?: number; error?: string }> {
+  if (!(await requirePerm("billing.sell"))) return { ok: false, error: "Your role can't receive payments." };
+  const paise = Math.round((input.amountRupees ?? 0) * 100);
+  if (!Number.isFinite(paise) || paise <= 0) return { ok: false, error: "Enter the amount received." };
+  if (!input.customerId && !input.phone) return { ok: false, error: "Missing customer" };
+  const sb = supabaseServer();
+
+  const sel = "id,invoice_no,total,amount_paid,bill_type,gst_mode,status,pay_cash,pay_bank,created_at";
+  const byId = input.customerId ? await sb.from("orders").select(sel).eq("customer_id", input.customerId).order("created_at", { ascending: true }).limit(200) : { data: [] as any[] };
+  const byPhone = input.phone ? await sb.from("orders").select(sel).eq("customer_phone", input.phone).order("created_at", { ascending: true }).limit(200) : { data: [] as any[] };
+  const seen = new Set<string>();
+  const orders = [...(((byId.data as any[]) ?? [])), ...(((byPhone.data as any[]) ?? []))]
+    .filter((o) => (seen.has(o.id) ? false : (seen.add(o.id), true)))
+    .filter((o) => o.status !== "cancelled")
+    .sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
+
+  const credits = await returnCreditsByOrder(orders.map((o) => o.id));
+  let remaining = paise;
+  const allocated: { invoice: string; paise: number }[] = [];
+  for (const o of orders) {
+    if (remaining <= 0) break;
+    const due = orderReceivable(o, credits.get(o.id) ?? 0);
+    if (due <= 0) continue;
+    const alloc = Math.min(due, remaining);
+    const patch: Record<string, number> = { amount_paid: (o.amount_paid ?? 0) + alloc };
+    if (input.method === "cash") patch.pay_cash = (o.pay_cash ?? 0) + alloc;
+    else patch.pay_bank = (o.pay_bank ?? 0) + alloc;
+    const { error } = await sb.from("orders").update(patch).eq("id", o.id);
+    if (error) return { ok: false, error: error.message };
+    allocated.push({ invoice: o.invoice_no || String(o.id).slice(0, 8).toUpperCase(), paise: alloc });
+    remaining -= alloc;
+  }
+  if (!allocated.length) return { ok: false, error: "No outstanding bills found for this customer." };
+
+  await sb.from("audit_log").insert({
+    actor: "owner", action: "payment_in",
+    ref: input.customerId ?? input.phone ?? "",
+    detail: `Received ₹${Math.round(paise / 100)} (${input.method})${input.note ? ` — ${input.note}` : ""} → ${allocated.map((a) => `${a.invoice} ₹${Math.round(a.paise / 100)}`).join(", ")}${remaining > 0 ? ` · ₹${Math.round(remaining / 100)} unallocated (advance)` : ""}`,
+  }).then(() => {}, () => {});
+
+  revalidatePath("/admin/creditors"); revalidatePath("/admin/sales"); revalidatePath("/admin/customers");
+  if (input.customerId) revalidatePath(`/admin/customer/${input.customerId}`);
+  return { ok: true, allocated, leftoverPaise: remaining };
 }

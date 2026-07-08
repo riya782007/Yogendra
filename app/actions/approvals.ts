@@ -40,7 +40,14 @@ export async function decideApprovalAction(formData: FormData) {
   }
   if (approve && a.action === "sales_return") {
     const p = (a.payload as any) ?? {};
-    const p_items = ((p.items ?? []) as any[]).map((i) => ({ product_id: i.product_id, qty: i.qty }));
+    // Variant-exact: resolve stored variantSku → variants.id so the approved return restocks the colour.
+    const vskus = [...new Set(((p.items ?? []) as any[]).map((i) => (i.variantSku ?? "").trim()).filter(Boolean))];
+    const vmap = new Map<string, string>();
+    if (vskus.length) {
+      const { data: vs } = await sb.from("variants").select("id,sku").in("sku", vskus);
+      for (const v of ((vs as any[]) ?? [])) vmap.set(String(v.sku).toUpperCase(), v.id);
+    }
+    const p_items = ((p.items ?? []) as any[]).map((i) => ({ product_id: i.product_id, qty: i.qty, variant_id: i.variantSku ? (vmap.get(String(i.variantSku).toUpperCase()) ?? null) : null }));
     if (p.orderId && p_items.length) {
       const { error } = await sb.rpc("record_sales_return", { p_order_id: p.orderId, p_reason: p.reason ?? "Approved return", p_items });
       if (!error) {

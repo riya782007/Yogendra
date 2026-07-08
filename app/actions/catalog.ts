@@ -25,6 +25,26 @@ export async function createCategoryAction(formData: FormData) {
 /** Delete a category WITHOUT deleting its inventory. Products in it are moved to an auto-created
  *  "Uncategorized" category (products.category_id is NOT NULL, so they must land somewhere) and the
  *  category's subcategories are removed. Returns a result so the UI can confirm + report. */
+/** Owner picks which variant a configurable product LEADS with on the storefront. */
+export async function setDefaultVariantAction(productId: string, variantId: string | null): Promise<{ ok: boolean; error?: string }> {
+  if (!(await requirePerm("catalog.edit"))) return { ok: false, error: "Your role can't edit the catalogue." };
+  const sb = supabaseServer();
+  const { error } = await sb.from("products").update({ default_variant_id: variantId }).eq("id", productId);
+  if (error) return { ok: false, error: /default_variant_id/.test(error.message) ? "One-time setup: run migration 0047 (default_variant_id column)." : error.message };
+  revalidatePath("/admin/products/" + productId); revalidatePath("/shop"); revalidatePath("/catalog");
+  return { ok: true };
+}
+
+/** Form wrapper for the catalogue page's ★ control (server component → plain <form action>). */
+export async function setDefaultVariantFormAction(formData: FormData): Promise<void> {
+  const productId = String(formData.get("product_id") ?? "").trim();
+  const variantId = String(formData.get("variant_id") ?? "").trim() || null;
+  const sku = String(formData.get("sku") ?? "").trim();
+  if (!productId) return;
+  await setDefaultVariantAction(productId, variantId);
+  if (sku) revalidatePath(`/admin/catalogue/${sku}`);
+}
+
 export async function deleteCategoryAction(id: string): Promise<{ ok: boolean; moved?: number; error?: string }> {
   if (!(await requirePerm("catalog.edit"))) return { ok: false, error: "Your role can't edit the catalogue." };
   id = (id ?? "").trim();
@@ -332,7 +352,7 @@ export async function aiParseRowsAction(rawText: string): Promise<{ rows: Parsed
   const text = (rawText ?? "").trim().slice(0, 8000);
   let rows: ParsedRow[] = [];
   let usedAi = false;
-  if (text && (groqConfigured() || openaiConfigured())) {
+  if (text && (groqConfigured() || geminiTextConfigured() || openaiConfigured())) {
     const system = `You convert a messy product list into clean JSON for a jewellery store. Output STRICT JSON:
 {"rows":[{
   "name":string,
@@ -354,7 +374,9 @@ export async function aiParseRowsAction(rawText: string): Promise<{ rows: Parsed
 }]}.
 The input may be CSV, tab-separated, or freeform, with columns in any order or different header names: price/cost/wholesale -> base_price (rupees, number); quantity/stock/pcs -> qty (int); colours/variants -> colors[]; sku/code/item code -> sku (verbatim if given else ""). When the row mentions sizes (S/M/L, 2.4, 2.6 etc.) or polishes (Antique, Oxidised, Matte etc.) or per-variant prices, populate "variants" instead of plain "colors" and set type="configurable". A row with >1 colour OR any variants[] entry must be "configurable". Ignore header rows, currency symbols, and totals. Return ONLY JSON.`;
     try {
-      const out = groqConfigured() ? await groqChat({ system, user: text, json: true }) : await openaiChat({ system, user: text, json: true });
+      const out = groqConfigured() ? await groqChat({ system, user: text, json: true })
+        : geminiTextConfigured() ? await geminiChat({ system, user: text, json: true })
+        : await openaiChat({ system, user: text, json: true });
       const parsed = JSON.parse(out);
       rows = (parsed.rows ?? []).map((r: any) => {
         // Pillar 10 — capture full variants when the AI emits them. Each entry can carry
@@ -743,7 +765,7 @@ export async function savePricingFormulaAction(formData: FormData): Promise<void
   revalidatePath("/admin/catalogue");
 }
 
-import { groqChat, openaiChat, groqConfigured, openaiConfigured } from "@/lib/ai/providers";
+import { groqChat, openaiChat, geminiChat, groqConfigured, openaiConfigured, geminiTextConfigured } from "@/lib/ai/providers";
 
 /** AI-processed bulk import: reads a messy CSV/spreadsheet/freeform list, maps columns
  *  intelligently to {name, base_price, qty, type, colors}, then inserts. Falls back to
@@ -756,10 +778,12 @@ export async function aiBulkUploadAction(categoryId: string, rawText: string): P
   let usedAi = false;
 
   const text = (rawText ?? "").trim().slice(0, 8000);
-  if (text && (groqConfigured() || openaiConfigured())) {
+  if (text && (groqConfigured() || geminiTextConfigured() || openaiConfigured())) {
     const system = `You convert a messy product list into clean JSON for a jewellery store. Output STRICT JSON: {"rows":[{"name":string,"base_price":number,"qty":number,"type":"simple"|"configurable","colors":string[]}]}. The input may be CSV, tab-separated, or freeform, with columns in any order or with different header names (price/cost/wholesale -> base_price in rupees as a number; quantity/stock/pcs -> qty integer; colours/variants -> colors array; if multiple colours are present set type to "configurable" else "simple"). Ignore header rows and currency symbols. Infer sensibly. Return ONLY JSON.`;
     try {
-      const out = groqConfigured() ? await groqChat({ system, user: text, json: true }) : await openaiChat({ system, user: text, json: true });
+      const out = groqConfigured() ? await groqChat({ system, user: text, json: true })
+        : geminiTextConfigured() ? await geminiChat({ system, user: text, json: true })
+        : await openaiChat({ system, user: text, json: true });
       const parsed = JSON.parse(out);
       rows = (parsed.rows ?? []).map((r: any) => ({
         name: String(r.name ?? "").trim(),

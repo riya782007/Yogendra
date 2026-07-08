@@ -4,7 +4,7 @@ import { formatPaise } from "@/lib/pricing";
 import { createEstimateAction } from "@/app/actions/billing";
 import { QtyField } from "@/components/admin/QtyField";
 
-type P = { sku: string; name: string; price: number; wholesale: number };
+type P = { sku: string; name: string; price: number; wholesale: number; parentSku?: string; parentName?: string };
 type Cust = { id: string; name: string; phone: string; type: string; gstin: string };
 type Line = { sku: string; name: string; price: number; wholesale: number; qty: number; override: string };
 
@@ -26,6 +26,16 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
   const [msg, setMsg] = useState("");
 
   const matches = useMemo(() => (q.trim() ? products.filter((p) => (p.name + p.sku).toLowerCase().includes(q.toLowerCase())).slice(0, 6) : []), [q, products]);
+  // Bulk shortcut: any matched design with 2+ colours gets a single "add all colours" row.
+  const matchParents = useMemo(() => {
+    const seen = new Map<string, { sku: string; name: string; count: number }>();
+    for (const m of matches) {
+      if (!m.parentSku || seen.has(m.parentSku)) continue;
+      const count = products.filter((p) => p.parentSku === m.parentSku).length;
+      if (count >= 2) seen.set(m.parentSku, { sku: m.parentSku, name: m.parentName ?? m.name, count });
+    }
+    return [...seen.values()].slice(0, 3);
+  }, [matches, products]);
   const custMatches = useMemo(() => {
     const s = custQ.trim().toLowerCase();
     if (!s) return [];
@@ -44,6 +54,14 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
   const total = lines.reduce((s, l) => s + effUnit(l) * l.qty, 0) + chargesTotal;
 
   const add = (p: P) => { setLines((prev) => (prev.find((l) => l.sku === p.sku) ? prev.map((l) => (l.sku === p.sku ? { ...l, qty: l.qty + 1 } : l)) : [...prev, { sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, qty: 1, override: "" }])); setQ(""); };
+  const addAllVariants = (parentSku: string) => {
+    const vars = products.filter((p) => p.parentSku === parentSku);
+    setLines((prev) => {
+      const have = new Set(prev.map((l) => l.sku));
+      return [...prev, ...vars.filter((v) => !have.has(v.sku)).map((v) => ({ sku: v.sku, name: v.name, price: v.price, wholesale: v.wholesale, qty: 1, override: "" }))];
+    });
+    setQ("");
+  };
   const setOverride = (sku: string, v: string) => setLines((p) => p.map((l) => (l.sku === sku ? { ...l, override: v } : l)));
   function pickCustomer(c: Cust) { setName(c.name); setPhone(c.phone); setCustType(c.type === "wholesale" ? "wholesale" : "retail"); setCustQ(""); setCustOpen(false); }
   function walkIn(type: "retail" | "wholesale") { setName(type === "wholesale" ? "Cash (W)" : "Cash (R)"); setPhone(""); setCustType(type); }
@@ -108,6 +126,12 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
         <input className={input} placeholder="Search product to add…" value={q} onChange={(e) => setQ(e.target.value)} />
         {matches.length > 0 && (
           <div className="absolute z-10 left-0 right-0 mt-1 bg-white rounded-xl shadow-luxe border border-sand overflow-hidden">
+            {matchParents.map((pp) => (
+              <button key={`all-${pp.sku}`} onClick={() => addAllVariants(pp.sku)} className="w-full text-left px-4 py-2.5 text-sm bg-emerald-mist/60 hover:bg-emerald-mist flex justify-between border-b border-sand/60">
+                <span className="font-medium text-emerald-dark">➕ All {pp.count} colours — {pp.name}</span>
+                <span className="text-[11px] text-emerald-dark/70">adds {pp.count} lines</span>
+              </button>
+            ))}
             {matches.map((p) => <button key={p.sku} onClick={() => add(p)} className="w-full text-left px-4 py-2.5 text-sm hover:bg-emerald-mist flex justify-between"><span>{p.name} <span className="text-muted">· {p.sku}</span></span><span>{formatPaise(baseUnit(p))}</span></button>)}
           </div>
         )}

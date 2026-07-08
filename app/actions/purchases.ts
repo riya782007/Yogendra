@@ -127,3 +127,64 @@ export async function recordPurchaseAction(input: {
   revalidatePath(`/admin/supplier/${input.supplierId}`); revalidatePath("/admin/cashbook");
   return { ok: true, total };
 }
+
+/** Lines of ONE purchase bill, with per-line returnable (bought − already returned to supplier). */
+export async function fetchPurchaseForReturnAction(purchaseId: string): Promise<{ ok: boolean; error?: string; items?: { productId: string; variantId: string | null; name: string; sku: string; color: string | null; qty: number; returned: number; returnable: number; unitCost: number; backorderQty: number }[] }> {
+  if (!(await requirePerm("purchases.manage"))) return { ok: false, error: "Your role can't manage purchases." };
+  const id = (purchaseId ?? "").trim();
+  if (!id) return { ok: false, error: "Missing purchase" };
+  const sb = supabaseServer();
+  const [{ data: items, error }, { data: rets }] = await Promise.all([
+    sb.from("purchase_items").select("qty,unit_cost,mapped_product_id,variant_id, product:products(id,name,sku), variant:variants(id,sku,color)").eq("purchase_id", id),
+    sb.from("stock_adjustments").select("product_id,variant_id,delta").eq("ref_id", id).eq("kind", "purchase_return"),
+  ]);
+  if (error) return { ok: false, error: error.message };
+
+  // BACKORDER AWARENESS (client): pieces promised to OPEN backorders should not quietly leave for
+  // the supplier — surface how many of each line's product/variant open backorders still need.
+  const prodIds = [...new Set(((items as any[]) ?? []).map((it) => it.mapped_product_id).filter(Boolean))];
+  const boBy = new Map<string, number>();
+  if (prodIds.length) {
+    const { data: boOrders } = await sb.from("orders").select("id").eq("is_backorder", true).neq("status", "cancelled");
+    const boIds = ((boOrders as any[]) ?? []).map((o) => o.id);
+    if (boIds.length) {
+      const { data: boItems } = await sb.from("order_items").select("order_id,product_id,variant_id,qty").in("order_id", boIds).in("product_id", prodIds);
+      for (const oi of ((boItems as any[]) ?? [])) {
+        const k = `${oi.product_id}::${oi.variant_id ?? ""}`;
+        boBy.set(k, (boBy.get(k) ?? 0) + (oi.qty ?? 0));
+      }
+    }
+  }
+  const retBy = new Map<string, number>();
+  for (const r of ((rets as any[]) ?? [])) {
+    const k = `${r.product_id}::${r.variant_id ?? ""}`;
+    retBy.set(k, (retBy.get(k) ?? 0) + Math.abs(r.delta ?? 0));
+  }
+  return { ok: true, items: ((items as any[]) ?? []).filter((it) => it.mapped_product_id).map((it) => {
+    const returned = retBy.get(`${it.mapped_product_id}::${it.variant_id ?? ""}`) ?? 0;
+    const backorderQty = (boBy.get(`${it.mapped_product_id}::${it.variant_id ?? ""}`) ?? 0) + (it.variant_id ? (boBy.get(`${it.mapped_product_id}::`) ?? 0) : 0);
+    return {
+      productId: it.mapped_product_id, variantId: it.variant_id ?? null,
+      name: it.product?.name ?? "—", sku: it.variant?.sku ?? it.product?.sku ?? "",
+      color: it.variant?.color ?? null,
+      qty: it.qty ?? 0, returned, returnable: Math.max(0, (it.qty ?? 0) - returned),
+      unitCost: it.unit_cost ?? 0,
+      /** Pieces of this product/variant still promised to OPEN backorders — warn before sending back. */
+      backorderQty,
+    };
+  }) };
+}
+
+/** Record a PURCHASE RETURN (goods back to the supplier): variant-exact stock out + debit note.
+ *  The RPC enforces the per-line cap (bought − already returned) — same rule as sales returns. */
+export async function recordPurchaseReturnAction(input: { purchaseId: string; reason: string; items: { productId: string; variantId?: string | null; qty: number }[] }): Promise<{ ok: boolean; qty?: number; amount?: number; error?: string }> {
+  if (!(await requirePerm("purchases.manage"))) return { ok: false, error: "Your role can't manage purchases." };
+  if (!input.items?.length) return { ok: false, error: "Select items to return" };
+  if (!input.reason?.trim()) return { ok: false, error: "Add a reason (damaged, wrong goods, excess…)" };
+  const sb = supabaseServer();
+  const p_items = input.items.map((i) => ({ product_id: i.productId, variant_id: i.variantId ?? null, qty: i.qty }));
+  const { data, error } = await sb.rpc("record_purchase_return", { p_purchase_id: input.purchaseId, p_reason: input.reason, p_items });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/admin/purchases"); revalidatePath(`/admin/purchase/${input.purchaseId}`); revalidatePath("/admin/returns"); revalidatePath("/admin/stock-movements"); revalidatePath("/admin/catalogue"); revalidatePath("/admin/inventory"); revalidatePath("/admin/suppliers"); revalidatePath("/shop");
+  return { ok: true, qty: (data as any)?.qty, amount: (data as any)?.amount };
+}

@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 import { getReorderCandidates } from "@/lib/supabase/queries";
-import { groqChat, openaiChat, groqConfigured, openaiConfigured } from "@/lib/ai/providers";
+import { groqChat, openaiChat, geminiChat, groqConfigured, openaiConfigured, geminiTextConfigured } from "@/lib/ai/providers";
 
 export type Rec = { sku: string; name: string; action: "reorder" | "clear"; qty: number; urgency: "high" | "medium" | "low"; rationale: string };
 
@@ -23,6 +23,7 @@ export async function generateReorderPlanAction(): Promise<{ ok: boolean; provid
   try {
     let raw: string;
     if (groqConfigured()) { raw = await groqChat({ system, user: "Plan the reorders. JSON only.", json: true }); }
+    else if (geminiTextConfigured()) { raw = await geminiChat({ system, user: "Plan the reorders. JSON only.", json: true }); }
     else if (openaiConfigured()) { raw = await openaiChat({ system, user: "Plan the reorders. JSON only.", json: true }); }
     else throw new Error("no-ai");
     const parsed = JSON.parse(raw);

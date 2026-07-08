@@ -43,16 +43,25 @@ function openaiKeyPresent(): boolean {
   return !!(process.env.OPENAI_API_KEY ?? process.env.openai_api_key ?? process.env.OpenAI_api_key);
 }
 
+/** OpenAI image fallback is ON by default (billing refilled) — it rescues generation whenever the
+ *  Gemini chain fails (e.g. Gemini prepaid credits depleted / 429 RESOURCE_EXHAUSTED). Park OpenAI
+ *  again with OPENAI_DISABLED=1 if its billing cap is ever hit. */
+function openaiFallbackEnabled(): boolean {
+  const on = (v?: string) => (v ?? "").trim() === "1";
+  if (on(process.env.OPENAI_DISABLED) && !on(process.env.OPENAI_ENABLED) && !on(process.env.OPENAI_IMAGES_ENABLED)) return false;
+  return openaiKeyPresent();
+}
+
 /** True if EITHER provider can generate images (Gemini primary, OpenAI fallback). */
 export function geminiConfigured(): boolean {
-  return !!process.env.GEMINI_API_KEY || openaiKeyPresent();
+  return !!process.env.GEMINI_API_KEY || openaiFallbackEnabled();
 }
 
 /** Run the OpenAI fallback and adapt its result to GenImageResult. */
 async function openaiFallback(opts: {
   prompt: string; referenceBase64?: string; referenceMime?: string; aspectRatio?: string; timeoutMs?: number;
 }, priorErr: string): Promise<GenImageResult> {
-  if (!openaiKeyPresent()) return { ok: false, reason: "api_error", error: priorErr || "no provider available" };
+  if (!openaiFallbackEnabled()) return { ok: false, reason: "api_error", error: priorErr || "Gemini unavailable (set GEMINI_API_KEY) and OpenAI fallback is disabled (OPENAI_IMAGES_ENABLED != 1)" };
   const r = await generateImageOpenAI(opts);
   if (r.ok) return { ok: true, base64: r.base64, mime: r.mime, model: r.model };
   return { ok: false, reason: r.reason === "no_key" ? "api_error" : r.reason, error: r.error ?? priorErr };
@@ -154,7 +163,7 @@ export async function editImage(opts: {
   if (!opts.images.length) return { ok: false, reason: "no_source" };
   const key = process.env.GEMINI_API_KEY;
   const openaiEdit = async (priorErr: string): Promise<GenImageResult> => {
-    if (!openaiKeyPresent()) return { ok: false, reason: "api_error", error: priorErr || "no provider available" };
+    if (!openaiFallbackEnabled()) return { ok: false, reason: "api_error", error: priorErr || "Gemini unavailable (set GEMINI_API_KEY) and OpenAI fallback is disabled (OPENAI_IMAGES_ENABLED != 1)" };
     const r = await editImageOpenAI({ prompt: opts.prompt, images: opts.images, aspectRatio: opts.aspectRatio, timeoutMs: opts.timeoutMs });
     return r.ok ? { ok: true, base64: r.base64, mime: r.mime, model: r.model } : { ok: false, reason: r.reason === "no_key" ? "api_error" : r.reason, error: r.error ?? priorErr };
   };

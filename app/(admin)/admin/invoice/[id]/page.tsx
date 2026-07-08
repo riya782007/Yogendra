@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getOrder } from "@/lib/supabase/queries";
+import { supabaseServer } from "@/lib/supabase/server";
 import { formatPaise } from "@/lib/pricing";
 import { PrintButton } from "@/components/admin/PrintButton";
 import { CancelOrderButton } from "@/components/admin/CancelOrderButton";
@@ -13,6 +14,15 @@ export const metadata = { title: "Invoice" };
 
 export default async function Invoice({ params }: { params: { id: string } }) {
   const data = await getOrder(params.id);
+  // Returns recorded AGAINST this bill (credit notes + per-line movements) — surfaced right on the
+  // bill so nobody accidentally records the same return twice or misses that one already happened.
+  const sbRet = supabaseServer();
+  const [{ data: retNotes }, { data: retMoves }] = await Promise.all([
+    sbRet.from("returns").select("id,qty,amount,reason,created_at").eq("kind", "sales").eq("ref_order_id", params.id).order("created_at", { ascending: false }),
+    sbRet.from("stock_adjustments").select("sku,delta,reason,created_at, variant:variants(color)").eq("kind", "return").eq("ref_id", params.id).order("created_at", { ascending: false }),
+  ]);
+  const returnsAgainst = ((retNotes as any[]) ?? []);
+  const returnMoves = ((retMoves as any[]) ?? []);
   if (!data) notFound();
   const { order } = data;
   // #4/#35: list bill lines in A–Z SKU order so picking/checking is predictable.
@@ -260,6 +270,29 @@ export default async function Invoice({ params }: { params: { id: string } }) {
 
           <p className="text-center text-[10px] text-muted mt-4">This is a computer-generated {docTitle.toLowerCase()} and does not require a physical signature.</p>
         </div>
+
+        {/* Returns against this bill (screen-only, never printed) */}
+        {returnsAgainst.length > 0 && (
+          <div className="no-print bg-gold/5 border border-gold/40 rounded-2xl p-5 mt-5">
+            <h2 className="font-medium text-gold-dark mb-1">↩ Returns recorded against this bill</h2>
+            <p className="text-[11px] text-muted mb-2">Already returned — the return window for these pieces is closed. Credit notes include the bill&apos;s GST share.</p>
+            <ul className="divide-y divide-gold/20 text-sm">
+              {returnsAgainst.map((r: any) => (
+                <li key={r.id} className="py-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="text-muted whitespace-nowrap">{new Date(r.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" })}</span>
+                  <span className="text-ink">{r.qty} pc{r.qty === 1 ? "" : "s"}</span>
+                  {(r.amount ?? 0) > 0 && <span className="text-ink font-medium tabular-nums">credit {formatPaise(r.amount)}</span>}
+                  {r.reason && <span className="text-muted truncate">— {r.reason}</span>}
+                </li>
+              ))}
+            </ul>
+            {returnMoves.length > 0 && (
+              <p className="text-[11px] text-muted mt-2">
+                Lines: {returnMoves.map((m: any) => `${m.sku}${m.variant?.color ? ` (${m.variant.color})` : ""} ×${m.delta}`).join(", ")}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Admin controls (never printed) */}
         {(can(session, "billing.sell") || can(session, "billing.gst")) && (

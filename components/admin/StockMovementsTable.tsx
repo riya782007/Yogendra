@@ -11,20 +11,23 @@ import { StockLedgerDrawer } from "./StockLedgerDrawer";
 type Row = {
   id: string; product_id: string | null; kind: string | null; delta: number;
   sku: string | null; source: string | null; reason: string | null; ref_id: string | null;
-  created_at: string; invoice_no?: string | null; party?: string | null;
+  created_at: string; invoice_no?: string | null; party?: string | null; price?: number | null;
   product?: { sku: string; name: string } | null; variant?: { color: string } | null;
 };
+
+const rupees = (paise?: number | null) => paise == null ? null : `₹${Math.round(paise / 100).toLocaleString("en-IN")}`;
 
 const KIND_STYLE: Record<string, string> = {
   sale: "bg-gold/15 text-gold-dark", purchase: "bg-emerald-mist text-emerald-dark",
   damage: "bg-rose/10 text-rose", opening: "bg-blue-100 text-blue-700",
   adjustment: "bg-cream text-muted", estimate: "bg-gold/10 text-gold-dark",
+  return: "bg-blue-50 text-blue-700", purchase_return: "bg-wine/10 text-wine",
 };
 
 function docFor(r: Row): { href: string; label: string } | null {
   if (!r.ref_id) return null;
-  if (r.kind === "sale") return { href: `/admin/invoice/${r.ref_id}`, label: "View bill →" };
-  if (r.kind === "purchase") return { href: `/admin/purchase/${r.ref_id}`, label: "View purchase →" };
+  if (r.kind === "sale" || r.kind === "return") return { href: `/admin/invoice/${r.ref_id}`, label: r.kind === "return" ? "View original bill →" : "View bill →" };
+  if (r.kind === "purchase" || r.kind === "purchase_return") return { href: `/admin/purchase/${r.ref_id}`, label: r.kind === "purchase_return" ? "View original purchase →" : "View purchase →" };
   if (r.kind === "estimate") return { href: `/admin/estimate/${r.ref_id}`, label: "View estimate →" };
   return null;
 }
@@ -38,10 +41,10 @@ export function StockMovementsTable({ rows }: { rows: Row[] }) {
         <table className="w-full text-sm">
           <thead className="bg-cream text-muted text-left"><tr>
             <th className="p-3">Date</th><th className="p-3">Item</th><th className="p-3">Party</th><th className="p-3">Type</th>
-            <th className="p-3 text-right">Change</th><th className="p-3">Note</th><th className="p-3">Document</th>
+            <th className="p-3 text-right">Change</th><th className="p-3 text-right">Price</th><th className="p-3">Note</th><th className="p-3">Document</th>
           </tr></thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan={7} className="p-4 text-muted">No movements match these filters.</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={8} className="p-4 text-muted">No movements match these filters.</td></tr>}
             {rows.map((r) => {
               const doc = docFor(r);
               const colour = r.variant?.color;
@@ -60,6 +63,7 @@ export function StockMovementsTable({ rows }: { rows: Row[] }) {
                   <td className="p-3 text-ink">{r.party ? <span>{r.party}</span> : <span className="text-muted">—</span>}</td>
                   <td className="p-3"><span className={`px-2 py-0.5 rounded-full text-xs capitalize ${KIND_STYLE[r.kind ?? ""] ?? "bg-cream text-muted"}`}>{r.kind ?? "—"}</span></td>
                   <td className={`p-3 text-right font-semibold tabular-nums ${r.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{r.delta > 0 ? "+" : ""}{r.delta}</td>
+                  <td className="p-3 text-right tabular-nums text-ink" title={r.kind === "purchase" ? "Unit cost on that purchase" : "Unit rate billed on that document"}>{rupees(r.price) ?? <span className="text-muted">—</span>}</td>
                   <td className="p-3 text-muted max-w-[260px] truncate">{r.source ?? ""}{r.reason ? ` — ${r.reason}` : ""}</td>
                   <td className="p-3" onClick={(e) => e.stopPropagation()}>{doc ? (
                     <div className="whitespace-nowrap">

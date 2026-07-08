@@ -5,10 +5,20 @@ import { ProductImage } from "@/components/Placeholder";
 import { QtyField } from "@/components/admin/QtyField";
 import { placeWholesaleOrderAction, wholesaleLogoutAction, requestQuoteAction } from "@/app/actions/wholesale";
 
-type P = { sku: string; name: string; category: string; qty: number; price: number; mrp: number; image: string | null; colour?: string | null };
+type P = { sku: string; name: string; category: string; sub?: string | null; style?: string | null; qty: number; price: number; mrp: number; image: string | null; colour?: string | null };
 type HistItem = { sku: string; name: string; qty: number };
 type Hist = { id: string; total: number; amountPaid?: number; status?: string; paymentRef?: string | null; created_at: string; invoice_no: string | null; items: HistItem[] };
 type PayInfo = { payeeName: string; upiId: string | null; qrUrl: string | null };
+
+// Mirrors the server's owner-fixed shipping slabs so the dealer sees the exact payable before paying.
+function shipSlab(totalPaise: number): number {
+  if (totalPaise > 3000000) return 0;
+  if (totalPaise > 2000000) return 90000;
+  if (totalPaise > 1200000) return 60000;
+  if (totalPaise > 700000) return 40000;
+  return 30000;
+}
+const COD_FEE = 12000; // ₹120 per COD order
 
 export function WholesaleCatalog({ products, customerName, minOrder = 300000, history = [], payInfo = null, outstanding = 0, tiers = [] }: {
   products: P[]; customerName: string; minOrder?: number; history?: Hist[]; payInfo?: PayInfo | null; outstanding?: number; tiers?: WholesaleTier[];
@@ -44,11 +54,17 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
 
   const bySku = useMemo(() => new Map(products.map((p) => [p.sku.toUpperCase(), p])), [products]);
   const categories = useMemo(() => Array.from(new Set(products.map((p) => p.category).filter(Boolean))).sort(), [products]);
+  const [sub, setSub] = useState("all");
+  const [styleF, setStyleF] = useState("all");
+  const subs = useMemo(() => Array.from(new Set(products.filter((p) => cat === "all" || p.category === cat).map((p) => p.sub).filter((x): x is string => !!x))).sort(), [products, cat]);
+  const stylesL = useMemo(() => Array.from(new Set(products.filter((p) => cat === "all" || p.category === cat).map((p) => p.style).filter((x): x is string => !!x))).sort(), [products, cat]);
   const colours = useMemo(() => Array.from(new Set(products.map((p) => p.colour).filter((c): c is string => !!c))).sort(), [products]);
   const list = useMemo(() => {
     const s = q.trim().toLowerCase();
     const out = products.filter((p) =>
       (cat === "all" || p.category === cat) &&
+      (sub === "all" || p.sub === sub) &&
+      (styleF === "all" || p.style === styleF) &&
       (colour === "all" || (p.colour ?? "").toLowerCase() === colour.toLowerCase()) &&
       (!inStock || p.qty > 0) &&
       (!s || (p.name + p.sku + p.category + (p.colour ?? "")).toLowerCase().includes(s)));
@@ -88,6 +104,15 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
     setErr(""); setUtr(""); setPaying(true);
   }
   /** Finalise: record the order with the UPI reference; the owner is WhatsApp'd to verify & dispatch. */
+  async function confirmOrderCOD() {
+    if (lines.length === 0 || busy) return;
+    setBusy(true); setErr("");
+    const res = await placeWholesaleOrderAction(lines.map(([sku, n]) => ({ sku, qty: n })), { cod: true });
+    setBusy(false);
+    if (res.ok) { setDone({ id: res.orderId!, total: res.total ?? 0 }); setQty({}); setPaying(false); }
+    else setErr(res.error ?? "Could not place order");
+  }
+
   async function confirmOrder() {
     if (lines.length === 0) return;
     setBusy(true); setErr("");
@@ -196,10 +221,22 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
           {/* Filters + quick order */}
           <div className="flex flex-wrap items-center gap-2 mb-3">
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search designs / SKU / colour…" className="rounded-full border border-sand px-4 py-2 text-sm outline-none focus:border-emerald flex-1 min-w-[150px]" />
-            <select value={cat} onChange={(e) => setCat(e.target.value)} className="rounded-full border border-sand px-4 py-2 text-sm bg-white outline-none focus:border-emerald">
+            <select value={cat} onChange={(e) => { setCat(e.target.value); setSub("all"); setStyleF("all"); }} className="rounded-full border border-sand px-4 py-2 text-sm bg-white outline-none focus:border-emerald">
               <option value="all">All categories</option>
               {categories.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
+            {subs.length > 0 && (
+              <select value={sub} onChange={(e) => setSub(e.target.value)} className="rounded-full border border-sand px-4 py-2 text-sm bg-white outline-none focus:border-emerald">
+                <option value="all">All types</option>
+                {subs.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            )}
+            {stylesL.length > 0 && (
+              <select value={styleF} onChange={(e) => setStyleF(e.target.value)} className="rounded-full border border-sand px-4 py-2 text-sm bg-white outline-none focus:border-emerald">
+                <option value="all">All styles</option>
+                {stylesL.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            )}
             {colours.length > 0 && (
               <select value={colour} onChange={(e) => setColour(e.target.value)} className="rounded-full border border-sand px-4 py-2 text-sm bg-white outline-none focus:border-emerald">
                 <option value="all">All colours</option>
@@ -346,9 +383,13 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
               <button onClick={() => !busy && setPaying(false)} className="text-muted hover:text-ink text-lg leading-none">✕</button>
             </div>
 
-            <div className="mt-3 flex items-center justify-between rounded-xl bg-cream/70 px-4 py-3">
-              <span className="text-sm text-muted">Amount to pay{savings > 0 && <span className="block text-[11px] text-emerald-dark">incl. {formatPaise(savings)} bulk savings</span>}</span>
-              <span className="text-2xl font-semibold text-ink">{formatPaise(orderTotal)}</span>
+            <div className="mt-3 rounded-xl bg-cream/70 px-4 py-3 space-y-1">
+              <div className="flex items-center justify-between text-sm"><span className="text-muted">Items{savings > 0 && <span className="block text-[11px] text-emerald-dark">incl. {formatPaise(savings)} bulk savings</span>}</span><span className="text-ink">{formatPaise(orderTotal)}</span></div>
+              {shipSlab(orderTotal) > 0
+                ? <div className="flex items-center justify-between text-sm"><span className="text-muted">Shipping</span><span className="text-ink">{formatPaise(shipSlab(orderTotal))}</span></div>
+                : <div className="flex items-center justify-between text-sm"><span className="text-muted">Shipping</span><span className="text-[11px] text-gold-dark">quoted separately (order above ₹30,000)</span></div>}
+              <div className="flex items-center justify-between border-t border-sand/60 pt-1.5"><span className="text-sm text-muted">Amount to pay</span><span className="text-2xl font-semibold text-ink">{formatPaise(orderTotal + shipSlab(orderTotal))}</span></div>
+              <p className="text-[10px] text-muted">COD instead? +₹120 COD fee applies — use the COD button below.</p>
             </div>
 
             {payInfo && (payInfo.qrUrl || payInfo.upiId) ? (
@@ -372,6 +413,10 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
               <button onClick={confirmOrder} disabled={busy} className="btn-gold flex-1 py-2.5 text-sm font-medium disabled:opacity-50">{busy ? "Placing…" : "I've paid — place order"}</button>
               <button onClick={() => !busy && setPaying(false)} className="px-4 py-2.5 rounded-xl bg-ink/5 text-ink text-sm hover:bg-ink/10">Back</button>
             </div>
+            {/* COD — the dealer orders now, pays on delivery; the amount stays due on their ledger. */}
+            <button onClick={confirmOrderCOD} disabled={busy} className="w-full mt-2 py-2.5 rounded-xl border border-sand text-sm text-ink hover:border-emerald disabled:opacity-50">
+              💵 Order on COD — pay {formatPaise(orderTotal + shipSlab(orderTotal) + COD_FEE)} on delivery (incl. ₹120 COD fee)
+            </button>
             <p className="text-[11px] text-muted mt-2 text-center">We verify your payment and dispatch — you'll get a WhatsApp confirmation.</p>
           </div>
         </div>

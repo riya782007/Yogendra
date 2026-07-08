@@ -1,9 +1,10 @@
 "use server";
+import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { isWalkInPlaceholder } from "@/lib/supabase/queries";
 import { requirePerm } from "@/lib/auth";
 import { sendPurchase } from "@/lib/ga4";
-import { notifyOrderPlaced } from "@/lib/whatsapp";
+import { notifyOrderPlaced, sendWhatsAppText } from "@/lib/whatsapp";
 
 export type PlaceOrderInput = {
   items: { sku: string; qty: number; color?: string }[];
@@ -24,11 +25,25 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
     p_tier: "retail",
   });
   if (error) return { ok: false, error: error.message };
-  const orderId = (data as any)?.order_id, total = (data as any)?.total;
+  const orderId = (data as any)?.order_id;
+  let total = (data as any)?.total as number;
+
+  // SHIPPING belongs IN the order (free ≥ ₹999, else ₹50 — mirrors the checkout UI): the old code
+  // showed it at checkout but never recorded it, so every COD order's total was ₹50 short.
+  const ship = total >= 99900 || total === 0 ? 0 : 5000;
+  // DELIVERY ADDRESS was collected but never saved — the owner had bills with no address to ship to.
+  const addr = [input.customer.address, input.customer.city, input.customer.pincode].filter(Boolean).join(", ");
+  const patch: Record<string, unknown> = {};
+  if (ship > 0) { total = total + ship; patch.total = total; patch.extra_courier = ship; }
+  if (addr) patch.buyer_address = addr;
+  if (Object.keys(patch).length) await sb.from("orders").update(patch).eq("id", orderId).then(() => {}, () => {});
+
   await sendPurchase({ orderId, valuePaise: total, channel: "retail", items: input.items.map((i) => ({ sku: i.sku, qty: i.qty })) });
   await notifyOrderPlaced({
     orderId, customerName: input.customer.name, customerPhone: input.customer.phone,
     totalPaise: total, payment: input.payment, itemCount: input.items.reduce((n, i) => n + i.qty, 0),
+    itemsText: input.items.map((i) => `• ${i.sku}${i.color ? ` · ${i.color}` : ""} × ${i.qty}`).join("\n"),
+    address: addr || null, shippingPaise: ship || null,
   }).catch(() => {});
   return { ok: true, orderId, total };
 }
@@ -64,6 +79,9 @@ export async function posSaleAction(input: {
   const { data, error } = await sb.rpc("place_order", {
     p_items: input.items.map((i) => ({ sku: i.sku, qty: i.qty })), p_customer: input.customer ?? {}, p_channel: "pos", p_payment: input.payment || "cash",
     p_allow_oversell: !!input.allowOversell, p_tier: input.tier === "wholesale" ? "wholesale" : "retail",
+    // BACKORDER = held like an estimate: the RPC records the bill but does NOT move stock, log a
+    // sale movement, or post revenue. All of that happens when the owner fulfils it manually.
+    p_backorder: !!input.backorder,
   });
   if (error) return { ok: false, error: error.message };
   const orderId = (data as any)?.order_id;
@@ -219,6 +237,10 @@ export async function posSaleAction(input: {
     pay_bank: payBank,
   }).eq("id", orderId);
 
+  // Persist the GST mode so the invoice renders correctly: WHOLESALE bills are exclusive (GST added
+  // on top), RETAIL bills are inclusive (GST already inside the price). Best-effort — never breaks a sale.
+  if (gstMode) await sb.from("orders").update({ gst_mode: gstMode }).eq("id", orderId).then(() => {}, () => {});
+
   // Itemised charge breakdown — best-effort; needs migration 0021. Never breaks a sale.
   if (xCharges !== 0) {
     const { error: chErr } = await sb.from("orders").update({ extra_packing: xPacking, extra_courier: xCourier, extra_adjustment: xAdjust }).eq("id", orderId);
@@ -258,4 +280,43 @@ export async function posSaleAction(input: {
 
   await sendPurchase({ orderId, valuePaise: total, channel: "retail", items: input.items.map((i) => ({ sku: i.sku, qty: i.qty })) });
   return { ok: true, orderId, total };
+}
+
+/** ACCEPT a storefront (website) order — moves it out of the "new" queue; customer WhatsApp'd. */
+export async function acceptStorefrontOrderAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("billing.sell"))) return;
+  const id = String(formData.get("id") ?? "").trim();
+  if (!id) return;
+  const sb = supabaseServer();
+  const { error } = await sb.from("orders").update({ fulfillment: "accepted" }).eq("id", id);
+  if (!error) {
+    const { data: o } = await sb.from("orders").select("invoice_no,customer_name,customer_phone,total").eq("id", id).maybeSingle();
+    const ph = (o as any)?.customer_phone;
+    if (ph) {
+      const inv = (o as any)?.invoice_no || id.slice(0, 8).toUpperCase();
+      await sendWhatsAppText(ph, `Hi ${(o as any)?.customer_name || "there"}! 💛 Your Blythe Diva order ${inv} is CONFIRMED and being packed. We'll share tracking soon.`).catch(() => {});
+    }
+  }
+  revalidatePath("/admin/orders"); revalidatePath("/admin/sales");
+}
+
+/** REJECT a storefront order — cancels it properly: restocks every line, reverses the revenue
+ *  ledger, marks cancelled (via the same cancel_order RPC the owner uses), customer notified. */
+export async function rejectStorefrontOrderAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("billing.sell"))) return;
+  const id = String(formData.get("id") ?? "").trim();
+  const reason = String(formData.get("reason") ?? "").trim() || "Order rejected by store";
+  if (!id) return;
+  const sb = supabaseServer();
+  const { error } = await sb.rpc("cancel_order", { p_order_id: id, p_reason: reason });
+  if (!error) {
+    await sb.from("orders").update({ fulfillment: "rejected" }).eq("id", id).then(() => {}, () => {});
+    const { data: o } = await sb.from("orders").select("invoice_no,customer_name,customer_phone").eq("id", id).maybeSingle();
+    const ph = (o as any)?.customer_phone;
+    if (ph) {
+      const inv = (o as any)?.invoice_no || id.slice(0, 8).toUpperCase();
+      await sendWhatsAppText(ph, `Hi ${(o as any)?.customer_name || "there"}, we're sorry — your Blythe Diva order ${inv} couldn't be fulfilled and has been cancelled. Any payment will be refunded. Reason: ${reason}`).catch(() => {});
+    }
+  }
+  revalidatePath("/admin/orders"); revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard");
 }

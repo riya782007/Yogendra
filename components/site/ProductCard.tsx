@@ -14,7 +14,22 @@ export type CardProduct = {
   rating: number; reviews: number; isNew?: boolean;
   image?: string | null;
   wholesale_override?: number | null; retail_override?: number | null; mrp_override?: number | null;
+  /** Available colour variants — shown as swatch dots on the card (like the old blythediva.com). */
+  colors?: string[];
 };
+
+// Best-effort swatch colour: CSS understands common names (gold, maroon, teal…); Indian trade
+// names (feroji, rani…) get a mapped hex; anything unknown falls back to a neutral chip.
+const SWATCH: Record<string, string> = {
+  feroji: "#3AAFA9", rani: "#E0115F", gajri: "#F88379", mehendi: "#7A8B3A", "peacock": "#0F6B72",
+  "baby pink": "#F4C2C2", "blush pink": "#E8A9A9", "off white": "#FAF6EE", oxidised: "#8a8f98", antique: "#9C7A3C",
+};
+function swatchCss(name: string): string {
+  const n = name.trim().toLowerCase();
+  if (SWATCH[n]) return SWATCH[n];
+  const el = ["red","blue","green","gold","silver","white","black","pink","purple","maroon","orange","yellow","grey","gray","teal","navy","peach","cream","brown","magenta","violet","turquoise","coral","ivory","mint","wine","copper"].find((c) => n.includes(c));
+  return el ?? "#d8cfc0";
+}
 
 export function ProductCard({ p, formula, index = 0 }: { p: CardProduct; formula: PricingFormula; index?: number }) {
   const o = liveOffer(p.base_wholesale, formula, overridesOf(p));
@@ -43,6 +58,14 @@ export function ProductCard({ p, formula, index = 0 }: { p: CardProduct; formula
         {p.category.name && p.category.name.toLowerCase() !== "uncategorized" && <p className="text-[10px] uppercase tracking-[0.15em] text-gold-dark">{p.category.name}</p>}
         <h3 className="text-sm font-medium text-ink leading-snug mt-0.5 line-clamp-1 group-hover:text-emerald transition-colors">{p.name}</h3>
         <div className="mt-1"><Stars rating={p.rating} count={p.reviews} /></div>
+        {(p.colors?.length ?? 0) > 1 && (
+          <div className="mt-1.5 flex items-center gap-1" title={p.colors!.join(", ")}>
+            {p.colors!.slice(0, 5).map((c) => (
+              <span key={c} className="h-3.5 w-3.5 rounded-full border border-ink/15 shadow-sm" style={{ background: swatchCss(c) }} />
+            ))}
+            {p.colors!.length > 5 && <span className="text-[10px] text-muted">+{p.colors!.length - 5}</span>}
+          </div>
+        )}
         <div className="mt-2 flex items-baseline gap-2">
           <span className="font-semibold text-ink">{formatPaise(o.price)}</span>
           {o.hasOffer && <span className="text-xs text-muted line-through">{formatPaise(o.mrp)}</span>}

@@ -5,7 +5,7 @@
  * data we pass it — it never invents prices, order details, or promises. Server-only.
  */
 import "server-only";
-import { openaiChat, openaiConfigured } from "./providers";
+import { openaiChat, openaiConfigured, geminiChat, geminiTextConfigured } from "./providers";
 
 export type AgentReply = { reply: string; escalate: boolean; reason?: string };
 
@@ -41,7 +41,9 @@ const SYSTEM =
   `"reason" is a short internal note for the owner (why you escalated, or "" if not).`;
 
 export async function runSupportAgent(ctx: AgentContext): Promise<AgentReply> {
-  if (!openaiConfigured()) {
+  // OpenAI when enabled, otherwise Gemini — the CRM keeps answering while OpenAI billing is capped.
+  const chatFn = openaiConfigured() ? openaiChat : geminiTextConfigured() ? geminiChat : null;
+  if (!chatFn) {
     return {
       reply: "Thank you for messaging BlytheDIVA 💛 Our team will get back to you very shortly.",
       escalate: true,
@@ -74,7 +76,7 @@ export async function runSupportAgent(ctx: AgentContext): Promise<AgentReply> {
   ].filter((x) => x !== undefined).join("\n");
 
   try {
-    const raw = await openaiChat({ system: SYSTEM, user, json: true, timeoutMs: 20_000 });
+    const raw = await chatFn({ system: SYSTEM, user, json: true, timeoutMs: 20_000 });
     const j = JSON.parse(raw);
     const reply = String(j.reply ?? "").trim() || "Thank you for messaging BlytheDIVA 💛 Our team will reach out shortly.";
     return { reply, escalate: !!j.escalate, reason: j.reason ? String(j.reason) : undefined };

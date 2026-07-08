@@ -77,34 +77,25 @@ body {
   body { background: #fff !important; }
   .print-area { box-shadow: none !important; }
 
-  /* Barcode labels — an exact cols×rows grid that FILLS one A4 sheet with uniform 8mm margins.
-     Column count (--bc-cols) and rows-per-sheet (--bc-rows) come from the chosen paper preset, so
-     e.g. 65-up = 5×13 lands exactly on one sheet with clean, even borders and never spills over. */
-  @page { size: A4; margin: 8mm; }
-  .barcode-grid {
-    display: grid !important;
-    grid-template-columns: repeat(var(--bc-cols, 5), 1fr) !important;
-    /* Fixed row height (computed so rows + gaps fill the 281mm printable height exactly) and small
-       gutters between labels — matches the owner's existing sheet: separated labels, no boxes. */
-    grid-auto-rows: var(--bc-rowh, 19.77mm) !important;
-    column-gap: var(--bc-colgap, 3mm) !important;
-    row-gap: var(--bc-rowgap, 2mm) !important;
-  }
+  /* Barcode labels: ALL print geometry (page margin 0, die-cut grid, label size) is owned by the
+     inline print style in BarcodeSheet.tsx — the ONLY @page for barcodes lives there. No @page or
+     grid/label sizing here, so nothing can shift or clip the 65-up sheet (that conflict was why
+     only 60 of 65 labels printed: a competing 8mm page margin pushed row 13 off the die-cut). */
   .barcode-label {
-    padding: 0 !important;
-    border: none !important; border-radius: 0 !important;
-    page-break-inside: avoid; break-inside: avoid;
-    height: 100%; overflow: hidden;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 0.8mm !important;
+    border-radius: 2px !important;
+    page-break-inside: avoid;
+    overflow: hidden;
+    display: flex; flex-direction: column; justify-content: center;
   }
   /* Catalogue PDF: make dark header/footer readable without background graphics */
   .catalog-dark, .catalog-dark * { background: transparent !important; color: #241B2E !important; }
   .catalog-dark a { color: #A07E2E !important; }
 
-  .barcode-label .bc-name { font-size: 5.5pt; line-height: 1.05; max-width: 100%; }
-  .barcode-label .bc-sku { font-size: 6pt; margin-top: 0.4mm; line-height: 1; }
-  .barcode-label .bc-price { font-size: 6.5pt; line-height: 1; }
-  .barcode-label svg { height: var(--bc-barh, 8.5mm) !important; max-width: 100% !important; }
+  .barcode-label .bc-name { font-size: 6pt; line-height: 1.1; }
+  .barcode-label .bc-sku { font-size: 6pt; margin-top: 0.5mm; }
+  .barcode-label .bc-price { font-size: 7pt; }
+  .barcode-label svg { height: 10mm !important; width: 100% !important; }
 }
 /* on-screen label sizing + preview outline (removed on print, where labels are borderless) */
 .barcode-label .bc-name { font-size: 10px; }

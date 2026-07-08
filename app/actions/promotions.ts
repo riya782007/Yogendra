@@ -14,7 +14,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 import { logActivity } from "@/lib/audit";
 import { refinePromoPrompt } from "@/lib/ai/promo";
-import { openaiConfigured } from "@/lib/ai/providers";
+import { openaiConfigured, geminiTextConfigured } from "@/lib/ai/providers";
 import { generateImage, geminiConfigured } from "@/lib/ai/gemini";
 
 const BUCKET = "product-media";
@@ -23,7 +23,7 @@ export async function refinePromoAction(input: { idea: string }): Promise<{ ok: 
   if (!(await requirePerm("marketing.manage"))) return { ok: false, error: "You don't have permission for promotions." };
   const idea = (input.idea ?? "").trim();
   if (!idea) return { ok: false, error: "Type your promotion idea first." };
-  if (!openaiConfigured()) return { ok: false, error: "Add OPENAI_API_KEY to refine prompts with ChatGPT." };
+  if (!openaiConfigured() && !geminiTextConfigured()) return { ok: false, error: "Add GEMINI_API_KEY (or re-enable OpenAI) to refine promotion prompts." };
   const sb = supabaseServer();
   const [{ data: cats }, { data: prods }] = await Promise.all([
     sb.from("categories").select("name,slug").order("name"),

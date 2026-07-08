@@ -1,5 +1,5 @@
 "use server";
-import { groqChat, openaiChat, groqConfigured, openaiConfigured } from "@/lib/ai/providers";
+import { groqChat, openaiChat, geminiChat, groqConfigured, openaiConfigured, geminiTextConfigured } from "@/lib/ai/providers";
 import { getStorefront } from "@/lib/supabase/queries";
 import { liveOffer } from "@/lib/offers";
 import { formatPaise } from "@/lib/pricing";
@@ -22,6 +22,7 @@ export async function askAssistantAction(message: string): Promise<{ ok: boolean
   try {
     let reply: string;
     if (groqConfigured()) reply = await groqChat({ system, user: msg });
+    else if (geminiTextConfigured()) reply = await geminiChat({ system, user: msg });
     else if (openaiConfigured()) reply = await openaiChat({ system, user: msg });
     else return { ok: true, reply: "I'd love to help you find the perfect piece! Browse our Necklaces, Earrings, Bracelets, Anklets and Rings, or tell me your budget and occasion. (The live AI assistant switches on once the store connects its AI key.)" };
     return { ok: true, reply: reply.trim() };

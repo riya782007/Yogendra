@@ -5,6 +5,7 @@ import { formatPaise } from "@/lib/pricing";
 import { Pager } from "@/components/admin/Pager";
 import { getSession, can } from "@/lib/auth";
 import { upsertCustomerAction } from "@/app/actions/customers";
+import { ReceivePaymentButton } from "@/components/admin/ReceivePaymentButton";
 
 export const metadata = { title: "Owner Console · Customers" };
 const PAGE_SIZE = 20;
@@ -150,7 +151,12 @@ export default async function Customers({ searchParams }: { searchParams: { q?: 
                     ) : <span className="text-muted text-xs">—</span>}
                   </td>
                   <td className="p-3 text-right">{c.credit_balance ? <span className="text-rose font-medium">{formatPaise(c.credit_balance)}</span> : <span className="text-muted">—</span>}</td>
-                  <td className="p-3 text-right">{wa && <a href={wa} target="_blank" rel="noreferrer" className="text-[11px] text-emerald hover:underline whitespace-nowrap">Reach out ↗</a>}</td>
+                  <td className="p-3 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <ReceivePaymentButton customerId={c.id} phone={c.phone || null} customerName={c.name} />
+                      {wa && <a href={wa} target="_blank" rel="noreferrer" className="text-[11px] text-emerald hover:underline whitespace-nowrap">Reach out ↗</a>}
+                    </div>
+                  </td>
                 </tr>
               );
             })}

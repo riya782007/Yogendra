@@ -1,0 +1,3 @@
+-- 0048 — applied live via MCP 2026-07-06: record_purchase_return(p_purchase_id, p_reason, p_items)
+-- — variant-exact stock OUT (floored 0), per-line cap (bought − returned), movement kind
+-- 'purchase_return' against the bill, debit note on returns (kind 'purchase') + money ledger credit.

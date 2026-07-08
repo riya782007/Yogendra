@@ -10,11 +10,14 @@ import Link from "next/link";
 import { fetchProductLedgerAction } from "@/app/actions/ledger";
 
 type Movement = {
-  id: string; kind: string; delta: number; runningBalance: number;
+  id: string; kind: string; delta: number; runningBalance: number | null;
   source: string | null; reason: string | null; created_by: string | null;
   ref_id: string | null; created_at: string; invoice_no?: string | null;
   party?: string | null;
+  hold?: boolean;
   variant?: { color: string | null; sku: string | null } | null;
+  price?: number | null;
+  variantBalance?: number | null;
   doc: { href: string; label: string } | null;
 };
 type VariantSummary = { id: string; sku: string; color: string | null; qty: number; purchased: number; sold: number; net: number };
@@ -39,6 +42,8 @@ const day = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "2
 const time = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
 
 const KIND_STYLE: Record<string, string> = {
+  purchase_return: "bg-wine/10 text-wine",
+  baseline: "bg-cream text-muted",
   sale: "bg-gold/15 text-gold-dark", purchase: "bg-emerald-mist text-emerald-dark",
   damage: "bg-rose/10 text-rose", opening: "bg-blue-100 text-blue-700",
   adjustment: "bg-cream text-muted", estimate: "bg-gold/10 text-gold-dark",
@@ -109,8 +114,10 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
   }, [filtered]);
 
   function exportCsv() {
-    const head = ["Date", "Time", "Type", "Change", "Balance", "Invoice/Bill", "Party", "Reference", "By", "Note"];
-    const lines = rows.map((r) => [day(r.created_at), time(r.created_at), r.kind, r.delta, r.runningBalance,
+    const head = ["Date", "Time", "Type", "Before", "Change", "Balance", "Colour", "Colour Balance", "Unit Price", "Invoice/Bill", "Party", "Reference", "By", "Note"];
+    const lines = rows.map((r) => [day(r.created_at), time(r.created_at), r.kind, r.hold ? "" : ((r.runningBalance ?? 0) - r.delta), r.delta, r.hold ? "reserved" : (r.runningBalance ?? ""),
+      r.variant?.color ?? "", r.variantBalance ?? "",
+      r.price != null ? (r.price / 100).toFixed(2) : "",
       r.invoice_no ?? "", r.party ?? "", r.ref_id ?? "", r.created_by ?? "", (r.reason ?? r.source ?? "").replace(/[\n,]/g, " ")]);
     const csv = [head, ...lines].map((row) => row.map((c) => `"${String(c)}"`).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
@@ -201,7 +208,7 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
                     <button key={v.id} onClick={() => setColour((c) => (c === (v.color ?? "") ? "" : (v.color ?? "")))}
                       className={`rounded-lg border p-2 text-left ${colour === (v.color ?? "") && colour !== "" ? "border-emerald ring-1 ring-emerald/40" : "border-sand hover:border-gold"}`}>
                       <p className="text-[11px] font-medium text-ink truncate">{v.color ?? "—"} <span className="font-mono text-[9px] text-muted">{v.sku}</span></p>
-                      <p className="text-[10px] text-muted">Stock <b className={v.qty <= 2 ? "text-rose" : "text-ink"}>{v.qty}</b> · sold {v.sold} · bought {v.purchased}</p>
+                      <p className="text-[10px] text-muted">Stock <b className={v.qty <= 2 ? "text-rose" : "text-ink"}>{v.qty}</b> · sold {v.sold} · bought {v.purchased}{(v as any).returned > 0 ? ` · ret ${(v as any).returned}` : ""}</p>
                     </button>
                   ))}
                 </div>
@@ -231,7 +238,9 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
                 <div key={d}>
                   <div className="flex items-center justify-between mb-1.5">
                     <p className="text-xs font-semibold text-ink">{d}</p>
-                    <p className="text-[11px] text-muted">Closing balance <b className="text-ink">{items[0]?.runningBalance}</b></p>
+                    <p className="text-[11px] text-muted">Closing {colour ? `${colour} stock` : "balance"} <b className="text-ink">{colour
+                      ? (items.find((x) => x.variantBalance != null)?.variantBalance ?? "—")
+                      : (items.find((x) => x.runningBalance != null)?.runningBalance ?? "—")}</b></p>
                   </div>
                   <div className="rounded-xl border border-sand bg-white divide-y divide-sand/60">
                     {items.map((r) => (
@@ -245,8 +254,28 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
                             {r.party ? " · " : ""}{time(r.created_at)}{r.created_by ? ` · ${r.created_by}` : ""}{r.doc ? " · " : ""}{r.doc && <Link href={r.doc.href} className="text-emerald nav-link">{r.doc.label}</Link>}
                           </p>
                         </div>
-                        <span className={`font-semibold tabular-nums ${r.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{r.delta > 0 ? "+" : ""}{r.delta}</span>
-                        <span className="text-xs text-muted tabular-nums w-14 text-right">→ {r.runningBalance}</span>
+                        {r.price != null && <span className="text-[11px] tabular-nums text-ink whitespace-nowrap" title="Unit rate on this document">@ {fmt(r.price)}</span>}
+                        {r.hold ? (
+                          <>
+                            <span className="font-semibold tabular-nums text-gold-dark">⏳ {Math.abs(r.delta)}</span>
+                            <span className="text-[10px] text-gold-dark/80 tabular-nums w-14 text-right">reserved</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className={`font-semibold tabular-nums ${r.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{r.delta > 0 ? "+" : ""}{r.delta}</span>
+                            {/* Lucid balance trail: what it WAS → what happened → what it IS now.
+                                With a colour filter on, the trail is that COLOUR's own stock chain. */}
+                            {(() => {
+                              const bal = colour ? (r.variantBalance ?? null) : (r.runningBalance ?? null);
+                              if (bal == null) return <span className="text-xs text-muted w-20 text-right">—</span>;
+                              return (
+                                <span className="text-xs text-muted tabular-nums w-20 text-right whitespace-nowrap" title={`${colour ? `${colour} stock` : "Stock"} was ${bal - r.delta}, ${r.delta > 0 ? "added" : "removed"} ${Math.abs(r.delta)}, now ${bal}`}>
+                                  {bal - r.delta} → <b className="text-ink">{bal}</b>
+                                </span>
+                              );
+                            })()}
+                          </>
+                        )}
                       </div>
                     ))}
                   </div>

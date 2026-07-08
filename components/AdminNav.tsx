@@ -25,6 +25,7 @@ const GROUPS: { title: string; links: L[] }[] = [
   ]},
   { title: "Sales & Billing", links: [
     { href: "/admin/billing", label: "Billing (POS)", icon: "₹", perm: "billing.sell" },
+    { href: "/admin/orders", label: "Storefront Orders", icon: "🛒", perm: "billing.sell" },
     { href: "/admin/sales", label: "Sales Records", icon: "❑", perm: "sales.view" },
     { href: "/admin/backorders", label: "Backorders", icon: "⏳", perm: "sales.view" },
     { href: "/admin/estimates", label: "Estimates", icon: "≈", perm: "estimates.create" },
@@ -35,7 +36,7 @@ const GROUPS: { title: string; links: L[] }[] = [
   { title: "People", links: [
     { href: "/admin/customers", label: "Customers", icon: "♚", perm: "customers.view" },
     { href: "/admin/quotes", label: "Quote Requests", icon: "📝", perm: "customers.view" },
-    { href: "/admin/employees", label: "Employees", icon: "☺", perm: "customers.view" },
+    { href: "/admin/employees", label: "Staff & Sales Ledger", icon: "☺", perm: "owner.only" },
     { href: "/admin/creditors", label: "Creditors", icon: "₹", perm: "customers.view" },
     { href: "/admin/suppliers", label: "Suppliers", icon: "⚒", perm: "suppliers.manage" },
     { href: "/admin/reviews", label: "Reviews", icon: "★", perm: "reviews.respond" },

@@ -6,7 +6,7 @@ import { posSaleAction } from "@/app/actions/orders";
 import { quickAddEmployeeAction } from "@/app/actions/employees";
 import { QtyField } from "@/components/admin/QtyField";
 
-type P = { sku: string; name: string; price: number; wholesale: number; mrp: number; category: string; qty: number };
+type P = { sku: string; name: string; price: number; wholesale: number; mrp: number; category: string; qty: number; parentSku?: string; parentName?: string };
 type Line = { sku: string; name: string; price: number; wholesale: number; mrp: number; qty: number; stock: number; override: string; disc: string };
 type Cust = { id: string; name: string; phone: string; type: string; gstin: string };
 const TIER_LABEL: Record<string, string> = { retail: "R", wholesale: "W" };
@@ -60,9 +60,22 @@ export function POSClient({ products, customers = [], methods = [], employees = 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [allowBackorder, setAllowBackorder] = useState(false);
+  // CREDIT SALE — the bill is recorded with whatever was actually received (even ₹0); the balance
+  // stays DUE on the bill (sales page shows Unpaid/Partial) instead of silently marking it paid.
+  const [credit, setCredit] = useState(false);
 
   const pct = (v: string) => { const n = Number(v); return Number.isFinite(n) && n > 0 && n < 100 ? n : 0; };
-  const gDisc = pct(globalDisc);
+  // DISCOUNT PARSER — owner's rule: a value WITH "%" is a percentage; a plain number is a RUPEE
+  // amount off per unit ("50" = ₹50 off each piece; "10%" = 10% off). Returns paise for amounts.
+  const parseDisc = (v: string): { pct: number; amtPaise: number } => {
+    const t = (v ?? "").trim();
+    if (!t) return { pct: 0, amtPaise: 0 };
+    if (t.endsWith("%")) return { pct: pct(t.slice(0, -1)), amtPaise: 0 };
+    const n = Number(t);
+    if (!Number.isFinite(n) || n <= 0) return { pct: 0, amtPaise: 0 };
+    return { pct: 0, amtPaise: Math.round(n * 100) };
+  };
+  const gDisc = pct((globalDisc ?? "").replace("%", ""));
   const baseUnit = (l: Line | P) => (custType === "wholesale" && l.wholesale > 0 ? l.wholesale : l.price);
   // rawUnit = the ORIGINAL unit rate shown in the Rate column (a manual override, else the tier rate).
   // It does NOT change when a discount is applied — the discount only affects the Amount.
@@ -71,13 +84,17 @@ export function POSClient({ products, customers = [], methods = [], employees = 
     if (ov !== "" && Number.isFinite(Number(ov)) && Number(ov) >= 0) return Math.round(Number(ov) * 100);
     return baseUnit(l);
   };
-  const lineDiscPct = (l: Line) => (l.disc.trim() !== "" ? pct(l.disc) : gDisc);
+  const lineDisc = (l: Line) => (l.disc.trim() !== "" ? parseDisc(l.disc) : { pct: gDisc, amtPaise: 0 });
+  const lineDiscPct = (l: Line) => lineDisc(l).pct; // kept for callers that only care about %
   // effUnit = the discounted unit that actually bills (Amount = effUnit × qty). Discount applies on
   // top of the Rate (override or tier), so Rate stays original and Amount reflects the discount.
+  // Supports BOTH forms: "10%" (percentage) and "50" (₹50 off per unit).
   const effUnit = (l: Line) => {
-    const d = lineDiscPct(l);
+    const d = lineDisc(l);
     const base = rawUnit(l);
-    return d > 0 ? Math.round((base * (100 - d)) / 100) : base;
+    if (d.pct > 0) return Math.round((base * (100 - d.pct)) / 100);
+    if (d.amtPaise > 0) return Math.max(0, base - d.amtPaise);
+    return base;
   };
   const mrpUnit = (l: Line) => Math.max(l.mrp || 0, rawUnit(l));
 
@@ -104,6 +121,30 @@ export function POSClient({ products, customers = [], methods = [], employees = 
     return products.filter((p) => p.name.toLowerCase().includes(s) || p.sku.toLowerCase().includes(s) || p.category.toLowerCase().includes(s)).slice(0, 8);
   }, [q, products]);
 
+  // Parents represented in the current matches that have 2+ variant colours — offered as ONE
+  // "add all colours" row so a 10-colour design never needs 10 separate picks.
+  const matchParents = useMemo(() => {
+    const seen = new Map<string, { sku: string; name: string; count: number }>();
+    for (const m of matches) {
+      if (!m.parentSku) continue;
+      const cur = seen.get(m.parentSku);
+      if (cur) continue;
+      const count = products.filter((p) => p.parentSku === m.parentSku).length;
+      if (count >= 2) seen.set(m.parentSku, { sku: m.parentSku, name: m.parentName ?? m.name, count });
+    }
+    return [...seen.values()].slice(0, 3);
+  }, [matches, products]);
+
+  function addAllVariants(parentSku: string) {
+    const vars = products.filter((p) => p.parentSku === parentSku);
+    setLines((prev) => {
+      const have = new Set(prev.map((l) => l.sku));
+      const added = vars.filter((v) => !have.has(v.sku)).map((v) => ({ sku: v.sku, name: v.name, price: v.price, wholesale: v.wholesale, mrp: v.mrp, qty: 1, stock: v.qty, override: "", disc: "" }));
+      return [...prev, ...added];
+    });
+    setQ("");
+  }
+
   const toPaise = (v: string) => { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) : 0; };
   const chargesTotal = Math.max(0, toPaise(packing)) + Math.max(0, toPaise(courier)) + toPaise(adjustment);
   const itemsTotal = lines.reduce((s, l) => s + effUnit(l) * l.qty, 0);
@@ -128,15 +169,19 @@ export function POSClient({ products, customers = [], methods = [], employees = 
   function setLineDisc(sku: string, val: string) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, disc: val } : l)); }
   function rm(sku: string) { setLines((p) => p.filter((l) => l.sku !== sku)); }
 
-  /** One box for scan + search: Enter adds the exact SKU match, else the first result. */
+  /** One box for scan + search. Enter adds ONLY a safe match:
+   *  1) the EXACT SKU, else 2) the single result when exactly one matches.
+   *  It never grabs "the first of many" — a scanner misread (e.g. KN10…) must NOT silently
+   *  bill some other design that merely contains the same letters (the CCKN9582 bug). */
   function submitSearch() {
     const code = q.trim();
     if (!code) return;
     const exact = products.find((x) => x.sku.toLowerCase() === code.toLowerCase());
-    const p = exact ?? matches[0];
-    if (p) { addLine(p); setScanMsg({ text: `✓ ${p.name} · ${p.qty} in stock${p.qty <= 0 ? " (OUT)" : ""}`, ok: p.qty > 0 }); }
-    else setScanMsg({ text: `✕ No product “${code}”`, ok: false });
-    setQ(""); searchRef.current?.focus();
+    const p = exact ?? (matches.length === 1 ? matches[0] : undefined);
+    if (p) { addLine(p); setScanMsg({ text: `✓ ${p.name} · ${p.qty} in stock${p.qty <= 0 ? " (OUT)" : ""}`, ok: p.qty > 0 }); setQ(""); }
+    else if (matches.length > 1) { setScanMsg({ text: `✕ “${code}” is not an exact SKU — ${matches.length} similar items, pick one from the list`, ok: false }); }
+    else { setScanMsg({ text: `✕ No product “${code}” — check the label/SKU`, ok: false }); setQ(""); }
+    searchRef.current?.focus();
   }
 
   async function complete() {
@@ -154,15 +199,17 @@ export function POSClient({ products, customers = [], methods = [], employees = 
       items: lines.map((l) => {
         const ov = l.override.trim();
         const hasOv = ov !== "" && Number.isFinite(Number(ov)) && Number(ov) >= 0;
-        const d = lineDiscPct(l);
-        // When a rate is overridden OR a discount applies, bill the NET unit and also record the
-        // ORIGINAL rate (listRupees) so the invoice can show Rate → Disc → Amount.
-        if (hasOv || d > 0) return { sku: l.sku, qty: l.qty, priceRupees: effUnit(l) / 100, listRupees: rawUnit(l) / 100 };
+        const d = lineDisc(l);
+        // When a rate is overridden OR a discount applies (percent OR rupee amount), bill the NET
+        // unit and record the ORIGINAL rate (listRupees) so the invoice shows Rate → Disc → Amount.
+        if (hasOv || d.pct > 0 || d.amtPaise > 0) return { sku: l.sku, qty: l.qty, priceRupees: effUnit(l) / 100, listRupees: rawUnit(l) / 100 };
         return { sku: l.sku, qty: l.qty };
       }),
       customer: cust, payment: "cash",
       billType, gstMode: billType === "gst" ? gstMode : undefined, buyerGstin: billType === "gst" ? gstin : "", buyerAddress: addr,
       ...(validPays.length ? { payments: validPays } : {}),
+      // Credit sale: record EXACTLY what was received (₹0 for full credit) — never default to paid.
+      ...(credit ? { amountPaidRupees: received / 100 } : {}),
       allowOversell: allowBackorder, tier: custType, salesEmployeeId: salesEmp || undefined,
       backorder: allowBackorder && lines.some((l) => l.qty > l.stock),
       packingRupees: Number(packing) || 0, courierRupees: Number(courier) || 0, adjustmentRupees: Number(adjustment) || 0,
@@ -221,6 +268,13 @@ export function POSClient({ products, customers = [], methods = [], employees = 
           </div>
           {matches.length > 0 && (
             <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl shadow-luxe border border-sand overflow-hidden">
+              {/* One-tap bulk add: every colour of a matched design in a single click. */}
+              {matchParents.map((pp) => (
+                <button key={`all-${pp.sku}`} onClick={() => { addAllVariants(pp.sku); searchRef.current?.focus(); }} className="w-full text-left px-3 py-2 text-sm bg-emerald-mist/60 hover:bg-emerald-mist flex justify-between items-center border-b border-sand/60">
+                  <span className="truncate font-medium text-emerald-dark">➕ All {pp.count} colours — {pp.name}</span>
+                  <span className="text-[11px] text-emerald-dark/70 shrink-0 ml-2">adds {pp.count} lines</span>
+                </button>
+              ))}
               {matches.map((p) => (
                 <button key={p.sku} onClick={() => { addLine(p); searchRef.current?.focus(); }} className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-mist flex justify-between items-center">
                   <span className="truncate">{p.name} <span className="text-muted">· {p.sku}</span> <span className={`text-[11px] ${p.qty <= 0 ? "text-rose" : "text-muted"}`}>({p.qty})</span></span>
@@ -339,7 +393,7 @@ export function POSClient({ products, customers = [], methods = [], employees = 
                           className={`w-20 text-right rounded border border-transparent hover:border-sand focus:border-emerald px-1 py-0.5 outline-none ${l.override.trim() !== "" ? "text-emerald-dark font-medium" : "text-ink"}`} />
                       </td>
                       <td className="px-2 py-1.5 text-right align-middle">
-                        <input value={l.disc} onChange={(e) => setLineDisc(l.sku, e.target.value)} inputMode="decimal" placeholder={gDisc > 0 ? String(gDisc) : "0"}
+                        <input value={l.disc} onChange={(e) => setLineDisc(l.sku, e.target.value)} inputMode="decimal" placeholder={gDisc > 0 ? `${gDisc}%` : "10% / ₹50"} title='Type "10%" for percent or "50" for ₹50 off per piece'
                           className={`w-12 text-right rounded border border-transparent hover:border-sand focus:border-emerald px-1 py-0.5 outline-none ${pct(l.disc) > 0 ? "text-emerald-dark font-medium" : "text-ink"}`} />
                       </td>
                       <td className="px-3 py-1.5 text-right font-medium align-middle">{formatPaise(effUnit(l) * l.qty)}</td>
@@ -385,7 +439,7 @@ export function POSClient({ products, customers = [], methods = [], employees = 
           {lines.some((l) => l.qty > l.stock) && (
             <label className="mt-3 flex items-start gap-2 rounded-xl border border-gold/60 bg-gold/10 px-3 py-2 text-xs text-ink cursor-pointer">
               <input type="checkbox" checked={allowBackorder} onChange={(e) => setAllowBackorder(e.target.checked)} className="mt-0.5" />
-              <span>Some lines exceed stock. Tick to <b>bill as backorder</b> — otherwise blocked to prevent overselling.</span>
+              <span>Some lines exceed stock. Tick to <b>bill as backorder</b> — the bill is held like an estimate (no stock moves, not in Sales) until you convert it on the Backorders page.</span>
             </label>
           )}
         </div>
@@ -401,7 +455,7 @@ export function POSClient({ products, customers = [], methods = [], employees = 
 
           {/* Payment (F4) */}
           <div className="pt-2">
-            <p className="text-[11px] text-muted mb-1">Payment <span className="text-muted/70">— empty = paid in full cash</span> <span className="text-[10px]">F4</span></p>
+            <p className="text-[11px] text-muted mb-1">Payment <span className="text-muted/70">{credit ? "— CREDIT sale: balance stays due on the bill" : "— empty = paid in full cash"}</span> <span className="text-[10px]">F4</span></p>
             {methods.length === 0 ? (
               <p className="text-[11px] text-muted bg-cream/60 rounded-lg px-2 py-1.5">Add methods in Bank &amp; Payment Methods.</p>
             ) : (
@@ -418,6 +472,11 @@ export function POSClient({ products, customers = [], methods = [], employees = 
                 ))}
                 <div className="flex flex-wrap gap-1.5">
                   <button onClick={addPayLine} className="text-[11px] px-2.5 py-1 rounded-full border border-sand text-ink hover:border-emerald">+ Split</button>
+                  <button onClick={() => setCredit((c) => !c)}
+                    title="Record this bill on credit — the unpaid balance stays due against the customer"
+                    className={`text-[11px] px-2.5 py-1 rounded-full border ${credit ? "bg-wine text-white border-wine" : "border-sand text-muted hover:border-wine"}`}>
+                    {credit ? "✓ Credit (pay later)" : "Credit (pay later)"}
+                  </button>
                   {cashMethod && <button onClick={() => setPayLines([{ methodId: cashMethod.id, amount: String(Math.round(grandTotal / 100)) }])} className="text-[11px] px-2.5 py-1 rounded-full border border-sand text-muted hover:border-emerald">All cash</button>}
                   {payLines.length > 0 && remaining > 0 && (
                     <button onClick={() => setPayLine(payLines.length - 1, { amount: String((((Number(payLines[payLines.length - 1].amount) || 0) * 100 + remaining) / 100)) })} className="text-[11px] px-2.5 py-1 rounded-full border border-sand text-muted hover:border-emerald">Fill {formatPaise(remaining)}</button>
@@ -425,9 +484,9 @@ export function POSClient({ products, customers = [], methods = [], employees = 
                 </div>
               </div>
             )}
-            {received > 0 && (
-              <p className={`text-[11px] mt-1 text-right ${remaining > 0 ? "text-rose" : "text-emerald-dark"}`}>
-                Received {formatPaise(received)}{remaining > 0 ? ` · due ${formatPaise(remaining)}` : remaining < 0 ? ` · change ${formatPaise(-remaining)}` : " · settled"}
+            {(received > 0 || credit) && (
+              <p className={`text-[11px] mt-1 text-right ${credit && remaining > 0 ? "text-wine font-medium" : remaining > 0 ? "text-rose" : "text-emerald-dark"}`}>
+                Received {formatPaise(received)}{remaining > 0 ? ` · ${credit ? "CREDIT due" : "due"} ${formatPaise(remaining)}` : remaining < 0 ? ` · change ${formatPaise(-remaining)}` : " · settled"}
               </p>
             )}
           </div>

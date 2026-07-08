@@ -6,8 +6,11 @@
  * price preview and client-side validation. Each tab saves through its own server action; all
  * panels stay mounted so unsaved edits survive tab switches.
  */
+import { ProductHistoryLedger } from "./ProductHistoryLedger";
 import { useState } from "react";
+import { setDefaultVariantAction } from "@/app/actions/catalog";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { formatPaise, computePrices } from "@/lib/pricing";
 import {
   saveProductGeneralAction, saveProductInventoryAction, saveProductPricingAction,
@@ -201,8 +204,10 @@ export function ProductManager({ data, initialTab }: { data: any; initialTab?: s
                 <p className="text-sm font-medium text-ink">{data.variants.length} variants</p>
                 <Link href={`/admin/catalogue/${p.sku}?tab=variants`} className="text-xs text-emerald nav-link">Add / edit / bulk →</Link>
               </div>
+              <p className="text-[11px] text-muted">★ = the DEFAULT variant — the colour customers see first on the storefront (pre-selected, its photo leads). Tap a star to change it.</p>
               {data.variants.map((v: any) => (
                 <div key={v.id} className="rounded-xl border border-sand p-3 flex flex-wrap items-center gap-3 text-sm">
+                  <DefaultVariantStar productId={p.id} variantId={v.id} on={(p as any).default_variant_id === v.id} />
                   <div className="min-w-[140px]">
                     <p className="font-medium text-ink">{v.color ?? v.sku}{v.size ? ` · ${v.size}` : ""}</p>
                     <p className="text-[11px] text-muted font-mono">{v.sku}</p>
@@ -307,6 +312,10 @@ export function ProductManager({ data, initialTab }: { data: any; initialTab?: s
 
       {/* ---------- HISTORY ---------- */}
       <div hidden={tab !== "history"}>
+        <div className={`${card} mb-4`}>
+          {/* Movements + estimates for THIS product: date, party, variant, qty, price, document. */}
+          {tab === "history" && <ProductHistoryLedger productId={p.id} />}
+        </div>
         <div className={card}>
           <p className="text-sm font-medium text-ink mb-3">Audit timeline</p>
           {data.audit.length === 0 ? (
@@ -324,6 +333,19 @@ export function ProductManager({ data, initialTab }: { data: any; initialTab?: s
         </div>
       </div>
     </div>
+  );
+}
+
+function DefaultVariantStar({ productId, variantId, on }: { productId: string; variantId: string; on: boolean }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button" disabled={busy}
+      title={on ? "This is the default storefront variant (tap to clear)" : "Make this the default storefront variant"}
+      onClick={async () => { setBusy(true); await setDefaultVariantAction(productId, on ? null : variantId); setBusy(false); router.refresh(); }}
+      className={`text-lg leading-none ${on ? "text-gold-dark" : "text-sand hover:text-gold-dark"} disabled:opacity-50`}
+    >★</button>
   );
 }
 

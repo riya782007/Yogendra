@@ -1,7 +1,7 @@
 "use server";
 /**
  * updateProductAction — full edit of an existing product from the owner console.
- * Updates core columns (name, category, type, status, base price, qty) AND the
+ * Updates core columns (name, category, type, status, base price) AND the (stock is NOT touched here)
  * generated_content JSON (title, description, tags, SEO meta + keywords, specs).
  * Money stays in integer paise; the pricing formula re-derives retail/MRP/wholesale.
  */
@@ -98,7 +98,6 @@ export async function updateProductAction(formData: FormData): Promise<UpdateRes
       wholesale_only: String(formData.get("visibility") ?? "all") === "wholesale",
       retail_only: String(formData.get("visibility") ?? "all") === "retail",
       base_wholesale: Math.round(basePriceRupees * 100),
-      qty,
       generated_content,
       last_movement_at: new Date().toISOString(),
     })

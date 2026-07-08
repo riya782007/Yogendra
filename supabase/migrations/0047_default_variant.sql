@@ -1,0 +1,4 @@
+-- 0047 — products.default_variant_id uuid (owner-chosen storefront lead colour).
+-- 2026-07-07 HOTFIX (applied live): the FK to variants was DROPPED — it created a second
+-- products<->variants relationship, making PostgREST's variants(*) embeds ambiguous, which
+-- 404'd every storefront product page. Plain uuid column now; code tolerates stale ids.

@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
+import { ProductHistoryLedger } from "@/components/admin/ProductHistoryLedger";
 import {
   getProductBySku, getCategories, getPricingFormula, getSubcategories, getStyles,
   getProductSalesStats, getStockHistory, getProductEstimates, getVariantOptions, getLabels, getColorCodeMap,
@@ -14,7 +15,7 @@ import VariantAiPhoto from "@/components/admin/VariantAiPhoto";
 import { requirePerm, getSession, can } from "@/lib/auth";
 import { addVariantAction, updateVariantAction, deleteVariantAction } from "@/app/actions/variants";
 import { VariantPhotos } from "@/components/admin/VariantPhotos";
-import { setProductVisibilityAction, moveProductToSubcategoryAction, moveProductToStyleAction, savePricingAction, setWholesaleOnlyAction, toggleProductLabelAction } from "@/app/actions/catalog";
+import { setProductVisibilityAction, moveProductToSubcategoryAction, moveProductToStyleAction, savePricingAction, setWholesaleOnlyAction, toggleProductLabelAction, setDefaultVariantFormAction } from "@/app/actions/catalog";
 
 const LABEL_CHIP: Record<string, string> = {
   emerald: "bg-emerald-mist text-emerald-dark", gold: "bg-gold/15 text-gold-dark",
@@ -262,8 +263,19 @@ export default async function ProductPage({ params, searchParams }: { params: { 
               ].filter(Boolean).join("-")}`
             : null;
           const needsNormalise = !!canonicalSku && canonicalSku !== v.sku;
+          const isDefault = (p as any).default_variant_id === v.id;
           return (
-            <div key={v.id} className="rounded-xl border border-sand/70 p-3">
+            <div key={v.id} className={`rounded-xl border p-3 ${isDefault ? "border-gold bg-gold/5" : "border-sand/70"}`}>
+              {/* DEFAULT VARIANT — which colour customers see FIRST on the storefront (pre-selected,
+                  its photo leads the gallery). One star per product; tap to move it. */}
+              <form action={setDefaultVariantFormAction} className="inline-flex items-center gap-1.5 mb-1.5">
+                <input type="hidden" name="product_id" value={(p as any).id} />
+                <input type="hidden" name="variant_id" value={isDefault ? "" : v.id} />
+                <input type="hidden" name="sku" value={p.sku} />
+                <button title={isDefault ? "This colour opens first on the storefront (tap to clear)" : "Make this the colour customers see first on the storefront"}
+                  className={`text-base leading-none ${isDefault ? "text-gold-dark" : "text-sand hover:text-gold-dark"}`}>★</button>
+                <span className={`text-[10px] ${isDefault ? "text-gold-dark font-medium" : "text-muted"}`}>{isDefault ? "Default on storefront" : "Set as storefront default"}</span>
+              </form>
               <form action={updateVariantAction} className="flex flex-wrap items-end gap-2">
                 <input type="hidden" name="id" value={v.id} />
                 <input type="hidden" name="product_sku" value={p.sku} />
@@ -415,26 +427,10 @@ export default async function ProductPage({ params, searchParams }: { params: { 
         <div className={card}><p className="text-xs uppercase tracking-wide text-muted">Photos</p><p className="text-xl font-semibold text-ink mt-1">{photoCount}</p></div>
       </div>
       <div className={card}>
-        <h3 className="font-medium text-ink mb-3">Stock movements</h3>
-        {history.length === 0 ? <p className="text-sm text-muted">No stock adjustments recorded yet.</p> : (
-          <ul className="divide-y divide-sand/60">
-            {history.map((h, i) => (
-              <li key={i} className="py-2.5 flex items-center justify-between gap-3 text-sm">
-                <span className={`font-medium tabular-nums ${h.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{h.delta > 0 ? "+" : ""}{h.delta}</span>
-                <span className="flex-1 text-ink truncate">
-                  {h.kind && <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded mr-1.5 ${h.kind === "damage" ? "bg-rose/10 text-rose" : h.kind === "purchase" ? "bg-emerald-mist text-emerald-dark" : h.kind === "sale" ? "bg-gold/15 text-gold-dark" : "bg-cream text-muted"}`}>{h.kind}</span>}
-                  {h.source ?? "Adjustment"}{h.reason ? <span className="text-muted"> — {h.reason}</span> : null}
-                </span>
-                {(h as any).ref_id && (h.kind === "sale" || h.kind === "purchase") ? (
-                  <Link href={h.kind === "sale" ? `/admin/invoice/${(h as any).ref_id}` : `/admin/purchase/${(h as any).ref_id}`} className="text-emerald nav-link whitespace-nowrap text-xs">
-                    {h.kind === "sale" ? "View bill →" : "View purchase →"}
-                  </Link>
-                ) : null}
-                <span className="text-muted whitespace-nowrap">{timeAgo(h.created_at)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
+        {/* Shared movement history (same engine as the Stock Ledger drawer): every sale, purchase,
+            adjustment AND estimate — each with date, party, VARIANT COLOUR, qty, unit price and its
+            bill/estimate link. Replaces the old plain list that showed none of that. */}
+        <ProductHistoryLedger productId={p.id} />
       </div>
       {estReservations.length > 0 && (
         <div className={card}>

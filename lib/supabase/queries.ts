@@ -376,14 +376,42 @@ export async function getCustomerSpend(range?: { from?: string; to?: string }): 
   return m;
 }
 
+
+/** The rupee amount a customer actually OWES on one bill:
+ *  grand total (bill total + GST charged ON TOP for exclusive GST bills, rounded to ₹1 exactly
+ *  like the printed invoice) − amount paid − return credits (credit notes incl. their GST share).
+ *  Fixes the client's two escalations: "GST chhod diya" (outstanding rose by the pre-tax total)
+ *  and returns never reducing what the customer owes. */
+export function orderReceivable(o: { total?: number | null; amount_paid?: number | null; bill_type?: string | null; gst_mode?: string | null }, returnCredit = 0): number {
+  const total = o.total ?? 0;
+  const grand = o.bill_type === "gst" && (o.gst_mode ?? "exclusive") !== "inclusive"
+    ? Math.round((total + Math.round((total * 3) / 100)) / 100) * 100
+    : total;
+  return Math.max(0, grand - (o.amount_paid ?? 0) - returnCredit);
+}
+
+/** Σ return credit (returns.amount, incl. GST share) per order id, for a set of orders. */
+export async function returnCreditsByOrder(orderIds: string[]): Promise<Map<string, number>> {
+  const m = new Map<string, number>();
+  if (!orderIds.length) return m;
+  const sb = supabaseServer();
+  const { data } = await sb.from("returns").select("ref_order_id,amount").eq("kind", "sales").in("ref_order_id", orderIds);
+  for (const r of ((data as any[]) ?? [])) {
+    if (!r.ref_order_id) continue;
+    m.set(r.ref_order_id, (m.get(r.ref_order_id) ?? 0) + (r.amount ?? 0));
+  }
+  return m;
+}
 /** Creditors — customers who owe a balance, aggregated across all their bills (outstanding =
  *  Σ bill total − amount paid). Important for wholesale credit tracking. */
 export async function getCreditors(): Promise<{ id: string | null; name: string; phone: string; outstanding: number; bills: number }[]> {
   const sb = supabaseServer();
-  const { data } = await sb.from("orders").select("customer_id,customer_name,customer_phone,total,amount_paid");
+  const { data } = await sb.from("orders").select("id,customer_id,customer_name,customer_phone,total,amount_paid,bill_type,gst_mode,status");
+  const rows0 = ((data as any[]) ?? []).filter((o) => o.status !== "cancelled");
+  const credits = await returnCreditsByOrder(rows0.map((o) => o.id));
   const map = new Map<string, { id: string | null; name: string; phone: string; outstanding: number; bills: number }>();
-  for (const o of ((data as any[]) ?? [])) {
-    const due = (o.total ?? 0) - (o.amount_paid ?? 0);
+  for (const o of rows0) {
+    const due = orderReceivable(o, credits.get(o.id) ?? 0);
     if (due <= 0) continue;
     const key = o.customer_id ? `id:${o.customer_id}` : o.customer_phone ? `ph:${o.customer_phone}` : o.customer_name ? `nm:${o.customer_name}` : null;
     if (!key) continue;
@@ -557,7 +585,7 @@ export async function getCustomerById(id: string) {
   // Order history: linked customer_id plus any POS sales saved with the same phone.
   // (Two separate queries merged — avoids putting a raw phone into an or() filter.)
   const phone = (c as any).phone;
-  const sel = "id,total,amount_paid,invoice_no,channel,bill_type,payment_mode,status,created_at,customer_id,customer_phone";
+  const sel = "id,total,amount_paid,invoice_no,channel,bill_type,gst_mode,payment_mode,status,created_at,customer_id,customer_phone";
   const byId = await sb.from("orders").select(sel).eq("customer_id", id).order("created_at", { ascending: false }).limit(100);
   const byPhone = phone ? await sb.from("orders").select(sel).eq("customer_phone", phone).order("created_at", { ascending: false }).limit(100) : { data: [] as any[] };
   const seen = new Set<string>();
@@ -569,9 +597,10 @@ export async function getCustomerById(id: string) {
   // unpaid invoices roll up automatically. The DB column `credit_balance` is now a
   // *manual override* (advance received, store credit, hand-entered adjustment) — kept as
   // a fallback so existing data continues to display.
+  const custCredits = await returnCreditsByOrder(list.map((o: any) => o.id));
   const outstandingFromOrders = list
     .filter((o: any) => o.status !== "cancelled" && o.status !== "void")
-    .reduce((s: number, o: any) => s + Math.max(0, (o.total ?? 0) - (o.amount_paid ?? 0)), 0);
+    .reduce((s: number, o: any) => s + orderReceivable(o, custCredits.get(o.id) ?? 0), 0);
   return {
     customer: c,
     orders: list,
@@ -607,6 +636,11 @@ export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?
   const pageSize = opts.pageSize ?? 25;
   const page = Math.max(1, opts.page ?? 1);
   let query = sb.from("orders").select("id,total,amount_paid,invoice_no,channel,status,payment_mode,bill_type,customer_name,customer_phone,source_tag,created_at", { count: "exact" });
+  // Open backorders are NOT sales yet — they hold no stock and post no revenue until the owner
+  // fulfils them on /admin/backorders. Keep them out of the sales record. (is_backorder may not
+  // exist pre-migration-0020; PostgREST treats .not on a missing column as an error, so this is
+  // written as .or to stay resilient.)
+  query = query.or("is_backorder.is.null,is_backorder.eq.false");
   if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.or(`customer_name.ilike.%${s}%,customer_phone.ilike.%${s}%`); }
   if (opts.channel && opts.channel !== "all") query = query.eq("channel", opts.channel);
   if (opts.billType) query = query.eq("bill_type", opts.billType);
@@ -620,7 +654,16 @@ export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?
   let q = query.order(col, { ascending: asc, nullsFirst: false });
   if (col !== "created_at") q = q.order("created_at", { ascending: false });
   const { data, count } = await q.range(fromIdx, fromIdx + pageSize - 1);
-  return { rows: (data as any[]) ?? [], total: count ?? 0, page, pageSize };
+  const rows = (data as any[]) ?? [];
+  // Attach returned-piece counts so the sales list shows "↩ N returned" on affected bills —
+  // the chain-of-events note the client asked for (avoids double returns / miscommunication).
+  if (rows.length) {
+    const { data: rets } = await sb.from("returns").select("ref_order_id,qty").eq("kind", "sales").in("ref_order_id", rows.map((r) => r.id));
+    const by = new Map<string, number>();
+    for (const r of ((rets as any[]) ?? [])) if (r.ref_order_id) by.set(r.ref_order_id, (by.get(r.ref_order_id) ?? 0) + (r.qty ?? 0));
+    for (const r of rows) r.returned_qty = by.get(r.id) ?? 0;
+  }
+  return { rows, total: count ?? 0, page, pageSize };
 }
 
 export async function getPublishedProducts(): Promise<(DbProduct & { category: DbCategory })[]> {
@@ -987,7 +1030,7 @@ export async function getStockMovements(opts: { page?: number; pageSize?: number
   const pageSize = opts.pageSize ?? 30;
   const page = Math.max(1, opts.page ?? 1);
   let query = sb.from("stock_adjustments")
-    .select("id,product_id,delta,kind,source,reason,ref_id,sku,created_at, product:products(sku,name), variant:variants(color)", { count: "exact" });
+    .select("id,product_id,variant_id,delta,kind,source,reason,ref_id,sku,created_at, product:products(sku,name), variant:variants(color)", { count: "exact" });
   if (opts.kind && opts.kind !== "all") query = query.eq("kind", opts.kind);
   if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.ilike("sku", `%${s}%`); }
   if (opts.from) query = query.gte("created_at", opts.from);
@@ -998,16 +1041,17 @@ export async function getStockMovements(opts: { page?: number; pageSize?: number
   // Attach the bill/invoice number to each sale row (ref_id → orders.invoice_no). ref_id is a
   // generic reference (orders/purchases/estimates), not a PostgREST FK, so we look it up in one
   // extra query and map it back rather than embedding.
-  const saleRefs = [...new Set(rows.filter((r) => r.kind === "sale" && r.ref_id).map((r) => r.ref_id))];
-  const purchaseRefs = [...new Set(rows.filter((r) => r.kind === "purchase" && r.ref_id).map((r) => r.ref_id))];
+  // Customer returns reference the ORDER; purchase returns reference the PURCHASE — both need
+  // their party and rate resolved just like plain sales/purchases (the owner traces returns too).
+  const saleRefs = [...new Set(rows.filter((r) => (r.kind === "sale" || r.kind === "return") && r.ref_id).map((r) => r.ref_id))];
+  const purchaseRefs = [...new Set(rows.filter((r) => (r.kind === "purchase" || r.kind === "purchase_return") && r.ref_id).map((r) => r.ref_id))];
   const estimateRefs = [...new Set(rows.filter((r) => r.kind === "estimate" && r.ref_id).map((r) => r.ref_id))];
-  // party = the person/firm involved (customer on a sale/estimate, supplier on a purchase). The owner
-  // needs this to trace "who did I sell/buy this to/from" months later.
+  // party = the person/firm involved (customer on a sale/estimate/return, supplier on a purchase).
   const partyBy = new Map<string, string>();
   if (saleRefs.length) {
     const { data: ords } = await sb.from("orders").select("id,invoice_no,customer_name").in("id", saleRefs as string[]);
     const byId = new Map(((ords as any[]) ?? []).map((o) => [o.id, o]));
-    for (const r of rows) if (r.kind === "sale" && r.ref_id) { const o = byId.get(r.ref_id); r.invoice_no = o?.invoice_no ?? null; if (o?.customer_name) partyBy.set(r.ref_id, o.customer_name); }
+    for (const r of rows) if ((r.kind === "sale" || r.kind === "return") && r.ref_id) { const o = byId.get(r.ref_id); r.invoice_no = o?.invoice_no ?? null; if (o?.customer_name) partyBy.set(r.ref_id, o.customer_name); }
   }
   if (purchaseRefs.length) {
     const { data: purs } = await sb.from("purchases").select("id, supplier:suppliers(name)").in("id", purchaseRefs as string[]);
@@ -1018,6 +1062,36 @@ export async function getStockMovements(opts: { page?: number; pageSize?: number
     for (const e of ((ests as any[]) ?? [])) if (e.customer_name) partyBy.set(e.id, e.customer_name);
   }
   for (const r of rows) r.party = r.ref_id ? (partyBy.get(r.ref_id) ?? null) : null;
+
+  // PRICE per movement — the owner checks "what did I sell/buy this at last time" from this very
+  // register. Batch-resolved: sale rows → order_items.unit_price, purchase rows →
+  // purchase_items.unit_cost, estimate rows → estimate_items.unit_price. Variant-exact when the
+  // movement carries a variant; falls back to the product-level line.
+  const priceKey = (ref: string, prod: string, vid: string | null) => `${ref}|${prod}|${vid ?? ""}`;
+  const priceBy = new Map<string, number>();
+  if (saleRefs.length) {
+    const { data: ois } = await sb.from("order_items").select("order_id,product_id,variant_id,unit_price").in("order_id", saleRefs as string[]);
+    for (const oi of ((ois as any[]) ?? [])) {
+      priceBy.set(priceKey(oi.order_id, oi.product_id, oi.variant_id ?? null), oi.unit_price ?? 0);
+      if (!priceBy.has(priceKey(oi.order_id, oi.product_id, null))) priceBy.set(priceKey(oi.order_id, oi.product_id, null), oi.unit_price ?? 0);
+    }
+  }
+  if (purchaseRefs.length) {
+    const { data: pis } = await sb.from("purchase_items").select("purchase_id,mapped_product_id,unit_cost").in("purchase_id", purchaseRefs as string[]);
+    for (const pi of ((pis as any[]) ?? [])) if (pi.mapped_product_id) priceBy.set(priceKey(pi.purchase_id, pi.mapped_product_id, null), pi.unit_cost ?? 0);
+  }
+  if (estimateRefs.length) {
+    const { data: eis } = await sb.from("estimate_items").select("estimate_id,product_id,variant_id,unit_price").in("estimate_id", estimateRefs as string[]);
+    for (const ei of ((eis as any[]) ?? [])) {
+      priceBy.set(priceKey(ei.estimate_id, ei.product_id, ei.variant_id ?? null), ei.unit_price ?? 0);
+      if (!priceBy.has(priceKey(ei.estimate_id, ei.product_id, null))) priceBy.set(priceKey(ei.estimate_id, ei.product_id, null), ei.unit_price ?? 0);
+    }
+  }
+  for (const r of rows) {
+    r.price = r.ref_id && r.product_id
+      ? (priceBy.get(priceKey(r.ref_id, r.product_id, r.variant_id ?? null)) ?? priceBy.get(priceKey(r.ref_id, r.product_id, null)) ?? null)
+      : null;
+  }
   return { rows, total: count ?? 0, page, pageSize };
 }
 
@@ -1027,7 +1101,7 @@ export async function getOpenEstimateReservations(limit = 50) {
   const sb = supabaseServer();
   const { data } = await sb
     .from("estimates")
-    .select("id, customer_name, created_at, estimate_items(qty, product:products(sku,name))")
+    .select("id, customer_name, created_at, estimate_items(qty, unit_price, variant:variants(color), product:products(sku,name))")
     .eq("status", "open")
     .order("created_at", { ascending: false })
     .limit(limit);
@@ -1037,6 +1111,7 @@ export async function getOpenEstimateReservations(limit = 50) {
     created_at: e.created_at as string,
     lines: ((e.estimate_items as any[]) ?? []).map((li) => ({
       qty: li.qty as number, sku: li.product?.sku as string | undefined, name: li.product?.name as string | undefined,
+      color: (li.variant?.color as string | null) ?? null, unitPrice: (li.unit_price as number | null) ?? null,
     })),
     qty: ((e.estimate_items as any[]) ?? []).reduce((s, li) => s + (li.qty ?? 0), 0),
   })).filter((e) => e.lines.length > 0);
@@ -1047,11 +1122,18 @@ export async function getOpenEstimateReservations(limit = 50) {
 // running balance, pulls open-estimate reservations, resolves related documents, and rolls up
 // analytics — for the drawer opened by clicking any Stock Movement row.
 export type LedgerMovement = {
-  id: string; kind: string; delta: number; runningBalance: number;
+  id: string; kind: string; delta: number; runningBalance: number | null;
   source: string | null; reason: string | null; created_by: string | null;
   ref_id: string | null; created_at: string; invoice_no?: string | null;
+  /** Customer name (sales/estimates) or supplier name (purchases) for this movement. */
   party?: string | null;
+  /** True for estimate/reservation holds — soft commitments that do NOT change the stock balance. */
+  hold?: boolean;
   variant?: { color: string | null; sku: string | null } | null;
+  /** Unit price of this movement (paise): sale/estimate = billed rate, purchase = unit cost. */
+  price?: number | null;
+  /** Running balance of THIS movement's variant (colour) — anchored to the variant's own stock. */
+  variantBalance?: number | null;
   doc: { href: string; label: string } | null;
 };
 
@@ -1088,27 +1170,54 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   const { data: varRows } = await sb.from("variants").select("id,sku,color,qty").eq("product_id", productId);
   const variantById = new Map<string, { id: string; sku: string; color: string | null; qty: number }>();
   for (const v of ((varRows as any[]) ?? [])) variantById.set(v.id, { id: v.id, sku: v.sku, color: v.color ?? null, qty: v.qty ?? 0 });
-  const vAgg = new Map<string, { purchased: number; sold: number; net: number }>();
+  const vAgg = new Map<string, { purchased: number; sold: number; returned: number; net: number }>();
   for (const r of allRows) {
     if (!r.variant_id) continue;
-    const a2 = vAgg.get(r.variant_id) ?? { purchased: 0, sold: 0, net: 0 };
+    const a2 = vAgg.get(r.variant_id) ?? { purchased: 0, sold: 0, returned: 0, net: 0 };
     const d = r.delta ?? 0;
     if (r.kind === "purchase") a2.purchased += Math.max(0, d);
     if (r.kind === "sale") a2.sold += Math.abs(Math.min(0, d));
+    // Returns are part of every colour's story: customer returns come back IN (+), supplier
+    // returns go OUT (−) — the client's "variant ledger" must show them, not just the totals.
+    if (r.kind === "return" || r.kind === "purchase_return") a2.returned += Math.abs(d);
     a2.net += d;
     vAgg.set(r.variant_id, a2);
   }
   const variants = [...variantById.values()]
-    .map((v) => ({ ...v, purchased: vAgg.get(v.id)?.purchased ?? 0, sold: vAgg.get(v.id)?.sold ?? 0, net: vAgg.get(v.id)?.net ?? 0 }))
+    .map((v) => ({ ...v, purchased: vAgg.get(v.id)?.purchased ?? 0, sold: vAgg.get(v.id)?.sold ?? 0, returned: vAgg.get(v.id)?.returned ?? 0, net: vAgg.get(v.id)?.net ?? 0 }))
     .sort((a, b) => (a.color ?? "").localeCompare(b.color ?? ""));
 
-  let bal = 0;
-  for (const r of allRows) { bal += r.delta ?? 0; r.runningBalance = bal; }
-  const totalMovements = allRows.length;
+  // Running balance is ANCHORED to the actual on-hand stock (products.qty — the source of truth that
+  // POS sales and purchase bills update atomically). We set the NEWEST movement's closing balance to
+  // the current stock, then walk backwards subtracting each delta. This guarantees (a) the top of the
+  // ledger always equals the real stock the owner sees, and (b) every row chains exactly
+  // (row.balance − row.delta = the row below it). The old "sum forward from 0" drifted whenever an
+  // opening count or a PIM stock edit changed qty without leaving a matching ledger row.
+  const deltaSum = allRows.reduce((s, r) => s + (r.delta ?? 0), 0);
+  const currentStock = prod.qty ?? deltaSum;
+  let running = currentStock;
+  for (let i = allRows.length - 1; i >= 0; i--) {
+    allRows[i].runningBalance = running;
+    running -= allRows[i].delta ?? 0;
+  }
+  // PER-COLOUR running balance (client: "a Pink +10 must show Pink's 10, not the product's 30"):
+  // each variant's chain is anchored to ITS OWN current stock and walked backwards through only
+  // its movements. Shown in the drawer whenever a colour filter is active.
+  {
+    const vRun = new Map<string, number>();
+    for (const [vid, v] of variantById) vRun.set(vid, v.qty ?? 0);
+    for (let i = allRows.length - 1; i >= 0; i--) {
+      const vid = allRows[i].variant_id;
+      if (!vid || !vRun.has(vid)) { allRows[i].variantBalance = null; continue; }
+      const bal = vRun.get(vid)!;
+      allRows[i].variantBalance = bal;
+      vRun.set(vid, bal - (allRows[i].delta ?? 0));
+    }
+  }
 
   // --- related documents (batch lookups) ---
-  const saleRefs = [...new Set(allRows.filter((r) => r.kind === "sale" && r.ref_id).map((r) => r.ref_id))];
-  const purchaseRefs = [...new Set(allRows.filter((r) => r.kind === "purchase" && r.ref_id).map((r) => r.ref_id))];
+  const saleRefs = [...new Set(allRows.filter((r) => (r.kind === "sale" || r.kind === "return") && r.ref_id).map((r) => r.ref_id))];
+  const purchaseRefs = [...new Set(allRows.filter((r) => (r.kind === "purchase" || r.kind === "purchase_return") && r.ref_id).map((r) => r.ref_id))];
   const estimateRefs = [...new Set(allRows.filter((r) => r.kind === "estimate" && r.ref_id).map((r) => r.ref_id))];
   const invoiceBy = new Map<string, string>();
   const billBy = new Map<string, string>();
@@ -1128,25 +1237,13 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     return null;
   };
 
-  // newest-first for display, sliced for lazy pagination
-  const desc = [...allRows].reverse();
-  const movements: LedgerMovement[] = desc.slice(offset, offset + limit).map((r) => ({
-    id: r.id, kind: r.kind ?? "adjustment", delta: r.delta ?? 0, runningBalance: r.runningBalance ?? 0,
-    source: r.source ?? null, reason: r.reason ?? null, created_by: r.created_by ?? r.source ?? null,
-    ref_id: r.ref_id ?? null, created_at: r.created_at,
-    invoice_no: r.kind === "sale" ? (invoiceBy.get(r.ref_id) ?? null) : r.kind === "purchase" ? (billBy.get(r.ref_id) ?? null) : null,
-    party: r.ref_id ? (partyBy.get(r.ref_id) ?? null) : null,
-    variant: r.variant_id ? { color: variantById.get(r.variant_id)?.color ?? null, sku: variantById.get(r.variant_id)?.sku ?? null } : null,
-    doc: docFor(r),
-  }));
-
-  // --- estimates for this product (ANY status, with variant + price) so every quote is tracked in
-  //     the ledger, clickable through to the estimate. Only OPEN estimates soft-hold stock. ---
+  // --- estimates for this product (ANY status, with variant + price) — every quote is tracked in the
+  //     ledger and the timeline; only OPEN estimates soft-hold stock. ---
   const { data: resv } = await sb.from("estimate_items")
     .select("qty,unit_price,line_total, variant:variants(color), estimate:estimates(id,customer_name,status,created_at)")
     .eq("product_id", productId);
-  const reservations = ((resv as any[]) ?? [])
-    .filter((r) => r.estimate)
+  const resvRows = ((resv as any[]) ?? []).filter((r) => r.estimate);
+  const reservations = resvRows
     .map((r) => ({
       id: r.estimate.id as string,
       customer: (r.estimate.customer_name as string) ?? "Walk-in",
@@ -1160,6 +1257,77 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
   // Availability is only reduced by OPEN estimates (converted/billed ones already became sales).
   const reserved = reservations.filter((r) => r.status === "open").reduce((s, r) => s + r.qty, 0);
+
+  // Unit price per movement (sale rate / purchase cost / estimate rate), variant-exact w/ fallback.
+  const priceKey = (ref: string, vid: string | null) => `${ref}|${vid ?? ""}`;
+  const priceBy = new Map<string, number>();
+  if (saleRefs.length) {
+    const { data: ois } = await sb.from("order_items").select("order_id,variant_id,unit_price").in("order_id", saleRefs as string[]).eq("product_id", productId);
+    for (const oi of ((ois as any[]) ?? [])) {
+      priceBy.set(priceKey(oi.order_id, oi.variant_id ?? null), oi.unit_price ?? 0);
+      if (!priceBy.has(priceKey(oi.order_id, null))) priceBy.set(priceKey(oi.order_id, null), oi.unit_price ?? 0);
+    }
+  }
+  if (purchaseRefs.length) {
+    const { data: pis2 } = await sb.from("purchase_items").select("purchase_id,unit_cost").in("purchase_id", purchaseRefs as string[]).eq("mapped_product_id", productId);
+    for (const pi of ((pis2 as any[]) ?? [])) priceBy.set(priceKey(pi.purchase_id, null), pi.unit_cost ?? 0);
+  }
+
+  // Real stock movements → display rows (carry the anchored running balance).
+  const realDisplay: (LedgerMovement & { _seq?: number })[] = allRows.map((r, _i) => ({
+    _seq: _i,
+    id: r.id, kind: r.kind ?? "adjustment", delta: r.delta ?? 0, runningBalance: r.runningBalance ?? 0,
+    source: r.source ?? null, reason: r.reason ?? null, created_by: r.created_by ?? r.source ?? null,
+    ref_id: r.ref_id ?? null, created_at: r.created_at,
+    invoice_no: r.kind === "sale" ? (invoiceBy.get(r.ref_id) ?? null) : r.kind === "purchase" ? (billBy.get(r.ref_id) ?? null) : null,
+    party: r.ref_id ? (partyBy.get(r.ref_id) ?? null) : null,
+    hold: false,
+    variant: r.variant_id ? { color: variantById.get(r.variant_id)?.color ?? null, sku: variantById.get(r.variant_id)?.sku ?? null } : null,
+    price: r.ref_id ? (priceBy.get(priceKey(r.ref_id, r.variant_id ?? null)) ?? priceBy.get(priceKey(r.ref_id, null)) ?? null) : null,
+    variantBalance: (r.variantBalance as number | null) ?? null,
+    doc: docFor(r),
+  }));
+  // Estimate holds → timeline rows. They do NOT change the running balance (soft commitment), so
+  // runningBalance stays null and delta carries the reserved qty for display only.
+  const holdDisplay: LedgerMovement[] = resvRows.map((r) => ({
+    id: `est-${r.estimate.id}-${r.qty}-${r.estimate.created_at}`,
+    kind: "estimate", delta: -(r.qty ?? 0), runningBalance: null,
+    source: null, reason: `Reserved ${r.qty ?? 0} pcs · estimate ${r.estimate.status ?? ""}`.trim(),
+    created_by: null, ref_id: r.estimate.id as string, created_at: r.estimate.created_at as string,
+    invoice_no: null, party: (r.estimate.customer_name as string) ?? null, hold: true,
+    variant: (r.variant?.color as string | null) ? { color: r.variant.color as string, sku: null } : null,
+    price: (r.unit_price as number) ?? null,
+    doc: { href: `/admin/estimate/${r.estimate.id}`, label: "Open estimate →" },
+  }));
+
+  // HONEST BASELINE: if the real stock (products.qty) differs from the sum of every logged
+  // movement, that residual used to hide inside the first row's balance (an Opening of +21 would
+  // mysteriously show "→ 23"). Surface it as an explicit OLDEST row instead, so the owner sees
+  // exactly where stock existed without a logged movement (e.g. a direct stock edit / pre-ledger
+  // count) and every row's before → change → after chains transparently.
+  const residual = currentStock - deltaSum;
+  const baselineRow: LedgerMovement[] = residual !== 0 && allRows.length > 0 ? [{
+    id: "baseline",
+    kind: "adjustment", delta: residual, runningBalance: residual,
+    source: "Baseline", created_by: null, ref_id: null,
+    reason: residual > 0
+      ? `${residual} pc${residual === 1 ? "" : "s"} existed before/outside the logged movements (direct stock edit or pre-ledger count)`
+      : `${Math.abs(residual)} pc${residual === -1 ? "" : "s"} left stock without a logged movement (direct stock edit)`,
+    created_at: new Date(new Date(allRows[0].created_at).getTime() - 1000).toISOString(),
+    invoice_no: null, party: null, hold: false, variant: null, price: null, doc: null,
+  }] : [];
+
+  // Combined newest-first timeline (real movements + estimate holds + baseline), sliced for lazy pagination.
+  const timeline = [...realDisplay, ...holdDisplay, ...baselineRow]
+    .sort((a, b) => {
+      if (a.created_at < b.created_at) return 1;
+      if (a.created_at > b.created_at) return -1;
+      // Same instant (e.g. two lines of ONE bill): later ledger sequence stacks ON TOP, so the
+      // whole timeline reads newest-first uniformly and balances chain downwards without zig-zags.
+      return ((b as any)._seq ?? 0) - ((a as any)._seq ?? 0);
+    });
+  const totalMovements = timeline.length;
+  const movements: LedgerMovement[] = timeline.slice(offset, offset + limit);
 
   // --- supplier + cost from purchase history ---
   const { data: pis } = await sb.from("purchase_items")
@@ -1182,7 +1350,6 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   const sold = allRows.filter((r) => r.kind === "sale").reduce((s, r) => s + Math.abs(Math.min(0, r.delta ?? 0)), 0);
   const returned = allRows.filter((r) => ["return", "purchase_return"].includes(r.kind)).reduce((s, r) => s + Math.abs(r.delta ?? 0), 0);
   const adjusted = allRows.filter((r) => ["adjustment", "damage", "correction"].includes(r.kind)).reduce((s, r) => s + (r.delta ?? 0), 0);
-  const currentStock = prod.qty ?? bal;
   const available = currentStock - reserved;
   const daysSinceLastSale = lastSale ? Math.floor((Date.now() - new Date(lastSale).getTime()) / 86400000) : null;
   const firstAt = allRows[0]?.created_at ? new Date(allRows[0].created_at) : null;
@@ -1618,6 +1785,60 @@ export async function getReturns() {
   return (data as any[]) ?? [];
 }
 
+/** The Returns module's full picture — SALES and PURCHASE returns together, each with:
+ *  the bill it was made against (invoice / purchase bill, linkable), the party (customer /
+ *  supplier), the money value (credit or debit note), and EVERY line with its VARIANT colour.
+ *  Lines link via stock_adjustments.return_id (migration 0050); legacy rows (recorded before the
+ *  linkage existed) fall back to a ±20s window on the same bill so history still shows its items. */
+export async function getReturnsDetailed(limit = 40): Promise<{
+  id: string; kind: string; refId: string | null; billRef: string; billHref: string | null;
+  party: string; qty: number; amount: number; reason: string | null; created_at: string;
+  lines: { sku: string | null; color: string | null; qty: number }[];
+}[]> {
+  const sb = supabaseServer();
+  const { data } = await sb.from("returns")
+    .select("id,kind,ref_order_id,reason,qty,amount,created_at")
+    .order("created_at", { ascending: false }).limit(limit);
+  const rets = (data as any[]) ?? [];
+  if (!rets.length) return [];
+
+  const retIds = rets.map((r) => r.id);
+  const saleRefs = [...new Set(rets.filter((r) => r.kind === "sales" && r.ref_order_id).map((r) => r.ref_order_id))];
+  const purchRefs = [...new Set(rets.filter((r) => r.kind === "purchase" && r.ref_order_id).map((r) => r.ref_order_id))];
+  const allRefs = [...saleRefs, ...purchRefs];
+
+  const [{ data: moves }, { data: ords }, { data: purs }] = await Promise.all([
+    allRefs.length
+      ? sb.from("stock_adjustments").select("ref_id,return_id,sku,delta,created_at, variant:variants(color)")
+          .in("kind", ["return", "purchase_return"]).in("ref_id", allRefs)
+      : Promise.resolve({ data: [] as any[] }),
+    saleRefs.length ? sb.from("orders").select("id,invoice_no,customer_name").in("id", saleRefs) : Promise.resolve({ data: [] as any[] }),
+    purchRefs.length ? sb.from("purchases").select("id,bill_no, supplier:suppliers(name)").in("id", purchRefs) : Promise.resolve({ data: [] as any[] }),
+  ]);
+  const ordBy = new Map(((ords as any[]) ?? []).map((o) => [o.id, o]));
+  const purBy = new Map(((purs as any[]) ?? []).map((p) => [p.id, p]));
+  const allMoves = ((moves as any[]) ?? []);
+
+  return rets.map((r) => {
+    // Exact linkage first; legacy fallback = same bill within ±20s of the return record.
+    const t = new Date(r.created_at).getTime();
+    let mv = allMoves.filter((m) => m.return_id === r.id);
+    if (!mv.length) mv = allMoves.filter((m) => !m.return_id && m.ref_id === r.ref_order_id && Math.abs(new Date(m.created_at).getTime() - t) < 20000);
+    const lines = mv.map((m) => ({ sku: (m.sku as string | null) ?? null, color: (m.variant?.color as string | null) ?? null, qty: Math.abs(m.delta ?? 0) }));
+    const o = r.kind === "sales" ? ordBy.get(r.ref_order_id) : null;
+    const p = r.kind === "purchase" ? purBy.get(r.ref_order_id) : null;
+    return {
+      id: r.id as string, kind: r.kind as string, refId: (r.ref_order_id as string | null) ?? null,
+      billRef: (o?.invoice_no as string) || (p?.bill_no as string) || (r.ref_order_id ? String(r.ref_order_id).slice(0, 8).toUpperCase() : "—"),
+      billHref: r.ref_order_id ? (r.kind === "sales" ? `/admin/invoice/${r.ref_order_id}` : `/admin/purchase/${r.ref_order_id}`) : null,
+      party: (o?.customer_name as string) || (p?.supplier?.name as string) || "—",
+      qty: (r.qty as number) ?? 0, amount: (r.amount as number) ?? 0,
+      reason: (r.reason as string | null) ?? null, created_at: r.created_at as string,
+      lines,
+    };
+  });
+}
+
 // ---------- purchases ----------
 export async function getSuppliers() {
   const sb = supabaseServer();
@@ -1654,15 +1875,24 @@ export async function getPurchaseById(id: string) {
   const sb = supabaseServer();
   const { data: p } = await sb.from("purchases").select("*, supplier:suppliers(id,name,city)").eq("id", id).maybeSingle();
   if (!p) return null;
-  const { data: items } = await sb.from("purchase_items").select("id,supplier_sku,qty,unit_cost,mapped_product_id, product:products(sku,name)").eq("purchase_id", id);
+  // Show the variant (colour + variant SKU) alongside the mapped product. Resilient: if the variant
+  // embed isn't available on a given DB, fall back to the product-only select so nothing blanks.
+  const RICH_PI = "id,supplier_sku,qty,unit_cost,mapped_product_id, product:products(sku,name), variant:variants(sku,color)";
+  const BASIC_PI = "id,supplier_sku,qty,unit_cost,mapped_product_id, product:products(sku,name)";
+  const richPi = await sb.from("purchase_items").select(RICH_PI).eq("purchase_id", id);
+  let items: any[] | null = (richPi.data as any) ?? null;
+  if (richPi.error || items == null) {
+    const basicPi = await sb.from("purchase_items").select(BASIC_PI).eq("purchase_id", id);
+    items = (basicPi.data as any) ?? null;
+  }
   const { data: pending } = await sb.from("approvals").select("id").eq("action", "delete_purchase").eq("status", "pending").contains("payload", { purchase_id: id }).maybeSingle();
   const { data: suppliers } = await sb.from("suppliers").select("id,name,city").order("name");
   // Products list for re-mapping any unmapped line (owner picks the design the supplier item is).
-  const hasUnmapped = ((items as any[]) ?? []).some((it) => !it.mapped_product_id);
+  const hasUnmapped = ((items as any[]) ?? []).some((it: any) => !it.mapped_product_id);
   const { data: products } = hasUnmapped
     ? await sb.from("products").select("id,name,sku").order("sku")
     : { data: [] as any[] };
-  return { purchase: p, items: (items as any[]) ?? [], deletionPending: !!pending, suppliers: (suppliers as any[]) ?? [], products: (products as any[]) ?? [] };
+  return { purchase: p, items: items ?? [], deletionPending: !!pending, suppliers: (suppliers as any[]) ?? [], products: (products as any[]) ?? [] };
 }
 
 export async function searchProducts(q: string) {
@@ -1739,12 +1969,7 @@ export async function getRetailers() {
 }
 export async function getAbandonedCarts() {
   const sb = supabaseServer();
-  // Only surface carts that have gone quiet (no update for 20 min) — a shopper still browsing isn't
-  // "abandoned" yet. Newest first. Recovered carts (order placed → cart cleared) are removed already.
-  const idleSince = new Date(Date.now() - 20 * 60 * 1000).toISOString();
-  const { data } = await sb.from("abandoned_carts")
-    .select("*").eq("recovered", false).lt("updated_at", idleSince)
-    .order("updated_at", { ascending: false });
+  const { data } = await sb.from("abandoned_carts").select("*").eq("recovered", false).order("created_at", { ascending: false });
   return (data as any[]) ?? [];
 }
 export async function getSitemapData() {

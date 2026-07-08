@@ -40,8 +40,14 @@ export default async function ProductPage({ params }: Params) {
   const content = resolveProductContent({ name: p.name, sku: p.sku, categoryName: p.category?.name, colors, generated_content: p.generated_content });
   const pOv = overridesOf(p);
   const o = liveOffer(p.base_wholesale, formula, pOv);
+  // Owner-chosen DEFAULT VARIANT leads: it is the pre-selected colour in the buy box and its
+  // photo fronts the gallery. Falls back to the natural (insertion) order when unset.
+  const defVid = (p as any).default_variant_id ?? null;
+  const orderedVariants = defVid
+    ? [...(p.variants ?? [])].sort((a: any, b: any) => (a.id === defVid ? -1 : b.id === defVid ? 1 : 0))
+    : (p.variants ?? []);
   // Per-variant: its own photo, stock and price (variant override → product override → formula).
-  const variantsForBuy = (p.variants ?? []).map((v: any) => {
+  const variantsForBuy = (orderedVariants as any[]).map((v: any) => {
     const vOv = overridesOf(v);
     const merged = { wholesale: vOv.wholesale ?? pOv.wholesale, retail: vOv.retail ?? pOv.retail, mrp: vOv.mrp ?? pOv.mrp };
     const vo = liveOffer(p.base_wholesale, formula, merged);
@@ -52,7 +58,7 @@ export default async function ProductPage({ params }: Params) {
   // (kind 'source'/'flatlay') is kept for the Fix-a-detail editor but never shown to customers.
   const galleryImages = [
     ...((p.images ?? []) as any[]).filter((i: any) => isStorefrontImage(i.kind)),
-    ...((p.variants ?? []) as any[]).flatMap((v: any) => (((v.image_paths ?? []) as string[]) || []).map((path) => ({ path, kind: v.color }))),
+    ...((orderedVariants ?? []) as any[]).flatMap((v: any) => (((v.image_paths ?? []) as string[]) || []).map((path) => ({ path, kind: v.color }))),
   ];
   // Owner-chosen storefront cover leads the gallery (so the hero matches the card thumbnail).
   const coverPath = typeof (p as any).thumbnail_path === "string" && (p as any).thumbnail_path.startsWith("http") ? (p as any).thumbnail_path : null;

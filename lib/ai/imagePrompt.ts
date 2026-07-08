@@ -73,8 +73,11 @@ export function categoryIdentity(category: string, subcategory?: string): string
  *
  * The reference image (passed alongside) carries the design; we change ONLY the colour.
  */
-export function buildVariantImagePrompt(opts: { category: string; color: string; productName?: string; subcategory?: string; aspect?: ImageAspect }): string {
+export function buildVariantImagePrompt(opts: { category: string; color: string; productName?: string; subcategory?: string; aspect?: ImageAspect; setPieces?: string[]; customPrompt?: string }): string {
   const color = opts.color.trim();
+  const pieces = (opts.setPieces ?? []).map((x) => x.trim()).filter(Boolean);
+  const setNote = pieces.length >= 2 ? ` This SKU is a FULL SET of ${pieces.length} pieces (${pieces.join(", ")}): reproduce EVERY piece from the reference, all together in one frame, none cropped or omitted.` : "";
+  const customNote = opts.customPrompt?.trim() ? `\nOWNER'S SHOOT BRIEF (obey exactly): ${opts.customPrompt.trim()}` : "";
   const aspect = opts.aspect ?? "1:1";
   const identity = categoryIdentity(opts.category, opts.subcategory);
   const productLine = opts.productName?.trim() ? `"${opts.productName.trim()}"` : "this piece";
@@ -86,7 +89,7 @@ export function buildVariantImagePrompt(opts: { category: string; color: string;
   return `This is a REAL, manufactured artificial-jewellery product (${productLine}, a ${opts.subcategory || opts.category}). ${identity}. Use the attached image as the EXACT reference. Generate a clean, professional e-commerce PRODUCT photograph (the jewellery by itself, no model) of THIS exact piece.
 
 NON-NEGOTIABLE — REPRODUCE THE REFERENCE EXACTLY; DO NOT CHANGE OR INVENT THE COLOUR:
-Reproduce the piece EXACTLY as it appears in the reference photo — the SAME colour(s), stones, beads, enamel / meenakari, metal finish, cuts, motifs, links, clasps, drops and proportions. Take the colour and EVERY detail directly FROM the reference image. DO NOT recolour, restyle, redesign, add, remove or "improve" anything, and do NOT invent, guess or force any colour — the piece's colour is whatever the reference already shows${color ? ` (this is the "${color}" option)` : ""}. NO HALLUCINATION: never add stones, motifs, drops or elements that are not present in the reference. It must look identical to the reference, just cleanly and sharply photographed.
+Reproduce the piece EXACTLY as it appears in the reference photo — the SAME colour(s), stones, beads, enamel / meenakari, metal finish, cuts, motifs, links, clasps, drops and proportions. Take the colour and EVERY detail directly FROM the reference image. DO NOT recolour, restyle, redesign, add, remove or "improve" anything, and do NOT invent, guess or force any colour — the piece's colour is whatever the reference already shows${color ? ` (this is the "${color}" option)` : ""}. NO HALLUCINATION: never add stones, motifs, drops or elements that are not present in the reference. It must look identical to the reference, just cleanly and sharply photographed.${setNote}${customNote}
 
 NON-NEGOTIABLE — ABSOLUTELY NO TEXT:
 Zero text of any kind — no words, letters, numbers, captions, labels, logos, watermarks, price tags, stamps, or UI. Every surface must be free of writing.
@@ -165,6 +168,11 @@ export type StudioSettings = {
   lighting?: string; modelStyle?: string; background?: string; focus?: string;
   ethnicity?: string; age?: string; skinTone?: string; hair?: string; makeup?: string;
   pose?: string; cameraAngle?: string; lens?: string; mood?: string; luxury?: string; emphasis?: string;
+  /** Every component of a multi-piece SET (e.g. ["necklace","earrings","maang tikka","ring"]) —
+   *  the generation MUST include all of them, none cropped out. */
+  setPieces?: string[];
+  /** Owner's free-text art direction for this product's shoot — appended verbatim, high priority. */
+  customPrompt?: string;
 };
 
 const FIDELITY = `This is a REAL, manufactured jewellery product the customer will physically receive — the design in your output MUST be a pixel-faithful reproduction of the attached reference image. Same metal colour & finish, same gemstone cut/colour/size/placement, same engravings, links, clasps and proportions. Do NOT redesign, restyle, embellish or "improve" the piece.`;
@@ -241,9 +249,18 @@ SHOT TYPE: ${meta.frame} — worn at ${shot} (this is a ${typeLabel}).
 ${FRAMING}
 BACKGROUND & MOOD: ${background}. ${s.mood?.trim() || "Calm, aspirational, luxury Indian brand feel."}`;
 
+  // COMPLETE SET — when the SKU has multiple components, reproducing them ALL outranks the tight
+  // single-area crop: the owner's complaint was generated images cropping out the maang tikka /
+  // ring from a full set. The composition widens just enough to show every piece.
+  const pieces = (s.setPieces ?? []).map((x) => x.trim()).filter(Boolean);
+  const setBlock = pieces.length >= 2 ? `
+COMPLETE SET — EVERY PIECE MUST BE IN FRAME (outranks the tight-crop rule): This SKU is a FULL JEWELLERY SET comprising ${pieces.length} pieces: ${pieces.join(", ")}. The reference photo shows the complete set — your output must be a professional photoshoot replica of that raw image with EVERY listed piece fully visible, correctly placed and tack-sharp: ${worn ? `all pieces worn TOGETHER on the model in their correct positions (necklace on the neckline, earrings on the ears, maang tikka on the forehead/parting, ring on the finger, etc.), widening the crop to a head-and-décolletage / half-length composition as needed so NOTHING is cut off` : `all pieces displayed TOGETHER in one elegant arrangement (on the bust/stand and beside it as a boutique set presentation), composed so every piece is completely inside the frame`}. DO NOT omit, crop, hide or de-emphasise ANY piece — an output missing even one listed piece is WRONG.` : "";
+  const customBlock = s.customPrompt?.trim() ? `
+OWNER'S SHOOT BRIEF (obey exactly, high priority): ${s.customPrompt.trim()}` : "";
+
   const prompt = `${FIDELITY}
 
-${identityBlock}${colourBlock}${detectedNote}
+${identityBlock}${setBlock}${colourBlock}${detectedNote}${customBlock}
 
 ${subjectBlock}
 

@@ -5,6 +5,8 @@ import { getPurchaseById } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { getSession, can } from "@/lib/auth";
 import { updatePurchaseAction, requestPurchaseDeletionAction, mapPurchaseLineAction } from "@/app/actions/purchases";
+import { PurchaseReturnButton } from "@/components/admin/PurchaseReturnButton";
+import { supabaseServer } from "@/lib/supabase/server";
 
 export const metadata = { title: "Owner Console · Purchase" };
 
@@ -12,6 +14,9 @@ export default async function PurchaseDetail({ params }: { params: { id: string 
   const data = await getPurchaseById(params.id);
   if (!data) notFound();
   const { purchase: p, items, deletionPending, suppliers, products } = data;
+  // Returns already made to the supplier against this bill (debit notes).
+  const { data: pRets } = await supabaseServer().from("returns").select("id,qty,amount,reason,created_at").eq("kind", "purchase").eq("ref_order_id", params.id).order("created_at", { ascending: false });
+  const purchaseReturns = ((pRets as any[]) ?? []);
   const canEdit = can(getSession(), "purchases.create");
   const ref = p.bill_no || String(p.id).slice(0, 8).toUpperCase();
   const fld = "rounded-xl border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-emerald";
@@ -19,8 +24,26 @@ export default async function PurchaseDetail({ params }: { params: { id: string 
   return (
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen max-w-3xl">
       <Link href="/admin/purchases" className="text-sm text-muted hover:text-ink">← Purchases</Link>
-      <h1 className="font-display text-4xl text-ink mt-1">Purchase · {ref}</h1>
-      <p className="text-sm text-muted mb-5">{p.supplier?.name}{p.supplier?.city ? ` · ${p.supplier.city}` : ""} · {new Date(p.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</p>
+      <div className="flex flex-wrap items-center justify-between gap-2 mt-1">
+        <h1 className="font-display text-4xl text-ink">Purchase · {ref}</h1>
+        {canEdit && <PurchaseReturnButton purchaseId={String(p.id)} billNo={p.bill_no} />}
+      </div>
+      <p className="text-sm text-muted mb-2">{p.supplier?.name}{p.supplier?.city ? ` · ${p.supplier.city}` : ""} · {new Date(p.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</p>
+      {purchaseReturns.length > 0 && (
+        <div className="rounded-2xl border border-gold/40 bg-gold/5 p-4 mb-4 text-sm">
+          <p className="font-medium text-gold-dark mb-1">↩ Returns to supplier against this bill</p>
+          <ul className="divide-y divide-gold/20">
+            {purchaseReturns.map((r: any) => (
+              <li key={r.id} className="py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="text-muted whitespace-nowrap">{new Date(r.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" })}</span>
+                <span className="text-ink">{r.qty} pc{r.qty === 1 ? "" : "s"}</span>
+                {(r.amount ?? 0) > 0 && <span className="text-ink font-medium tabular-nums">debit note {formatPaise(r.amount)}</span>}
+                {r.reason && <span className="text-muted truncate">— {r.reason}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Items */}
       <div className="overflow-x-auto rounded-2xl border border-sand bg-white shadow-card mb-5">
@@ -32,7 +55,12 @@ export default async function PurchaseDetail({ params }: { params: { id: string 
               <tr key={i} className="border-t border-sand/60">
                 <td className="p-3 text-ink">{it.supplier_sku || "—"}</td>
                 <td className="p-3 text-muted">
-                  {it.product ? `${it.product.name} (${it.product.sku})` : canEdit ? (
+                  {it.product ? (
+                    <>
+                      {it.product.name}{it.variant?.color ? <span className="text-ink"> – {it.variant.color}</span> : ""}{" "}
+                      <span className="font-mono text-xs text-ink/70">({it.variant?.sku ?? it.product.sku})</span>
+                    </>
+                  ) : canEdit ? (
                     <form action={mapPurchaseLineAction} className="flex items-center gap-1.5">
                       <input type="hidden" name="line_id" value={it.id} />
                       <input type="hidden" name="purchase_id" value={p.id} />

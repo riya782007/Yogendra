@@ -1,10 +1,11 @@
 /** OpenAI embeddings (semantic recs). No-op-safe: returns null if no key. Server-only. */
 import "server-only";
-import { openaiKey } from "./providers";
+import { openaiKey, openaiEnabled } from "./providers";
 
-export function embeddingsConfigured() { return !!openaiKey(); }
+export function embeddingsConfigured() { return !!openaiKey() && openaiEnabled(); }
 
 export async function getEmbedding(text: string): Promise<number[] | null> {
+  if (!openaiEnabled()) return null;
   const key = openaiKey(); if (!key) return null;
   try {
     const res = await fetch("https://api.openai.com/v1/embeddings", {
