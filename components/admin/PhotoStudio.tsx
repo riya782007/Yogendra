@@ -14,7 +14,7 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
 import {
   generateStudioImageAction, setGenerationStatusAction, publishGenerationAction, detectJewelleryAction,
-  uploadBrandedImageAction, refineGenerationAction, setProductThumbnailAction,
+  uploadBrandedImageAction, refineGenerationAction, setProductThumbnailAction, deleteGenerationAction,
 } from "@/app/actions/studio";
 import { addVariantImageAction } from "@/app/actions/variants";
 
@@ -385,6 +385,7 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
                       <div className="flex gap-0.5 mt-0.5">
                         <StatusBtn id={g.id} status="favorite" title="★" />
                         <StatusBtn id={g.id} status="rejected" title="✕" />
+                        <DeleteGenBtn id={g.id} />
                       </div>
                     </div>
                   ))}
@@ -642,6 +643,17 @@ function StatusBtn({ id, status, title }: { id: string; status: string; title: s
       <input type="hidden" name="id" value={id} />
       <input type="hidden" name="status" value={status} />
       <button className="w-full text-[10px] rounded bg-ink/5 hover:bg-ink/10 leading-none py-0.5" title={status}>{title}</button>
+    </form>
+  );
+}
+
+/** Permanently delete this generated candidate (file + row). Publishing already copies live photos
+ *  to the storefront, so deleting a candidate never removes a published image. */
+function DeleteGenBtn({ id }: { id: string }) {
+  return (
+    <form action={deleteGenerationAction} className="flex-1" onSubmit={(e) => { if (!confirm("Delete this generated image permanently?")) e.preventDefault(); }}>
+      <input type="hidden" name="id" value={id} />
+      <button className="w-full text-[10px] rounded bg-rose/10 text-rose hover:bg-rose/20 leading-none py-0.5" title="Delete permanently">🗑</button>
     </form>
   );
 }

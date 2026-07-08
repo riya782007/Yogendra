@@ -258,6 +258,26 @@ export async function setGenerationStatusAction(formData: FormData): Promise<voi
   if ((g as any)?.product_id) revalidatePath(`/admin/media/${(g as any).product_id}`);
 }
 
+/** Permanently delete a generated candidate (owner "delete this image"): removes the storage file
+ *  and the row. A PUBLISHED image already lives on the storefront as its own product_images copy, so
+ *  deleting the candidate never removes a live storefront photo. */
+export async function deleteGenerationAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("catalog.ai"))) return;
+  const id = String(formData.get("id") ?? "").trim();
+  if (!id) return;
+  const sb = supabaseServer();
+  const { data: g } = await sb.from("image_generations").select("product_id,output_path").eq("id", id).maybeSingle();
+  const path = (g as any)?.output_path as string | undefined;
+  // Best-effort remove the stored file (derive the object key after the bucket segment).
+  if (path && path.includes(`/${BUCKET}/`)) {
+    const key = path.split(`/${BUCKET}/`)[1]?.split("?")[0];
+    if (key) await sb.storage.from(BUCKET).remove([key]).catch(() => {});
+  }
+  await sb.from("image_generations").delete().eq("id", id);
+  await logActivity({ action: "photo_deleted", ref: id, detail: "" });
+  if ((g as any)?.product_id) revalidatePath(`/admin/media/${(g as any).product_id}`);
+}
+
 /** Publish a candidate → storefront. Copies its URL into product_images and sets it as the
  *  primary hero (or an angle), so every storefront surface updates. Previous images are kept. */
 export async function publishGenerationAction(formData: FormData): Promise<void> {

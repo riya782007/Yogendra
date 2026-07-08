@@ -71,6 +71,16 @@ export async function generateOneAction(sku: string, keywords?: string): Promise
   const { data: pub } = sb.storage.from(BUCKET).getPublicUrl(path);
   await sb.from("product_images").insert({ product_id: p.id, path: pub.publicUrl, kind: "model", sort: -1 });
 
+  // Also record it as a Studio candidate so this quick-generated shot is manageable + FIXABLE in the
+  // AI Studio ("Fix a detail") — the list page publishes, the Studio can then correct it. Best-effort.
+  try {
+    const { count } = await sb.from("image_generations").select("id", { count: "exact", head: true }).eq("product_id", p.id).eq("shot_type", "hero");
+    await sb.from("image_generations").insert({
+      product_id: p.id, shot_type: "hero", output_path: pub.publicUrl, prompt,
+      provider: (result as any).model ?? "ai", version: (count ?? 0) + 1, status: "published", created_by: "owner",
+    });
+  } catch { /* candidate mirror is best-effort; publishing already succeeded */ }
+
   // The polished model shot becomes the PRIMARY (sort -1). We deliberately KEEP the raw
   // (source/flatlay) photo now — it is the ground-truth reference the "Fix a detail" editor
   // re-feeds to correct drifted details, so it must never be destroyed. Customers never see it:
