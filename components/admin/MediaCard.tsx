@@ -2,7 +2,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
-import { uploadProductImageAction, deleteProductImageAction, setHeroImageAction } from "@/app/actions/media";
+import { uploadProductImageAction, deleteProductImageAction, setHeroImageAction, uploadStorefrontPhotoAction } from "@/app/actions/media";
 import { generateOneAction } from "@/app/actions/images";
 import { compressImage } from "@/lib/image";
 
@@ -21,6 +21,7 @@ export function MediaCard({ p, geminiReady }: { p: P; geminiReady: boolean }) {
   const [kw, setKw] = useState(""); // owner's optional 1–2 keywords to guide the AI (jewellery details)
   const rawRef = useRef<HTMLInputElement>(null);
   const angleRef = useRef<HTMLInputElement>(null);
+  const readyRef = useRef<HTMLInputElement>(null);
 
   const hasRaw = p.images.some((i) => i.kind === "flatlay" || i.kind === "source" || i.kind === "angle");
   const hasModel = p.images.some((i) => i.kind === "model");
@@ -50,6 +51,18 @@ export function MediaCard({ p, geminiReady }: { p: P; geminiReady: boolean }) {
       toast(friendly ?? `Couldn't generate: ${res.reason}${detail}`, "error");
       if (res.error) console.error("[generate]", res.reason, res.error);
     }
+  }
+  async function uploadReady(file: File | undefined) {
+    if (!file) return;
+    setBusy("ready");
+    try {
+      const small = await compressImage(file);
+      const fd = new FormData(); fd.set("sku", p.sku); fd.set("image", small);
+      const res = await uploadStorefrontPhotoAction(fd);
+      if (res.ok) { toast(`Photo published to the site for ${p.sku} ✓`); router.refresh(); }
+      else toast(res.error ?? "Upload failed", "error");
+    } catch { toast("Upload failed — try a smaller photo", "error"); }
+    finally { setBusy(""); }
   }
   async function del(id: string) { const fd = new FormData(); fd.set("id", id); await deleteProductImageAction(fd); router.refresh(); }
   async function hero(id: string) { const fd = new FormData(); fd.set("id", id); fd.set("productId", p.id); await setHeroImageAction(fd); toast("Hero image set"); router.refresh(); }
@@ -86,6 +99,11 @@ export function MediaCard({ p, geminiReady }: { p: P; geminiReady: boolean }) {
           className="rounded-full border border-sand px-3 py-1.5 text-xs outline-none focus:border-emerald w-52" />
         <button onClick={generate} disabled={busy === "gen" || !hasRaw} title={!geminiReady ? "Add GEMINI_API_KEY to enable" : !hasRaw ? "Upload a raw photo first" : ""}
           className="px-3 py-1.5 rounded-full bg-gold/15 text-gold-dark text-xs font-medium hover:bg-gold/25 transition-colors disabled:opacity-50">{busy === "gen" ? "Generating…" : "✨ Generate model photo"}</button>
+
+        {/* Emergency / manual override: drop a finished photo straight onto the storefront. */}
+        <input ref={readyRef} type="file" accept="image/*" className="hidden" onChange={(e) => uploadReady(e.target.files?.[0])} />
+        <button onClick={() => readyRef.current?.click()} disabled={busy === "ready"} title="Upload a ready photo and show it on the site now — no AI needed"
+          className="px-3 py-1.5 rounded-full border border-emerald text-emerald-dark text-xs font-medium hover:bg-emerald-mist transition-colors disabled:opacity-50">{busy === "ready" ? "Uploading…" : "⬆ Upload ready photo"}</button>
 
         <input ref={angleRef} type="file" accept="image/*" className="hidden" onChange={(e) => upload(e.target.files?.[0], "angle")} />
         <button onClick={() => angleRef.current?.click()} disabled={busy === "angle"} className="px-3 py-1.5 rounded-full border border-sand text-ink text-xs font-medium hover:border-emerald transition-colors disabled:opacity-50">{busy === "angle" ? "Uploading…" : "+ Add angle"}</button>

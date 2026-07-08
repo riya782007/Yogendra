@@ -17,6 +17,8 @@ import {
   uploadBrandedImageAction, refineGenerationAction, setProductThumbnailAction, deleteGenerationAction,
 } from "@/app/actions/studio";
 import { addVariantImageAction } from "@/app/actions/variants";
+import { uploadStorefrontPhotoAction } from "@/app/actions/media";
+import { compressImage } from "@/lib/image";
 
 // Human-readable reasons so a failed click never looks like "nothing happened".
 const REASON_MSG: Record<string, string> = {
@@ -180,6 +182,22 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
   }
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scheduleRefresh = () => { if (refreshTimer.current) clearTimeout(refreshTimer.current); refreshTimer.current = setTimeout(() => router.refresh(), 1500); };
+
+  // Emergency / manual override: upload a FINISHED photo and show it on the storefront now (used when
+  // AI generation is down, or the owner already has a ready shot).
+  const readyRef = useRef<HTMLInputElement>(null);
+  async function uploadReadyHero(file: File | undefined) {
+    if (!file) return;
+    const key = "ready-hero"; addBusy(key); setErr("");
+    try {
+      const small = await compressImage(file);
+      const fd = new FormData(); fd.set("sku", p.sku); fd.set("image", small);
+      const r = await uploadStorefrontPhotoAction(fd);
+      if (r.ok) { toast("Photo published to the site ✓", "success"); router.refresh(); }
+      else { const m = r.error || "Upload failed."; setErr(m); toast(m, "error"); }
+    } catch { toast("Upload failed — try a smaller photo", "error"); }
+    finally { dropBusy(key); }
+  }
 
   // Art-direction settings.
   const [lighting, setLighting] = useState(LIGHTING[0]);
@@ -369,6 +387,9 @@ export function PhotoStudio({ data, ready }: { data: Data; ready: boolean }) {
                 {heroUrl && <a href={heroUrl} target="_blank" className="px-2 py-1 rounded-lg bg-ink/5 hover:bg-ink/10">View</a>}
                 {heroUrl && <a href={heroUrl} download className="px-2 py-1 rounded-lg bg-ink/5 hover:bg-ink/10">⬇ Download</a>}
                 <button onClick={() => gen("hero", "hero")} disabled={isBusy("hero")} className="px-2 py-1 rounded-lg bg-gold/15 text-gold-dark hover:bg-gold/25 disabled:opacity-50">{isBusy("hero") ? "…" : "⟳ Regenerate"}</button>
+                {/* Emergency manual upload — bypasses AI, shows straight on the site. */}
+                <input ref={readyRef} type="file" accept="image/*" className="hidden" onChange={(e) => uploadReadyHero(e.target.files?.[0])} />
+                <button onClick={() => readyRef.current?.click()} disabled={isBusy("ready-hero")} className="px-2 py-1 rounded-lg border border-emerald text-emerald-dark hover:bg-emerald-mist disabled:opacity-50" title="Upload a ready photo and show it on the site now — no AI needed">{isBusy("ready-hero") ? "…" : "⬆ Upload photo"}</button>
                 {hero && <button onClick={() => openRefine(hero)} className="px-2 py-1 rounded-lg bg-emerald-mist text-emerald-dark hover:bg-emerald/20" title="Mark a wrong area and tell the AI what to fix — only that spot changes">✏️ Fix a detail</button>}
                 {hero && hero.status !== "published" && (
                   <form action={publishGenerationAction}><input type="hidden" name="id" value={hero.id} /><button className="px-2 py-1 rounded-lg bg-emerald text-white">Publish</button></form>

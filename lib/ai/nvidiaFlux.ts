@@ -30,31 +30,6 @@ const INVOKE_URL = () => process.env.NVIDIA_IMAGE_URL || `https://ai.api.nvidia.
 const STEPS = () => Math.max(10, Math.min(50, Number(process.env.NVIDIA_IMAGE_STEPS) || 30));
 const CFG = () => { const n = Number(process.env.NVIDIA_IMAGE_CFG); return Number.isFinite(n) && n > 0 ? n : 3.5; };
 
-/** Upload a reference image to the NVCF asset store; returns its asset id (or null). */
-async function uploadAsset(key: string, base64: string, mime: string, signal: AbortSignal): Promise<string | null> {
-  try {
-    const auth = await fetch("https://api.nvcf.nvidia.com/v2/nvcf/assets", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ contentType: mime, description: "blythediva-reference" }),
-      signal,
-    });
-    if (!auth.ok) return null;
-    const j: any = await auth.json();
-    const assetId: string | undefined = j?.assetId;
-    const uploadUrl: string | undefined = j?.uploadUrl;
-    if (!assetId || !uploadUrl) return null;
-    const put = await fetch(uploadUrl, {
-      method: "PUT",
-      headers: { "Content-Type": mime, "x-amz-meta-nvcf-asset-description": "blythediva-reference" },
-      body: Buffer.from(base64, "base64"),
-      signal,
-    });
-    if (!put.ok) return null;
-    return assetId;
-  } catch { return null; }
-}
-
 /** Pull the output image (base64) out of whatever shape NVIDIA returns. */
 async function extractImage(res: Response, signal: AbortSignal): Promise<{ base64: string; mime: string } | null> {
   // Large outputs may come back as a downloadable asset instead of inline JSON.
@@ -104,17 +79,10 @@ export async function fluxKontext(opts: {
 
     if (opts.referenceBase64) {
       const mime = opts.referenceMime || "image/jpeg";
-      // Inline the reference when reasonably sized (covers compressed product photos); only very large
-      // inputs use the NVCF asset upload. Keeping refs inline avoids the multi-step asset flow.
-      const bytes = Math.ceil((opts.referenceBase64.length * 3) / 4);
-      if (bytes <= 700_000) {
-        body.image = `data:${mime};base64,${opts.referenceBase64}`;
-      } else {
-        const assetId = await uploadAsset(key, opts.referenceBase64, mime, controller.signal);
-        if (!assetId) return { ok: false, reason: "asset_upload_failed" };
-        body.image = `data:${mime};asset_id,${assetId}`;
-        headers["NVCF-INPUT-ASSET-REFERENCES"] = assetId;
-      }
+      // Always send the reference INLINE as a base64 data URI — the reliable path. (The NVCF asset
+      // reference format differs by model and was rejected here, so we avoid it. Product photos are
+      // compressed and small enough to inline.)
+      body.image = `data:${mime};base64,${opts.referenceBase64}`;
       // NOTE: FLUX Kontext infers image-to-image from the presence of `image`; it REJECTS a `mode`
       // field ("extra_forbidden"), so we must not send one.
     }
