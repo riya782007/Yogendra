@@ -157,7 +157,7 @@ export function PromoUpload({ categories = [] }: { categories?: Cat[] }) {
           )}
           <div>
             <label className="text-[11px] text-muted">Link when tapped <span className="text-muted/70">(optional)</span></label>
-            <input value={cta} onChange={(e) => setCta(e.target.value)} placeholder="/shop/c/necklace  or leave blank" className={field} />
+            <input value={cta} onChange={(e) => setCta(e.target.value)} placeholder="/shop/c/necklaces  or leave blank" className={field} />
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div><label className="text-[11px] text-muted">Starts <span className="text-muted/70">(optional)</span></label><input type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} className={field} /></div>

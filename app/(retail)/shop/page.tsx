@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
-import { getStorefront, getFeaturedReviews, getShoppableReels, getActivePromotions } from "@/lib/supabase/queries";
+import { getStorefront, getFeaturedReviews, getShoppableReels, getActivePromotions, getCategoryTree } from "@/lib/supabase/queries";
 import { ProductCard } from "@/components/site/ProductCard";
 import { PromoHero } from "@/components/site/PromoHero";
 import { ProductImage } from "@/components/Placeholder";
@@ -15,8 +15,10 @@ export const metadata = {
 };
 
 export default async function Shop() {
-  const [{ products, formula }, reviews, reels, promos] = await Promise.all([getStorefront(), getFeaturedReviews(), getShoppableReels(), getActivePromotions("retail")]);
-  const cats = Array.from(new Map(products.map((p) => [p.category.slug, p.category])).values());
+  const [{ products, formula }, reviews, reels, promos, tree] = await Promise.all([getStorefront(), getFeaturedReviews(), getShoppableReels(), getActivePromotions("retail"), getCategoryTree()]);
+  // Category tiles are driven by the catalogue tree, so they always show — even before
+  // any products are published (the storefront starts with everything in draft).
+  const cats = tree.filter((c) => c.name?.trim().toLowerCase() !== "uncategorized").map((c) => ({ name: c.name, slug: c.slug }));
   const bestsellers = [...products].sort((a, b) => b.reviews - a.reviews).slice(0, 8);
   // New Arrivals first (recently added), then the rest — real feed for the nav link + section.
   const trending = [...products].sort((a, b) => (b.isNew ? 1 : 0) - (a.isNew ? 1 : 0)).slice(0, 8);
@@ -71,26 +73,27 @@ export default async function Shop() {
             <h2 className="font-display text-4xl text-ink mt-1">Shop by Category</h2>
           </div>
         </Reveal>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
           {cats.map((c, i) => (
             <Reveal key={c.slug} delay={i * 70}>
               <Link href={`/shop/c/${c.slug}`} className="group block rounded-2xl overflow-hidden bg-white shadow-card hover:shadow-luxe transition-all hover:-translate-y-1">
-                <div className="aspect-square overflow-hidden"><div className="card-img h-full w-full"><ProductImage name={c.name} /></div></div>
-                <p className="text-center py-3 text-sm font-medium text-ink group-hover:text-emerald transition-colors">{c.name}</p>
+                <div className="aspect-[4/3] overflow-hidden"><div className="card-img h-full w-full"><ProductImage name={c.name} /></div></div>
+                <p className="text-center py-4 text-base font-medium text-ink group-hover:text-emerald transition-colors">{c.name}</p>
               </Link>
             </Reveal>
           ))}
         </div>
       </section>
 
-      {/* BESTSELLERS */}
+      {/* BESTSELLERS — shown once designs are published */}
+      {bestsellers.length > 0 && (
       <section id="bestsellers" className="max-w-7xl mx-auto px-5 py-8 scroll-mt-24">
         <div className="flex items-end justify-between mb-7">
           <div>
             <p className="text-gold-dark tracking-[0.25em] uppercase text-xs">Loved by thousands</p>
             <h2 className="font-display text-4xl text-ink mt-1">Bestsellers</h2>
           </div>
-          <Link href="/shop/c/necklace" className="nav-link text-sm text-emerald">View all →</Link>
+          <Link href="/shop" className="nav-link text-sm text-emerald">View all →</Link>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
           {bestsellers.map((p, i) => (
@@ -98,21 +101,37 @@ export default async function Shop() {
           ))}
         </div>
       </section>
+      )}
 
-      {/* FESTIVE BANNER */}
+      {/* Curation note — only while the catalogue is still in draft (no products live yet) */}
+      {products.length === 0 && (
+        <section className="max-w-3xl mx-auto px-5 py-16 text-center">
+          <p className="text-gold-dark tracking-[0.25em] uppercase text-xs">Arriving soon</p>
+          <h2 className="font-display text-4xl text-ink mt-2">Our new collection is being styled</h2>
+          <p className="text-muted mt-3 leading-relaxed">Thousands of handcrafted Kundan, Meenakari, Temple and American-diamond designs are being photographed and readied. Browse by category above — pieces go live daily.</p>
+          <div className="flex flex-wrap gap-3 justify-center mt-6">
+            {cats.map((c) => (
+              <Link key={c.slug} href={`/shop/c/${c.slug}`} className="px-5 py-2 rounded-full border border-sand text-ink hover:border-emerald hover:text-emerald transition-colors text-sm">{c.name}</Link>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* BRAND BANNER — evergreen craft message (real offers are run via the Promotions engine) */}
       <section className="max-w-7xl mx-auto px-5 py-12">
         <Reveal>
           <div className="rounded-3xl bg-ink text-cream px-8 py-12 text-center relative overflow-hidden">
             <div className="absolute inset-0 opacity-20" style={{ background: "radial-gradient(circle at 20% 20%, #C8A24C, transparent 40%), radial-gradient(circle at 80% 80%, #0F5C4D, transparent 40%)" }} />
-            <p className="relative text-gold-light tracking-[0.3em] uppercase text-xs">Festive Edit</p>
-            <h2 className="relative font-display text-4xl md:text-5xl mt-2">Flat 20% off, sitewide</h2>
-            <p className="relative text-cream/70 mt-3">No code needed. Free shipping over ₹999. Cash on delivery available.</p>
-            <Link href="#bestsellers" className="relative btn-gold inline-block mt-6 px-8 py-3 text-sm font-medium">Shop now</Link>
+            <p className="relative text-gold-light tracking-[0.3em] uppercase text-xs">The Blythe Diva Promise</p>
+            <h2 className="relative font-display text-4xl md:text-5xl mt-2">Handcrafted. Anti-tarnish. Made to shine.</h2>
+            <p className="relative text-cream/70 mt-3">Free shipping over ₹999 · Cash on delivery · Easy 7-day returns.</p>
+            <Link href="/shop" className="relative btn-gold inline-block mt-6 px-8 py-3 text-sm font-medium">Explore the collection</Link>
           </div>
         </Reveal>
       </section>
 
-      {/* NEW ARRIVALS */}
+      {/* NEW ARRIVALS — shown once designs are published */}
+      {trending.length > 0 && (
       <section id="new-arrivals" className="max-w-7xl mx-auto px-5 py-8 scroll-mt-24">
         <h2 className="font-display text-4xl text-ink mb-7">New Arrivals</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
@@ -121,10 +140,12 @@ export default async function Shop() {
           ))}
         </div>
       </section>
+      )}
 
       <ReelsSection reels={reels} />
 
-      {/* REVIEWS */}
+      {/* REVIEWS — shown once there are verified reviews */}
+      {reviews.length > 0 && (
       <section className="bg-emerald-mist/60 py-16 mt-12">
         <div className="max-w-7xl mx-auto px-5">
           <Reveal>
@@ -146,6 +167,7 @@ export default async function Shop() {
           </div>
         </div>
       </section>
+      )}
     </>
   );
 }
