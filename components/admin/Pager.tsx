@@ -43,6 +43,17 @@ export function Pager({
       {end < pages && <>{end < pages - 1 && <span className="text-muted px-1">…</span>}<Link href={href(pages)} className={`${btn} border-sand text-ink hover:border-gold`}>{pages}</Link></>}
       <Link href={href(Math.min(pages, page + 1))} aria-disabled={page === pages}
         className={`${btn} ${page === pages ? "border-sand text-muted/40 pointer-events-none" : "border-sand text-ink hover:border-gold"}`}>›</Link>
+
+      {/* Jump straight to any page — type a number and press Go/Enter */}
+      <form action={basePath} className="flex items-center gap-1 ml-2">
+        {Object.entries(params).map(([k, v]) => (v && k !== "page" ? <input key={k} type="hidden" name={k} value={v} /> : null))}
+        <span className="text-xs text-muted">Go to</span>
+        <input name="page" type="number" min={1} max={pages} defaultValue={page} inputMode="numeric"
+          aria-label="Page number"
+          className="w-16 h-8 rounded-lg border border-sand px-2 text-sm text-ink bg-white outline-none focus:border-gold" />
+        <button className={`${btn} border-sand text-ink hover:border-gold`}>Go</button>
+        <span className="text-xs text-muted">/ {pages}</span>
+      </form>
     </div>
   );
 }
