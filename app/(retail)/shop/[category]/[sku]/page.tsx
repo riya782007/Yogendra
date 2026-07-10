@@ -46,19 +46,21 @@ export default async function ProductPage({ params }: Params) {
   const orderedVariants = defVid
     ? [...(p.variants ?? [])].sort((a: any, b: any) => (a.id === defVid ? -1 : b.id === defVid ? 1 : 0))
     : (p.variants ?? []);
+  // Owner option (per product): hide out-of-stock colourways from the buy selector AND the gallery.
+  const visibleVariants = (orderedVariants as any[]).filter((v: any) => !(p as any).hide_oos_variants || (v.qty ?? 0) > 0);
   // Per-variant: its own photo, stock and price (variant override → product override → formula).
-  const variantsForBuy = (orderedVariants as any[]).map((v: any) => {
+  const variantsForBuy = (visibleVariants as any[]).map((v: any) => {
     const vOv = overridesOf(v);
     const merged = { wholesale: vOv.wholesale ?? pOv.wholesale, retail: vOv.retail ?? pOv.retail, mrp: vOv.mrp ?? pOv.mrp };
     const vo = liveOffer(p.base_wholesale, formula, merged);
     const label = [v.color, v.size, v.polish].filter(Boolean).join(" · ") || v.sku;
     return { sku: v.sku, label, image: (v.image_paths?.[0] ?? null) as string | null, price: vo.price, qty: v.qty ?? 0 };
   });
-  // Gallery shows AI-generated product photos + every variant photo, all zoomable. The raw upload
-  // (kind 'source'/'flatlay') is kept for the Fix-a-detail editor but never shown to customers.
+  // Gallery shows AI-generated product photos + every visible variant photo, all zoomable. The raw
+  // upload (kind 'source'/'flatlay') is kept for the Fix-a-detail editor but never shown to customers.
   const galleryImages = [
     ...((p.images ?? []) as any[]).filter((i: any) => isStorefrontImage(i.kind)),
-    ...((orderedVariants ?? []) as any[]).flatMap((v: any) => (((v.image_paths ?? []) as string[]) || []).map((path) => ({ path, kind: v.color }))),
+    ...((visibleVariants ?? []) as any[]).flatMap((v: any) => (((v.image_paths ?? []) as string[]) || []).map((path) => ({ path, kind: v.color }))),
   ];
   // Owner-chosen storefront cover leads the gallery (so the hero matches the card thumbnail).
   const coverPath = typeof (p as any).thumbnail_path === "string" && (p as any).thumbnail_path.startsWith("http") ? (p as any).thumbnail_path : null;

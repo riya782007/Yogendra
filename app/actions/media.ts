@@ -64,7 +64,7 @@ export async function deleteProductImageAction(formData: FormData) {
   if (!(await requirePerm("catalog.ai"))) return;
   const id = String(formData.get("id"));
   await supabaseServer().from("product_images").delete().eq("id", id);
-  revalidatePath("/admin/media"); revalidatePath("/shop");
+  revalidatePath("/admin/media"); revalidatePath("/shop"); revalidatePath("/admin/catalogue/[sku]", "page");
 }
 
 export async function setHeroImageAction(formData: FormData) {

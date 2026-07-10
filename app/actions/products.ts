@@ -96,6 +96,7 @@ export async function saveProductInventoryAction(formData: FormData): Promise<vo
     track_inventory: bool(formData, "track_inventory"),
     continue_selling_oos: bool(formData, "continue_selling_oos"),
     allow_backorders: bool(formData, "allow_backorders"),
+    hide_oos_variants: bool(formData, "hide_oos_variants"),
   }).eq("id", id);
 
   // Keep the stock ledger consistent: a manual qty edit is an 'adjustment' movement.

@@ -9,6 +9,7 @@
 import { ProductHistoryLedger } from "./ProductHistoryLedger";
 import { useState } from "react";
 import { setDefaultVariantAction } from "@/app/actions/catalog";
+import { deleteProductImageAction } from "@/app/actions/media";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { formatPaise, computePrices } from "@/lib/pricing";
@@ -186,6 +187,7 @@ export function ProductManager({ data, initialTab }: { data: any; initialTab?: s
             <Toggle name="track_inventory" on={p.track_inventory ?? true}>Track inventory</Toggle>
             <Toggle name="continue_selling_oos" on={p.continue_selling_oos ?? false}>Continue selling when out of stock</Toggle>
             <Toggle name="allow_backorders" on={p.allow_backorders ?? false}>Allow backorders</Toggle>
+            <Toggle name="hide_oos_variants" on={(p as any).hide_oos_variants ?? false}>Hide out-of-stock colours/variants from the store</Toggle>
           </div>
           <div className="mt-4 flex justify-end"><button className={saveBtn}>Save inventory</button></div>
         </form>
@@ -281,23 +283,41 @@ export function ProductManager({ data, initialTab }: { data: any; initialTab?: s
       {/* ---------- MEDIA ---------- */}
       <div hidden={tab !== "media"}>
         <div className={card}>
-          <div className="flex justify-between items-center mb-3">
-            <p className="text-sm font-medium text-ink">{data.images.length} image(s)</p>
-            <Link href={`/admin/catalogue/${p.sku}?tab=photos`} className="text-xs text-emerald nav-link">Upload / reorder / AI photos →</Link>
-          </div>
-          {data.images.length === 0 ? (
-            <p className="text-sm text-muted">No images yet.</p>
-          ) : (
-            <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-              {data.images.map((im: any, i: number) => (
-                <div key={im.id ?? i} className="aspect-square rounded-lg overflow-hidden bg-cream border border-sand relative">
-                  {typeof im.path === "string" && im.path.startsWith("http") ? <img src={im.path} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full grid place-items-center text-[10px] text-muted">{im.kind ?? "img"}</div>}
-                  {i === 0 && <span className="absolute top-1 left-1 bg-ink/80 text-cream text-[9px] px-1.5 rounded-full">Primary</span>}
+          {(() => {
+            // Product-level Photos only. Colour/variant photos belong to their variant (shown under
+            // the Variants tab), so here we show images NOT tied to a variant. A product with no
+            // variants keeps its photo here.
+            const hasVariants = ((data.variants as any[])?.length ?? 0) > 0;
+            const shown = (hasVariants ? (data.images as any[]).filter((im) => !im.variant_id) : (data.images as any[])) ?? [];
+            return (
+              <>
+                <div className="flex justify-between items-center mb-3">
+                  <p className="text-sm font-medium text-ink">{shown.length} product image(s)</p>
+                  <Link href={`/admin/catalogue/${p.sku}?tab=photos`} className="text-xs text-emerald nav-link">Upload / reorder / AI photos →</Link>
                 </div>
-              ))}
-            </div>
-          )}
-          <p className="text-[11px] text-muted mt-3">Drag-drop reorder, retail/wholesale-only images, 360° &amp; video land in Phase 2; upload + AI photos work today via the link above.</p>
+                {hasVariants && <p className="text-[11px] text-muted mb-2">Colour/variant photos are managed under the <b>Variants</b> tab — only product-level photos show here.</p>}
+                {shown.length === 0 ? (
+                  <p className="text-sm text-muted">{hasVariants ? "No product-level images — this product's photos live under its colours/variants." : "No images yet."}</p>
+                ) : (
+                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                    {shown.map((im: any, i: number) => (
+                      <div key={im.id ?? i} className="aspect-square rounded-lg overflow-hidden bg-cream border border-sand relative">
+                        {typeof im.path === "string" && im.path.startsWith("http") ? <img src={im.path} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full grid place-items-center text-[10px] text-muted">{im.kind ?? "img"}</div>}
+                        {i === 0 && <span className="absolute top-1 left-1 bg-ink/80 text-cream text-[9px] px-1.5 rounded-full">Primary</span>}
+                        {im.id && (
+                          <form action={deleteProductImageAction} className="absolute top-1 right-1" onSubmit={(e) => { if (!confirm("Delete this image?")) e.preventDefault(); }}>
+                            <input type="hidden" name="id" value={im.id} />
+                            <button title="Delete image" className="w-5 h-5 rounded-full bg-rose text-white text-[12px] leading-none grid place-items-center opacity-85 hover:opacity-100">×</button>
+                          </form>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="text-[11px] text-muted mt-3">The AI photos page adds model/stand shots. Deleting removes a photo from the store.</p>
+              </>
+            );
+          })()}
         </div>
       </div>
 

@@ -1432,7 +1432,7 @@ export async function getProductForPim(id: string) {
     safe(async () => (await sb.from("product_details").select("*").eq("product_id", id).maybeSingle()).data, null as any),
     safe(async () => (await sb.from("product_channel_settings").select("*").eq("product_id", id)).data ?? [], [] as any[]),
     safe(async () => (await sb.from("variants").select("*").eq("product_id", id).order("sku")).data ?? [], [] as any[]),
-    safe(async () => (await sb.from("product_images").select("id,path,kind,sort").eq("product_id", id).order("sort")).data ?? [], [] as any[]),
+    safe(async () => (await sb.from("product_images").select("id,path,kind,sort,variant_id").eq("product_id", id).order("sort")).data ?? [], [] as any[]),
     getPricingFormula(),
     getProductEstimateReservations(id),
     getCategories(),
