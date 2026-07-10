@@ -5,6 +5,33 @@ import type { PricingFormula } from "../pricing";
 import { cleanTiers } from "../pricing";
 
 /**
+ * PostgREST caps every select at 1000 rows (the `max-rows` default). With a 4000+ product
+ * catalogue that silently truncates lists, counts and the storefront. `fetchAll` pages through
+ * in 1000-row windows and returns the complete set. `build(from,to)` must construct a FRESH
+ * query each call (query builders are single-use) and apply `.range(from,to)`.
+ */
+async function fetchAll<T = any>(build: (from: number, to: number) => PromiseLike<{ data: T[] | null }>): Promise<T[]> {
+  const step = 1000; const out: T[] = [];
+  for (let from = 0; ; from += step) {
+    const { data } = await build(from, from + step - 1);
+    const rows = (data as T[]) ?? [];
+    out.push(...rows);
+    if (rows.length < step) break;
+  }
+  return out;
+}
+
+/** Run an `.in(col, ids)` lookup in safe chunks — a long id list would otherwise blow past the URL length limit. */
+async function fetchByIds<T = any>(ids: string[], build: (chunk: string[]) => PromiseLike<{ data: T[] | null }>): Promise<T[]> {
+  const out: T[] = [];
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data } = await build(ids.slice(i, i + 200));
+    out.push(...((data as T[]) ?? []));
+  }
+  return out;
+}
+
+/**
  * Sanitise a user search term before putting it in a PostgREST `.or(...ilike...)` filter.
  * Strips characters with meaning in the or() grammar (commas, parentheses, wildcards,
  * dots, asterisks) so a search string can never break or inject into the query.
@@ -221,18 +248,31 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
   const RICH = "id,sku,name,qty,base_wholesale,wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,generated_content,thumbnail_path,category:categories(name,slug),subcategory:subcategories(name,slug),images:product_images(path,kind,sort),product_labels(label_id,labels(name))";
   const BASIC = "id,sku,name,qty,base_wholesale,wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,generated_content,category:categories(name,slug)";
 
-  let { data, error } = await build(RICH);
-  if (error || data == null) {
+  // A single category can exceed PostgREST's 1000-row cap, so page through the results.
+  const firstRich = await build(RICH).range(0, 999);
+  let data: any[] | null;
+  if (firstRich.error || firstRich.data == null) {
+    data = null;
+  } else {
+    data = [...(firstRich.data as any[])];
+    for (let from = 1000; data.length === from; from += 1000) {
+      const nx = await build(RICH).range(from, from + 999);
+      const rows = (nx.data as any[]) ?? [];
+      data.push(...rows);
+      if (rows.length < 1000) break;
+    }
+  }
+  if (data == null) {
     // Rich embed failed → fetch the proven-safe minimal set (core + category, exactly what the
     // working storefront query uses), then attach images in a SEPARATE query so that no single
     // embedded relation (subcategory / labels / images) can ever blank the whole catalogue.
-    ({ data } = await build(BASIC));
-    const rows = (data as any[]) ?? [];
+    data = await fetchAll((f, t) => build(BASIC).range(f, t));
+    const rows = data as any[];
     const ids = rows.map((p) => (p as any).id);
     if (ids.length) {
-      const { data: imgs } = await sb.from("product_images").select("product_id,path,sort").in("product_id", ids);
+      const imgs = await fetchByIds(ids, (chunk) => sb.from("product_images").select("product_id,path,sort").in("product_id", chunk));
       const byP = new Map<string, any[]>();
-      for (const im of ((imgs as any[]) ?? [])) { const a = byP.get(im.product_id) ?? []; a.push(im); byP.set(im.product_id, a); }
+      for (const im of (imgs as any[])) { const a = byP.get(im.product_id) ?? []; a.push(im); byP.set(im.product_id, a); }
       for (const p of rows) (p as any).images = byP.get((p as any).id) ?? [];
     }
   }
@@ -242,7 +282,7 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
   const vImgByP = new Map<string, string>();
   const cardIds = cardRows.map((p) => p.id).filter(Boolean);
   if (cardIds.length) {
-    const { data: vimgs } = await sb.from("variants").select("product_id,image_paths").in("product_id", cardIds);
+    const vimgs = await fetchByIds(cardIds, (chunk) => sb.from("variants").select("product_id,image_paths").in("product_id", chunk));
     for (const v of ((vimgs as any[]) ?? [])) {
       if (vImgByP.has(v.product_id) || !Array.isArray(v.image_paths)) continue;
       const hit = v.image_paths.find((x: string) => typeof x === "string" && x.startsWith("http"));
@@ -964,7 +1004,7 @@ export async function getProductBySku(sku: string): Promise<
 
 export async function getProductSkus(): Promise<{ sku: string; slug: string }[]> {
   const sb = supabaseServer();
-  const { data } = await sb.from("products").select("sku, category:categories(slug)").eq("status", "published");
+  const data = await fetchAll((f, t) => sb.from("products").select("sku, category:categories(slug)").eq("status", "published").range(f, t));
   return (data ?? []).map((r: any) => ({ sku: r.sku, slug: r.category?.slug ?? "all" }));
 }
 
@@ -1479,15 +1519,15 @@ export type DashboardData = {
 export async function getDashboardData(fromISO: string, toISO: string, rule: InventoryRule = DEFAULT_RULE): Promise<DashboardData> {
   const sb = supabaseServer();
   const now = new Date();
-  const [ordersRes, prodRes, catRes, retRes, apprRes] = await Promise.all([
+  const [ordersRes, prods, catRes, retRes, apprRes] = await Promise.all([
     sb.from("orders").select("total,channel,payment_mode,pay_cash,pay_bank,created_at").gte("created_at", fromISO).lte("created_at", toISO),
-    sb.from("products").select("sku,name,qty,last_movement_at,created_at,category:categories(name)"),
+    fetchAll((f, t) => sb.from("products").select("sku,name,qty,last_movement_at,created_at,category:categories(name)").range(f, t)),
     sb.from("categories").select("id"),
     sb.from("retailers").select("id,approved"),
     sb.from("approvals").select("id,status"),
   ]);
   const orders = ordersRes.data ?? [];
-  const products = (prodRes.data as any[]) ?? [];
+  const products = (prods as any[]) ?? [];
 
   const revenue = orders.reduce((s, o: any) => s + (o.total ?? 0), 0);
   const cod = orders.filter((o: any) => o.payment_mode === "cod").length;
@@ -1517,7 +1557,7 @@ export type ClassifiedRow = { id: string; sku: string; name: string; category: s
 
 export async function getInventoryClassified(rule: InventoryRule = DEFAULT_RULE): Promise<ClassifiedRow[]> {
   const sb = supabaseServer();
-  const { data } = await sb.from("products").select("id,sku,name,qty,status,last_movement_at,category:categories(name,slug)").order("sku");
+  const data = await fetchAll((f, t) => sb.from("products").select("id,sku,name,qty,status,last_movement_at,category:categories(name,slug)").order("sku").range(f, t));
   const now = new Date();
   return ((data as any[]) ?? []).map((p) => ({
     id: p.id, sku: p.sku, name: p.name, category: p.category?.name ?? "—", categorySlug: p.category?.slug ?? "all",
@@ -1596,13 +1636,16 @@ export async function getStorefront(
 ): Promise<{ products: StoreProduct[]; formula: PF }> {
   const sb = supabaseServer();
   // D2C-safe defaults: only published, and never wholesale-only items (#1, #23).
-  let pq = sb.from("products").select("*, category:categories(id,name,slug)").order("sku");
-  if (!opts.includeDrafts) pq = pq.eq("status", "published");
-  const [{ data: prods }, { data: revs }, { data: pimgs }, { data: vimgs }, formula] = await Promise.all([
-    pq,
-    sb.from("reviews").select("product_id, rating"),
-    sb.from("product_images").select("product_id, path, sort, kind").order("sort", { ascending: true }),
-    sb.from("variants").select("product_id, image_paths"),
+  // NOTE: products / images / variants all exceed PostgREST's 1000-row cap — page through them.
+  const [prods, revs, pimgs, vimgs, formula] = await Promise.all([
+    fetchAll((f, t) => {
+      let q = sb.from("products").select("*, category:categories(id,name,slug)").order("sku");
+      if (!opts.includeDrafts) q = q.eq("status", "published");
+      return q.range(f, t);
+    }),
+    sb.from("reviews").select("product_id, rating").then((r) => r.data ?? []),
+    fetchAll((f, t) => sb.from("product_images").select("product_id, path, sort, kind").order("sort", { ascending: true }).range(f, t)),
+    fetchAll((f, t) => sb.from("variants").select("product_id, image_paths").range(f, t)),
     getPricingFormula(),
   ]);
   const agg = new Map<string, { sum: number; n: number }>();
@@ -1857,14 +1900,14 @@ export async function getSuppliers() {
 }
 export async function getProductsLite() {
   const sb = supabaseServer();
-  const { data } = await sb.from("products").select("id,name,sku").order("sku");
+  const data = await fetchAll((f, t) => sb.from("products").select("id,name,sku").order("sku").range(f, t));
   return (data as any[]) ?? [];
 }
 
 /** Products plus their variants — for purchase entry where stock can land on a specific variant. */
 export async function getProductsForPurchase() {
   const sb = supabaseServer();
-  const { data } = await sb.from("products").select("id,name,sku, variants(id,sku,color,size,polish)").order("sku");
+  const data = await fetchAll((f, t) => sb.from("products").select("id,name,sku, variants(id,sku,color,size,polish)").order("sku").range(f, t));
   return ((data as any[]) ?? []).map((p) => ({
     id: p.id, name: p.name, sku: p.sku,
     variants: ((p.variants as any[]) ?? []).map((v) => ({
@@ -1899,9 +1942,9 @@ export async function getPurchaseById(id: string) {
   const { data: suppliers } = await sb.from("suppliers").select("id,name,city").order("name");
   // Products list for re-mapping any unmapped line (owner picks the design the supplier item is).
   const hasUnmapped = ((items as any[]) ?? []).some((it: any) => !it.mapped_product_id);
-  const { data: products } = hasUnmapped
-    ? await sb.from("products").select("id,name,sku").order("sku")
-    : { data: [] as any[] };
+  const products = hasUnmapped
+    ? await fetchAll((f, t) => sb.from("products").select("id,name,sku").order("sku").range(f, t))
+    : ([] as any[]);
   return { purchase: p, items: items ?? [], deletionPending: !!pending, suppliers: (suppliers as any[]) ?? [], products: (products as any[]) ?? [] };
 }
 
@@ -1988,7 +2031,7 @@ export async function getAbandonedCarts() {
 }
 export async function getSitemapData() {
   const sb = supabaseServer();
-  const { data } = await sb.from("products").select("sku, category:categories(slug)").eq("status", "published");
+  const data = await fetchAll((f, t) => sb.from("products").select("sku, category:categories(slug)").eq("status", "published").range(f, t));
   const { data: cats } = await sb.from("categories").select("slug");
   return { products: ((data as any[]) ?? []).map((p) => ({ sku: p.sku, slug: p.category?.slug ?? "all" })), categories: ((cats as any[]) ?? []).map((c) => c.slug) };
 }
@@ -1998,7 +2041,7 @@ import { classify as _classify, DEFAULT_RULE as _RULE } from "../inventory";
 export type ReorderCandidate = { sku: string; name: string; category: string; qty: number; base_wholesale: number; daysSince: number | null; cls: string };
 export async function getReorderCandidates(): Promise<ReorderCandidate[]> {
   const sb = supabaseServer();
-  const { data } = await sb.from("products").select("sku,name,qty,base_wholesale,last_movement_at,category:categories(name)");
+  const data = await fetchAll((f, t) => sb.from("products").select("sku,name,qty,base_wholesale,last_movement_at,category:categories(name)").range(f, t));
   const now = new Date();
   return ((data as any[]) ?? []).map((p) => {
     const cls = _classify({ qty: p.qty, lastMovementAt: p.last_movement_at }, _RULE, now);
@@ -2011,7 +2054,7 @@ import { cosine as _cosine } from "../ai/embeddings";
 export async function getRecommendations(sku: string, n = 4): Promise<StoreProduct[]> {
   const { products } = await getStorefront();
   const sb = supabaseServer();
-  const { data: embRows } = await sb.from("products").select("sku,embedding");
+  const embRows = await fetchAll((f, t) => sb.from("products").select("sku,embedding").range(f, t));
   const embBy = new Map<string, number[]>();
   for (const r of (embRows as any[]) ?? []) if (Array.isArray(r.embedding)) embBy.set(r.sku, r.embedding);
   const self = products.find((p) => p.sku === sku);
