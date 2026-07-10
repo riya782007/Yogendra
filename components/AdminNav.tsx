@@ -4,7 +4,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { logoutAction } from "@/app/actions/auth";
 
-type L = { href: string; label: string; icon: string; perm?: string };
+// `hidden` removes a module from the menu for the client handover WITHOUT deleting the page or its
+// logic — the route still works if opened directly. Flip to false to bring a module back.
+type L = { href: string; label: string; icon: string; perm?: string; hidden?: boolean };
 type Perms = string[] | "*";
 const GROUPS: { title: string; links: L[] }[] = [
   { title: "Overview", links: [
@@ -12,13 +14,13 @@ const GROUPS: { title: string; links: L[] }[] = [
     { href: "/admin/analytics", label: "Analytics & SEO", icon: "◷", perm: "analytics.view" },
   ]},
   { title: "Catalog", links: [
-    { href: "/admin/upload", label: "Add Inventory", icon: "↑", perm: "catalog.create" },
+    { href: "/admin/upload", label: "Add Inventory", icon: "↑", perm: "catalog.create", hidden: true },
     { href: "/admin/submissions", label: "Submissions", icon: "📥", perm: "catalog.create" },
     { href: "/admin/catalogue", label: "Catalogue", icon: "✦", perm: "catalog.view" },
     { href: "/admin/media", label: "Product Photos", icon: "▣", perm: "catalog.ai" },
     { href: "/admin/categories", label: "Categories", icon: "▦", perm: "catalog.edit" },
-    { href: "/admin/pricing", label: "Pricing formula", icon: "％", perm: "catalog.price_edit" },
-    { href: "/admin/inventory", label: "Inventory", icon: "▤", perm: "inventory.view" },
+    { href: "/admin/pricing", label: "Pricing formula", icon: "％", perm: "catalog.price_edit", hidden: true },
+    { href: "/admin/inventory", label: "Inventory", icon: "▤", perm: "inventory.view", hidden: true },
     { href: "/admin/stock-movements", label: "Stock Movement", icon: "⇅", perm: "inventory.view" },
     { href: "/admin/barcodes", label: "Barcodes", icon: "▥", perm: "inventory.barcode" },
     { href: "/admin/reorder", label: "AI Reorder", icon: "✨", perm: "inventory.view" },
@@ -64,7 +66,7 @@ const allow = (perms: Perms, perm?: string) => !perm || perms === "*" || perms.i
 function NavInner({ collapsed, onNavigate, perms, badges = {} }: { collapsed: boolean; onNavigate?: () => void; perms: Perms; badges?: Record<string, number> }) {
   const path = usePathname();
   const isActive = (href: string) => path === href || path.startsWith(href + "/");
-  const groups = GROUPS.map((g) => ({ ...g, links: g.links.filter((l) => allow(perms, l.perm)) })).filter((g) => g.links.length > 0);
+  const groups = GROUPS.map((g) => ({ ...g, links: g.links.filter((l) => allow(perms, l.perm) && !l.hidden) })).filter((g) => g.links.length > 0);
   return (
     <>
       <nav className="space-y-4">
