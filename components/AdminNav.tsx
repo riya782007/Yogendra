@@ -67,12 +67,30 @@ function NavInner({ collapsed, onNavigate, perms, badges = {} }: { collapsed: bo
   const path = usePathname();
   const isActive = (href: string) => path === href || path.startsWith(href + "/");
   const groups = GROUPS.map((g) => ({ ...g, links: g.links.filter((l) => allow(perms, l.perm) && !l.hidden) })).filter((g) => g.links.length > 0);
+  // Collapsible groups: each section header toggles its links (remembered across visits). Defaults to
+  // open; the group holding the current page is always kept open so you never lose your place.
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  useEffect(() => { try { const s = localStorage.getItem("bd_nav_groups"); if (s) setOpenGroups(JSON.parse(s)); } catch {} }, []);
+  const toggleGroup = (t: string) => setOpenGroups((g) => { const n = { ...g, [t]: !(g[t] ?? true) }; try { localStorage.setItem("bd_nav_groups", JSON.stringify(n)); } catch {} return n; });
+  const activeGroup = groups.find((g) => g.links.some((l) => isActive(l.href)))?.title;
   return (
     <>
-      <nav className="space-y-4">
-        {groups.map((g) => (
+      <nav className="space-y-3">
+        {groups.map((g) => {
+          // Rail (icon-only) mode always shows links; otherwise honour the toggle, and keep the active group open.
+          const groupOpen = collapsed || (openGroups[g.title] ?? true) || g.title === activeGroup;
+          const groupBadge = g.links.reduce((s, l) => s + (badges[l.href] ?? 0), 0);
+          return (
           <div key={g.title}>
-            {!collapsed && <p className="px-3 mb-1 text-[10px] uppercase tracking-widest text-cream/35">{g.title}</p>}
+            {!collapsed && (
+              <button type="button" onClick={() => toggleGroup(g.title)}
+                className="w-full flex items-center px-3 mb-1 text-[10px] uppercase tracking-widest text-cream/35 hover:text-cream/60 transition-colors">
+                <span>{g.title}</span>
+                {groupBadge > 0 && !groupOpen && <span className="ml-1.5 h-1.5 w-1.5 rounded-full bg-rose inline-block" />}
+                <span className="ml-auto text-cream/30 text-[9px] leading-none">{groupOpen ? "▾" : "▸"}</span>
+              </button>
+            )}
+            {groupOpen && (
             <div className="space-y-0.5">
               {g.links.map((l) => {
                 const badge = badges[l.href] ?? 0;
@@ -88,8 +106,10 @@ function NavInner({ collapsed, onNavigate, perms, badges = {} }: { collapsed: bo
                 );
               })}
             </div>
+            )}
           </div>
-        ))}
+          );
+        })}
       </nav>
       <div className="mt-6">
         {!collapsed && <p className="px-3 mb-1 text-[10px] uppercase tracking-widest text-cream/35">Storefront</p>}

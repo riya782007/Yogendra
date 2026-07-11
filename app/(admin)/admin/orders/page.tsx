@@ -25,7 +25,7 @@ export default async function StorefrontOrders({ searchParams }: { searchParams?
   let migrationMissing = false;
   {
     const q = sb.from("orders")
-      .select("id,invoice_no,channel,total,amount_paid,payment_mode,bill_type,status,fulfillment,customer_name,customer_phone,buyer_address,payment_ref,created_at, order_items(qty, product:products(name,sku), variant:variants(sku,color))")
+      .select("id,invoice_no,channel,total,amount_paid,payment_mode,bill_type,status,fulfillment,customer_name,customer_phone,buyer_address,payment_ref,payment_proof_path,created_at, order_items(qty, product:products(name,sku), variant:variants(sku,color))")
       .neq("channel", "pos")
       .order("created_at", { ascending: false })
       .limit(100);
@@ -82,6 +82,13 @@ export default async function StorefrontOrders({ searchParams }: { searchParams?
                         <span className="text-muted"> · {new Date(r.created_at).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
                       </p>
                       {r.buyer_address && <p className="text-xs text-muted mt-0.5">📦 {r.buyer_address}</p>}
+                      {r.payment_proof_path && (
+                        <a href={r.payment_proof_path} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 mt-1.5 group/proof" title="Open the payment screenshot the buyer uploaded">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={r.payment_proof_path} alt="Payment screenshot" className="h-12 w-12 object-cover rounded-lg border border-sand group-hover/proof:ring-2 ring-emerald" />
+                          <span className="text-xs text-emerald nav-link">📷 Payment screenshot ↗</span>
+                        </a>
+                      )}
                       <p className="text-xs text-muted mt-1.5">
                         {items.map((it: any) => `${it.product?.name ?? it.variant?.sku ?? "item"}${it.variant?.color ? ` (${it.variant.color})` : ""} ×${it.qty}`).join(" · ") || "—"}
                       </p>
