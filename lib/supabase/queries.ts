@@ -1677,7 +1677,15 @@ export async function getStorefront(
     if (!isStorefrontImage(r.kind)) continue; // hide the raw upload — only AI-generated images on the shop
     if (!imgByProduct.has(r.product_id)) imgByProduct.set(r.product_id, r.path);
   }
+  // Every VALID image URL a product currently owns (product images + variant images). Used to
+  // auto-heal a stale cover: if the owner deletes the photo that thumbnail_path pointed at, that
+  // pinned cover no longer matches any real image, so we ignore it and fall back — the "deleted
+  // everywhere but the cover still shows" bug.
+  const validImgs = new Map<string, Set<string>>();
+  const addValid = (pid: string, url: string) => { let s = validImgs.get(pid); if (!s) { s = new Set(); validImgs.set(pid, s); } s.add(url); };
+  for (const r of (pimgs as any[]) ?? []) if (typeof r.path === "string" && r.path.startsWith("http")) addValid(r.product_id, r.path);
   for (const v of (vimgs as any[]) ?? []) {
+    for (const u of ((v.image_paths as string[]) ?? [])) if (typeof u === "string" && u.startsWith("http")) addValid(v.product_id, u);
     if (imgByProduct.has(v.product_id)) continue;
     const u = (((v.image_paths as string[]) ?? []).find((x) => x && x.startsWith("http")));
     if (u) imgByProduct.set(v.product_id, u);
@@ -1688,8 +1696,8 @@ export async function getStorefront(
     const rating = a && a.n ? a.sum / a.n : 4.6;
     const reviews = a?.n ?? 0;
     const isNew = p.created_at ? now - new Date(p.created_at).getTime() < 1000 * 60 * 60 * 24 * 21 : false;
-    // Owner-chosen storefront cover (any product/variant image) wins over the automatic pick.
-    const cover = (typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http")) ? p.thumbnail_path : null;
+    // Owner-chosen storefront cover wins — but ONLY if it still points at an image the product owns.
+    const cover = (typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http") && validImgs.get(p.id)?.has(p.thumbnail_path)) ? p.thumbnail_path : null;
     return { ...p, image: cover ?? imgByProduct.get(p.id) ?? null, rating: Math.round(rating * 10) / 10, reviews, isNew };
   });
   if (!opts.includeWholesaleOnly) products = products.filter((p: any) => !p.wholesale_only);

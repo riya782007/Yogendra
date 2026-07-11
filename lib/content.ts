@@ -262,12 +262,31 @@ export function templateContent(p: ProductLike): GeneratedContent {
 
 export function resolveProductContent(p: ProductLike): GeneratedContent {
   if (p.generated_content && p.generated_content.title) {
-    // Keep the AI's description/specs/keywords, but the shown TITLE is always the owner's curated name
-    // (his house format: girl name + design + type). The AI must never rewrite the title.
+    const gc = p.generated_content;
+    const tpl = templateContent(p); // deterministic, complete — used to fill any field left empty
     const curated = preferredTitle(p);
-    return curated && curated !== p.generated_content.title
-      ? { ...p.generated_content, title: curated }
-      : p.generated_content;
+    const title = curated || gc.title;
+    // The AI often wrote its OWN (flowery) title into the description & SEO prose (e.g. "...with Aaradhya
+    // American Diamond Stone Jhumka Earrings by BlytheDIVA"). Since the shown title is the owner's clean
+    // curated name, swap that old title string OUT of every text field so the name is consistent
+    // everywhere — the root cause of "title is right but the description shows the old name".
+    const fixName = (s: string | undefined, fallback: string): string => {
+      const out = (s && s.trim()) ? s : fallback;
+      return (curated && gc.title && curated !== gc.title) ? out.split(gc.title).join(curated) : out;
+    };
+    // TITLE is always the owner's curated name; other fields keep the saved value when present, else
+    // fall back to the complete template — so no product ever shows an empty field ("yeh sab khali").
+    return {
+      title,
+      description: fixName(gc.description, tpl.description),
+      specs: gc.specs && Object.keys(gc.specs).length > 0 ? gc.specs : tpl.specs,
+      tags: gc.tags && gc.tags.length > 0 ? gc.tags : tpl.tags,
+      seo: {
+        metaTitle: fixName(gc.seo?.metaTitle, tpl.seo.metaTitle),
+        metaDescription: fixName(gc.seo?.metaDescription, tpl.seo.metaDescription),
+        keywords: gc.seo?.keywords && gc.seo.keywords.length > 0 ? gc.seo.keywords : tpl.seo.keywords,
+      },
+    };
   }
   return templateContent(p);
 }

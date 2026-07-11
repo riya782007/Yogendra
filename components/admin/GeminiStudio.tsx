@@ -126,11 +126,11 @@ export function GeminiStudio({ data }: { data: Data }) {
               <button onClick={() => upRefs.current[`${kUp}-model`]?.click()} disabled={busy === `up-${variantId ?? "product"}`} className={upBtn}>⬆ Upload model</button>
             </div>
           </div>
-          {/* STAND: prompt → Gemini, then upload the stand result */}
+          {/* STAND: prompt → Flow, then upload the stand result */}
           <div className="rounded-xl border border-sand p-2.5">
-            <p className="text-[11px] font-medium text-ink mb-1.5">Stand photo · blythediva nameplate</p>
+            <p className="text-[11px] font-medium text-ink mb-1.5">Display-stand photo</p>
             <div className="flex flex-wrap gap-2">
-              <button onClick={() => showPrompt(variantId, "branded_stand", "Stand")} disabled={busy === kStand} className={promptBtn}>{busy === kStand ? "…" : "✦ Prompt → Gemini"}</button>
+              <button onClick={() => showPrompt(variantId, "branded_stand", "Stand")} disabled={busy === kStand} className={promptBtn}>{busy === kStand ? "…" : "✦ Prompt → Flow"}</button>
               <input ref={(el) => { upRefs.current[`${kUp}-stand`] = el; }} type="file" accept="image/*" className="hidden"
                 onChange={(e) => variantId ? uploadToVariant(variantId, e.target.files?.[0]) : uploadToProduct(e.target.files?.[0])} />
               <button onClick={() => upRefs.current[`${kUp}-stand`]?.click()} disabled={busy === `up-${variantId ?? "product"}`} className={upBtn}>⬆ Upload stand</button>
@@ -148,11 +148,11 @@ export function GeminiStudio({ data }: { data: Data }) {
         <p className="font-medium mb-1">Make a Model + Stand photo for every colour — free, on Google Flow (Nano Banana 2)</p>
         <ol className="list-decimal ml-5 space-y-0.5 text-[13px] text-ink/80">
           <li>Click <b>Model prompt</b> or <b>Stand prompt</b> — the tailored prompt copies and Google Flow opens.</li>
-          <li>In Google Flow, set the image model to <b>Nano Banana 2</b>, then <b>paste</b> the prompt, <b>attach the raw colour photo</b> (required!), and generate.</li>
+          <li>In Google Flow, set the image model to <b>Nano Banana 2</b> and <b>1 image at a time</b>, then <b>paste</b> the prompt, <b>attach the raw colour photo</b> (required!), and generate.</li>
           <li><b>Download</b> the image, then <b>⬆ Upload model</b> or <b>⬆ Upload stand</b> here.</li>
           <li>Pick your favourite as the <b>thumbnail</b> — it leads the product card &amp; page.</li>
         </ol>
-        <p className="text-[11px] text-muted mt-1">Stand shots carry the elegant “blythediva” nameplate. The prompt keeps the exact piece — every stone, colour and part of the set.</p>
+        <p className="text-[11px] text-muted mt-1">The prompt is written for you — simple, text-free and elegant. It keeps the exact piece: every stone, colour and part of the set, with no design change.</p>
       </div>
 
       {/* Header */}
@@ -182,7 +182,7 @@ export function GeminiStudio({ data }: { data: Data }) {
               <h3 className="font-display text-xl text-ink">{promptBox.label} photo prompt</h3>
               <button onClick={() => setPromptBox(null)} className="text-muted hover:text-ink text-lg leading-none">✕</button>
             </div>
-            <p className="text-xs text-muted mb-2">Copy this, open <b>Google Flow</b> (image model: <b>Nano Banana 2</b>), <b>paste</b> it, <b>attach the raw photo</b>, and generate. Then download the result and <b>⬆ Upload result</b> here.</p>
+            <p className="text-xs text-muted mb-2">Copy this, open <b>Google Flow</b> (image model: <b>Nano Banana 2</b>, <b>1 image</b>), <b>paste</b> it, <b>attach the raw photo</b>, and generate. Then download the result and <b>⬆ Upload result</b> here.</p>
             <textarea readOnly value={promptBox.text} onFocus={(e) => e.currentTarget.select()} rows={9} className="w-full rounded-xl border border-sand px-3 py-2 text-xs text-ink/90 outline-none focus:border-emerald font-mono" />
             <div className="flex items-center gap-2 mt-3">
               <button onClick={() => copyNow(promptBox.text)} className="btn-primary flex-1 py-2.5 text-sm font-medium">Copy prompt</button>

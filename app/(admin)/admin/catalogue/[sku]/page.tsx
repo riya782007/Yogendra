@@ -8,6 +8,7 @@ import {
   getLastPurchaseCosts,
 } from "@/lib/supabase/queries";
 import { ProductEditor, type EditorProduct } from "@/components/admin/ProductEditor";
+import { resolveProductContent } from "@/lib/content";
 import { ProductWorkspace, type WorkspaceTab, type TabKey } from "@/components/admin/ProductWorkspace";
 import { ProductStockAdjust } from "@/components/admin/ProductStockAdjust";
 import { MediaCard } from "@/components/admin/MediaCard";
@@ -64,12 +65,19 @@ export default async function ProductPage({ params, searchParams }: { params: { 
   const labelIds = new Set((((p as any).product_labels as any[]) ?? []).map((x) => x.label_id));
 
   const session = getSession();
-  const gc = (p.generated_content as any) ?? {};
-  const seo = gc.seo ?? {};
-  const specs = gc.specs ?? {};
-  const specsText = Object.entries(specs).map(([k, v]) => `${k}: ${v}`).join("\n");
-  const tags: string[] = gc.tags ?? [];
-  const keywords: string[] = seo.keywords ?? [];
+  // Show EXACTLY what the storefront resolves: clean curated title, description/SEO with the old flowery
+  // name swapped out, and the house-template used to fill any field the saved content left empty — so the
+  // editor never opens blank ("yeh sab khali") and the description never shows the old name. Saving
+  // persists these into generated_content.
+  const resolved = resolveProductContent({
+    name: p.name, sku: p.sku, categoryName: p.category?.name,
+    colors: ((p.variants ?? []) as any[]).map((v) => v.color).filter(Boolean),
+    generated_content: p.generated_content as any,
+  });
+  const seo = resolved.seo;
+  const specsText = Object.entries(resolved.specs).map(([k, v]) => `${k}: ${v}`).join("\n");
+  const tags: string[] = resolved.tags;
+  const keywords: string[] = resolved.seo.keywords ?? [];
 
   const variants = p.variants ?? [];
   const variantStock = variants.reduce((s: number, v: any) => s + (v.qty ?? 0), 0);
@@ -97,8 +105,8 @@ export default async function ProductPage({ params, searchParams }: { params: { 
     // Configurable products carry their stock on the variants — show the live sum, not the (possibly
     // stale) product-row qty, so the read-only Basic-tab total always matches the Variants tab.
     qty: p.type === "configurable" ? variantStock : (p.qty ?? 0),
-    title: gc.title ?? p.name,
-    description: gc.description ?? "",
+    title: resolved.title,
+    description: resolved.description,
     tags: tags.join("\n"),
     metaTitle: seo.metaTitle ?? "",
     metaDescription: seo.metaDescription ?? "",

@@ -63,7 +63,14 @@ export async function uploadStorefrontPhotoAction(formData: FormData): Promise<{
 export async function deleteProductImageAction(formData: FormData) {
   if (!(await requirePerm("catalog.ai"))) return;
   const id = String(formData.get("id"));
-  await supabaseServer().from("product_images").delete().eq("id", id);
+  const sb = supabaseServer();
+  // Read the row first so we can also clear the product cover if it pointed at this exact photo —
+  // otherwise the deleted image keeps showing as the cover ("deleted everywhere but cover stays").
+  const { data: img } = await sb.from("product_images").select("product_id,path").eq("id", id).maybeSingle();
+  await sb.from("product_images").delete().eq("id", id);
+  if (img && (img as any).product_id && (img as any).path) {
+    await sb.from("products").update({ thumbnail_path: null }).eq("id", (img as any).product_id).eq("thumbnail_path", (img as any).path);
+  }
   revalidatePath("/admin/media"); revalidatePath("/shop"); revalidatePath("/admin/catalogue/[sku]", "page");
 }
 

@@ -18,9 +18,32 @@ const BUCKET = "product-media";
 export type GenOut = { ok: boolean; error?: string; reason?: string; id?: string; url?: string; provider?: string };
 
 /**
- * Build the ready-to-paste Gemini prompt for a specific VARIANT + shot (model or branded stand).
- * The owner copies this, opens Gemini, uploads the raw colour photo, and Gemini produces the shot.
- * No image API is called here — this is just the (free) prompt text, tailored to the exact piece.
+ * Describe the physical components of the piece in plain words — like the owner's own prompt
+ * ("...contains earrings and mangtika") — detected from the product name + category + subcategory.
+ * Falls back to the piece type itself when nothing specific is found.
+ */
+function describeComponents(text: string, pieceType: string): string {
+  const t = text.toLowerCase();
+  const parts: string[] = [];
+  if (/necklace|choker|pendant|rani ?haar|\bhaar\b|mala|mangalsutra/.test(t)) parts.push(/choker/.test(t) ? "a choker" : "a necklace");
+  if (/jhumk/.test(t)) parts.push("jhumka earrings");
+  else if (/ear ?ring|dangler|\bstud|chandbali|chandabali|bugadi|ear ?cuff|bali\b/.test(t)) parts.push("earrings");
+  if (/maang ?tik|mang ?tik|mangtik|tikka|borla|matha ?patti|damini/.test(t)) parts.push("a maang tikka");
+  if (/\bnath\b|nose ?pin|nathni/.test(t)) parts.push("a nose pin");
+  if (/finger ?ring|\bring\b/.test(t)) parts.push("a finger ring");
+  if (/haathphool|hathphool|hand ?harness/.test(t)) parts.push("a haathphool");
+  else if (/bajuband|armlet|bazuband/.test(t)) parts.push("a bajuband");
+  else if (/bangle|kada|kangan/.test(t)) parts.push("bangles");
+  else if (/bracelet/.test(t)) parts.push("a bracelet");
+  if (parts.length === 0) return `a ${pieceType}`;
+  if (parts.length === 1) return parts[0];
+  return parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1];
+}
+
+/**
+ * Build the ready-to-paste image prompt for a specific VARIANT + shot (model or display stand),
+ * written in the owner's own proven, text-free style. The owner copies this, opens Google Flow
+ * (Nano Banana 2), uploads the raw colour photo, and generates the shot. No image API is called here.
  */
 export async function getShotPromptAction(input: { productId: string; variantId?: string | null; shotType: "model" | "branded_stand" }):
   Promise<{ ok: boolean; prompt?: string; error?: string }> {
@@ -39,30 +62,21 @@ export async function getShotPromptAction(input: { productId: string; variantId?
     const { data: v } = await sb.from("variants").select("color").eq("id", input.variantId).maybeSingle();
     variantColor = (v as any)?.color ?? undefined;
   }
-  const piece = (subName || prod.category?.name || "jewellery piece").toLowerCase();
+  const pieceType = (subName || prod.category?.name || "jewellery piece").toLowerCase();
+  const components = describeComponents([prod.name, subName, prod.category?.name].filter(Boolean).join(" "), pieceType);
   const colourNote = variantColor
-    ? ` This is the "${variantColor}" colourway — but reproduce the ACTUAL colours shown in my attached photo; if the photo and the label disagree, follow the PHOTO.`
+    ? ` This is the ${variantColor} colour — keep the exact colours as shown in my attached photo.`
     : "";
 
-  // Tuned to a Sabyasachi / heritage-editorial reference: clean bright background, sleek Indian model,
-  // and the jewellery large, tack-sharp and dominant with EVERY piece of the set shown.
-  const look = input.shotType === "branded_stand"
-    ? `THE LOOK — MODERN METALLIC DISPLAY STAND (no model, no person, no hands): present the piece on a contemporary, premium jewellery display — a soft matte-velvet neck bust mounted on a slim METALLIC GOLD-TONE stand (the modern gold-metal boutique stands used today), placed on a clean neutral studio surface with a soft, bright, gently graded background and soft even lighting. If the piece is a SET, add matching gold-metal display props right beside it — an earring stand holding the earrings, and a small maang-tikka holder for the tikka — so every component of the set is shown together and clearly. Render the lowercase wordmark "blythediva" softly and elegantly ON the velvet bust, just below the piece, like a refined engraved boutique nameplate — small, tasteful, spelled EXACTLY "blythediva", with NO other text anywhere.`
-    : `THE LOOK — ON MODEL (match this exact editorial style): an elegant young Indian woman as the model, hair pulled back in a sleek centre-parted low bun, soft natural neutral makeup, calm graceful expression, wearing a plain ivory/white V-neck blouse so the jewellery stands out. Clean, bright, soft neutral-white studio background, soft even editorial lighting. Premium fine-jewellery mood.`;
+  // Written in the owner's OWN proven style (simple, first-person, text-free) — these are the prompts
+  // that reliably worked for him on Google Flow with the Nano Banana 2 image model. Model & Stand share
+  // the same fidelity guarantee ("shown exactly as it is, no design change"); only the setting differs.
+  const setting = input.shotType === "branded_stand"
+    ? "which displays the jewellery piece elegantly on a premium jewellery display stand (a soft velvet neck bust / display stand — no model and no person)"
+    : "which advertises the jewellery piece on an elegant model";
 
   const prompt =
-`Act as a top-tier Indian fine-jewellery e-commerce photographer. I am attaching ONE real photo of an actual ${piece} that a customer will physically receive. Your #1 job is to REPRODUCE THAT EXACT JEWELLERY — treat this like compositing MY real piece into the shot, NOT designing a new one. The output jewellery must look identical to my photo; a customer must recognise it as the very same piece.
-
-COPY THE PIECE EXACTLY FROM MY PHOTO (non-negotiable): the SAME overall silhouette, shape and length; the SAME pattern and motifs; the SAME number, shape, size and arrangement of every stone, drop and pendant; the SAME stone colours (e.g. pink stones stay pink, in the same spots); the SAME metal tone, kundan/polki, meenakari/enamel, pearls, links and clasp.${colourNote}
-DO NOT (these are the exact mistakes to avoid): do not redesign or restyle the piece; do not change its shape, length or drape; do not change, add, remove or rearrange any drop, stone or motif; do not recolour any stone; do not swap it for a generic or "similar" design; do not "improve", simplify or embellish it. Never invent elements that are not in my photo. If unsure, copy my photo exactly. If my photo shows a SET (necklace + earrings + maang tikka etc.), EVERY component must appear together in the frame — none omitted, swapped or cropped.
-
-${look}
-
-FRAMING & FOCUS — JEWELLERY FILLS THE FRAME (critical): crop in VERY CLOSE so the ${piece} is large and dominant, filling roughly 55–75% of the frame, tack-sharp with EVERY stone clearly visible. ${input.shotType === "branded_stand"
-  ? "Shoot close on the bust so the piece — not the stand — dominates."
-  : "This is NOT a beauty portrait of the model and we are NOT advertising the model — the jewellery is the hero, the model is only a backdrop. Do NOT show the full face or a head-shot from a distance. Crop the face as needed: for EARRINGS shoot a tight three-quarter/side view of the ear, jaw and neck so the earrings are big; for a NECKLACE crop close on the neckline and décolletage. The piece must clearly dominate the frame."} Do not shoot wide, far away or full-body. No text, logos or watermarks${input.shotType === "branded_stand" ? " other than the 'blythediva' nameplate described above" : ""}.
-
-Output ONE high-resolution vertical (4:5) image, cleanly retouched and ready to publish. Before finishing, compare your jewellery to my photo detail-by-detail and correct anything that differs.`;
+`I am an artificial jewellery designer and manufacturer, and I sell to wholesale buyers from my e-commerce site. I want you to convert this raw image into a professional, well-shot, detail-capturing, advertisable image ${setting}. Make sure there are no texts on the image. It must be simple and elegant, on a clean plain background with soft lighting, and the jewellery should fill most of the frame so every detail is clearly visible. This jewellery piece contains ${components}. Make sure the entire jewellery is shown exactly as it is, in its original colours, without any design change at all.${colourNote}`;
   return { ok: true, prompt };
 }
 

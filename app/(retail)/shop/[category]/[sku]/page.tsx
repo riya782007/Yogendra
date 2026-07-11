@@ -67,7 +67,9 @@ export default async function ProductPage({ params }: Params) {
   if (coverPath) {
     const i = galleryImages.findIndex((g: any) => g.path === coverPath);
     if (i > 0) galleryImages.unshift(galleryImages.splice(i, 1)[0]);
-    else if (i === -1) galleryImages.unshift({ path: coverPath, kind: "cover" });
+    // If the cover is no longer one of the product's images (i === -1) it was deleted — do NOT force
+    // it back in, otherwise a removed photo keeps reappearing as the hero ("deleted everywhere but
+    // the cover still shows"). It simply falls back to the first real image.
   }
   const waText = `Please place an order for ${p.name} (SKU:${p.sku})`;
   const waHref = `https://wa.me/919873151767?text=${encodeURIComponent(waText)}`;
