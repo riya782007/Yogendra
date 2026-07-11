@@ -59,7 +59,7 @@ export function PromoUpload({ categories = [] }: { categories?: Cat[] }) {
       let publicUrl: string | undefined;
       if (needsMedia && file) {
         let toUpload: File = file;
-        if (file.type.startsWith("image")) { try { toUpload = await compressImage(file, 2000, 0.85); } catch { /* use original */ } }
+        if (file.type.startsWith("image")) { try { toUpload = await compressImage(file, 2000, 0.85, 0); } catch { /* use original */ } }
         const signed = await signPromoUploadAction({ filename: toUpload.name || (isVideo ? "promo.mp4" : "promo.jpg"), contentType: toUpload.type });
         if (!signed.ok || !signed.signedUrl || !signed.publicUrl) { setMsg({ t: signed.error || "Could not start upload.", ok: false }); setBusy(false); return; }
         const put = await fetch(signed.signedUrl, { method: "PUT", headers: { "content-type": toUpload.type, "x-upsert": "true" }, body: toUpload });
