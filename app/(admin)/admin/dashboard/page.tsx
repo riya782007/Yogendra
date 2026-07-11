@@ -1,7 +1,8 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
-import { getDashboardData, getDashboardAnalytics, getChannelReport } from "@/lib/supabase/queries";
+import { getDashboardData, getDashboardAnalytics, getChannelReport, getRecentOrders } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
+import { OrderNotifications } from "@/components/admin/OrderNotifications";
 import { AnimatedNumber } from "@/components/admin/AnimatedNumber";
 import { BarChart } from "@/components/admin/BarChart";
 import { Donut } from "@/components/admin/Donut";
@@ -47,7 +48,7 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
   // owner can see exactly which dates the figures cover — the earlier blank-box confusion.
   const fromDate = searchParams.from ?? from.slice(0, 10);
   const toDate = searchParams.to ?? to.slice(0, 10);
-  const [d, a, report] = await Promise.all([getDashboardData(from, to), getDashboardAnalytics(from, to), getChannelReport(from, to)]);
+  const [d, a, report, recent] = await Promise.all([getDashboardData(from, to), getDashboardAnalytics(from, to), getChannelReport(from, to), getRecentOrders(8)]);
   const label = custom
     ? `${new Date(from).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })} – ${new Date(to).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`
     : (PRESETS.find((p) => p.key === preset)?.label ?? "This month");
@@ -87,6 +88,9 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
           </div>
         </div>
       </div>
+
+      {/* Live "New Orders" panel — alerts the owner the moment an order lands (polls every 30s). */}
+      <div className="mb-6"><OrderNotifications initial={recent} /></div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
         <Tile label="Revenue" icon="₹" accent="text-emerald" bar="bg-emerald" sub={`${d.orders} orders`}><span className="sensitive"><AnimatedNumber value={d.revenue / 100} prefix="₹" /></span></Tile>

@@ -3,7 +3,7 @@ import { useState, useMemo } from "react";
 import { formatPaise, tierPctOff, applyTier, type WholesaleTier } from "@/lib/pricing";
 import { ProductImage } from "@/components/Placeholder";
 import { QtyField } from "@/components/admin/QtyField";
-import { placeWholesaleOrderAction, wholesaleLogoutAction, requestQuoteAction } from "@/app/actions/wholesale";
+import { placeWholesaleOrderAction, wholesaleLogoutAction, requestQuoteAction, uploadPaymentProofAction } from "@/app/actions/wholesale";
 
 type P = { sku: string; name: string; category: string; sub?: string | null; style?: string | null; qty: number; price: number; mrp: number; image: string | null; colour?: string | null };
 type HistItem = { sku: string; name: string; qty: number };
@@ -30,7 +30,8 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
   const [sort, setSort] = useState<"featured" | "price_asc" | "price_desc" | "margin">("featured");
   const [qty, setQty] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState(false);
-  const [paying, setPaying] = useState(false);   // payment (QR + UTR) step
+  const [paying, setPaying] = useState(false);   // payment (QR + screenshot) step
+  const [proof, setProof] = useState<File | null>(null); // dealer's payment screenshot
   const [utr, setUtr] = useState("");
   const [done, setDone] = useState<{ id: string; total: number } | null>(null);
   const [err, setErr] = useState("");
@@ -116,9 +117,16 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
   async function confirmOrder() {
     if (lines.length === 0) return;
     setBusy(true); setErr("");
-    const res = await placeWholesaleOrderAction(lines.map(([sku, n]) => ({ sku, qty: n })), { paymentRef: utr.trim() || undefined });
+    let proofUrl: string | undefined;
+    if (proof) {
+      const fd = new FormData(); fd.set("file", proof);
+      const up = await uploadPaymentProofAction(fd);
+      if (!up.ok) { setBusy(false); setErr(up.error ?? "Could not upload the screenshot — try a smaller image."); return; }
+      proofUrl = up.url;
+    }
+    const res = await placeWholesaleOrderAction(lines.map(([sku, n]) => ({ sku, qty: n })), { proofPath: proofUrl, paymentRef: utr.trim() || undefined });
     setBusy(false);
-    if (res.ok) { setDone({ id: res.orderId!, total: res.total ?? 0 }); setQty({}); setPaying(false); }
+    if (res.ok) { setDone({ id: res.orderId!, total: res.total ?? 0 }); setQty({}); setProof(null); setPaying(false); }
     else setErr(res.error ?? "Could not place order");
   }
 
@@ -399,14 +407,19 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
                   ? <img src={payInfo.qrUrl} alt="UPI QR" className="mx-auto mt-2 w-56 h-56 object-contain rounded-xl border border-sand bg-white" />
                   : <div className="mx-auto mt-2 w-56 h-56 rounded-xl border border-dashed border-sand grid place-items-center text-xs text-muted p-4">QR will be added soon — use the UPI ID below.</div>}
                 {payInfo.upiId && <p className="mt-2 text-sm text-ink">UPI ID: <b className="font-mono">{payInfo.upiId}</b></p>}
-                <p className="text-[11px] text-muted mt-1">Pay to {payInfo.payeeName}. Then enter the UPI reference below.</p>
+                <p className="text-[11px] text-muted mt-1">Pay to {payInfo.payeeName}. Then upload your payment screenshot below.</p>
               </div>
             ) : (
               <p className="mt-4 text-sm text-gold-dark bg-gold/10 rounded-xl px-4 py-3">Payment details will be shared with you on WhatsApp right after you place the order. You can add the UPI reference now or later.</p>
             )}
 
-            <label className="block text-xs font-medium text-muted mt-4 mb-1">UPI transaction reference (UTR) <span className="text-muted/70">— optional, speeds up verification</span></label>
-            <input value={utr} onChange={(e) => setUtr(e.target.value)} placeholder="e.g. 4351xxxxxxxx" className="w-full rounded-xl border border-sand px-3 py-2.5 text-sm outline-none focus:border-emerald" />
+            <label className="block text-xs font-medium text-ink mt-4 mb-1">Upload your payment screenshot <span className="text-muted/70 font-normal">— just drop the screenshot, no need to type anything</span></label>
+            <label className="flex items-center gap-3 rounded-xl border border-dashed border-emerald/50 bg-emerald-mist/30 px-3 py-3 cursor-pointer hover:bg-emerald-mist/50 transition-colors">
+              <span className="text-xl">📷</span>
+              <span className="text-sm text-ink truncate">{proof ? proof.name : "Tap to add payment screenshot"}</span>
+              <input type="file" accept="image/*" className="hidden" onChange={(e) => setProof(e.target.files?.[0] ?? null)} />
+            </label>
+            {proof && <p className="text-[11px] text-emerald-dark mt-1">✓ Screenshot ready — tap “I've paid” to send it to the seller for verification.</p>}
             {err && <p className="text-sm text-rose mt-2">{err}</p>}
 
             <div className="flex items-center gap-2 mt-4">

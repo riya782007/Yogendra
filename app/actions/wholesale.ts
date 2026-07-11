@@ -61,6 +61,23 @@ export async function regenWholesaleCodeAction(formData: FormData) {
   revalidatePath(`/admin/customer/${id}`);
 }
 
+/** Dealer uploads a payment SCREENSHOT (owner's preferred proof) → stored in the public payment-proofs bucket. */
+export async function uploadPaymentProofAction(formData: FormData): Promise<{ ok: boolean; url?: string; error?: string }> {
+  const sess = await getWholesaleSession();
+  if (!sess) return { ok: false, error: "Please log in as an approved wholesale customer." };
+  const file = formData.get("file") as unknown as File | null;
+  if (!file || typeof (file as any).arrayBuffer !== "function") return { ok: false, error: "No image selected." };
+  const sb = supabaseServer();
+  const type = (file as any).type || "image/jpeg";
+  const ext = (String(type).split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "").slice(0, 5) || "jpg";
+  const path = `${sess.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const buf = Buffer.from(await (file as any).arrayBuffer());
+  const { error } = await sb.storage.from("payment-proofs").upload(path, buf, { contentType: type, upsert: false });
+  if (error) return { ok: false, error: error.message };
+  const base = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, "");
+  return { ok: true, url: `${base}/storage/v1/object/public/payment-proofs/${path}` };
+}
+
 /**
  * Place a wholesale order. Prices are recomputed server-side at the wholesale rate.
  * Payment is by direct UPI (the dealer scans the owner's QR and pays) — NO Razorpay, so the owner
@@ -69,7 +86,7 @@ export async function regenWholesaleCodeAction(formData: FormData) {
  */
 export async function placeWholesaleOrderAction(
   items: { sku: string; qty: number }[],
-  opts?: { paymentRef?: string; cod?: boolean },
+  opts?: { paymentRef?: string; cod?: boolean; proofPath?: string },
 ): Promise<{ ok: boolean; orderId?: string; total?: number; error?: string }> {
   const sess = await getWholesaleSession();
   if (!sess) return { ok: false, error: "Please log in as an approved wholesale customer." };
@@ -85,6 +102,7 @@ export async function placeWholesaleOrderAction(
   const orderId = (data as any)?.order_id as string | undefined;
   let total = (data as any)?.total as number | undefined;
   const ref = (opts?.paymentRef ?? "").trim().slice(0, 40);
+  const proof = (opts?.proofPath ?? "").trim().slice(0, 400);
 
   if (orderId) {
     await sb.rpc("assign_invoice_no", { p_order: orderId });
@@ -100,6 +118,8 @@ export async function placeWholesaleOrderAction(
     }
     // Record the dealer's UPI payment claim so the owner can match it against his bank/UPI history.
     if (ref) await sb.from("orders").update({ payment_ref: ref, payment_mode: "upi" }).eq("id", orderId);
+    // Dealer's payment SCREENSHOT (owner's preferred proof) — stored on the order for one-tap verify.
+    if (proof) await sb.from("orders").update({ payment_proof_path: proof, payment_mode: "upi" }).eq("id", orderId);
     // COD wholesale order: nothing received yet — dues stay on the dealer's ledger until collected.
     if (opts?.cod) await sb.from("orders").update({ payment_mode: "cod", amount_paid: 0 }).eq("id", orderId).then(() => {}, () => {});
 
@@ -118,7 +138,8 @@ export async function placeWholesaleOrderAction(
           `🔔 New WHOLESALE order ${inv}`,
           `Dealer: ${dealer}`,
           `Amount: ₹${amt}`,
-          opts?.cod ? `💵 COD (incl. ₹120 COD fee) — collect ₹${amt} on delivery.` : ref ? `UPI ref (UTR): ${ref} — verify this in your UPI/bank, then dispatch.` : `Payment: to be collected.`,
+          opts?.cod ? `💵 COD (incl. ₹120 COD fee) — collect ₹${amt} on delivery.` : proof ? `📷 Payment screenshot submitted — verify & dispatch.` : ref ? `UPI ref (UTR): ${ref} — verify this in your UPI/bank, then dispatch.` : `Payment: to be collected.`,
+          ...(proof ? [`Proof: ${proof}`] : []),
           ...(shipNote ? [shipNote] : []),
           `Open the Owner Console → Sales to confirm.`,
         ];
