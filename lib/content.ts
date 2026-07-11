@@ -35,6 +35,20 @@ export const DIVA_NAMES = [
   "Anvita", "Reyna", "Navya", "Prisha", "Aadhya", "Mahika", "Siya", "Tara", "Inaya", "Riya", "Avni",
   "Meher", "Kashvi", "Vaidehi", "Charvi", "Diya", "Hiya", "Zara", "Nitya", "Samaira", "Aisha",
 ];
+/**
+ * The owner curates every product name in the exact house format he wants:
+ *   {Girl name} {design / material} {product type}   e.g. "Divya American Diamond Stone Jhumkas".
+ * That curated name IS the title he wants shown — so we ALWAYS prefer it and never let the AI or the
+ * synthesiser rewrite it (which was inventing a new girl name and flowery wording he disliked).
+ * Returns the cleaned name, or null when the name is missing/placeholder so a title can be synthesised.
+ */
+export function preferredTitle(p: { name?: string | null }): string | null {
+  const raw = (p.name ?? "").replace(/\s*\([^)]*\)\s*$/, "").replace(/\s+/g, " ").trim(); // drop any trailing (SKU)
+  if (raw.length < 3) return null;
+  if (/^(product|untitled|new product|item|sku\b)/i.test(raw)) return null; // placeholder names → synthesise
+  return raw;
+}
+
 /** Deterministic, stable name pick for a product (so its fallback title doesn't change each render). */
 export function pickDivaName(seed: string): string {
   let h = 0; const s = (seed || "").toString();
@@ -177,7 +191,9 @@ export function templateContent(p: ProductLike): GeneratedContent {
     if (descWords.length >= 5) break;
   }
   const titleDescriptors = descWords.join(" ").trim();
-  const title = [name, titleDescriptors, type].filter(Boolean).join(" ") + withPieces;
+  // Prefer the owner's curated name verbatim; only synthesise a {name}{descriptors}{type} title when
+  // the product has no real name yet.
+  const title = preferredTitle(p) ?? ([name, titleDescriptors, type].filter(Boolean).join(" ") + withPieces);
 
   let description: string;
   let specOccasion: string, specMaterial: string;
@@ -245,6 +261,13 @@ export function templateContent(p: ProductLike): GeneratedContent {
 }
 
 export function resolveProductContent(p: ProductLike): GeneratedContent {
-  if (p.generated_content && p.generated_content.title) return p.generated_content;
+  if (p.generated_content && p.generated_content.title) {
+    // Keep the AI's description/specs/keywords, but the shown TITLE is always the owner's curated name
+    // (his house format: girl name + design + type). The AI must never rewrite the title.
+    const curated = preferredTitle(p);
+    return curated && curated !== p.generated_content.title
+      ? { ...p.generated_content, title: curated }
+      : p.generated_content;
+  }
   return templateContent(p);
 }

@@ -138,7 +138,7 @@ export async function getStyles(opts: { categoryId?: string } = {}): Promise<{ i
 }
 
 // ---------- efficient, paginated lists (for 10k+ SKUs) ----------
-export async function getProductsPage(opts: { page?: number; pageSize?: number; q?: string; category?: string; status?: string }) {
+export async function getProductsPage(opts: { page?: number; pageSize?: number; q?: string; category?: string; subcategory?: string; status?: string }) {
   const sb = supabaseServer();
   const pageSize = opts.pageSize ?? 25;
   const page = Math.max(1, opts.page ?? 1);
@@ -147,6 +147,11 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
   if (opts.category && opts.category !== "all") {
     const { data: cat } = await sb.from("categories").select("id").eq("slug", opts.category).maybeSingle();
     if (cat) query = query.eq("category_id", (cat as any).id);
+  }
+  // Subcategory filter — resolve the slug to its id and match on the product's primary subcategory.
+  if (opts.subcategory && opts.subcategory !== "all") {
+    const { data: sub } = await sb.from("subcategories").select("id").eq("slug", opts.subcategory).maybeSingle();
+    if (sub) query = query.eq("subcategory_id", (sub as any).id);
   }
   if (opts.status && opts.status !== "all") query = query.eq("status", opts.status);
   const fromIdx = (page - 1) * pageSize;

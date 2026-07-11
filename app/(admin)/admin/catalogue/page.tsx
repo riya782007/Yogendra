@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
-import { getProductsPage, getPricingFormula, getCategories } from "@/lib/supabase/queries";
+import { getProductsPage, getPricingFormula, getCategoryTree } from "@/lib/supabase/queries";
 import { liveOffer } from "@/lib/offers";
 import { formatPaise, resolvePrices, overridesOf } from "@/lib/pricing";
 import { geminiConfigured } from "@/lib/ai/gemini";
@@ -14,16 +14,20 @@ import { CatalogueRow } from "@/components/admin/CatalogueRow";
 export const metadata = { title: "Owner Console · Catalogue" };
 const PAGE_SIZE = 25;
 
-export default async function AdminCatalogue({ searchParams }: { searchParams: { page?: string; q?: string; category?: string; status?: string } }) {
+export default async function AdminCatalogue({ searchParams }: { searchParams: { page?: string; q?: string; category?: string; sub?: string; status?: string } }) {
   const page = parseInt(searchParams.page ?? "1", 10) || 1;
   const q = searchParams.q ?? "";
   const category = searchParams.category ?? "all";
+  const subcategory = searchParams.sub ?? "all";
   const status = searchParams.status ?? "all";
   const [{ rows, total }, formula, categories] = await Promise.all([
-    getProductsPage({ page, pageSize: PAGE_SIZE, q, category, status }),
+    getProductsPage({ page, pageSize: PAGE_SIZE, q, category, subcategory, status }),
     getPricingFormula(),
-    getCategories(),
+    getCategoryTree(),
   ]);
+  // Subcategory options for the filter: when a category is chosen, show only its subcategories;
+  // otherwise list every subcategory grouped by its parent category (optgroups).
+  const catForSub = category !== "all" ? categories.filter((c) => c.slug === category) : categories;
   const ai = aiProvidersStatus();
   const imageReady = geminiConfigured();
   const session = getSession();
@@ -69,11 +73,21 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
           <option value="all">All categories</option>
           {categories.map((c) => <option key={c.id} value={c.slug}>{c.name}</option>)}
         </select>
+        <select name="sub" defaultValue={subcategory} className={sel}>
+          <option value="all">All sub-categories</option>
+          {category !== "all"
+            ? (catForSub[0]?.subcategories ?? []).map((s) => <option key={s.id} value={s.slug}>{s.name}</option>)
+            : catForSub.map((c) => (
+                <optgroup key={c.id} label={c.name}>
+                  {c.subcategories.map((s) => <option key={s.id} value={s.slug}>{s.name}</option>)}
+                </optgroup>
+              ))}
+        </select>
         <select name="status" defaultValue={status} className={sel}>
           <option value="all">All statuses</option><option value="published">Published</option><option value="draft">Draft</option><option value="flagged">Flagged</option>
         </select>
         <button className="px-4 py-2 rounded-xl bg-ink text-white text-sm">Search</button>
-        {(q || category !== "all" || status !== "all") && <Link href="/admin/catalogue" className="px-3 py-2 text-sm text-muted hover:text-ink">Clear</Link>}
+        {(q || category !== "all" || subcategory !== "all" || status !== "all") && <Link href="/admin/catalogue" className="px-3 py-2 text-sm text-muted hover:text-ink">Clear</Link>}
       </form>
 
       <p className="text-xs text-muted mb-2">Tip: click any product to expand it — publish, variants &amp; stock, AI and more.</p>
@@ -107,7 +121,7 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
           </tbody>
         </table>
       </div>
-      <Pager basePath="/admin/catalogue" params={{ q, category, status }} page={page} pageSize={PAGE_SIZE} total={total} />
+      <Pager basePath="/admin/catalogue" params={{ q, category, sub: subcategory, status }} page={page} pageSize={PAGE_SIZE} total={total} />
     </main>
   );
 }
