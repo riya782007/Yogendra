@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { getRecentOrders } from "@/lib/supabase/queries";
+import { getOrderAlerts } from "@/lib/supabase/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +9,7 @@ export async function GET() {
   const s = getSession();
   if (!s.authed) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   try {
-    const data = await getRecentOrders(8);
+    const data = await getOrderAlerts(8);
     return NextResponse.json(data, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return NextResponse.json({ orders: [], last24h: 0 });

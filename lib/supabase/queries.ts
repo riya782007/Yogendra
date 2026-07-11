@@ -1555,16 +1555,16 @@ export async function getDashboardData(fromISO: string, toISO: string, rule: Inv
 
 export type ClassifiedRow = { id: string; sku: string; name: string; category: string; categorySlug: string; status: string; qty: number; lastMovementAt: string | null; cls: string };
 
-export type RecentOrder = { id: string; invoice_no: string | null; channel: string | null; status: string | null; total: number; amount_paid: number; customer_name: string | null; created_at: string };
+export type OrderAlertRow = { id: string; invoice_no: string | null; channel: string | null; status: string | null; total: number; amount_paid: number; customer_name: string | null; created_at: string };
 /** Latest orders + a 24h count — powers the live "New Orders" panel + toast on the dashboard. */
-export async function getRecentOrders(limit = 8): Promise<{ orders: RecentOrder[]; last24h: number }> {
+export async function getOrderAlerts(limit = 8): Promise<{ orders: OrderAlertRow[]; last24h: number }> {
   const sb = supabaseServer();
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const [listRes, cntRes] = await Promise.all([
     sb.from("orders").select("id,invoice_no,channel,status,total,amount_paid,customer_name,created_at").order("created_at", { ascending: false }).limit(limit),
     sb.from("orders").select("id", { count: "exact", head: true }).gte("created_at", since),
   ]);
-  return { orders: ((listRes.data as any[]) ?? []) as RecentOrder[], last24h: cntRes.count ?? 0 };
+  return { orders: ((listRes.data as any[]) ?? []) as OrderAlertRow[], last24h: cntRes.count ?? 0 };
 }
 
 export async function getInventoryClassified(rule: InventoryRule = DEFAULT_RULE): Promise<ClassifiedRow[]> {

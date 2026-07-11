@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
-import { getDashboardData, getDashboardAnalytics, getChannelReport, getRecentOrders } from "@/lib/supabase/queries";
+import { getDashboardData, getDashboardAnalytics, getChannelReport, getOrderAlerts } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { OrderNotifications } from "@/components/admin/OrderNotifications";
 import { AnimatedNumber } from "@/components/admin/AnimatedNumber";
@@ -48,7 +48,7 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
   // owner can see exactly which dates the figures cover — the earlier blank-box confusion.
   const fromDate = searchParams.from ?? from.slice(0, 10);
   const toDate = searchParams.to ?? to.slice(0, 10);
-  const [d, a, report, recent] = await Promise.all([getDashboardData(from, to), getDashboardAnalytics(from, to), getChannelReport(from, to), getRecentOrders(8)]);
+  const [d, a, report, recent] = await Promise.all([getDashboardData(from, to), getDashboardAnalytics(from, to), getChannelReport(from, to), getOrderAlerts(8)]);
   const label = custom
     ? `${new Date(from).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })} – ${new Date(to).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`
     : (PRESETS.find((p) => p.key === preset)?.label ?? "This month");
