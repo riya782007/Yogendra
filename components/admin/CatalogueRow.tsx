@@ -27,6 +27,11 @@ export function CatalogueRow({
   const [open, setOpen] = useState(false);
   const [showWholesale, setShowWholesale] = useState(false);
   const published = p.status === "published";
+  // Out-of-stock at a glance. Use the variant sum when the product has colours (the product-row qty
+  // can be stale for configurable products), else the plain qty.
+  const totalQty = p.variants.length > 0 ? p.variants.reduce((s, v) => s + (v.qty ?? 0), 0) : p.qty;
+  const outOfStock = totalQty <= 0;
+  const oosColours = p.variants.filter((v) => (v.qty ?? 0) <= 0).length;
 
   return (
     <>
@@ -39,8 +44,13 @@ export function CatalogueRow({
           </div>
         </td>
         <td className="p-3 font-medium text-ink">
-          {p.name}
-          {!published && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-gold-dark">· {p.status}</span>}
+          <span className="flex items-center gap-1.5">
+            {outOfStock && <span className="h-2 w-2 rounded-full bg-ink inline-block shrink-0" title="Out of stock" />}
+            <span>{p.name}</span>
+            {outOfStock && <span className="text-[10px] uppercase tracking-wide text-ink/70 bg-ink/5 border border-sand rounded-full px-1.5 py-0.5 whitespace-nowrap">Out of stock</span>}
+            {!outOfStock && oosColours > 0 && <span className="text-[10px] text-muted whitespace-nowrap">· {oosColours} colour{oosColours > 1 ? "s" : ""} out</span>}
+          </span>
+          {!published && <span className="text-[10px] uppercase tracking-wide text-gold-dark">· {p.status}</span>}
         </td>
         <td className="p-3 text-muted whitespace-nowrap">{p.categoryName} · {p.sku}</td>
         <td className="p-3"><span className="font-semibold">{p.priceLabel}</span>{p.hasOffer && <span className="text-xs text-rose ml-1">{p.offerPct}% off</span>}</td>
