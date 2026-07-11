@@ -76,6 +76,8 @@ function joinAnd(items: string[]): string {
 /** Ethnic/bridal material & style descriptors detected from the name + spec keywords. */
 function styleHints(name: string, keywords?: string[]): string[] {
   const n = (name + " " + (keywords ?? []).join(" ")).toLowerCase(); const t: string[] = [];
+  if (n.includes("american diamond") || n.includes("americandiamond") || n.includes("ad stone")) t.push("American Diamond");
+  if (n.includes("zircon") || n.includes("zircorn")) t.push("Zircon");
   if (n.includes("uncut kundan")) t.push("Uncut Kundan");
   else if (n.includes("kundan")) t.push("Kundan");
   if (n.includes("meena") || n.includes("meenakari")) t.push("Meenakari");
@@ -176,7 +178,7 @@ export function templateContent(p: ProductLike): GeneratedContent {
   // title mirrors it faithfully. Fall back to name/word detection only when no keywords were given.
   const parsed = parseSpecKeywords(p.keywords);
   const hasKw = parsed.ordered.length > 0;
-  const material = parsed.materials.join(", ") || (styles.find((s) => /kundan|meenakari|temple|polki|pearl|moissanite|turkish|crystal|oxidised/i.test(s)) ?? "");
+  const material = parsed.materials.join(", ") || (styles.find((s) => /american diamond|zircon|kundan|meenakari|temple|polki|pearl|moissanite|turkish|crystal|oxidised/i.test(s)) ?? "");
   const styleWord = parsed.styles.join(" ") || styles.filter((s) => /semi long|long|double layer|layered|choker|chandbali|jhumka/i.test(s)).join(" ");
 
   // TITLE — {UniqueName} {ordered descriptors} {Type} with {pieces}. No SKU, ever.
@@ -218,7 +220,9 @@ export function templateContent(p: ProductLike): GeneratedContent {
       `Its elegant ethnic design pairs beautifully with sarees, lehengas, anarkalis, shararas and bridal outfits. ` +
       `Perfect for brides, bridesmaids and women who love statement Indian jewellery, this ${catL} adds charm, richness and timeless beauty to special-occasion styling.`;
     specOccasion = "Wedding, festive, party & daily wear";
-    specMaterial = material || "Brass alloy, anti-tarnish plating";
+    // Don't claim "anti-tarnish" by default — it isn't true for every piece. Use the detected material
+    // (American Diamond, Kundan, etc.) when known, else a plain, safe "Brass alloy".
+    specMaterial = material || "Brass alloy";
   }
 
   const descriptorStr = titleDescriptors;
@@ -230,7 +234,8 @@ export function templateContent(p: ProductLike): GeneratedContent {
     ...(pieces.length ? { Includes: joinAnd(pieces) } : {}),
     Occasion: specOccasion,
     Care: "Keep away from water & perfume; store dry",
-    ...(p.colors && p.colors.length ? { Colours: p.colors.join(", ") } : {}),
+    // Colours intentionally omitted from specs — the variant/colour selector already shows them, so
+    // repeating them here is redundant (owner's note).
   };
 
   const tags = Array.from(new Set([
