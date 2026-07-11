@@ -116,6 +116,7 @@ export default async function ProductPage({ params }: Params) {
             <p className="text-ink/80 leading-relaxed">{content.description}</p>
           </div>
 
+          {content.specs && Object.keys(content.specs).length > 0 && (
           <div className="mt-6">
             <h3 className="text-sm font-semibold text-ink mb-2">Specifications</h3>
             <dl className="grid grid-cols-2 gap-y-2 text-sm">
@@ -124,6 +125,7 @@ export default async function ProductPage({ params }: Params) {
               ))}
             </dl>
           </div>
+          )}
 
           {content.tags && content.tags.length > 0 && (
             <div className="mt-6">

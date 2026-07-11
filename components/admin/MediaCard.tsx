@@ -88,7 +88,7 @@ export function MediaCard({ p, geminiReady }: { p: P; geminiReady: boolean }) {
         <input value={kw} onChange={(e) => setKw(e.target.value)} placeholder="+ details (e.g. polki, peacock motif)" maxLength={120}
           title="Optional: add 1–2 keywords to guide the AI on important jewellery details" aria-label="Extra keywords for AI"
           className="rounded-full border border-sand px-3 py-1.5 text-xs outline-none focus:border-emerald w-52" />
-        <button onClick={generate} title="Open the AI Studio to make Model + Stand photos on Gemini for each colour"
+        <button onClick={generate} title="Open the AI Studio to make Model + Stand photos on Google Flow (Nano Banana 2) for each colour"
           className="px-3 py-1.5 rounded-full bg-ink text-white text-xs font-medium hover:bg-ink/90 transition-colors">✦ Make photos (Studio)</button>
 
         {/* Emergency / manual override: drop a finished photo straight onto the storefront. */}

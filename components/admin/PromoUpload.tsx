@@ -40,8 +40,8 @@ export function PromoUpload({ categories = [] }: { categories?: Cat[] }) {
     const shape = type === "popup" ? "vertical 4:5 poster" : "wide 16:9 landscape banner";
     const prompt = `Design a professional, festive e-commerce PROMOTIONAL ${type === "popup" ? "POPUP POSTER" : "BANNER"} for a premium artificial-jewellery brand called "Blythe Diva". The promotion: ${offer}. Style: elegant Indian jewellery aesthetic, warm gold and maroon festive tones, a graceful model wearing kundan/polki jewellery, soft bokeh lights. Include the offer text "${offer}" in a refined elegant font and the brand name "BlytheDIVA" small in a corner. ${shape}, high resolution, tasteful, NO spelling mistakes and no extra text. Output one ready-to-publish image.`;
     try { navigator.clipboard.writeText(prompt).catch(() => {}); } catch { /* clipboard may be blocked */ }
-    window.open("https://gemini.google.com/app", "_blank", "noopener");
-    setMsg({ t: "Prompt copied — in Gemini: paste, send, download the creative, then upload it here.", ok: true });
+    window.open("https://flow.google.com", "_blank", "noopener");
+    setMsg({ t: "Prompt copied — in Google Flow (Nano Banana 2): paste, generate, download the creative, then upload it here.", ok: true });
   }
 
   function pick(f: File | undefined) {
@@ -124,7 +124,7 @@ export function PromoUpload({ categories = [] }: { categories?: Cat[] }) {
                 )}
               </button>
               {file && <button onClick={() => { setFile(null); setPreview(""); if (fileRef.current) fileRef.current.value = ""; }} className="text-xs text-muted hover:text-rose mt-2">Remove file</button>}
-              <button onClick={makeOnGemini} className="mt-2 w-full px-3 py-1.5 rounded-full bg-ink text-white text-xs font-medium hover:bg-ink/90">✦ No creative? Make one on Gemini (free)</button>
+              <button onClick={makeOnGemini} className="mt-2 w-full px-3 py-1.5 rounded-full bg-ink text-white text-xs font-medium hover:bg-ink/90">✦ No creative? Make one on Google Flow (free)</button>
             </>
           ) : (
             <div className="rounded-2xl border border-dashed border-sand bg-cream/40 p-4 text-sm text-muted h-full grid place-items-center text-center">

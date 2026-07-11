@@ -15,7 +15,8 @@ type Data = {
   thumbnailPath?: string | null;
 };
 
-const GEMINI = "https://gemini.google.com/app";
+// Google Flow (labs) — use the Nano Banana 2 image model for the best jewellery reproduction.
+const FLOW = "https://flow.google.com";
 
 /**
  * Gemini-powered photo studio (no image API, no billing). For EVERY variant the owner makes a MODEL
@@ -119,7 +120,7 @@ export function GeminiStudio({ data }: { data: Data }) {
           <div className="rounded-xl border border-sand p-2.5">
             <p className="text-[11px] font-medium text-ink mb-1.5">Model photo</p>
             <div className="flex flex-wrap gap-2">
-              <button onClick={() => showPrompt(variantId, "model", "Model")} disabled={busy === kModel} className={promptBtn}>{busy === kModel ? "…" : "✦ Prompt → Gemini"}</button>
+              <button onClick={() => showPrompt(variantId, "model", "Model")} disabled={busy === kModel} className={promptBtn}>{busy === kModel ? "…" : "✦ Prompt → Flow"}</button>
               <input ref={(el) => { upRefs.current[`${kUp}-model`] = el; }} type="file" accept="image/*" className="hidden"
                 onChange={(e) => variantId ? uploadToVariant(variantId, e.target.files?.[0]) : uploadToProduct(e.target.files?.[0])} />
               <button onClick={() => upRefs.current[`${kUp}-model`]?.click()} disabled={busy === `up-${variantId ?? "product"}`} className={upBtn}>⬆ Upload model</button>
@@ -144,10 +145,10 @@ export function GeminiStudio({ data }: { data: Data }) {
     <div>
       {/* How it works */}
       <div className="rounded-2xl border border-emerald/30 bg-emerald-mist/40 p-4 mb-5 text-sm text-ink">
-        <p className="font-medium mb-1">Make a Model + Stand photo for every colour — free, on Gemini</p>
+        <p className="font-medium mb-1">Make a Model + Stand photo for every colour — free, on Google Flow (Nano Banana 2)</p>
         <ol className="list-decimal ml-5 space-y-0.5 text-[13px] text-ink/80">
-          <li>Click <b>Model prompt</b> or <b>Stand prompt</b> — the tailored prompt copies and Gemini opens.</li>
-          <li>In Gemini: <b>paste</b> (Ctrl+V), <b>attach the raw colour photo</b> (required!), press send.</li>
+          <li>Click <b>Model prompt</b> or <b>Stand prompt</b> — the tailored prompt copies and Google Flow opens.</li>
+          <li>In Google Flow, set the image model to <b>Nano Banana 2</b>, then <b>paste</b> the prompt, <b>attach the raw colour photo</b> (required!), and generate.</li>
           <li><b>Download</b> the image, then <b>⬆ Upload model</b> or <b>⬆ Upload stand</b> here.</li>
           <li>Pick your favourite as the <b>thumbnail</b> — it leads the product card &amp; page.</li>
         </ol>
@@ -181,11 +182,11 @@ export function GeminiStudio({ data }: { data: Data }) {
               <h3 className="font-display text-xl text-ink">{promptBox.label} photo prompt</h3>
               <button onClick={() => setPromptBox(null)} className="text-muted hover:text-ink text-lg leading-none">✕</button>
             </div>
-            <p className="text-xs text-muted mb-2">Copy this, open Gemini, <b>paste</b> it, <b>attach the raw photo</b>, and press send. Then download the result and <b>⬆ Upload result</b> here.</p>
+            <p className="text-xs text-muted mb-2">Copy this, open <b>Google Flow</b> (image model: <b>Nano Banana 2</b>), <b>paste</b> it, <b>attach the raw photo</b>, and generate. Then download the result and <b>⬆ Upload result</b> here.</p>
             <textarea readOnly value={promptBox.text} onFocus={(e) => e.currentTarget.select()} rows={9} className="w-full rounded-xl border border-sand px-3 py-2 text-xs text-ink/90 outline-none focus:border-emerald font-mono" />
             <div className="flex items-center gap-2 mt-3">
               <button onClick={() => copyNow(promptBox.text)} className="btn-primary flex-1 py-2.5 text-sm font-medium">Copy prompt</button>
-              <a href={GEMINI} target="_blank" rel="noreferrer" className="px-4 py-2.5 rounded-xl bg-ink text-white text-sm font-medium hover:bg-ink/90">Open Gemini ↗</a>
+              <a href={FLOW} target="_blank" rel="noreferrer" className="px-4 py-2.5 rounded-xl bg-ink text-white text-sm font-medium hover:bg-ink/90">Open Google Flow ↗</a>
             </div>
           </div>
         </div>
