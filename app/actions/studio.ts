@@ -58,7 +58,9 @@ DO NOT (these are the exact mistakes to avoid): do not redesign or restyle the p
 
 ${look}
 
-FRAMING & FOCUS — JEWELLERY FIRST: frame close and tight (head-and-décolletage for a model) so the ${piece} is large, dominant and tack-sharp, with EVERY stone crisp and clearly visible. The jewellery is the hero; keep it in perfect focus. Do not shoot wide or full-body. No text, logos or watermarks${input.shotType === "branded_stand" ? " other than the 'blythediva' nameplate described above" : ""}.
+FRAMING & FOCUS — JEWELLERY FILLS THE FRAME (critical): crop in VERY CLOSE so the ${piece} is large and dominant, filling roughly 55–75% of the frame, tack-sharp with EVERY stone clearly visible. ${input.shotType === "branded_stand"
+  ? "Shoot close on the bust so the piece — not the stand — dominates."
+  : "This is NOT a beauty portrait of the model and we are NOT advertising the model — the jewellery is the hero, the model is only a backdrop. Do NOT show the full face or a head-shot from a distance. Crop the face as needed: for EARRINGS shoot a tight three-quarter/side view of the ear, jaw and neck so the earrings are big; for a NECKLACE crop close on the neckline and décolletage. The piece must clearly dominate the frame."} Do not shoot wide, far away or full-body. No text, logos or watermarks${input.shotType === "branded_stand" ? " other than the 'blythediva' nameplate described above" : ""}.
 
 Output ONE high-resolution vertical (4:5) image, cleanly retouched and ready to publish. Before finishing, compare your jewellery to my photo detail-by-detail and correct anything that differs.`;
   return { ok: true, prompt };

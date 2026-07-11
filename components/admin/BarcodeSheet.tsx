@@ -54,6 +54,9 @@ export function BarcodeSheet({ products }: { products: P[] }) {
     [q, products],
   );
   const G = PAPER.find((p) => p.key === paper) ?? PAPER[0];
+  // Handover: the owner uses one fixed pre-cut sheet and never changes these, so the paper-size,
+  // label-content and printer-alignment controls are hidden (defaults kept). Set true to expose them.
+  const SHOW_ADVANCED = false;
   const cols = G.cols;
   const per = G.per;
   // Special price is a FIXED constant (23) across all products — the owner's coded scheme. The
@@ -229,6 +232,7 @@ export function BarcodeSheet({ products }: { products: P[] }) {
           </div>
         )}
 
+        {SHOW_ADVANCED && (<>
         {/* Paper size + options */}
         <div className="grid sm:grid-cols-2 gap-5 mt-5 pt-4 border-t border-sand">
           <div>
@@ -271,6 +275,7 @@ export function BarcodeSheet({ products }: { products: P[] }) {
             </label>
           </div>
         </div>
+        </>)}
 
         <div className="flex items-center justify-between flex-wrap gap-3 mt-5">
           <div className="text-sm text-muted">Total Barcodes <span className="text-ink font-semibold text-base">{labels.length}</span>{labels.length > 0 && <> · ~{Math.ceil(labels.length / per)} sheet{Math.ceil(labels.length / per) === 1 ? "" : "s"}</>}</div>
