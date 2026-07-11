@@ -16,7 +16,7 @@ import VariantAiPhoto from "@/components/admin/VariantAiPhoto";
 import { requirePerm, getSession, can } from "@/lib/auth";
 import { addVariantAction, updateVariantAction, deleteVariantAction } from "@/app/actions/variants";
 import { VariantPhotos } from "@/components/admin/VariantPhotos";
-import { setProductVisibilityAction, moveProductToSubcategoryAction, moveProductToStyleAction, savePricingAction, setWholesaleOnlyAction, toggleProductLabelAction, setDefaultVariantFormAction } from "@/app/actions/catalog";
+import { setProductVisibilityAction, moveProductToSubcategoryAction, moveProductToStyleAction, savePricingAction, setWholesaleOnlyAction, setHideOosVariantsAction, toggleProductLabelAction, setDefaultVariantFormAction } from "@/app/actions/catalog";
 
 const LABEL_CHIP: Record<string, string> = {
   emerald: "bg-emerald-mist text-emerald-dark", gold: "bg-gold/15 text-gold-dark",
@@ -214,20 +214,40 @@ export default async function ProductPage({ params, searchParams }: { params: { 
       {can(session, "inventory.add") || can(session, "inventory.remove")
         ? <ProductStockAdjust sku={p.sku} qty={p.qty ?? 0} variants={variants.map((v: any) => ({ id: v.id, sku: v.sku, color: v.color, qty: v.qty ?? 0 }))} />
         : <p className="text-sm text-muted">Your role can't adjust stock.</p>}
-      {variants.length > 0 && (
+      {variants.length > 0 && (() => {
+        // Split in-stock from out-of-stock so the owner sees live colours first and the dead ones
+        // tucked into a collapsible "Out of stock" group he can ignore (each marked with a black dot).
+        const oosRow = (v: any, dim: boolean) => (
+          <li key={v.id} className={`py-2 flex items-center justify-between text-sm ${dim ? "opacity-70" : ""}`}>
+            <span className="text-ink flex items-center gap-2">
+              {dim && <span className="h-2 w-2 rounded-full bg-ink inline-block shrink-0" title="Out of stock" />}
+              <span>{v.color ?? "—"} <span className="text-muted font-mono text-xs">{v.sku}</span></span>
+            </span>
+            <span className={`font-medium ${(v.qty ?? 0) <= 0 ? "text-muted" : (v.qty ?? 0) <= 2 ? "text-rose" : "text-ink"}`}>{(v.qty ?? 0) <= 0 ? "Out of stock" : `${v.qty} pcs`}</span>
+          </li>
+        );
+        const inStock = variants.filter((v: any) => (v.qty ?? 0) > 0);
+        const oos = variants.filter((v: any) => (v.qty ?? 0) <= 0);
+        return (
         <div className={card}>
-          <h3 className="font-medium text-ink mb-3">Stock by variant</h3>
+          <h3 className="font-medium text-ink mb-3">Stock by variant <span className="text-xs font-normal text-muted">· {inStock.length} in stock{oos.length ? ` · ${oos.length} out` : ""}</span></h3>
           <ul className="divide-y divide-sand/60">
-            {variants.map((v: any) => (
-              <li key={v.id} className="py-2 flex items-center justify-between text-sm">
-                <span className="text-ink">{v.color ?? "—"} <span className="text-muted font-mono text-xs">{v.sku}</span></span>
-                <span className={`font-medium ${(v.qty ?? 0) <= 2 ? "text-rose" : "text-ink"}`}>{v.qty ?? 0} pcs</span>
-              </li>
-            ))}
+            {inStock.map((v: any) => oosRow(v, false))}
+            {inStock.length === 0 && <li className="py-2 text-sm text-muted">No colours in stock right now.</li>}
           </ul>
+          {oos.length > 0 && (
+            <details className="mt-3">
+              <summary className="cursor-pointer text-sm font-medium text-ink flex items-center gap-2 select-none">
+                <span className="h-2 w-2 rounded-full bg-ink inline-block" />
+                Out of stock ({oos.length}) <span className="text-muted text-xs font-normal">— tap to expand</span>
+              </summary>
+              <ul className="divide-y divide-sand/60 mt-2">{oos.map((v: any) => oosRow(v, true))}</ul>
+            </details>
+          )}
           <p className="text-[11px] text-muted mt-2">The product total ({variantStock}) is the sum of its variants.</p>
         </div>
-      )}
+        );
+      })()}
       <p className="text-xs text-muted">Every adjustment is logged with a reason and type, and appears in the <b>History</b> tab.</p>
     </div>
   );
@@ -272,8 +292,9 @@ export default async function ProductPage({ params, searchParams }: { params: { 
             : null;
           const needsNormalise = !!canonicalSku && canonicalSku !== v.sku;
           const isDefault = (p as any).default_variant_id === v.id;
+          const isOos = (v.qty ?? 0) <= 0;
           return (
-            <div key={v.id} className={`rounded-xl border p-3 ${isDefault ? "border-gold bg-gold/5" : "border-sand/70"}`}>
+            <div key={v.id} className={`rounded-xl border p-3 ${isDefault ? "border-gold bg-gold/5" : isOos ? "border-sand bg-ink/[0.03]" : "border-sand/70"}`}>
               {/* DEFAULT VARIANT — which colour customers see FIRST on the storefront (pre-selected,
                   its photo leads the gallery). One star per product; tap to move it. */}
               <form action={setDefaultVariantFormAction} className="inline-flex items-center gap-1.5 mb-1.5">
@@ -284,6 +305,11 @@ export default async function ProductPage({ params, searchParams }: { params: { 
                   className={`text-base leading-none ${isDefault ? "text-gold-dark" : "text-sand hover:text-gold-dark"}`}>★</button>
                 <span className={`text-[10px] ${isDefault ? "text-gold-dark font-medium" : "text-muted"}`}>{isDefault ? "Default on storefront" : "Set as storefront default"}</span>
               </form>
+              {isOos && (
+                <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-medium text-ink bg-ink/5 border border-sand rounded-full px-2 py-0.5 align-middle">
+                  <span className="h-1.5 w-1.5 rounded-full bg-ink inline-block" /> Out of stock
+                </span>
+              )}
               <form action={updateVariantAction} className="flex flex-wrap items-end gap-2">
                 <input type="hidden" name="id" value={v.id} />
                 <input type="hidden" name="product_sku" value={p.sku} />
@@ -356,6 +382,17 @@ export default async function ProductPage({ params, searchParams }: { params: { 
             <button className="px-4 py-2 rounded-full bg-wine/10 text-wine text-sm hover:bg-wine/20 whitespace-nowrap">{(p as any).wholesale_only ? "Make available to all" : "Wholesale only"}</button>
           </form>
         </div>
+        {/* Hide out-of-stock colours from the storefront — the owner's requested control, on the page he actually uses. */}
+        {variants.length > 0 && (
+          <div className="flex items-center justify-between gap-3 mt-3 pt-3 border-t border-sand/60">
+            <p className="text-sm text-muted">{(p as any).hide_oos_variants ? "Out-of-stock colours are hidden from customers (shown again automatically when restocked)." : "Out-of-stock colours are shown to customers as “Out of stock”."}</p>
+            <form action={setHideOosVariantsAction}>
+              <input type="hidden" name="sku" value={p.sku} />
+              <input type="hidden" name="hide_oos_variants" value={(p as any).hide_oos_variants ? "0" : "1"} />
+              <button className="px-4 py-2 rounded-full bg-ink/5 text-ink text-sm hover:bg-ink/10 whitespace-nowrap">{(p as any).hide_oos_variants ? "Show out-of-stock colours" : "Hide out-of-stock colours"}</button>
+            </form>
+          </div>
+        )}
       </div>
 
       <div className={card}>
@@ -476,11 +513,25 @@ export default async function ProductPage({ params, searchParams }: { params: { 
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
       <div className="mb-5 max-w-4xl">
         <Link href="/admin/catalogue" className="text-sm text-muted hover:text-ink">← Catalogue</Link>
-        <div className="flex items-center gap-3 mt-1 flex-wrap">
-          <h1 className="font-display text-4xl text-ink">{p.name}</h1>
-          <span className={`text-xs px-2 py-0.5 rounded-full ${published ? "bg-emerald-mist text-emerald-dark" : "bg-gold/15 text-gold-dark"}`}>{published ? "Visible" : "Hidden"}</span>
+        <div className="flex items-start justify-between gap-3 mt-1 flex-wrap">
+          <div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <h1 className="font-display text-4xl text-ink">{p.name}</h1>
+              <span className={`text-xs px-2 py-0.5 rounded-full ${published ? "bg-emerald-mist text-emerald-dark" : "bg-gold/15 text-gold-dark"}`}>{published ? "Visible" : "Hidden"}</span>
+            </div>
+            <p className="text-sm text-muted mt-1">{p.category?.name} · {p.sku} — everything for this product in one place.</p>
+          </div>
+          {/* Prominent one-click Publish / Unpublish — no need to dig into the Catalog tab. */}
+          {can(session, "catalog.publish") && (
+            <form action={setProductVisibilityAction} className="shrink-0">
+              <input type="hidden" name="sku" value={p.sku} />
+              <input type="hidden" name="status" value={published ? "draft" : "published"} />
+              <button className={`px-5 py-2.5 rounded-full text-sm font-semibold shadow-card transition-colors ${published ? "bg-cream text-ink border border-sand hover:bg-sand/40" : "bg-emerald text-white hover:bg-emerald-dark"}`}>
+                {published ? "● Live — Unpublish" : "🚀 Publish to store"}
+              </button>
+            </form>
+          )}
         </div>
-        <p className="text-sm text-muted">{p.category?.name} · {p.sku} — everything for this product in one place.</p>
       </div>
       <ProductWorkspace tabs={tabs} initial={initial} />
     </main>

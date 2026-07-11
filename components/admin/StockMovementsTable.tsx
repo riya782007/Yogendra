@@ -12,7 +12,7 @@ type Row = {
   id: string; product_id: string | null; kind: string | null; delta: number;
   sku: string | null; source: string | null; reason: string | null; ref_id: string | null;
   created_at: string; invoice_no?: string | null; party?: string | null; price?: number | null;
-  product?: { sku: string; name: string } | null; variant?: { color: string } | null;
+  product?: { sku: string; name: string } | null; variant?: { color: string; qty?: number | null } | null;
 };
 
 const rupees = (paise?: number | null) => paise == null ? null : `₹${Math.round(paise / 100).toLocaleString("en-IN")}`;
@@ -48,6 +48,8 @@ export function StockMovementsTable({ rows }: { rows: Row[] }) {
             {rows.map((r) => {
               const doc = docFor(r);
               const colour = r.variant?.color;
+              // Black dot = this colour/variant is CURRENTLY out of stock, so the owner can skip it at a glance.
+              const variantOos = !!r.variant && (r.variant.qty ?? 1) <= 0;
               return (
                 <tr
                   key={r.id}
@@ -57,8 +59,11 @@ export function StockMovementsTable({ rows }: { rows: Row[] }) {
                 >
                   <td className="p-3 text-muted whitespace-nowrap">{new Date(r.created_at).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "2-digit", hour: "2-digit", minute: "2-digit" })}</td>
                   <td className="p-3 text-ink">
-                    {r.product?.name ?? "—"}
-                    <span className="block text-xs text-muted">{r.sku ?? r.product?.sku}{colour ? ` · ${colour}` : ""}</span>
+                    <span className="flex items-center gap-1.5">
+                      {variantOos && <span className="h-2 w-2 rounded-full bg-ink inline-block shrink-0" title="This colour is currently out of stock" />}
+                      <span>{r.product?.name ?? "—"}</span>
+                    </span>
+                    <span className="block text-xs text-muted">{r.sku ?? r.product?.sku}{colour ? ` · ${colour}` : ""}{variantOos ? " · out of stock" : ""}</span>
                   </td>
                   <td className="p-3 text-ink">{r.party ? <span>{r.party}</span> : <span className="text-muted">—</span>}</td>
                   <td className="p-3"><span className={`px-2 py-0.5 rounded-full text-xs capitalize ${KIND_STYLE[r.kind ?? ""] ?? "bg-cream text-muted"}`}>{r.kind ?? "—"}</span></td>

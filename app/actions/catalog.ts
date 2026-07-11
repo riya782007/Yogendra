@@ -469,6 +469,17 @@ export async function setWholesaleOnlyAction(formData: FormData): Promise<void> 
   revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidatePath("/trade");
 }
 
+/** Hide every out-of-stock colour/variant from the storefront (buy selector + gallery) for this product. */
+export async function setHideOosVariantsAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("catalog.edit"))) return;
+  const sku = String(formData.get("sku") ?? "").trim();
+  const on = String(formData.get("hide_oos_variants") ?? "") === "1";
+  if (!sku) return;
+  await supabaseServer().from("products").update({ hide_oos_variants: on }).eq("sku", sku);
+  await logActivity({ action: "product_hide_oos", ref: sku, detail: `${sku} out-of-stock colours ${on ? "hidden from" : "shown on"} the store.` });
+  revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop");
+}
+
 const LABEL_COLORS = ["emerald", "gold", "wine", "rose", "blue", "ink"];
 
 /** #9/#31: create an owner-defined label. */

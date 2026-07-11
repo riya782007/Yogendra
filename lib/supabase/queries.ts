@@ -1075,7 +1075,7 @@ export async function getStockMovements(opts: { page?: number; pageSize?: number
   const pageSize = opts.pageSize ?? 30;
   const page = Math.max(1, opts.page ?? 1);
   let query = sb.from("stock_adjustments")
-    .select("id,product_id,variant_id,delta,kind,source,reason,ref_id,sku,created_at, product:products(sku,name), variant:variants(color)", { count: "exact" });
+    .select("id,product_id,variant_id,delta,kind,source,reason,ref_id,sku,created_at, product:products(sku,name), variant:variants(color,qty)", { count: "exact" });
   if (opts.kind && opts.kind !== "all") query = query.eq("kind", opts.kind);
   if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.ilike("sku", `%${s}%`); }
   if (opts.from) query = query.gte("created_at", opts.from);
