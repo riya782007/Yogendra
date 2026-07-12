@@ -1662,7 +1662,7 @@ export async function getStorefront(
     }),
     sb.from("reviews").select("product_id, rating").then((r) => r.data ?? []),
     fetchAll((f, t) => sb.from("product_images").select("product_id, path, sort, kind").order("sort", { ascending: true }).range(f, t)),
-    fetchAll((f, t) => sb.from("variants").select("product_id, image_paths").range(f, t)),
+    fetchAll((f, t) => sb.from("variants").select("product_id, image_paths, qty").range(f, t)),
     getPricingFormula(),
   ]);
   const agg = new Map<string, { sum: number; n: number }>();
@@ -1684,12 +1684,13 @@ export async function getStorefront(
   const validImgs = new Map<string, Set<string>>();
   const addValid = (pid: string, url: string) => { let s = validImgs.get(pid); if (!s) { s = new Set(); validImgs.set(pid, s); } s.add(url); };
   for (const r of (pimgs as any[]) ?? []) if (typeof r.path === "string" && r.path.startsWith("http")) addValid(r.product_id, r.path);
-  for (const v of (vimgs as any[]) ?? []) {
-    for (const u of ((v.image_paths as string[]) ?? [])) if (typeof u === "string" && u.startsWith("http")) addValid(v.product_id, u);
-    if (imgByProduct.has(v.product_id)) continue;
-    const u = (((v.image_paths as string[]) ?? []).find((x) => x && x.startsWith("http")));
-    if (u) imgByProduct.set(v.product_id, u);
-  }
+  const vlist = (vimgs as any[]) ?? [];
+  for (const v of vlist) for (const u of ((v.image_paths as string[]) ?? [])) if (typeof u === "string" && u.startsWith("http")) addValid(v.product_id, u);
+  // Card cover fallback: prefer an IN-STOCK colour's photo so a card never leads with a sold-out
+  // colour, then fall back to any colour's photo.
+  const firstHttp = (v: any) => ((v.image_paths as string[]) ?? []).find((x) => x && x.startsWith("http"));
+  for (const v of vlist) { if (imgByProduct.has(v.product_id) || (v.qty ?? 0) <= 0) continue; const u = firstHttp(v); if (u) imgByProduct.set(v.product_id, u); }
+  for (const v of vlist) { if (imgByProduct.has(v.product_id)) continue; const u = firstHttp(v); if (u) imgByProduct.set(v.product_id, u); }
   const now = Date.now();
   let products = ((prods as any[]) ?? []).map((p) => {
     const a = agg.get(p.id);

@@ -41,7 +41,7 @@ export default async function CategoryPage({ params, searchParams }: { params: {
   const [subsRes, stylesRes, varsRes, labelsRes] = await Promise.all([
     cat ? sb.from("subcategories").select("id,name,slug,sort").eq("category_id", cat.id).order("sort").order("name") : Promise.resolve({ data: [] as any[] }),
     cat ? sb.from("styles").select("id,name,slug,sort").eq("category_id", cat.id).order("sort").order("name") : Promise.resolve({ data: [] as any[] }),
-    catProductIds.length ? sb.from("variants").select("product_id,color").in("product_id", catProductIds) : Promise.resolve({ data: [] as any[] }),
+    catProductIds.length ? sb.from("variants").select("product_id,color,qty").in("product_id", catProductIds) : Promise.resolve({ data: [] as any[] }),
     catProductIds.length ? sb.from("product_labels").select("product_id, labels(name,storefront)").in("product_id", catProductIds) : Promise.resolve({ data: [] as any[] }),
   ]);
   const subs = (subsRes.data as any[]) ?? [];
@@ -62,6 +62,7 @@ export default async function CategoryPage({ params, searchParams }: { params: {
   const colourByProduct = new Map<string, Set<string>>();
   for (const v of ((varsRes.data as any[]) ?? [])) {
     const c = String(v.color ?? "").trim(); if (!c) continue;
+    if ((v.qty ?? 0) <= 0) continue; // only show colours that are actually in stock (owner's note)
     let set = colourByProduct.get(v.product_id); if (!set) { set = new Set(); colourByProduct.set(v.product_id, set); } set.add(c);
   }
   const colourCounts = new Map<string, number>();
