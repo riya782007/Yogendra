@@ -1691,14 +1691,26 @@ export async function getStorefront(
   const firstHttp = (v: any) => ((v.image_paths as string[]) ?? []).find((x) => x && x.startsWith("http"));
   for (const v of vlist) { if (imgByProduct.has(v.product_id) || (v.qty ?? 0) <= 0) continue; const u = firstHttp(v); if (u) imgByProduct.set(v.product_id, u); }
   for (const v of vlist) { if (imgByProduct.has(v.product_id)) continue; const u = firstHttp(v); if (u) imgByProduct.set(v.product_id, u); }
+  // Which variant images belong to a colour, and which to an IN-STOCK colour — so a product that hides
+  // out-of-stock colours never leads its card with a sold-out colour's photo (even a pinned thumbnail).
+  const varImgs = new Map<string, Set<string>>();
+  const inStockImgs = new Map<string, Set<string>>();
+  for (const v of vlist) for (const u of ((v.image_paths as string[]) ?? [])) {
+    if (typeof u !== "string" || !u.startsWith("http")) continue;
+    { let s = varImgs.get(v.product_id); if (!s) { s = new Set(); varImgs.set(v.product_id, s); } s.add(u); }
+    if ((v.qty ?? 0) > 0) { let s = inStockImgs.get(v.product_id); if (!s) { s = new Set(); inStockImgs.set(v.product_id, s); } s.add(u); }
+  }
   const now = Date.now();
   let products = ((prods as any[]) ?? []).map((p) => {
     const a = agg.get(p.id);
     const rating = a && a.n ? a.sum / a.n : 4.6;
     const reviews = a?.n ?? 0;
     const isNew = p.created_at ? now - new Date(p.created_at).getTime() < 1000 * 60 * 60 * 24 * 21 : false;
-    // Owner-chosen storefront cover wins — but ONLY if it still points at an image the product owns.
-    const cover = (typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http") && validImgs.get(p.id)?.has(p.thumbnail_path)) ? p.thumbnail_path : null;
+    // Owner-chosen cover wins — but only if it still points at an image the product owns, AND (when OOS
+    // colours are hidden) it isn't a sold-out colour's photo. Otherwise fall back to an in-stock photo.
+    const tp = (typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http") && validImgs.get(p.id)?.has(p.thumbnail_path)) ? p.thumbnail_path : null;
+    const tpIsOosColour = !!tp && (varImgs.get(p.id)?.has(tp) ?? false) && !(inStockImgs.get(p.id)?.has(tp) ?? false);
+    const cover = (tp && !(p.hide_oos_variants && tpIsOosColour)) ? tp : null;
     return { ...p, image: cover ?? imgByProduct.get(p.id) ?? null, rating: Math.round(rating * 10) / 10, reviews, isNew };
   });
   if (!opts.includeWholesaleOnly) products = products.filter((p: any) => !p.wholesale_only);
