@@ -173,18 +173,33 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
     }
     // Fall back to a VARIANT's photo when the product itself has none — a piece may have been shot
     // per-colour (variant image) without a product-level hero, and the catalogue should still show it.
-    const vImgByP = new Map<string, string>();
+    const vImgByP = new Map<string, string>();       // first variant photo (any colour)
+    const vImgInStock = new Map<string, string>();    // first IN-STOCK colour's photo
+    const varImgSet = new Map<string, Set<string>>();
+    const inStockImgSet = new Map<string, Set<string>>();
+    const addTo = (m: Map<string, Set<string>>, pid: string, u: string) => { let s = m.get(pid); if (!s) { s = new Set(); m.set(pid, s); } s.add(u); };
     const vByP = new Map<string, { sku: string; color: string | null; qty: number }[]>();
     for (const v of ((vrows as any[]) ?? [])) {
       const a = vByP.get(v.product_id) ?? [];
       a.push({ sku: v.sku, color: v.color ?? null, qty: v.qty ?? 0 });
       vByP.set(v.product_id, a);
-      if (!vImgByP.has(v.product_id) && Array.isArray(v.image_paths)) {
-        const hit = v.image_paths.find((x: string) => typeof x === "string" && x.startsWith("http"));
-        if (hit) vImgByP.set(v.product_id, hit);
+      const paths = Array.isArray(v.image_paths) ? (v.image_paths as string[]).filter((x) => typeof x === "string" && x.startsWith("http")) : [];
+      for (const u of paths) { addTo(varImgSet, v.product_id, u); if ((v.qty ?? 0) > 0) addTo(inStockImgSet, v.product_id, u); }
+      const hit = paths[0];
+      if (hit) {
+        if (!vImgByP.has(v.product_id)) vImgByP.set(v.product_id, hit);
+        if ((v.qty ?? 0) > 0 && !vImgInStock.has(v.product_id)) vImgInStock.set(v.product_id, hit);
       }
     }
-    for (const r of rows) { r.image = (typeof r.thumbnail_path === "string" && r.thumbnail_path.startsWith("http") ? r.thumbnail_path : null) ?? byP.get(r.id) ?? vImgByP.get(r.id) ?? null; r.variants = vByP.get(r.id) ?? []; }
+    // A colour that's out of stock stops being the default: skip a sold-out colour's thumbnail and lead
+    // with an in-stock colour's photo instead (unless the whole product is out of stock).
+    for (const r of rows) {
+      const tp = (typeof r.thumbnail_path === "string" && r.thumbnail_path.startsWith("http")) ? r.thumbnail_path : null;
+      const tpOosColour = !!tp && (varImgSet.get(r.id)?.has(tp) ?? false) && !(inStockImgSet.get(r.id)?.has(tp) ?? false);
+      const cover = (tp && !tpOosColour) ? tp : null;
+      r.image = cover ?? byP.get(r.id) ?? vImgInStock.get(r.id) ?? vImgByP.get(r.id) ?? null;
+      r.variants = vByP.get(r.id) ?? [];
+    }
   }
   return { rows, total: count ?? 0, page, pageSize };
 }
@@ -1706,11 +1721,12 @@ export async function getStorefront(
     const rating = a && a.n ? a.sum / a.n : 4.6;
     const reviews = a?.n ?? 0;
     const isNew = p.created_at ? now - new Date(p.created_at).getTime() < 1000 * 60 * 60 * 24 * 21 : false;
-    // Owner-chosen cover wins — but only if it still points at an image the product owns, AND (when OOS
-    // colours are hidden) it isn't a sold-out colour's photo. Otherwise fall back to an in-stock photo.
+    // Owner-chosen cover wins — but only if it still points at an image the product owns AND it isn't a
+    // sold-out colour's photo. A colour that goes out of stock stops being the default automatically, so
+    // the card leads with an in-stock colour instead (unless the whole product is out of stock).
     const tp = (typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http") && validImgs.get(p.id)?.has(p.thumbnail_path)) ? p.thumbnail_path : null;
     const tpIsOosColour = !!tp && (varImgs.get(p.id)?.has(tp) ?? false) && !(inStockImgs.get(p.id)?.has(tp) ?? false);
-    const cover = (tp && !(p.hide_oos_variants && tpIsOosColour)) ? tp : null;
+    const cover = (tp && !tpIsOosColour) ? tp : null;
     return { ...p, image: cover ?? imgByProduct.get(p.id) ?? null, rating: Math.round(rating * 10) / 10, reviews, isNew };
   });
   if (!opts.includeWholesaleOnly) products = products.filter((p: any) => !p.wholesale_only);
