@@ -41,7 +41,10 @@ export function Gallery({ name, images }: { name: string; images: { path: string
     <div>
       <button onClick={() => setOpen(true)} aria-label="Zoom image"
         className="relative aspect-[3/4] w-full rounded-3xl overflow-hidden bg-cream shadow-luxe group cursor-zoom-in block">
-        <img src={cur.path} alt={curColor ? `${name} — ${curColor}` : name} className="object-cover w-full h-full transition-transform duration-500 group-hover:scale-105" />
+        {/* object-CONTAIN on the main product image so the WHOLE jewellery piece is always visible — never
+            cropped. A 3:4 upload fills the 3:4 frame exactly (no margins); an odd-ratio photo shows complete
+            on the neutral cream background instead of hiding part of the piece. */}
+        <img src={cur.path} alt={curColor ? `${name} — ${curColor}` : name} className="object-contain w-full h-full transition-transform duration-500 group-hover:scale-105" />
         {curColor && (
           <span className="absolute top-3 left-3 text-[11px] font-medium text-ink bg-white/90 px-2.5 py-1 rounded-full shadow-sm capitalize">{curColor}</span>
         )}
