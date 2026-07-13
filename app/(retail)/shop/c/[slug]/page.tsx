@@ -154,8 +154,8 @@ export default async function CategoryPage({ params, searchParams }: { params: {
         </header>
       </Reveal>
 
-      {/* ================= FILTERS (collapsed behind one button) ================= */}
-      <FiltersPanel defaultOpen activeCount={activeChips.length} activeChips={activeChips} clearHref={`/shop/c/${params.slug}`}>
+      {/* ================= FILTERS (collapsed behind one button — Type/Style/Colour tucked inside) ===== */}
+      <FiltersPanel activeCount={activeChips.length} activeChips={activeChips} clearHref={`/shop/c/${params.slug}`}>
         {/* Quick filters (labels) */}
         {labels.length > 0 && (
           <Row label="Quick">
