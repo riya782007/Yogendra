@@ -142,7 +142,7 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
   const sb = supabaseServer();
   const pageSize = opts.pageSize ?? 25;
   const page = Math.max(1, opts.page ?? 1);
-  let query = sb.from("products").select("id,sku,name,qty,base_wholesale,type,status,generated_content,admin_tags,thumbnail_path,category:categories(id,name,slug)", { count: "exact" });
+  let query = sb.from("products").select("id,sku,name,qty,base_wholesale,type,status,generated_content,admin_tags,thumbnail_path,default_variant_id,category:categories(id,name,slug)", { count: "exact" });
   if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.or(`name.ilike.%${s}%,sku.ilike.%${s}%`); }
   if (opts.category && opts.category !== "all") {
     const { data: cat } = await sb.from("categories").select("id").eq("slug", opts.category).maybeSingle();
@@ -164,7 +164,7 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
   if (ids.length) {
     const [{ data: imgs }, { data: vrows }] = await Promise.all([
       sb.from("product_images").select("product_id,path,sort").in("product_id", ids).order("sort", { ascending: true }),
-      sb.from("variants").select("product_id,sku,color,qty,image_paths").in("product_id", ids),
+      sb.from("variants").select("id,product_id,sku,color,qty,image_paths").in("product_id", ids),
     ]);
     const byP = new Map<string, string>();
     for (const im of ((imgs as any[]) ?? [])) {
@@ -177,6 +177,7 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
     const vImgInStock = new Map<string, string>();    // first IN-STOCK colour's photo
     const varImgSet = new Map<string, Set<string>>();
     const inStockImgSet = new Map<string, Set<string>>();
+    const varById = new Map<string, { qty: number; img: string | null }>(); // for the DEFAULT colour
     const addTo = (m: Map<string, Set<string>>, pid: string, u: string) => { let s = m.get(pid); if (!s) { s = new Set(); m.set(pid, s); } s.add(u); };
     const vByP = new Map<string, { sku: string; color: string | null; qty: number }[]>();
     for (const v of ((vrows as any[]) ?? [])) {
@@ -186,17 +187,21 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
       const paths = Array.isArray(v.image_paths) ? (v.image_paths as string[]).filter((x) => typeof x === "string" && x.startsWith("http")) : [];
       for (const u of paths) { addTo(varImgSet, v.product_id, u); if ((v.qty ?? 0) > 0) addTo(inStockImgSet, v.product_id, u); }
       const hit = paths[0];
+      varById.set(v.id, { qty: v.qty ?? 0, img: hit ?? null });
       if (hit) {
         if (!vImgByP.has(v.product_id)) vImgByP.set(v.product_id, hit);
         if ((v.qty ?? 0) > 0 && !vImgInStock.has(v.product_id)) vImgInStock.set(v.product_id, hit);
       }
     }
-    // A colour that's out of stock stops being the default: skip a sold-out colour's thumbnail and lead
-    // with an in-stock colour's photo instead (unless the whole product is out of stock).
+    // Show the SAME picture the storefront shows: the owner's DEFAULT colour's lead photo first (if in
+    // stock), then a valid non-sold-out thumbnail, then an in-stock colour. So the catalogue image always
+    // matches the storefront default.
     for (const r of rows) {
+      const dv = r.default_variant_id ? varById.get(r.default_variant_id) : undefined;
+      const defImg = (dv && dv.qty > 0 && dv.img) ? dv.img : null;
       const tp = (typeof r.thumbnail_path === "string" && r.thumbnail_path.startsWith("http")) ? r.thumbnail_path : null;
       const tpOosColour = !!tp && (varImgSet.get(r.id)?.has(tp) ?? false) && !(inStockImgSet.get(r.id)?.has(tp) ?? false);
-      const cover = (tp && !tpOosColour) ? tp : null;
+      const cover = defImg ?? ((tp && !tpOosColour) ? tp : null);
       r.image = cover ?? byP.get(r.id) ?? vImgInStock.get(r.id) ?? vImgByP.get(r.id) ?? null;
       r.variants = vByP.get(r.id) ?? [];
     }
@@ -1677,7 +1682,7 @@ export async function getStorefront(
     }),
     sb.from("reviews").select("product_id, rating").then((r) => r.data ?? []),
     fetchAll((f, t) => sb.from("product_images").select("product_id, path, sort, kind").order("sort", { ascending: true }).range(f, t)),
-    fetchAll((f, t) => sb.from("variants").select("product_id, image_paths, qty").range(f, t)),
+    fetchAll((f, t) => sb.from("variants").select("id, product_id, image_paths, qty").range(f, t)),
     getPricingFormula(),
   ]);
   const agg = new Map<string, { sum: number; n: number }>();
@@ -1704,6 +1709,9 @@ export async function getStorefront(
   // Card cover fallback: prefer an IN-STOCK colour's photo so a card never leads with a sold-out
   // colour, then fall back to any colour's photo.
   const firstHttp = (v: any) => ((v.image_paths as string[]) ?? []).find((x) => x && x.startsWith("http"));
+  // Per-variant lookup (by id) so the owner's DEFAULT colour can lead the cover everywhere.
+  const varById = new Map<string, { qty: number; img: string | null }>();
+  for (const v of vlist) varById.set(v.id, { qty: v.qty ?? 0, img: firstHttp(v) ?? null });
   for (const v of vlist) { if (imgByProduct.has(v.product_id) || (v.qty ?? 0) <= 0) continue; const u = firstHttp(v); if (u) imgByProduct.set(v.product_id, u); }
   for (const v of vlist) { if (imgByProduct.has(v.product_id)) continue; const u = firstHttp(v); if (u) imgByProduct.set(v.product_id, u); }
   // Which variant images belong to a colour, and which to an IN-STOCK colour — so a product that hides
@@ -1721,12 +1729,14 @@ export async function getStorefront(
     const rating = a && a.n ? a.sum / a.n : 4.6;
     const reviews = a?.n ?? 0;
     const isNew = p.created_at ? now - new Date(p.created_at).getTime() < 1000 * 60 * 60 * 24 * 21 : false;
-    // Owner-chosen cover wins — but only if it still points at an image the product owns AND it isn't a
-    // sold-out colour's photo. A colour that goes out of stock stops being the default automatically, so
-    // the card leads with an in-stock colour instead (unless the whole product is out of stock).
+    // Cover priority: (1) the owner's DEFAULT colour's lead photo (if in stock) — so the card, catalogue
+    // and product page all show the SAME picture the owner set as default; (2) a pinned thumbnail that
+    // still exists and isn't a sold-out colour; (3) any in-stock colour's photo.
+    const dv = p.default_variant_id ? varById.get(p.default_variant_id) : undefined;
+    const defImg = (dv && dv.qty > 0 && dv.img) ? dv.img : null;
     const tp = (typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http") && validImgs.get(p.id)?.has(p.thumbnail_path)) ? p.thumbnail_path : null;
     const tpIsOosColour = !!tp && (varImgs.get(p.id)?.has(tp) ?? false) && !(inStockImgs.get(p.id)?.has(tp) ?? false);
-    const cover = (tp && !tpIsOosColour) ? tp : null;
+    const cover = defImg ?? ((tp && !tpIsOosColour) ? tp : null);
     return { ...p, image: cover ?? imgByProduct.get(p.id) ?? null, rating: Math.round(rating * 10) / 10, reviews, isNew };
   });
   if (!opts.includeWholesaleOnly) products = products.filter((p: any) => !p.wholesale_only);

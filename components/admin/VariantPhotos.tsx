@@ -2,7 +2,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
-import { addVariantImageAction, deleteVariantImageAction } from "@/app/actions/variants";
+import { addVariantImageAction, deleteVariantImageAction, setVariantLeadImageAction } from "@/app/actions/variants";
 import { compressImage } from "@/lib/image";
 
 /**
@@ -42,12 +42,23 @@ export function VariantPhotos({ variantId, productSku, color, images }: { varian
     router.refresh();
   }
 
+  async function makeMain(url: string) {
+    const fd = new FormData();
+    fd.set("id", variantId); fd.set("product_sku", productSku); fd.set("url", url);
+    await setVariantLeadImageAction(fd);
+    toast("Set as main photo ✓");
+    router.refresh();
+  }
+
   return (
     <>
-      {images.map((u) => (
-        <div key={u} className="relative h-14 w-14 rounded-lg overflow-hidden border border-sand">
+      {images.map((u, i) => (
+        <div key={u} className={`relative h-14 w-14 rounded-lg overflow-hidden border ${i === 0 ? "border-emerald ring-1 ring-emerald" : "border-sand"}`}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={u} alt={color ?? ""} className="h-full w-full object-cover" />
+          {i === 0
+            ? <span className="absolute bottom-0 inset-x-0 bg-emerald text-white text-[8px] leading-none text-center py-0.5" title="This photo leads this colour (and the storefront cover if it's the default colour)">★ Main</span>
+            : <button onClick={() => makeMain(u)} className="absolute bottom-0 inset-x-0 bg-ink/70 text-white text-[8px] leading-none py-0.5 hover:bg-emerald" title="Make this the main photo for this colour">Make main</button>}
           <button onClick={() => del(u)} className="absolute top-0 right-0 bg-ink/70 text-white text-[10px] leading-none px-1 py-0.5 rounded-bl" title="Remove photo">✕</button>
         </div>
       ))}

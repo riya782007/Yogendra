@@ -166,6 +166,23 @@ export async function deleteVariantImageAction(formData: FormData): Promise<void
   reval(productSku);
 }
 
+/** Reorder a variant's photos by moving the chosen one to the FRONT — that first photo is the colour's
+ *  lead image (and, for the default colour, the storefront/catalogue cover). */
+export async function setVariantLeadImageAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("catalog.edit"))) return;
+  const id = String(formData.get("id") ?? "");
+  const productSku = String(formData.get("product_sku") ?? "");
+  const url = String(formData.get("url") ?? "");
+  if (!id || !url) return;
+  const sb = supabaseServer();
+  const { data: v } = await sb.from("variants").select("image_paths").eq("id", id).maybeSingle();
+  const cur = (((v as any)?.image_paths as string[]) ?? []);
+  if (!cur.includes(url)) return;
+  const paths = [url, ...cur.filter((u) => u !== url)]; // chosen photo first, rest keep their order
+  await sb.from("variants").update({ image_paths: paths }).eq("id", id);
+  reval(productSku);
+}
+
 export type VariantImgResult = { ok: boolean; reason?: string; error?: string; url?: string };
 
 /** List a product's variants (by SKU) with their attributes + id — used by the Upload form
