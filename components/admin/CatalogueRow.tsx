@@ -18,12 +18,15 @@ export type CatalogueRowProduct = {
  *  to reveal everything not needed at first sight — publish, add image, variants & their stock, and
  *  the edit / view / AI / delete actions. Keeps the list scannable. */
 export function CatalogueRow({
-  p, canEdit, canAi, canDelete, canPublish, genContent,
+  p, canEdit, canAi, canDelete, canPublish, genContent, ret,
 }: {
   p: CatalogueRowProduct;
   canEdit: boolean; canAi: boolean; canDelete: boolean; canPublish: boolean;
   genContent: (fd: FormData) => Promise<void>;
+  /** The catalogue URL (page + filters) to return to — so the product page's back arrow lands here. */
+  ret?: string;
 }) {
+  const editHref = `/admin/catalogue/${p.sku}${ret ? `?ret=${encodeURIComponent(ret)}` : ""}`;
   const [open, setOpen] = useState(false);
   const [showWholesale, setShowWholesale] = useState(false);
   const published = p.status === "published";
@@ -110,7 +113,7 @@ export function CatalogueRow({
 
               {/* Actions */}
               <div className="flex flex-wrap items-start gap-2">
-                {canEdit && <Link href={`/admin/catalogue/${p.sku}`} className="px-3 py-1.5 rounded-full bg-ink/5 text-ink text-xs font-medium hover:bg-ink/10">✎ Edit</Link>}
+                {canEdit && <Link href={editHref} className="px-3 py-1.5 rounded-full bg-ink/5 text-ink text-xs font-medium hover:bg-ink/10">✎ Edit</Link>}
                 <Link href={`/admin/product/${p.sku}`} className="px-3 py-1.5 rounded-full bg-ink/5 text-ink text-xs hover:bg-ink/10">360°</Link>
                 <Link href={`/shop/${p.categorySlug}/${p.sku}`} target="_blank" className="px-3 py-1.5 rounded-full bg-emerald-mist text-emerald-dark text-xs hover:bg-emerald-mist/70">View ↗</Link>
                 {canAi && (

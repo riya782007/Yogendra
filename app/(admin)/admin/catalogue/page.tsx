@@ -28,6 +28,15 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
   // Subcategory options for the filter: when a category is chosen, show only its subcategories;
   // otherwise list every subcategory grouped by its parent category (optgroups).
   const catForSub = category !== "all" ? categories.filter((c) => c.slug === category) : categories;
+  // Preserve the exact page + filters so a product's "← Catalogue" back-link returns HERE (e.g. page 174),
+  // not page 1 — the efficient big-store behaviour.
+  const retParams = new URLSearchParams();
+  if (page > 1) retParams.set("page", String(page));
+  if (q) retParams.set("q", q);
+  if (category !== "all") retParams.set("category", category);
+  if (subcategory !== "all") retParams.set("sub", subcategory);
+  if (status !== "all") retParams.set("status", status);
+  const ret = `/admin/catalogue${retParams.toString() ? `?${retParams.toString()}` : ""}`;
   const ai = aiProvidersStatus();
   const imageReady = geminiConfigured();
   const session = getSession();
@@ -114,7 +123,7 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
                     adminTags: p.admin_tags ?? [], wholesaleLabel: formatPaise(wholesaleRate),
                   }}
                   canEdit={canEdit} canAi={canAi} canDelete={canDelete} canPublish={canPublish}
-                  genContent={genContent}
+                  genContent={genContent} ret={ret}
                 />
               );
             })}

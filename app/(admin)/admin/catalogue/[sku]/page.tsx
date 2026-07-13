@@ -37,7 +37,10 @@ function timeAgo(iso: string) {
   return `${d}d ago`;
 }
 
-export default async function ProductPage({ params, searchParams }: { params: { sku: string }; searchParams: { tab?: string } }) {
+export default async function ProductPage({ params, searchParams }: { params: { sku: string }; searchParams: { tab?: string; ret?: string } }) {
+  // Return the "← Catalogue" arrow to the exact page/filters the owner came from (only trust internal
+  // catalogue URLs), so a save-and-back never dumps him on page 1.
+  const backHref = (searchParams.ret && /^\/admin\/catalogue(\?|$)/.test(searchParams.ret)) ? searchParams.ret : "/admin/catalogue";
   if (!(await requirePerm("catalog.edit"))) redirect("/admin/dashboard?denied=editing+products");
 
   const [p, categories, formula] = await Promise.all([
@@ -512,7 +515,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
   return (
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
       <div className="mb-5 max-w-4xl">
-        <Link href="/admin/catalogue" className="text-sm text-muted hover:text-ink">← Catalogue</Link>
+        <Link href={backHref} className="text-sm text-muted hover:text-ink">← Catalogue</Link>
         <div className="flex items-start justify-between gap-3 mt-1 flex-wrap">
           <div>
             <div className="flex items-center gap-3 flex-wrap">
