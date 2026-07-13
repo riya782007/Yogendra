@@ -8,6 +8,7 @@ import { getWholesaleSession } from "@/lib/wholesale";
 import { getPricingFormula } from "@/lib/supabase/queries";
 import { sendWhatsAppText } from "@/lib/whatsapp";
 import { wholesaleShippingPaise, WHOLESALE_COD_FEE_PAISE } from "@/lib/wholesaleShipping";
+import { GST_RATE } from "@/lib/business";
 
 const COOKIE = { httpOnly: true, sameSite: "lax" as const, secure: true, path: "/", maxAge: 60 * 60 * 12 };
 
@@ -110,12 +111,14 @@ export async function placeWholesaleOrderAction(
     // SHIPPING (owner's fixed slabs) + COD fee belong IN the bill. Above ₹30k shipping is quoted
     // separately, so nothing is auto-added there.
     const itemsOnly = (total ?? 0) as number;
-    const ship = wholesaleShippingPaise(itemsOnly);
+    // Dealer-facing prices are GST-inclusive (imitation jewellery 3%), so charge the same GST on the
+    // recorded total — what the dealer saw equals what they pay. The shipping slab is judged on the
+    // GST-inclusive item value too, matching the dealer panel.
+    const itemsGst = Math.round(itemsOnly * (1 + GST_RATE / 100));
+    const ship = wholesaleShippingPaise(itemsGst);
     const codFee = opts?.cod ? WHOLESALE_COD_FEE_PAISE : 0;
-    if (ship + codFee > 0) {
-      total = itemsOnly + ship + codFee;
-      await sb.from("orders").update({ total, extra_courier: ship + codFee }).eq("id", orderId).then(() => {}, () => {});
-    }
+    total = itemsGst + ship + codFee;
+    await sb.from("orders").update({ total, extra_courier: ship + codFee }).eq("id", orderId).then(() => {}, () => {});
     // Record the dealer's UPI payment claim so the owner can match it against his bank/UPI history.
     if (ref) await sb.from("orders").update({ payment_ref: ref, payment_mode: "upi" }).eq("id", orderId);
     // Dealer's payment SCREENSHOT (owner's preferred proof) — stored on the order for one-tap verify.

@@ -6,6 +6,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { PromoHero } from "@/components/site/PromoHero";
 import { resolvePrices, overridesOf } from "@/lib/pricing";
 import { getWholesaleSession } from "@/lib/wholesale";
+import { GST_RATE } from "@/lib/business";
 import { WholesaleCatalog } from "@/components/site/WholesaleCatalog";
 import { SellForm } from "@/components/site/SellForm";
 
@@ -49,20 +50,33 @@ export default async function TradeDashboard() {
   const subName = new Map(((subRows as any[]) ?? []).map((x) => [x.id, x.name]));
   const styleName = new Map(((styleRows as any[]) ?? []).map((x) => [x.id, x.name]));
 
+  // Dealer prices are shown GST-INCLUSIVE (imitation jewellery = 3%), so the rate the dealer sees is
+  // the final all-in price. The charged order total is grossed up by the same GST in the order action,
+  // so "price shown" == "amount paid".
+  const gstInc = (paise: number) => Math.round(paise * (1 + GST_RATE / 100));
+
   const list = (products as any[]).flatMap((p) => {
     const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));
+    const price = gstInc(ps.wholesaleRate);
     const parentImg = imgBy.get((p as any).id) ?? null;
-    const vs = varsBy.get((p as any).id) ?? [];
+    const pid = (p as any).id as string;
+    const allVs = varsBy.get(pid) ?? [];
     const sub = subName.get((p as any).subcategory_id) ?? null;
     const style = styleName.get((p as any).style_id) ?? null;
-    if (vs.length > 0) {
+    if (allVs.length > 0) {
+      // A wholesale catalogue has to be shareable: only offer colours that are actually IN STOCK
+      // (sold-out colours are the owner's "hidden variants"), and drop a design entirely when every
+      // colour is out of stock. Colours of the same design are grouped into one dropdown row client-side.
+      const vs = allVs.filter((v) => (v.qty ?? 0) > 0);
       return vs.map((v) => ({
-        sku: v.sku, name: p.name, category: p.category.name, sub, style, colour: v.color ?? null,
-        qty: v.qty ?? 0, price: ps.wholesaleRate, mrp: ps.mrp,
+        pid, sku: v.sku, name: p.name, category: p.category.name, sub, style, colour: v.color ?? null,
+        qty: v.qty ?? 0, price, mrp: ps.mrp,
         image: (Array.isArray(v.image_paths) ? v.image_paths.find((x: string) => typeof x === "string" && x.startsWith("http")) : null) ?? parentImg,
       }));
     }
-    return [{ sku: p.sku, name: p.name, category: p.category.name, sub, style, colour: null, qty: p.qty, price: ps.wholesaleRate, mrp: ps.mrp, image: parentImg }];
+    // Simple product (no colours): list it only when it has stock.
+    if ((p.qty ?? 0) <= 0) return [];
+    return [{ pid, sku: p.sku, name: p.name, category: p.category.name, sub, style, colour: null, qty: p.qty, price, mrp: ps.mrp, image: parentImg }];
   });
 
   // Owner's UPI collection details for direct QR payment (no Razorpay → owner keeps 100%).

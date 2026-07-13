@@ -5,7 +5,9 @@ import { ProductImage } from "@/components/Placeholder";
 import { QtyField } from "@/components/admin/QtyField";
 import { placeWholesaleOrderAction, wholesaleLogoutAction, requestQuoteAction, uploadPaymentProofAction } from "@/app/actions/wholesale";
 
-type P = { sku: string; name: string; category: string; sub?: string | null; style?: string | null; qty: number; price: number; mrp: number; image: string | null; colour?: string | null };
+type P = { pid: string; sku: string; name: string; category: string; sub?: string | null; style?: string | null; qty: number; price: number; mrp: number; image: string | null; colour?: string | null };
+/** A design (product) with all of its in-stock colours grouped under one row + a colour dropdown. */
+type Grp = { pid: string; name: string; category: string; sub?: string | null; style?: string | null; variants: P[] };
 type HistItem = { sku: string; name: string; qty: number };
 type Hist = { id: string; total: number; amountPaid?: number; status?: string; paymentRef?: string | null; created_at: string; invoice_no: string | null; items: HistItem[] };
 type PayInfo = { payeeName: string; upiId: string | null; qrUrl: string | null };
@@ -60,20 +62,43 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
   const subs = useMemo(() => Array.from(new Set(products.filter((p) => cat === "all" || p.category === cat).map((p) => p.sub).filter((x): x is string => !!x))).sort(), [products, cat]);
   const stylesL = useMemo(() => Array.from(new Set(products.filter((p) => cat === "all" || p.category === cat).map((p) => p.style).filter((x): x is string => !!x))).sort(), [products, cat]);
   const colours = useMemo(() => Array.from(new Set(products.map((p) => p.colour).filter((c): c is string => !!c))).sort(), [products]);
-  const list = useMemo(() => {
+  // Colour of a design that the dealer has picked in its dropdown (pid -> chosen variant SKU).
+  const [sel, setSel] = useState<Record<string, string>>({});
+
+  // One row PER DESIGN, its in-stock colours grouped so the dealer picks a colour from a dropdown
+  // (the owner's "variants dropdown") instead of every colour flooding the list as its own row.
+  const groups = useMemo(() => {
     const s = q.trim().toLowerCase();
-    const out = products.filter((p) =>
-      (cat === "all" || p.category === cat) &&
-      (sub === "all" || p.sub === sub) &&
-      (styleF === "all" || p.style === styleF) &&
-      (colour === "all" || (p.colour ?? "").toLowerCase() === colour.toLowerCase()) &&
-      (!inStock || p.qty > 0) &&
-      (!s || (p.name + p.sku + p.category + (p.colour ?? "")).toLowerCase().includes(s)));
-    if (sort === "price_asc") out.sort((a, b) => a.price - b.price);
-    else if (sort === "price_desc") out.sort((a, b) => b.price - a.price);
-    else if (sort === "margin") out.sort((a, b) => (b.mrp - b.price) - (a.mrp - a.price));
-    return out;
-  }, [q, cat, colour, inStock, sort, products]);
+    const byPid = new Map<string, Grp>();
+    for (const p of products) {
+      let g = byPid.get(p.pid);
+      if (!g) { g = { pid: p.pid, name: p.name, category: p.category, sub: p.sub, style: p.style, variants: [] }; byPid.set(p.pid, g); }
+      g.variants.push(p);
+    }
+    let arr = Array.from(byPid.values()).filter((g) =>
+      (cat === "all" || g.category === cat) &&
+      (sub === "all" || g.sub === sub) &&
+      (styleF === "all" || g.style === styleF) &&
+      (colour === "all" || g.variants.some((v) => (v.colour ?? "").toLowerCase() === colour.toLowerCase())) &&
+      (!inStock || g.variants.some((v) => v.qty > 0)) &&
+      (!s || (g.name + " " + g.category + " " + g.variants.map((v) => v.sku).join(" ")).toLowerCase().includes(s)));
+    const lead = (g: Grp) => g.variants[0]?.price ?? 0;
+    const leadMargin = (g: Grp) => { const v = g.variants[0]; return v ? v.mrp - v.price : 0; };
+    if (sort === "price_asc") arr.sort((a, b) => lead(a) - lead(b));
+    else if (sort === "price_desc") arr.sort((a, b) => lead(b) - lead(a));
+    else if (sort === "margin") arr.sort((a, b) => leadMargin(b) - leadMargin(a));
+    return arr;
+  }, [q, cat, sub, styleF, colour, inStock, sort, products]);
+
+  /** The colour currently shown for a design: the global colour filter wins, then the dealer's
+   *  dropdown pick, then any colour already in the cart, then the first colour. */
+  const activeOf = (g: Grp): P => {
+    if (colour !== "all") { const m = g.variants.find((v) => (v.colour ?? "").toLowerCase() === colour.toLowerCase()); if (m) return m; }
+    const chosen = sel[g.pid] ? g.variants.find((v) => v.sku === sel[g.pid]) : undefined;
+    if (chosen) return chosen;
+    const inCart = g.variants.find((v) => (qty[v.sku] ?? 0) > 0);
+    return inCart ?? g.variants[0];
+  };
 
   const sortedTiers = useMemo(() => [...(tiers ?? [])].sort((a, b) => a.minQty - b.minQty), [tiers]);
   const hasTiers = sortedTiers.length > 0;
@@ -287,17 +312,36 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
             <table className="w-full text-sm">
               <thead className="bg-cream text-muted text-left"><tr>
                 <th className="p-4">Design</th><th className="p-4">SKU</th><th className="p-4">Stock</th>
-                <th className="p-4 text-right">Wholesale</th><th className="p-4 text-right">MRP · your margin</th><th className="p-4 text-center">Qty</th><th className="p-4 text-right">Line total</th>
+                <th className="p-4 text-right">Wholesale<span className="block text-[10px] font-normal normal-case">incl. GST</span></th><th className="p-4 text-right">MRP · your margin</th><th className="p-4 text-center">Qty</th><th className="p-4 text-right">Line total</th>
               </tr></thead>
               <tbody>
-                {list.map((p) => {
+                {groups.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-muted">No designs match.</td></tr>}
+                {groups.map((g) => {
+                  const p = activeOf(g);
                   const n = qty[p.sku] ?? 0;
                   const margin = p.mrp - p.price;
                   const marginPct = p.mrp > 0 ? Math.round((margin / p.mrp) * 100) : 0;
                   const out = p.qty <= 0;
+                  const multi = g.variants.length > 1 || !!g.variants[0]?.colour;
+                  const cartColours = g.variants.filter((v) => v.sku !== p.sku && (qty[v.sku] ?? 0) > 0);
                   return (
-                    <tr key={p.sku} className="border-t border-sand/60 hover:bg-cream/40">
-                      <td className="p-3"><div className="flex items-center gap-3"><Img p={p} className="w-12 h-14 rounded-lg shrink-0" /><span className="text-ink font-medium">{p.name}<span className="block text-xs text-muted font-normal">{p.category}{p.colour ? ` · ${p.colour}` : ""}</span></span></div></td>
+                    <tr key={g.pid} className="border-t border-sand/60 hover:bg-cream/40 align-top">
+                      <td className="p-3">
+                        <div className="flex items-center gap-3">
+                          <Img p={p} className="w-12 h-14 rounded-lg shrink-0" />
+                          <div className="min-w-0">
+                            <span className="text-ink font-medium block">{p.name}</span>
+                            <span className="text-xs text-muted">{p.category}</span>
+                            {multi ? (
+                              <select value={p.sku} onChange={(e) => setSel((s) => ({ ...s, [g.pid]: e.target.value }))}
+                                className="mt-1 block rounded-full border border-sand px-3 py-1 text-xs bg-white outline-none focus:border-emerald max-w-[190px]" aria-label="Choose colour">
+                                {g.variants.map((v) => <option key={v.sku} value={v.sku}>{v.colour ?? "Default"}{v.qty <= 3 ? ` · ${v.qty} left` : ""}</option>)}
+                              </select>
+                            ) : p.colour ? <span className="block text-xs text-emerald-dark">{p.colour}</span> : null}
+                            {cartColours.length > 0 && <span className="block text-[10px] text-emerald-dark mt-0.5">In cart: {cartColours.map((v) => `${v.colour ?? "Default"} ×${qty[v.sku]}`).join(", ")}</span>}
+                          </div>
+                        </div>
+                      </td>
                       <td className="p-4 text-muted font-mono text-xs">{p.sku}</td>
                       <td className="p-4">{out ? <span className="text-muted">Out</span> : <span className={p.qty <= 3 ? "text-rose" : "text-emerald"}>{p.qty}</span>}</td>
                       <td className="p-4 text-right font-semibold text-emerald-dark whitespace-nowrap">{formatPaise(p.price)}</td>
@@ -325,23 +369,34 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
 
           {/* Mobile: cards */}
           <div className="md:hidden space-y-2.5">
-            {list.length === 0 && <p className="text-sm text-muted text-center py-6">No designs match.</p>}
-            {list.map((p) => {
+            {groups.length === 0 && <p className="text-sm text-muted text-center py-6">No designs match.</p>}
+            {groups.map((g) => {
+              const p = activeOf(g);
               const n = qty[p.sku] ?? 0;
               const margin = p.mrp - p.price;
               const marginPct = p.mrp > 0 ? Math.round((margin / p.mrp) * 100) : 0;
               const out = p.qty <= 0;
+              const multi = g.variants.length > 1 || !!g.variants[0]?.colour;
+              const cartColours = g.variants.filter((v) => v.sku !== p.sku && (qty[v.sku] ?? 0) > 0);
               return (
-                <div key={p.sku} className="bg-white rounded-2xl border border-sand shadow-card p-3 flex gap-3">
+                <div key={g.pid} className="bg-white rounded-2xl border border-sand shadow-card p-3 flex gap-3">
                   <Img p={p} className="w-20 h-24 rounded-lg shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-ink font-medium leading-tight">{p.name}{p.colour ? <span className="text-emerald-dark"> · {p.colour}</span> : null}</p>
+                    <p className="text-ink font-medium leading-tight">{p.name}</p>
                     <p className="text-xs text-muted">{p.category} · <span className="font-mono">{p.sku}</span></p>
+                    {multi ? (
+                      <select value={p.sku} onChange={(e) => setSel((s) => ({ ...s, [g.pid]: e.target.value }))}
+                        className="mt-1 rounded-full border border-sand px-3 py-1 text-xs bg-white outline-none focus:border-emerald w-full" aria-label="Choose colour">
+                        {g.variants.map((v) => <option key={v.sku} value={v.sku}>{v.colour ?? "Default"}{v.qty <= 3 ? ` · ${v.qty} left` : ""}</option>)}
+                      </select>
+                    ) : p.colour ? <p className="text-xs text-emerald-dark">{p.colour}</p> : null}
                     <div className="flex items-baseline gap-2 mt-1 flex-wrap">
                       <span className="font-semibold text-emerald-dark">{formatPaise(p.price)}</span>
+                      <span className="text-[10px] text-muted">incl. GST</span>
                       <span className="text-xs text-muted line-through">{formatPaise(p.mrp)}</span>
                       <span className="text-[11px] text-gold-dark">+{formatPaise(margin)} ({marginPct}%)</span>
                     </div>
+                    {cartColours.length > 0 && <p className="text-[10px] text-emerald-dark mt-0.5">In cart: {cartColours.map((v) => `${v.colour ?? "Default"} ×${qty[v.sku]}`).join(", ")}</p>}
                     <div className="flex items-center justify-between mt-2">
                       <span className="text-xs">{out ? <span className="text-muted">Out of stock</span> : <span className={p.qty <= 3 ? "text-rose" : "text-emerald"}>{p.qty} in stock</span>}</span>
                       <div className={`inline-flex items-center rounded-full border border-sand overflow-hidden ${out ? "opacity-40 pointer-events-none" : ""}`}>

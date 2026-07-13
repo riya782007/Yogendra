@@ -5,6 +5,7 @@ import { getStorefront } from "@/lib/supabase/queries";
 import { supabaseServer } from "@/lib/supabase/server";
 import { resolvePrices, overridesOf, formatPaise } from "@/lib/pricing";
 import { getWholesaleSession } from "@/lib/wholesale";
+import { GST_RATE } from "@/lib/business";
 import { LineSheetToolbar } from "@/components/site/LineSheetToolbar";
 
 export const metadata: Metadata = {
@@ -35,13 +36,18 @@ export default async function LineSheet() {
   for (const v of ((vRows as any[]) ?? [])) { const a = varsBy.get(v.product_id) ?? []; a.push(v); varsBy.set(v.product_id, a); }
 
   // One row per design (colours listed together — a compact buyer's line-sheet, not per-variant).
-  const rows: Row[] = (products as any[]).map((p) => {
+  // Shareable sheet: only IN-STOCK colours, prices GST-inclusive, and sold-out designs dropped.
+  const gstInc = (paise: number) => Math.round(paise * (1 + GST_RATE / 100));
+  const rows: Row[] = (products as any[]).flatMap((p) => {
     const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));
     const vs = varsBy.get((p as any).id) ?? [];
-    const colours = Array.from(new Set(vs.map((v) => v.color).filter(Boolean))) as string[];
-    const stock = vs.length > 0 ? vs.reduce((s, v) => s + (v.qty ?? 0), 0) : (p.qty ?? 0);
-    const vImg = vs.map((v) => (Array.isArray(v.image_paths) ? v.image_paths.find((x: string) => typeof x === "string" && x.startsWith("http")) : null)).find(Boolean) ?? null;
-    return { sku: p.sku, name: p.name, category: p.category.name, colours, qty: stock, price: ps.wholesaleRate, mrp: ps.mrp, image: imgBy.get((p as any).id) ?? vImg };
+    const hasVariants = vs.length > 0;
+    const inStock = vs.filter((v) => (v.qty ?? 0) > 0);
+    const stock = hasVariants ? inStock.reduce((s, v) => s + (v.qty ?? 0), 0) : (p.qty ?? 0);
+    if (stock <= 0) return [];
+    const colours = Array.from(new Set(inStock.map((v) => v.color).filter(Boolean))) as string[];
+    const vImg = inStock.map((v) => (Array.isArray(v.image_paths) ? v.image_paths.find((x: string) => typeof x === "string" && x.startsWith("http")) : null)).find(Boolean) ?? null;
+    return [{ sku: p.sku, name: p.name, category: p.category.name, colours, qty: stock, price: gstInc(ps.wholesaleRate), mrp: ps.mrp, image: imgBy.get((p as any).id) ?? vImg }];
   });
 
   const today = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" });
@@ -57,7 +63,7 @@ export default async function LineSheet() {
           <h1 className="font-display text-3xl text-ink">BlytheDIVA — Wholesale Line-Sheet</h1>
           <p className="text-sm text-muted">Trade rates for {session.name} · {today}</p>
         </div>
-        <p className="text-xs text-muted text-right">Prices are wholesale (ex-GST).<br />MRP shown for your margin reference.</p>
+        <p className="text-xs text-muted text-right">Prices are wholesale, incl. GST.<br />MRP shown for your margin reference.</p>
       </header>
 
       {tiers.length > 0 && (
