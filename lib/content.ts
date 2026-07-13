@@ -15,6 +15,9 @@ export type ProductLike = {
   name: string;
   sku: string;
   categoryName?: string;
+  /** The owner's chosen subcategory (e.g. "Western Pendant Set", "Bridal Sets") — drives the copy tone
+   *  and the real piece type, so a western piece never gets bridal/festive wording. */
+  subcategoryName?: string;
   colors?: string[];
   keywords?: string[];
   generated_content?: GeneratedContent | null;
@@ -158,17 +161,27 @@ function parseSpecKeywords(keywords?: string[]): { styles: string[]; materials: 
 
 export function templateContent(p: ProductLike): GeneratedContent {
   const cat = p.categoryName ?? "Jewellery";
-  const blob = (p.name + " " + (p.keywords ?? []).join(" ")).toLowerCase();
-  // Register: default to the brand's ethnic/festive voice; switch to western/daily when the owner's
-  // keywords or name clearly say so AND there's no strong bridal material — so a "Western anti-tarnish
-  // bracelet" never gets wedding/saree copy (the bug the owner reported on WBR1006).
+  const sub = p.subcategoryName ?? "";
+  // Include the owner's chosen CATEGORY + SUBCATEGORY in the detection — a piece he filed under "Western"
+  // must read as western/daily, never bridal/festive (the root cause of the wrong-tone descriptions).
+  const blob = (p.name + " " + cat + " " + sub + " " + (p.keywords ?? []).join(" ")).toLowerCase();
+  // Register: ethnic/festive by default; switch to western/daily when the name, keywords OR the chosen
+  // category/subcategory clearly say so AND there's no strong bridal material.
   const western = WESTERN_RE.test(blob) && !BRIDAL_RE.test(blob);
 
-  const styles = styleHints(p.name, p.keywords);
-  const wStyles = westernHints(p.name, p.keywords);
+  const styles = styleHints(p.name + " " + sub, p.keywords);
+  const wStyles = westernHints(p.name + " " + sub, p.keywords);
   const pieces = includedPieces(p.keywords);
-  const isSet = pieces.length > 0 || /set/i.test(p.name);
-  const baseType = cat.replace(/s$/i, "");
+  const isSet = pieces.length > 0 || /set/i.test(p.name) || /set/i.test(sub);
+  // Prefer the REAL piece type from the name/subcategory (pendant, choker, mangalsutra…) over the broad
+  // parent category — so a pendant is a "Pendant Set", not a "Necklace Set" or an "Other Accessorie".
+  const typeHint = (p.name + " " + sub).toLowerCase();
+  let baseType = cat.replace(/s$/i, "");
+  if (/pendant/.test(typeHint)) baseType = "Pendant";
+  else if (/mangalsutra/.test(typeHint)) baseType = "Mangalsutra";
+  else if (/\bchoker\b/.test(typeHint)) baseType = "Choker";
+  else if (/maang ?tikka|tikka/.test(typeHint) && !/set/i.test(typeHint)) baseType = "Maang Tikka";
+  else if (/other accessor/i.test(baseType)) baseType = "Accessory";
   const type = isSet && !/set/i.test(baseType) ? `${baseType} Set` : (baseType || "Jewellery");
   const catL = type.toLowerCase();
   const name = pickDivaName(p.sku || p.name);

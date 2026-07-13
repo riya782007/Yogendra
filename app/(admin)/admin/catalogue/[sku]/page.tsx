@@ -73,7 +73,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
   // editor never opens blank ("yeh sab khali") and the description never shows the old name. Saving
   // persists these into generated_content.
   const resolved = resolveProductContent({
-    name: p.name, sku: p.sku, categoryName: p.category?.name,
+    name: p.name, sku: p.sku, categoryName: p.category?.name, subcategoryName: (p as any).subcategory?.name,
     colors: ((p.variants ?? []) as any[]).map((v) => v.color).filter(Boolean),
     generated_content: p.generated_content as any,
   });
