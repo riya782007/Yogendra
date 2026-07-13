@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase/server";
 import { formatPaise } from "@/lib/pricing";
-import { acceptStorefrontOrderAction, rejectStorefrontOrderAction } from "@/app/actions/orders";
+import { acceptStorefrontOrderAction, rejectStorefrontOrderAction, dispatchStorefrontOrderAction, deliverStorefrontOrderAction } from "@/app/actions/orders";
 
 export const metadata = { title: "Owner Console · Storefront Orders" };
 
@@ -25,7 +25,7 @@ export default async function StorefrontOrders({ searchParams }: { searchParams?
   let migrationMissing = false;
   {
     const q = sb.from("orders")
-      .select("id,invoice_no,channel,total,amount_paid,payment_mode,bill_type,status,fulfillment,customer_name,customer_phone,buyer_address,payment_ref,payment_proof_path,created_at, order_items(qty, product:products(name,sku), variant:variants(sku,color))")
+      .select("id,invoice_no,channel,total,amount_paid,payment_mode,bill_type,status,fulfillment,customer_name,customer_phone,buyer_address,payment_ref,payment_proof_path,courier_name,tracking_no,tracking_url,created_at, order_items(qty, product:products(name,sku), variant:variants(sku,color))")
       .neq("channel", "pos")
       .order("created_at", { ascending: false })
       .limit(100);
@@ -74,8 +74,10 @@ export default async function StorefrontOrders({ searchParams }: { searchParams?
                         </span>
                         {r.payment_ref && <span className="text-[11px] text-muted font-mono">ref {r.payment_ref}</span>}
                         {r.status === "cancelled" && <span className="px-2 py-0.5 rounded-full text-xs bg-rose/10 text-rose">Cancelled</span>}
-                        {r.fulfillment === "accepted" && <span className="px-2 py-0.5 rounded-full text-xs bg-emerald-mist text-emerald-dark">Accepted ✓</span>}
+                        {r.fulfillment === "accepted" && r.status !== "dispatched" && r.status !== "delivered" && <span className="px-2 py-0.5 rounded-full text-xs bg-emerald-mist text-emerald-dark">Accepted ✓</span>}
                         {r.fulfillment === "rejected" && <span className="px-2 py-0.5 rounded-full text-xs bg-rose/10 text-rose">Rejected</span>}
+                        {r.status === "dispatched" && <span className="px-2 py-0.5 rounded-full text-xs bg-gold/15 text-gold-dark">Dispatched 📦</span>}
+                        {r.status === "delivered" && <span className="px-2 py-0.5 rounded-full text-xs bg-emerald-mist text-emerald-dark">Delivered ✓</span>}
                       </div>
                       <p className="text-sm text-ink mt-1.5">
                         <b>{r.customer_name || "Walk-in"}</b>{r.customer_phone ? ` · ${r.customer_phone}` : ""}
@@ -106,6 +108,29 @@ export default async function StorefrontOrders({ searchParams }: { searchParams?
                             <input type="hidden" name="reason" value="Rejected by store" />
                             <button className="px-3.5 py-1.5 rounded-full border border-rose/40 text-rose text-xs font-medium hover:bg-rose/10">✕ Reject</button>
                           </form>
+                        </div>
+                      )}
+                      {/* Dispatch / deliver — moves the customer's tracker + WhatsApps them. */}
+                      {r.fulfillment === "accepted" && r.status !== "cancelled" && r.status !== "delivered" && (
+                        <div className="mt-2 flex flex-col items-end gap-1.5">
+                          {r.status !== "dispatched" ? (
+                            <details className="text-left">
+                              <summary className="cursor-pointer list-none inline-block px-3.5 py-1.5 rounded-full bg-ink text-white text-xs font-medium hover:bg-ink/90">📦 Dispatch</summary>
+                              <form action={dispatchStorefrontOrderAction} className="mt-2 w-64 bg-cream/60 rounded-xl p-3 space-y-2">
+                                <input type="hidden" name="id" value={r.id} />
+                                <input name="courier" placeholder="Courier (e.g. Delhivery)" className="w-full rounded-lg border border-sand px-3 py-1.5 text-xs outline-none focus:border-emerald" />
+                                <input name="trackingNo" placeholder="Tracking / AWB no." className="w-full rounded-lg border border-sand px-3 py-1.5 text-xs outline-none focus:border-emerald" />
+                                <input name="trackingUrl" placeholder="Tracking link (optional)" className="w-full rounded-lg border border-sand px-3 py-1.5 text-xs outline-none focus:border-emerald" />
+                                <button className="w-full px-3 py-1.5 rounded-full bg-emerald text-white text-xs font-medium hover:bg-emerald-dark">Mark dispatched + WhatsApp</button>
+                              </form>
+                            </details>
+                          ) : (
+                            <form action={deliverStorefrontOrderAction}>
+                              <input type="hidden" name="id" value={r.id} />
+                              <button className="px-3.5 py-1.5 rounded-full bg-emerald text-white text-xs font-medium hover:bg-emerald-dark">✓ Mark delivered</button>
+                            </form>
+                          )}
+                          {r.tracking_no && <span className="text-[11px] text-muted">AWB: <span className="font-mono">{r.tracking_no}</span></span>}
                         </div>
                       )}
                     </div>

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getOrder } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
+import { OrderTimeline } from "@/components/site/OrderTimeline";
 
 export const metadata = { title: "Order confirmed" };
 
@@ -33,18 +34,7 @@ export default async function OrderConfirm({ params }: { params: { id: string } 
       </div>
       <div className="bg-white rounded-2xl p-6 shadow-card mt-6" data-x="order-timeline">
         <h2 className="font-medium text-ink mb-4">Order status</h2>
-        <div className="flex items-center">
-          {["Confirmed", "Packed", "Shipped", "Delivered"].map((step, i) => (
-            <div key={step} className="flex-1 flex items-center">
-              <div className="flex flex-col items-center">
-                <div className={`h-8 w-8 rounded-full grid place-items-center text-sm ${i === 0 ? "bg-emerald text-white" : "bg-cream text-muted border border-sand"}`}>{i === 0 ? "\u2713" : i + 1}</div>
-                <span className={`text-[11px] mt-1 ${i === 0 ? "text-emerald" : "text-muted"}`}>{step}</span>
-              </div>
-              {i < 3 && <div className={`flex-1 h-0.5 mx-1 ${i === 0 ? "bg-emerald/40" : "bg-sand"}`} />}
-            </div>
-          ))}
-        </div>
-        <p className="text-xs text-muted mt-4 text-center">We&apos;ll send tracking on WhatsApp the moment your order ships.</p>
+        <OrderTimeline order={order} />
       </div>
       <div className="text-center mt-8">
         <Link href={`/account?order=${order.id}`} className="btn-primary inline-block px-7 py-3 text-sm font-medium">Track this order</Link>

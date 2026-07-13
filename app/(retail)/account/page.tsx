@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
-import { getOrder, getCustomerProfile, getCustomerOrders } from "@/lib/supabase/queries";
+import { getOrder, getOrderTracking, getCustomerProfile, getCustomerOrders } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { Back } from "@/components/site/Back";
 import { TrackForm } from "@/components/site/TrackForm";
@@ -13,26 +13,31 @@ export const metadata = { title: "My Account", robots: { index: false } };
 
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 
-export default async function Account({ searchParams }: { searchParams: { order?: string; track?: string } }) {
+export default async function Account({ searchParams }: { searchParams: { order?: string; track?: string; o?: string; p?: string } }) {
   const id = searchParams.order?.trim();
+  const lookupKey = searchParams.o?.trim();
+  const lookupPhone = searchParams.p?.trim();
 
-  // ---- 1) Order tracking (from an order link or the track form) ----
-  if (id) {
-    const data = await getOrder(id);
+  // ---- 1) Order tracking — from a confirmation link (?order=<uuid>) OR the track form
+  //         (?o=<order id / invoice>&p=<phone>, which also accepts the short 8-char code). ----
+  if (id || (lookupKey && lookupPhone)) {
+    const data = id
+      ? await getOrder(id)
+      : await (async () => { const r = await getOrderTracking(lookupKey!, lookupPhone!); return "order" in r ? r : null; })();
     return (
       <div className="max-w-xl mx-auto px-5 py-12">
         <div className="mb-5"><Back label="Back" /></div>
         <h1 className="font-display text-4xl text-ink mb-1">Track Your Order</h1>
         {!data ? (
           <div className="bg-white rounded-2xl shadow-card p-6 mt-4">
-            <p className="text-ink">We couldn&apos;t find an order with that ID.</p>
-            <p className="text-sm text-muted mt-1">Double-check it, or <a href="https://wa.me/919873151767" className="text-emerald nav-link">WhatsApp us</a> and we&apos;ll help.</p>
+            <p className="text-ink">We couldn&apos;t find that order.</p>
+            <p className="text-sm text-muted mt-1">Check the order ID and the phone number used on the order, or <a href="https://wa.me/919873151767" className="text-emerald nav-link">WhatsApp us</a> and we&apos;ll help.</p>
             <div className="mt-4"><TrackForm /></div>
           </div>
         ) : (
           <div className="mt-2">
-            <p className="text-muted mb-5">Order <span className="font-mono text-ink">{String(data.order.id).slice(0, 8).toUpperCase()}</span> · {day(data.order.created_at)}</p>
-            <div className="bg-white rounded-2xl p-6 shadow-card"><OrderTimeline /></div>
+            <p className="text-muted mb-5">Order <span className="font-mono text-ink">{data.order.invoice_no || String(data.order.id).slice(0, 8).toUpperCase()}</span> · {day(data.order.created_at)}</p>
+            <div className="bg-white rounded-2xl p-6 shadow-card"><OrderTimeline order={data.order} /></div>
             <div className="bg-white rounded-2xl p-6 shadow-card mt-4">
               <h2 className="font-medium text-ink mb-3">Items</h2>
               <div className="space-y-2">
@@ -57,7 +62,7 @@ export default async function Account({ searchParams }: { searchParams: { order?
       <div className="max-w-xl mx-auto px-5 py-12">
         <div className="mb-5"><Back label="Back" /></div>
         <h1 className="font-display text-4xl text-ink mb-1">Track Your Order</h1>
-        <p className="text-muted mb-6">Enter your order ID (from your confirmation) to see its status.</p>
+        <p className="text-muted mb-6">Enter your order ID (from your confirmation) and the phone number used on the order to see its status.</p>
         <TrackForm />
         <div className="text-center mt-6 text-sm text-muted"><Link href="/account" className="text-emerald nav-link">← Back to account</Link></div>
       </div>

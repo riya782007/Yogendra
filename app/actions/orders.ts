@@ -320,3 +320,53 @@ export async function rejectStorefrontOrderAction(formData: FormData): Promise<v
   }
   revalidatePath("/admin/orders"); revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard");
 }
+
+/** DISPATCH a storefront order — records the courier + tracking, moves the customer's tracker to
+ *  "Dispatched", and WhatsApps them the tracking link. */
+export async function dispatchStorefrontOrderAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("billing.sell"))) return;
+  const id = String(formData.get("id") ?? "").trim();
+  if (!id) return;
+  const courier = String(formData.get("courier") ?? "").trim().slice(0, 60) || null;
+  const trackingNo = String(formData.get("trackingNo") ?? "").trim().slice(0, 80) || null;
+  let trackingUrl = String(formData.get("trackingUrl") ?? "").trim().slice(0, 400) || null;
+  if (trackingUrl && !/^https?:\/\//i.test(trackingUrl)) trackingUrl = "https://" + trackingUrl;
+  const sb = supabaseServer();
+  const { error } = await sb.from("orders").update({
+    status: "dispatched", fulfillment: "accepted",
+    courier_name: courier, tracking_no: trackingNo, tracking_url: trackingUrl,
+    dispatched_at: new Date().toISOString(),
+  }).eq("id", id);
+  if (!error) {
+    const { data: o } = await sb.from("orders").select("invoice_no,customer_name,customer_phone").eq("id", id).maybeSingle();
+    const ph = (o as any)?.customer_phone;
+    if (ph) {
+      const inv = (o as any)?.invoice_no || id.slice(0, 8).toUpperCase();
+      const bits = [`Hi ${(o as any)?.customer_name || "there"}! 📦 Your Blythe Diva order ${inv} has been DISPATCHED.`];
+      if (courier) bits.push(`Courier: ${courier}`);
+      if (trackingNo) bits.push(`Tracking no: ${trackingNo}`);
+      if (trackingUrl) bits.push(`Track: ${trackingUrl}`);
+      bits.push(`Or track anytime with your phone + order id at our site.`);
+      await sendWhatsAppText(ph, bits.join("\n")).catch(() => {});
+    }
+  }
+  revalidatePath("/admin/orders");
+}
+
+/** Mark a storefront order DELIVERED — final tracking step. */
+export async function deliverStorefrontOrderAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("billing.sell"))) return;
+  const id = String(formData.get("id") ?? "").trim();
+  if (!id) return;
+  const sb = supabaseServer();
+  const { error } = await sb.from("orders").update({ status: "delivered", delivered_at: new Date().toISOString() }).eq("id", id);
+  if (!error) {
+    const { data: o } = await sb.from("orders").select("invoice_no,customer_name,customer_phone").eq("id", id).maybeSingle();
+    const ph = (o as any)?.customer_phone;
+    if (ph) {
+      const inv = (o as any)?.invoice_no || id.slice(0, 8).toUpperCase();
+      await sendWhatsAppText(ph, `Hi ${(o as any)?.customer_name || "there"}! ✅ Your Blythe Diva order ${inv} has been DELIVERED. We hope you love it — thank you for shopping with us! 💛`).catch(() => {});
+    }
+  }
+  revalidatePath("/admin/orders");
+}

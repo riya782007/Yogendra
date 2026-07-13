@@ -1866,6 +1866,36 @@ export async function getOrder(id: string) {
   return { order, items: items ?? [] };
 }
 
+/** Customer order tracking — looked up by order id (full or first 8 chars of the UUID, or the
+ *  invoice number) AND the phone used on the order, so no one can browse others' orders. */
+export async function getOrderTracking(idOrInvoice: string, phoneRaw: string) {
+  const sb = supabaseServer();
+  const key = (idOrInvoice ?? "").trim();
+  const phone = (phoneRaw ?? "").replace(/\D/g, "").slice(-10);
+  if (key.length < 4 || phone.length !== 10) return { error: "bad_input" as const };
+  const SEL = "id,invoice_no,status,fulfillment,total,payment_mode,customer_name,customer_phone,courier_name,tracking_no,tracking_url,dispatched_at,delivered_at,created_at";
+  // Match on invoice number, full UUID, or the short 8-char code shown to the customer.
+  let order: any = null;
+  const looksUuid = /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(key);
+  if (looksUuid) {
+    order = (await sb.from("orders").select(SEL).eq("id", key).maybeSingle()).data;
+  } else {
+    const byInv = (await sb.from("orders").select(SEL).ilike("invoice_no", key).limit(1)).data as any[];
+    order = byInv?.[0] ?? null;
+    if (!order && /^[0-9a-f]{8}$/i.test(key)) {
+      // Short code (first 8 of the UUID) — scan recent orders for a prefix match.
+      const recent = (await sb.from("orders").select(SEL).order("created_at", { ascending: false }).limit(1000)).data as any[];
+      order = (recent ?? []).find((o) => String(o.id).slice(0, 8).toLowerCase() === key.toLowerCase()) ?? null;
+    }
+  }
+  if (!order) return { error: "not_found" as const };
+  const onOrder = String(order.customer_phone ?? "").replace(/\D/g, "").slice(-10);
+  if (onOrder !== phone) return { error: "not_found" as const };
+  const { data: items } = await sb.from("order_items")
+    .select("qty,line_total,product:products(name,sku),variant:variants(sku,color)").eq("order_id", order.id);
+  return { order, items: (items as any[]) ?? [] };
+}
+
 // ---------- estimates + returns ----------
 /** Estimate register. Sort whitelist mirrors the sales register so headers feel consistent.
  *  Field options: ref / customer / date / amount; direction "_asc"|"_desc". Default is newest-first. */
