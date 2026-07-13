@@ -138,7 +138,7 @@ export async function getStyles(opts: { categoryId?: string } = {}): Promise<{ i
 }
 
 // ---------- efficient, paginated lists (for 10k+ SKUs) ----------
-export async function getProductsPage(opts: { page?: number; pageSize?: number; q?: string; category?: string; subcategory?: string; status?: string }) {
+export async function getProductsPage(opts: { page?: number; pageSize?: number; q?: string; category?: string; subcategory?: string; status?: string; stock?: string }) {
   const sb = supabaseServer();
   const pageSize = opts.pageSize ?? 25;
   const page = Math.max(1, opts.page ?? 1);
@@ -154,6 +154,9 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
     if (sub) query = query.eq("subcategory_id", (sub as any).id);
   }
   if (opts.status && opts.status !== "all") query = query.eq("status", opts.status);
+  // Stock filter — products.qty is kept in sync with the variant sum (resyncProductQty), so this is accurate.
+  if (opts.stock === "in") query = query.gt("qty", 0);
+  else if (opts.stock === "out") query = query.lte("qty", 0);
   const fromIdx = (page - 1) * pageSize;
   const { data, count } = await query.order("sku").range(fromIdx, fromIdx + pageSize - 1);
   const rows = (data as any[]) ?? [];

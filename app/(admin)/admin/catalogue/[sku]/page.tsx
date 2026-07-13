@@ -9,6 +9,7 @@ import {
 } from "@/lib/supabase/queries";
 import { ProductEditor, type EditorProduct } from "@/components/admin/ProductEditor";
 import { resolveProductContent } from "@/lib/content";
+import { AutosaveForm } from "@/components/admin/AutosaveForm";
 import { ProductWorkspace, type WorkspaceTab, type TabKey } from "@/components/admin/ProductWorkspace";
 import { ProductStockAdjust } from "@/components/admin/ProductStockAdjust";
 import { MediaCard } from "@/components/admin/MediaCard";
@@ -313,7 +314,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
                   <span className="h-1.5 w-1.5 rounded-full bg-ink inline-block" /> Out of stock
                 </span>
               )}
-              <form action={updateVariantAction} className="flex flex-wrap items-end gap-2">
+              <AutosaveForm action={updateVariantAction} className="flex flex-wrap items-end gap-2" savedMsg={`${v.color ?? "Colour"} saved ✓`}>
                 <input type="hidden" name="id" value={v.id} />
                 <input type="hidden" name="product_sku" value={p.sku} />
                 <label className="text-[11px] text-muted">Colour<input name="color" list="opt-color" defaultValue={v.color ?? ""} placeholder="Colour" className={`${vInput} w-28 block mt-0.5`} /></label>
@@ -324,9 +325,14 @@ export default async function ProductPage({ params, searchParams }: { params: { 
                 <label className="text-[11px] text-muted">Retail ₹<input name="retail" type="number" min={0} step="0.01" defaultValue={v.retail_override != null ? (v.retail_override / 100).toFixed(2) : ""} placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
                 <label className="text-[11px] text-muted">Wholesale ₹<input name="wholesale" type="number" min={0} step="0.01" defaultValue={v.wholesale_override != null ? (v.wholesale_override / 100).toFixed(2) : ""} placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
                 <label className="text-[11px] text-muted">MRP ₹<input name="mrp" type="number" min={0} step="0.01" defaultValue={v.mrp_override != null ? (v.mrp_override / 100).toFixed(2) : ""} placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
-                <button className="px-3 py-2 rounded-xl bg-ink/5 text-ink text-xs hover:bg-ink/10">Save</button>
-                <button formAction={deleteVariantAction} className="text-muted hover:text-rose text-xs px-1">Delete</button>
+                <button className="px-4 py-2 rounded-xl bg-emerald text-white text-xs font-medium hover:bg-emerald-dark">Save colour</button>
+              </AutosaveForm>
+              <form action={deleteVariantAction} className="mt-1">
+                <input type="hidden" name="id" value={v.id} />
+                <input type="hidden" name="product_sku" value={p.sku} />
+                <button className="text-muted hover:text-rose text-[11px] px-1">Delete colour</button>
               </form>
+              <p className="text-[10px] text-muted mt-0.5">Colour, size, polish &amp; stock save automatically — you don&apos;t need the Basic tab&apos;s “Save changes” for these.</p>
               {/* Per-variant photos (#16) — reliable client uploader (compress + feedback, fixes large/HEIC) */}
               <div className="flex flex-wrap items-center gap-2 mt-2.5">
                 <VariantPhotos variantId={v.id} productSku={p.sku} color={v.color ?? null} images={imgs} />

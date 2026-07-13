@@ -14,14 +14,15 @@ import { CatalogueRow } from "@/components/admin/CatalogueRow";
 export const metadata = { title: "Owner Console · Catalogue" };
 const PAGE_SIZE = 25;
 
-export default async function AdminCatalogue({ searchParams }: { searchParams: { page?: string; q?: string; category?: string; sub?: string; status?: string } }) {
+export default async function AdminCatalogue({ searchParams }: { searchParams: { page?: string; q?: string; category?: string; sub?: string; status?: string; stock?: string } }) {
   const page = parseInt(searchParams.page ?? "1", 10) || 1;
   const q = searchParams.q ?? "";
   const category = searchParams.category ?? "all";
   const subcategory = searchParams.sub ?? "all";
   const status = searchParams.status ?? "all";
+  const stock = searchParams.stock ?? "all";
   const [{ rows, total }, formula, categories] = await Promise.all([
-    getProductsPage({ page, pageSize: PAGE_SIZE, q, category, subcategory, status }),
+    getProductsPage({ page, pageSize: PAGE_SIZE, q, category, subcategory, status, stock }),
     getPricingFormula(),
     getCategoryTree(),
   ]);
@@ -36,6 +37,7 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
   if (category !== "all") retParams.set("category", category);
   if (subcategory !== "all") retParams.set("sub", subcategory);
   if (status !== "all") retParams.set("status", status);
+  if (stock !== "all") retParams.set("stock", stock);
   const ret = `/admin/catalogue${retParams.toString() ? `?${retParams.toString()}` : ""}`;
   const ai = aiProvidersStatus();
   const imageReady = geminiConfigured();
@@ -95,8 +97,11 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
         <select name="status" defaultValue={status} className={sel}>
           <option value="all">All statuses</option><option value="published">Published</option><option value="draft">Draft</option><option value="flagged">Flagged</option>
         </select>
+        <select name="stock" defaultValue={stock} className={sel}>
+          <option value="all">All stock</option><option value="in">In stock</option><option value="out">Out of stock</option>
+        </select>
         <button className="px-4 py-2 rounded-xl bg-ink text-white text-sm">Search</button>
-        {(q || category !== "all" || subcategory !== "all" || status !== "all") && <Link href="/admin/catalogue" className="px-3 py-2 text-sm text-muted hover:text-ink">Clear</Link>}
+        {(q || category !== "all" || subcategory !== "all" || status !== "all" || stock !== "all") && <Link href="/admin/catalogue" className="px-3 py-2 text-sm text-muted hover:text-ink">Clear</Link>}
       </form>
 
       <p className="text-xs text-muted mb-2">Tip: click any product to expand it — publish, variants &amp; stock, AI and more.</p>
@@ -130,7 +135,7 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
           </tbody>
         </table>
       </div>
-      <Pager basePath="/admin/catalogue" params={{ q, category, sub: subcategory, status }} page={page} pageSize={PAGE_SIZE} total={total} />
+      <Pager basePath="/admin/catalogue" params={{ q, category, sub: subcategory, status, stock }} page={page} pageSize={PAGE_SIZE} total={total} />
     </main>
   );
 }

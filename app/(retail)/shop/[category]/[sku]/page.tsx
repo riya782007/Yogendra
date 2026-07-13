@@ -40,12 +40,18 @@ export default async function ProductPage({ params }: Params) {
   const content = resolveProductContent({ name: p.name, sku: p.sku, categoryName: p.category?.name, subcategoryName: (p as any).subcategory?.name, colors, generated_content: p.generated_content });
   const pOv = overridesOf(p);
   const o = liveOffer(p.base_wholesale, formula, pOv);
-  // Owner-chosen DEFAULT VARIANT leads: it is the pre-selected colour in the buy box and its
-  // photo fronts the gallery. Falls back to the natural (insertion) order when unset.
+  // Owner-chosen DEFAULT VARIANT leads (pre-selected colour + its photo fronts the gallery) — BUT if
+  // that default colour is out of stock, the FIRST in-stock colour leads instead, so a customer never
+  // opens on a sold-out colour. If a product has just one colour in stock, it becomes the lead
+  // automatically. Falls back to the marked default / natural order otherwise.
   const defVid = (p as any).default_variant_id ?? null;
-  const orderedVariants = defVid
-    ? [...(p.variants ?? [])].sort((a: any, b: any) => (a.id === defVid ? -1 : b.id === defVid ? 1 : 0))
-    : (p.variants ?? []);
+  const allVars = [...(p.variants ?? [])] as any[];
+  const def = defVid ? allVars.find((v) => v.id === defVid) : null;
+  const leadId = (def && (def.qty ?? 0) > 0) ? def.id
+    : (allVars.find((v) => (v.qty ?? 0) > 0)?.id ?? defVid ?? allVars[0]?.id ?? null);
+  const orderedVariants = leadId
+    ? allVars.sort((a, b) => (a.id === leadId ? -1 : b.id === leadId ? 1 : 0))
+    : allVars;
   // Owner option (per product): hide out-of-stock colourways from the buy selector AND the gallery.
   const visibleVariants = (orderedVariants as any[]).filter((v: any) => !(p as any).hide_oos_variants || (v.qty ?? 0) > 0);
   // Per-variant: its own photo, stock and price (variant override → product override → formula).

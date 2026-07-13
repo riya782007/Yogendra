@@ -67,6 +67,16 @@ function reval(productSku: string) {
   revalidatePath("/shop");
 }
 
+/** Keep products.qty = sum(variants.qty), so the catalogue total, the stock filter and low-stock flags
+ *  stay accurate after any per-colour stock edit. */
+async function resyncProductQty(sb: ReturnType<typeof supabaseServer>, productSku: string) {
+  const { data: p } = await sb.from("products").select("id").ilike("sku", productSku).maybeSingle();
+  if (!p) return;
+  const { data: vs } = await sb.from("variants").select("qty").eq("product_id", (p as any).id);
+  const total = ((vs as any[]) ?? []).reduce((s, x) => s + (x.qty ?? 0), 0);
+  await sb.from("products").update({ qty: total }).eq("id", (p as any).id);
+}
+
 export async function addVariantAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("catalog.edit"))) return;
   const productSku = String(formData.get("product_sku") ?? "").trim();
@@ -91,6 +101,7 @@ export async function addVariantAction(formData: FormData): Promise<void> {
   });
   await rememberOptions(sb, { color, size, polish });
   if ((p as any).type !== "configurable") await sb.from("products").update({ type: "configurable" }).eq("id", (p as any).id);
+  await resyncProductQty(sb, productSku);
   reval(productSku);
 }
 
@@ -113,6 +124,7 @@ export async function updateVariantAction(formData: FormData): Promise<void> {
     retail_override: toPaise(formData.get("retail")), wholesale_override: toPaise(formData.get("wholesale")), mrp_override: toPaise(formData.get("mrp")),
   }).eq("id", id);
   await rememberOptions(sb, { color, size, polish });
+  await resyncProductQty(sb, productSku);
   reval(productSku);
 }
 
@@ -120,7 +132,9 @@ export async function deleteVariantAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("catalog.edit"))) return;
   const id = String(formData.get("id") ?? "");
   const productSku = String(formData.get("product_sku") ?? "");
-  await supabaseServer().from("variants").delete().eq("id", id);
+  const sb = supabaseServer();
+  await sb.from("variants").delete().eq("id", id);
+  await resyncProductQty(sb, productSku);
   reval(productSku);
 }
 
