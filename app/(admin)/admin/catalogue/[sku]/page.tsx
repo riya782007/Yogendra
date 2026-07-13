@@ -75,6 +75,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
   // persists these into generated_content.
   const resolved = resolveProductContent({
     name: p.name, sku: p.sku, categoryName: p.category?.name, subcategoryName: (p as any).subcategory?.name,
+    polishes: ((p.variants ?? []) as any[]).map((v) => v.polish).filter(Boolean),
     colors: ((p.variants ?? []) as any[]).map((v) => v.color).filter(Boolean),
     generated_content: p.generated_content as any,
   });

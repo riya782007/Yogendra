@@ -30,7 +30,10 @@ function prompt(p: ProductLike) {
       : ``,
     `• Product name the owner typed: ${p.name}`,
     `• Category: ${p.categoryName ?? "Jewellery"}.${sub}`,
+    (p as any).styleName ? `• Style: ${(p as any).styleName}.` : ``,
+    ((p as any).polishes ?? []).filter(Boolean).length ? `• Polish / finish: ${[...new Set(((p as any).polishes ?? []).filter(Boolean))].join(", ")}.` : ``,
     colors ? `• Colours: ${colors}.` : ``,
+    `USE all of the above — name, category, sub-category, style, polish/finish, colours and keywords — to describe THIS piece specifically. Do NOT invent stones, motifs or pieces that none of these mention, and do NOT write generic filler that could apply to any product.`,
     kw
       ? `• Jewellery SPECIFICATIONS the owner provided — USE THESE to decide the material, style, type AND which pieces the set includes: ${kw}.`
       : hasImage

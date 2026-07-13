@@ -37,9 +37,11 @@ export async function generateContentAction(sku: string, keywords?: string[]): P
   const p = await getProductBySku(sku);
   if (!p) return { ok: false, sku, error: "not found" };
   const colors = (p.variants ?? []).map((v) => v.color ?? "").filter(Boolean);
+  const polishes = (p.variants ?? []).map((v: any) => v.polish ?? "").filter(Boolean);
   const { imageBase64, imageMime } = await fetchProductImage(p);
   const { content, provider, fallbackUsed } = await generateProductContent({
-    name: p.name, sku: p.sku, categoryName: p.category?.name, colors,
+    name: p.name, sku: p.sku, categoryName: p.category?.name,
+    subcategoryName: (p as any).subcategory?.name, polishes, colors,
     keywords: (keywords ?? []).map((k) => k.trim()).filter(Boolean),
     imageBase64, imageMime,
   });

@@ -18,7 +18,7 @@ type Params = { params: { category: string; sku: string } };
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const p = await getProductBySku(params.sku);
   if (!p) return { title: "Product not found" };
-  const c = resolveProductContent({ name: p.name, sku: p.sku, categoryName: p.category?.name, subcategoryName: (p as any).subcategory?.name, colors: p.variants?.map((v) => v.color ?? "").filter(Boolean), generated_content: p.generated_content });
+  const c = resolveProductContent({ name: p.name, sku: p.sku, categoryName: p.category?.name, subcategoryName: (p as any).subcategory?.name, polishes: p.variants?.map((v) => v.polish ?? "").filter(Boolean), colors: p.variants?.map((v) => v.color ?? "").filter(Boolean), generated_content: p.generated_content });
   return { title: c.seo.metaTitle, description: c.seo.metaDescription, keywords: c.seo.keywords, openGraph: { title: c.seo.metaTitle, description: c.seo.metaDescription } };
 }
 
@@ -37,7 +37,7 @@ export default async function ProductPage({ params }: Params) {
   const catName = p.category?.name ?? "Jewellery";
 
   const colors = (p.variants ?? []).map((v) => v.color ?? "").filter(Boolean);
-  const content = resolveProductContent({ name: p.name, sku: p.sku, categoryName: p.category?.name, subcategoryName: (p as any).subcategory?.name, colors, generated_content: p.generated_content });
+  const content = resolveProductContent({ name: p.name, sku: p.sku, categoryName: p.category?.name, subcategoryName: (p as any).subcategory?.name, polishes: p.variants?.map((v) => v.polish ?? "").filter(Boolean), colors, generated_content: p.generated_content });
   const pOv = overridesOf(p);
   const o = liveOffer(p.base_wholesale, formula, pOv);
   // Owner-chosen DEFAULT VARIANT leads (pre-selected colour + its photo fronts the gallery) — BUT if

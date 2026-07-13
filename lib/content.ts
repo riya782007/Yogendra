@@ -18,6 +18,10 @@ export type ProductLike = {
   /** The owner's chosen subcategory (e.g. "Western Pendant Set", "Bridal Sets") — drives the copy tone
    *  and the real piece type, so a western piece never gets bridal/festive wording. */
   subcategoryName?: string;
+  /** The owner's chosen style (Choker, Long Necklace, Layered Set, Pendant Set & Mangalsutra…). */
+  styleName?: string;
+  /** The variant polish/finish values (Silver, Gold, Antique Gold, Oxidised…) — used for the metal tone. */
+  polishes?: string[];
   colors?: string[];
   keywords?: string[];
   generated_content?: GeneratedContent | null;
@@ -162,15 +166,18 @@ function parseSpecKeywords(keywords?: string[]): { styles: string[]; materials: 
 export function templateContent(p: ProductLike): GeneratedContent {
   const cat = p.categoryName ?? "Jewellery";
   const sub = p.subcategoryName ?? "";
-  // Include the owner's chosen CATEGORY + SUBCATEGORY in the detection — a piece he filed under "Western"
-  // must read as western/daily, never bridal/festive (the root cause of the wrong-tone descriptions).
-  const blob = (p.name + " " + cat + " " + sub + " " + (p.keywords ?? []).join(" ")).toLowerCase();
+  const style = p.styleName ?? "";                       // Choker, Long Necklace, Layered Set…
+  const polishText = (p.polishes ?? []).filter(Boolean).join(" "); // Silver, Gold, Antique Gold, Oxidised…
+  const extra = `${sub} ${style} ${polishText}`.trim();
+  // Everything the owner has told us about the piece feeds the copy: name + category + subcategory +
+  // style + polish + keywords. A piece filed under "Western" reads western; a "Silver" polish reads silver.
+  const blob = (`${p.name} ${cat} ${extra} ${(p.keywords ?? []).join(" ")}`).toLowerCase();
   // Register: ethnic/festive by default; switch to western/daily when the name, keywords OR the chosen
-  // category/subcategory clearly say so AND there's no strong bridal material.
+  // category/subcategory/style clearly say so AND there's no strong bridal material.
   const western = WESTERN_RE.test(blob) && !BRIDAL_RE.test(blob);
 
-  const styles = styleHints(p.name + " " + sub, p.keywords);
-  const wStyles = westernHints(p.name + " " + sub, p.keywords);
+  const styles = styleHints(`${p.name} ${extra}`, p.keywords);
+  const wStyles = westernHints(`${p.name} ${extra}`, p.keywords);
   const pieces = includedPieces(p.keywords);
   const isSet = pieces.length > 0 || /set/i.test(p.name) || /set/i.test(sub);
   // Prefer the REAL piece type from the name/subcategory (pendant, choker, mangalsutra…) over the broad
@@ -237,20 +244,26 @@ export function templateContent(p: ProductLike): GeneratedContent {
   const matName = (material || (western ? "premium plated alloy" : "brass alloy")).toLowerCase();
   const materialLine = `Finest quality ${matName}, crafted with environment-friendly non-precious metals — skin-friendly and safe to wear for long hours.`;
 
+  const lc = (x: string) => x.toLowerCase();
+  const styleDesc = (styleWord || (styles[0] ?? "")).toLowerCase();
   let specOccasion: string, specMaterial: string;
   let opening: string;
   if (western) {
     opening =
-      `This ${title} is a ${(styleWord || "contemporary").toLowerCase()} ${catL} with a clean, modern finish${finishTone ? ` in a ${finishTone} tone` : ""}. ` +
-      `${antiTarnish ? "Its anti-tarnish plating keeps the shine and colour lasting through everyday use. " : ""}` +
-      `Lightweight and easy to carry, it pairs effortlessly with dresses, kurtis, co-ords and everyday wear — a smart pick for office, college and casual outings.`;
+      `The ${title} brings a clean, contemporary look${finishTone ? ` in a ${finishTone} tone` : ""}${styleDesc && !new RegExp(styleDesc, "i").test(title) ? `, styled as a ${styleDesc} ${catL}` : ""}. ` +
+      `${antiTarnish ? "Its anti-tarnish finish keeps the shine and colour lasting through everyday use. " : ""}` +
+      `Lightweight and easy to wear, it pairs effortlessly with dresses, kurtis, co-ords and western outfits — an easy pick for daily wear, office, college and evenings out.`;
     specOccasion = "Daily wear, office, college & gifting";
     specMaterial = antiTarnish ? "Anti-tarnish plated alloy" : (finishTone ? `${titleCasePhrase(finishTone)} plated alloy` : "Skin-friendly plated alloy");
   } else {
+    const lead = motif ? `intricate ${motif} detailing`
+      : material ? `exquisite ${lc(material)} craftsmanship`
+      : "elegant handcrafted detailing";
     opening =
-      `This ${title} is a beautifully crafted ${catL}${material ? ` featuring ${material.toLowerCase()} work` : ""}${motif ? ` with intricate ${motif} detailing` : ""}${finishTone ? `, finished in a ${finishTone} tone` : ""}. ` +
-      `${pieces.length ? `The matching ${joinAnd(pieces.map((x) => x.toLowerCase()))} complete the look. ` : ""}` +
-      `Ideal for weddings, festive celebrations, engagement ceremonies and special occasions, it pairs gracefully with sarees, lehengas and ethnic outfits.`;
+      `The ${title} showcases ${lead}${finishTone ? `, finished in a ${finishTone} tone` : ""}. ` +
+      `Crafted with careful attention to detail, this ${catL}${styleDesc && !new RegExp(styleDesc, "i").test(title) ? ` in a graceful ${styleDesc} design` : ""} carries a rich, traditional and festive appeal. ` +
+      `${pieces.length ? `The matching ${joinAnd(pieces.map(lc))} complete the set, making it ` : "It is "}` +
+      `perfect for weddings, engagement ceremonies, festive celebrations and special occasions, and it pairs gracefully with sarees, lehengas and ethnic outfits.`;
     specOccasion = "Wedding, festive & special occasions";
     specMaterial = material || "Brass alloy";
   }
