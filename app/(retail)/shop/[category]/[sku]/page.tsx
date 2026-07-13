@@ -114,8 +114,13 @@ export default async function ProductPage({ params }: Params) {
 
           <BuyBox variants={variantsForBuy} waText={waText} waHref={waHref} item={{ sku: p.sku, name: p.name, price: o.price, category: catSlug, qty: (p as any).qty }} />
 
-          <div className="mt-7 border-t border-sand pt-5">
-            <p className="text-ink/80 leading-relaxed">{content.description}</p>
+          <div className="mt-7 border-t border-sand pt-5 space-y-2 text-ink/80 leading-relaxed">
+            {content.description.split("\n").map((line) => line.trim()).filter(Boolean).map((line, i) => {
+              const m = line.match(/^([A-Z][A-Z &]+):\s*(.*)$/);
+              return m
+                ? <p key={i} className="text-sm"><span className="font-semibold text-ink">{m[1]}:</span> {m[2]}</p>
+                : <p key={i}>{line}</p>;
+            })}
           </div>
 
           {content.specs && Object.keys(content.specs).length > 0 && (

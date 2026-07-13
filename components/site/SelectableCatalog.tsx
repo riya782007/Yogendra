@@ -82,7 +82,7 @@ export function SelectableCatalog({ products, view, brand, phone }: { products: 
   .meta-r { text-align: right; font-size: 11px; color: #78716c; line-height: 1.5; }
   .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
   .card { border: 1px solid #e7e2d9; border-radius: 10px; overflow: hidden; page-break-inside: avoid; break-inside: avoid; }
-  .imgwrap { aspect-ratio: 4/5; background: #f6f3ee; }
+  .imgwrap { aspect-ratio: 3/4; background: #f6f3ee; }
   .imgwrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .ph { width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:#a8a29e; font-size:11px; }
   .meta { padding: 8px 10px 10px; }
@@ -160,7 +160,7 @@ export function SelectableCatalog({ products, view, brand, phone }: { products: 
               <div key={p.sku}
                 onClick={picking ? () => toggle(p.sku) : undefined}
                 className={`bg-white rounded-2xl overflow-hidden border shadow-card break-inside-avoid transition-all ${picking ? "cursor-pointer" : ""} ${on ? "border-emerald ring-2 ring-emerald/40" : "border-sand"}`}>
-                <div className="aspect-[4/5] bg-cream relative">
+                <div className="aspect-[3/4] bg-cream relative">
                   <ProductImage src={p.image} name={p.name} />
                   {picking && (
                     <span className={`absolute top-2 left-2 h-6 w-6 rounded-full grid place-items-center text-xs ${on ? "bg-emerald text-white" : "bg-white/80 text-ink border border-sand"}`}>{on ? "✓" : ""}</span>

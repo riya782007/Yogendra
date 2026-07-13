@@ -28,7 +28,7 @@ export function Gallery({ name, images }: { name: string; images: { path: string
 
   if (real.length === 0) {
     return (
-      <div className="aspect-[4/5] rounded-3xl overflow-hidden bg-cream shadow-luxe grid place-items-center relative" style={{ background: GRAD }}>
+      <div className="aspect-[3/4] rounded-3xl overflow-hidden bg-cream shadow-luxe grid place-items-center relative" style={{ background: GRAD }}>
         <span className="font-display text-7xl text-ink/25">{initials}</span>
         <span className="absolute bottom-4 left-0 right-0 text-center text-[11px] uppercase tracking-widest text-ink/40">Photo coming soon</span>
       </div>
@@ -40,7 +40,7 @@ export function Gallery({ name, images }: { name: string; images: { path: string
   return (
     <div>
       <button onClick={() => setOpen(true)} aria-label="Zoom image"
-        className="relative aspect-[4/5] w-full rounded-3xl overflow-hidden bg-cream shadow-luxe group cursor-zoom-in block">
+        className="relative aspect-[3/4] w-full rounded-3xl overflow-hidden bg-cream shadow-luxe group cursor-zoom-in block">
         <img src={cur.path} alt={curColor ? `${name} — ${curColor}` : name} className="object-cover w-full h-full transition-transform duration-500 group-hover:scale-105" />
         {curColor && (
           <span className="absolute top-3 left-3 text-[11px] font-medium text-ink bg-white/90 px-2.5 py-1 rounded-full shadow-sm capitalize">{curColor}</span>

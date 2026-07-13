@@ -7,8 +7,10 @@
  * it is PADDED (letterboxed) to that ratio with a sampled background colour — never cropped. This
  * guarantees the storefront's object-cover shows the WHOLE image, so no jewellery is ever cut off.
  */
-// fitRatio defaults to 4/5 (the product-card ratio); pass 0 to disable (e.g. wide promo banners).
-export async function compressImage(file: File, maxDim = 1600, quality = 0.82, fitRatio: number = 4 / 5): Promise<File> {
+// fitRatio defaults to 3/4 — the ratio the owner's AI photos (Nano Banana) come in AND the storefront
+// card/gallery ratio, so a 3:4 upload passes through untouched (no bars) and fills perfectly. Only an
+// odd-ratio upload gets letterboxed (never cropped). Pass 0 to disable (e.g. wide promo banners).
+export async function compressImage(file: File, maxDim = 1600, quality = 0.82, fitRatio: number = 3 / 4): Promise<File> {
   if (!file.type.startsWith("image/")) return file;
   try {
     const bitmap = await createImageBitmap(file);

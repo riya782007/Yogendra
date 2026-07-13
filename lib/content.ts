@@ -210,33 +210,58 @@ export function templateContent(p: ProductLike): GeneratedContent {
   // the product has no real name yet.
   const title = preferredTitle(p) ?? ([name, titleDescriptors, type].filter(Boolean).join(" ") + withPieces);
 
-  let description: string;
+  // ---------- Description in BlytheDIVA's own house format (reference: blythediva.com product pages) ----------
+  // Grounded opening (correct tone: western/daily vs ethnic/festive) + the site's structured blocks.
+  const finishTone = (western ? wStyles : styles).map((s) => s.toLowerCase()).find((s) => /gold|silver|rose|antique|oxidis|rhodium/.test(s))
+    || (/antique/.test(blob) ? "antique gold" : /oxidis|oxidiz/.test(blob) ? "oxidised silver" : /rose ?gold/.test(blob) ? "rose gold" : /silver/.test(blob) ? "silver" : /gold/.test(blob) ? "gold" : "");
+  const antiTarnish = /anti[- ]?tarnish/.test(blob);
+  const motif = ["peacock", "floral", "flower", "butterfly", "leaf", "paisley", "evil eye", "heart", "lotus", "bird", "temple", "chandbali"].find((m) => blob.includes(m));
+
+  // BOX CONTAINING — the main piece + any matching pieces the owner's keywords mention.
+  const boxItems: string[] = [];
+  if (/earring|jhumka|chandbali|stud|dangler|\bbali\b/i.test(type)) boxItems.push("a pair of earrings");
+  else boxItems.push(`one ${baseType.toLowerCase()}`);
+  for (const pc of pieces) {
+    const l = pc.toLowerCase();
+    if (/earring/.test(l)) { if (!boxItems.some((b) => /earring/.test(b))) boxItems.push("a pair of earrings"); }
+    else if (/maang ?tikka/.test(l)) boxItems.push("a maang tikka");
+    else if (/ring/.test(l)) boxItems.push("a finger ring");
+    else if (/bracelet/.test(l)) boxItems.push("a bracelet");
+    else if (/nose/.test(l)) boxItems.push("a nose pin");
+    else if (/haathphool/.test(l)) boxItems.push("a haathphool");
+    else if (/bajuband/.test(l)) boxItems.push("a bajuband");
+  }
+  const boxJoined = joinAnd(boxItems);
+  const box = boxJoined.charAt(0).toUpperCase() + boxJoined.slice(1) + ".";
+
+  const matName = (material || (western ? "premium plated alloy" : "brass alloy")).toLowerCase();
+  const materialLine = `Finest quality ${matName}, crafted with environment-friendly non-precious metals — skin-friendly and safe to wear for long hours.`;
+
   let specOccasion: string, specMaterial: string;
+  let opening: string;
   if (western) {
-    const finish = wStyles.find((s) => /gold|silver|rose|american diamond|zircon/i.test(s));
-    const antiTarnish = /anti[- ]?tarnish/.test(blob);
-    description =
-      `Make everyday styling effortless with ${title} by BlytheDIVA. ` +
-      `${finish ? `Finished in a ${finish.toLowerCase()} tone, it` : "It"} carries a clean, contemporary look that's light on the skin and easy to carry from work to evenings out. ` +
-      `${antiTarnish ? "Its anti-tarnish plating keeps the shine and colour lasting through regular, everyday use. " : ""}` +
-      `This ${catL} pairs effortlessly with dresses, jeans, kurtis, co-ords and western outfits — an easy pick for daily wear, office, college and casual outings. ` +
-      `Lightweight, skin-friendly and gift-ready, it adds a modern, minimal shine to any look.`;
-    specOccasion = "Daily wear, office, college, parties & gifting";
-    specMaterial = antiTarnish ? "Anti-tarnish plated alloy" : (finish ? `${finish} plated alloy` : "Skin-friendly plated alloy");
+    opening =
+      `This ${title} is a ${(styleWord || "contemporary").toLowerCase()} ${catL} with a clean, modern finish${finishTone ? ` in a ${finishTone} tone` : ""}. ` +
+      `${antiTarnish ? "Its anti-tarnish plating keeps the shine and colour lasting through everyday use. " : ""}` +
+      `Lightweight and easy to carry, it pairs effortlessly with dresses, kurtis, co-ords and everyday wear — a smart pick for office, college and casual outings.`;
+    specOccasion = "Daily wear, office, college & gifting";
+    specMaterial = antiTarnish ? "Anti-tarnish plated alloy" : (finishTone ? `${titleCasePhrase(finishTone)} plated alloy` : "Skin-friendly plated alloy");
   } else {
-    const includesLine = pieces.length ? `The set includes ${joinAnd(pieces.map((x) => x.toLowerCase()))}, making it a complete jewellery choice ` : "This piece is a graceful choice ";
-    const materialLine = material ? `${material.toLowerCase()} detailing that gives a rich traditional and bridal appeal` : "elegant craftsmanship with a rich traditional appeal";
-    description =
-      `Add royal elegance to your festive look with ${title} by BlytheDIVA. ` +
-      `Designed in a graceful ${(styleWord || "classic").toLowerCase()} style, this ${catL} features ${materialLine}. ` +
-      `${includesLine}for weddings, engagement ceremonies, sangeet, haldi-mehendi functions, festive celebrations and family occasions. ` +
-      `Its elegant ethnic design pairs beautifully with sarees, lehengas, anarkalis, shararas and bridal outfits. ` +
-      `Perfect for brides, bridesmaids and women who love statement Indian jewellery, this ${catL} adds charm, richness and timeless beauty to special-occasion styling.`;
-    specOccasion = "Wedding, festive, party & daily wear";
-    // Don't claim "anti-tarnish" by default — it isn't true for every piece. Use the detected material
-    // (American Diamond, Kundan, etc.) when known, else a plain, safe "Brass alloy".
+    opening =
+      `This ${title} is a beautifully crafted ${catL}${material ? ` featuring ${material.toLowerCase()} work` : ""}${motif ? ` with intricate ${motif} detailing` : ""}${finishTone ? `, finished in a ${finishTone} tone` : ""}. ` +
+      `${pieces.length ? `The matching ${joinAnd(pieces.map((x) => x.toLowerCase()))} complete the look. ` : ""}` +
+      `Ideal for weddings, festive celebrations, engagement ceremonies and special occasions, it pairs gracefully with sarees, lehengas and ethnic outfits.`;
+    specOccasion = "Wedding, festive & special occasions";
     specMaterial = material || "Brass alloy";
   }
+
+  const description =
+    `${opening}\n\n` +
+    `BRAND: BlytheDIVA\n` +
+    `BOX CONTAINING: ${box}\n` +
+    `MATERIAL & CRAFTSMANSHIP: ${materialLine}\n` +
+    `JEWELLERY CARE: Wipe the piece with a soft cloth after every use, store it in a jewellery box to avoid damage, and keep water, sprays and perfumes away.\n` +
+    `DISCLAIMER: Product colour may vary slightly due to photographic lighting or your screen settings.`;
 
   const descriptorStr = titleDescriptors;
   const allStyles = western ? wStyles : styles;

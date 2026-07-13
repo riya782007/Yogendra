@@ -36,7 +36,7 @@ export function ProductCard({ p, formula, index = 0 }: { p: CardProduct; formula
   return (
     <Link href={`/shop/${p.category.slug}/${p.sku}`}
       className="group relative block rounded-2xl bg-white shadow-card hover:shadow-luxe transition-all duration-300 hover:-translate-y-1 overflow-hidden">
-      <div className="relative aspect-[4/5] overflow-hidden bg-cream">
+      <div className="relative aspect-[3/4] overflow-hidden bg-cream">
         <div className="card-img h-full w-full"><ProductImage name={p.name} src={p.image} /></div>
 
         <div className="absolute top-3 left-3 flex flex-col gap-1.5">

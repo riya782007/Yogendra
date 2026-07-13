@@ -25,7 +25,7 @@ export default function Wishlist() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
           {items.map((i) => (
             <div key={i.sku} className="rounded-2xl bg-white shadow-card overflow-hidden">
-              <Link href={`/shop/${i.categorySlug}/${i.sku}`} className="block aspect-[4/5]"><ProductImage name={i.name} /></Link>
+              <Link href={`/shop/${i.categorySlug}/${i.sku}`} className="block aspect-[3/4]"><ProductImage name={i.name} /></Link>
               <div className="p-3">
                 <p className="text-[10px] uppercase tracking-wide text-gold-dark">{i.category}</p>
                 <h3 className="text-sm font-medium text-ink line-clamp-1">{i.name}</h3>
