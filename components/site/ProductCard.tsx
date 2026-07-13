@@ -33,7 +33,6 @@ function swatchCss(name: string): string {
 
 export function ProductCard({ p, formula, index = 0 }: { p: CardProduct; formula: PricingFormula; index?: number }) {
   const o = liveOffer(p.base_wholesale, formula, overridesOf(p));
-  const low = p.qty > 0 && p.qty <= 3;
   return (
     <Link href={`/shop/${p.category.slug}/${p.sku}`}
       className="group relative block rounded-2xl bg-white shadow-card hover:shadow-luxe transition-all duration-300 hover:-translate-y-1 overflow-hidden">
@@ -47,7 +46,6 @@ export function ProductCard({ p, formula, index = 0 }: { p: CardProduct; formula
 
         <WishlistButton item={{ sku: p.sku, name: p.name, category: p.category.name, categorySlug: p.category.slug, price: o.price }} className="absolute top-3 right-3 h-9 w-9 grid place-items-center rounded-full backdrop-blur opacity-0 group-hover:opacity-100 translate-y-1 group-hover:translate-y-0 transition-all" />
 
-        {low && <span className="absolute bottom-3 left-3 bg-ink/80 text-cream text-[10px] px-2 py-1 rounded-full">Only {p.qty} left</span>}
 
         <div className="absolute inset-x-3 bottom-3 opacity-0 group-hover:opacity-100 translate-y-3 group-hover:translate-y-0 transition-all duration-300">
           <AddToCart variant="card" item={{ sku: p.sku, name: p.name, price: o.price, category: p.category.slug }} />
