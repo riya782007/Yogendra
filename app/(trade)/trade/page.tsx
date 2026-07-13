@@ -68,15 +68,21 @@ export default async function TradeDashboard() {
       // (sold-out colours are the owner's "hidden variants"), and drop a design entirely when every
       // colour is out of stock. Colours of the same design are grouped into one dropdown row client-side.
       const vs = allVs.filter((v) => (v.qty ?? 0) > 0);
-      return vs.map((v) => ({
-        pid, sku: v.sku, name: p.name, category: p.category.name, sub, style, colour: v.color ?? null,
-        qty: v.qty ?? 0, price, mrp: ps.mrp,
-        image: (Array.isArray(v.image_paths) ? v.image_paths.find((x: string) => typeof x === "string" && x.startsWith("http")) : null) ?? parentImg,
-      }));
+      return vs.map((v) => {
+        // ALL of the colour's photos (e.g. a model shot AND a stand shot of the same colour) so the
+        // dealer sees every angle — not just the first image.
+        const vImgs = Array.isArray(v.image_paths) ? v.image_paths.filter((x: string) => typeof x === "string" && x.startsWith("http")) : [];
+        const images = vImgs.length ? vImgs : (parentImg ? [parentImg] : []);
+        return {
+          pid, sku: v.sku, name: p.name, category: p.category.name, sub, style, colour: v.color ?? null,
+          qty: v.qty ?? 0, price, mrp: ps.mrp,
+          image: images[0] ?? parentImg, images,
+        };
+      });
     }
     // Simple product (no colours): list it only when it has stock.
     if ((p.qty ?? 0) <= 0) return [];
-    return [{ pid, sku: p.sku, name: p.name, category: p.category.name, sub, style, colour: null, qty: p.qty, price, mrp: ps.mrp, image: parentImg }];
+    return [{ pid, sku: p.sku, name: p.name, category: p.category.name, sub, style, colour: null, qty: p.qty, price, mrp: ps.mrp, image: parentImg, images: parentImg ? [parentImg] : [] }];
   });
 
   // Owner's UPI collection details for direct QR payment (no Razorpay → owner keeps 100%).

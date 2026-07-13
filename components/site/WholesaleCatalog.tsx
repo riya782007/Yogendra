@@ -5,7 +5,7 @@ import { ProductImage } from "@/components/Placeholder";
 import { QtyField } from "@/components/admin/QtyField";
 import { placeWholesaleOrderAction, wholesaleLogoutAction, requestQuoteAction, uploadPaymentProofAction } from "@/app/actions/wholesale";
 
-type P = { pid: string; sku: string; name: string; category: string; sub?: string | null; style?: string | null; qty: number; price: number; mrp: number; image: string | null; colour?: string | null };
+type P = { pid: string; sku: string; name: string; category: string; sub?: string | null; style?: string | null; qty: number; price: number; mrp: number; image: string | null; images?: string[]; colour?: string | null };
 /** A design (product) with all of its in-stock colours grouped under one row + a colour dropdown. */
 type Grp = { pid: string; name: string; category: string; sub?: string | null; style?: string | null; variants: P[] };
 type HistItem = { sku: string; name: string; qty: number };
@@ -40,7 +40,7 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
   const [tab, setTab] = useState<"order" | "history">("order");
   const [bulk, setBulk] = useState("");
   const [bulkMsg, setBulkMsg] = useState("");
-  const [zoom, setZoom] = useState<{ src: string; name: string } | null>(null);
+  const [zoom, setZoom] = useState<{ imgs: string[]; i: number; name: string } | null>(null);
   const [rfqOpen, setRfqOpen] = useState(false);   // request-a-quote (bulk/custom)
   const [rfqText, setRfqText] = useState("");
   const [rfqBusy, setRfqBusy] = useState(false);
@@ -192,11 +192,32 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
     );
   }
 
-  const Img = ({ p, className }: { p: P; className?: string }) => (
-    <button onClick={() => p.image && setZoom({ src: p.image, name: p.name })} className={`block bg-cream overflow-hidden ${p.image ? "cursor-zoom-in" : ""} ${className ?? ""}`} aria-label="Enlarge">
-      {p.image ? <img src={p.image} alt={p.name} className="w-full h-full object-cover" /> : <ProductImage name={p.name} />}
-    </button>
-  );
+  /** Every photo for a row (a colour can have a model shot + a stand shot). */
+  const imgsOf = (p: P) => (p.images && p.images.length ? p.images : (p.image ? [p.image] : []));
+  const Img = ({ p, className }: { p: P; className?: string }) => {
+    const imgs = imgsOf(p);
+    return (
+      <button onClick={() => imgs.length && setZoom({ imgs, i: 0, name: p.name })} className={`relative block bg-cream overflow-hidden ${imgs.length ? "cursor-zoom-in" : ""} ${className ?? ""}`} aria-label="Enlarge">
+        {imgs[0] ? <img src={imgs[0]} alt={p.name} className="w-full h-full object-cover" /> : <ProductImage name={p.name} />}
+        {imgs.length > 1 && <span className="absolute bottom-0.5 right-0.5 bg-ink/75 text-white text-[9px] leading-none px-1 py-0.5 rounded">1/{imgs.length}</span>}
+      </button>
+    );
+  };
+  /** Small thumbnail strip so the dealer SEES every photo of the shown colour, not just the first. */
+  const Thumbs = ({ p, big = false }: { p: P; big?: boolean }) => {
+    const imgs = imgsOf(p);
+    if (imgs.length < 2) return null;
+    const size = big ? "w-8 h-10" : "w-6 h-7";
+    return (
+      <div className="flex gap-1 mt-1">
+        {imgs.slice(0, 4).map((u, k) => (
+          <button key={k} onClick={() => setZoom({ imgs, i: k, name: p.name })} className={`${size} rounded overflow-hidden bg-cream ring-1 ring-sand cursor-zoom-in`} aria-label={`Photo ${k + 1}`}>
+            <img src={u} alt="" className="w-full h-full object-cover" />
+          </button>
+        ))}
+      </div>
+    );
+  };
 
   return (
     <div>
@@ -327,8 +348,8 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
                   return (
                     <tr key={g.pid} className="border-t border-sand/60 hover:bg-cream/40 align-top">
                       <td className="p-3">
-                        <div className="flex items-center gap-3">
-                          <Img p={p} className="w-12 h-14 rounded-lg shrink-0" />
+                        <div className="flex items-start gap-3">
+                          <div className="shrink-0"><Img p={p} className="w-12 h-14 rounded-lg" /><Thumbs p={p} /></div>
                           <div className="min-w-0">
                             <span className="text-ink font-medium block">{p.name}</span>
                             <span className="text-xs text-muted">{p.category}</span>
@@ -380,7 +401,7 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
               const cartColours = g.variants.filter((v) => v.sku !== p.sku && (qty[v.sku] ?? 0) > 0);
               return (
                 <div key={g.pid} className="bg-white rounded-2xl border border-sand shadow-card p-3 flex gap-3">
-                  <Img p={p} className="w-20 h-24 rounded-lg shrink-0" />
+                  <div className="shrink-0"><Img p={p} className="w-20 h-24 rounded-lg" /><Thumbs p={p} big /></div>
                   <div className="flex-1 min-w-0">
                     <p className="text-ink font-medium leading-tight">{p.name}</p>
                     <p className="text-xs text-muted">{p.category} · <span className="font-mono">{p.sku}</span></p>
@@ -528,8 +549,14 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
       {zoom && (
         <div className="fixed inset-0 z-[100] bg-ink/90 backdrop-blur-sm grid place-items-center p-5" onClick={() => setZoom(null)}>
           <button onClick={() => setZoom(null)} className="absolute top-4 right-5 text-cream/80 hover:text-white text-3xl">✕</button>
-          <img src={zoom.src} alt={zoom.name} className="max-w-[92vw] max-h-[85vh] object-contain rounded-xl" onClick={(e) => e.stopPropagation()} />
-          <p className="absolute bottom-5 left-0 right-0 text-center text-cream/70 text-sm">{zoom.name}</p>
+          {zoom.imgs.length > 1 && (
+            <>
+              <button onClick={(e) => { e.stopPropagation(); setZoom((z) => z && ({ ...z, i: (z.i - 1 + z.imgs.length) % z.imgs.length })); }} className="absolute left-3 sm:left-6 text-cream/80 hover:text-white text-4xl leading-none">‹</button>
+              <button onClick={(e) => { e.stopPropagation(); setZoom((z) => z && ({ ...z, i: (z.i + 1) % z.imgs.length })); }} className="absolute right-3 sm:right-6 text-cream/80 hover:text-white text-4xl leading-none">›</button>
+            </>
+          )}
+          <img src={zoom.imgs[zoom.i]} alt={zoom.name} className="max-w-[92vw] max-h-[85vh] object-contain rounded-xl" onClick={(e) => e.stopPropagation()} />
+          <p className="absolute bottom-5 left-0 right-0 text-center text-cream/70 text-sm">{zoom.name}{zoom.imgs.length > 1 ? ` · ${zoom.i + 1}/${zoom.imgs.length}` : ""}</p>
         </div>
       )}
     </div>
