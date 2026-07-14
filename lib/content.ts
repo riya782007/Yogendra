@@ -267,24 +267,34 @@ export function templateContent(p: ProductLike): GeneratedContent {
   const specOccasion = western ? "Daily wear, office, college & gifting" : "Wedding, festive & special occasions";
   const specMaterial = mFound.length ? joinAnd(mFound) : (material || "Brass alloy");
 
-  const description =
-    `BRAND: BlytheDIVA\n` +
-    `BOX CONTAINING: ${box}\n` +
-    `MATERIAL & CRAFTSMANSHIP: ${materialLine}\n` +
-    `JEWELLERY CARE: Wipe the piece with a soft cloth after every use, store it in a jewellery box to avoid damage, and keep water, sprays and perfumes away.\n` +
-    `DISCLAIMER: Product colour may vary slightly due to photographic lighting or your screen settings.`;
+  // Description — a ~100-125 word SEO marketing paragraph in the owner's approved ChatGPT style,
+  // GROUNDED: it only names the materials/pieces we actually detected, but reads as fluent SEO copy
+  // for Google ranking. The structured facts (box, material, care) go in the specs table below.
+  void materialLine; void itemNoun;
+  const finish = /rose ?gold/.test(nblob) ? "rose-gold" : /antique/.test(nblob) ? "antique-gold" : /oxidis|oxidiz/.test(nblob) ? "oxidised-silver" : /\bsilver\b|rhodium/.test(nblob) ? "silver-tone" : /\bgold\b/.test(nblob) ? "gold-tone" : "";
+  const matPhrase = materialsList !== "premium quality materials" ? materialsList.toLowerCase() : "";
+  const setNote = extras.length ? ` The ${joinAnd(extras)} complete the set for a coordinated look.` : "";
+  const description = western
+    ? `Add an effortless touch to your everyday style with this ${finish ? finish + " " : ""}${catL}${matPhrase ? ` featuring ${matPhrase}` : ""}. `
+      + `Lightweight and comfortable for all-day wear, it pairs beautifully with dresses, kurtis, co-ords and western outfits — an easy pick for the office, college, parties and casual outings.${setNote} `
+      + `Crafted from high-quality, skin-friendly materials with a refined finish, it offers durability and a clean, modern look. `
+      + `Whether you are a retailer, reseller or wholesale buyer, this trendy ${baseType.toLowerCase()} is a must-have addition to your collection. `
+      + `Shop premium fashion jewellery online from BlytheDIVA for the latest wholesale and retail designs at competitive prices.`
+    : `Elevate your jewellery collection with this ${finish ? finish + " " : ""}${catL}${matPhrase ? ` featuring ${matPhrase}` : ""}. `
+      + `Designed to complement ethnic, Indo-western and modern outfits, it is perfect for weddings, festive celebrations, parties and special occasions.${setNote} `
+      + `Crafted from high-quality materials with a graceful finish, it offers lightweight comfort, durability and a sophisticated, elegant look. `
+      + `Whether you are a retailer, reseller or wholesale buyer, this trendy piece is a must-have addition to your collection. `
+      + `Shop premium artificial jewellery online from BlytheDIVA for the latest wholesale and retail designs at competitive prices.`;
 
   const descriptorStr = titleDescriptors;
   const allStyles = western ? wStyles : styles;
   const specs: Record<string, string> = {
     Category: cat,
+    "Box Containing": box.replace(/\.$/, ""),
     Material: specMaterial,
     "Work / Style": allStyles.length ? allStyles.join(", ") : "Handcrafted",
-    ...(pieces.length ? { Includes: joinAnd(pieces) } : {}),
     Occasion: specOccasion,
-    Care: "Keep away from water & perfume; store dry",
-    // Colours intentionally omitted from specs — the variant/colour selector already shows them, so
-    // repeating them here is redundant (owner's note).
+    Care: "Wipe with a soft cloth; keep away from water, sprays & perfume; store in a box",
   };
 
   const tags = Array.from(new Set([
