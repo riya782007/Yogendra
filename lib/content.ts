@@ -228,7 +228,10 @@ export function templateContent(p: ProductLike): GeneratedContent {
   const boxMain = isEarringType ? "a pair of earrings" : `one ${baseType.toLowerCase()}`;
   const extras: string[] = [];
   const hasExtra = (re: RegExp) => extras.some((e) => re.test(e));
-  if (!isEarringType && (isSet || /earring|jhumka|\bbali\b|dangler/.test(nblob)) && !hasExtra(/earring/)) extras.push("a pair of earrings");
+  // A "Set" in the NAME is NOT proof of earrings (a "Pendant Set" can be a single pendant). Only add
+  // earrings when the name/keywords LITERALLY say so — never infer a piece that isn't named
+  // (owner: "sabme earrings chipka diya" — do not stick earrings onto everything).
+  if (!isEarringType && /\bearrings?\b|jhumka|jhumki|\bdanglers?\b/.test(nblob) && !hasExtra(/earring/)) extras.push("a pair of earrings");
   for (const pc of pieces.map((x) => x.toLowerCase())) {
     if (/earring|jhumka|\bbali\b|dangler/.test(pc)) { if (!isEarringType && !hasExtra(/earring/)) extras.push("a pair of earrings"); }
     else if (/tikka/.test(pc)) { if (!hasExtra(/tikka/)) extras.push("a maang tikka"); }
@@ -273,14 +276,16 @@ export function templateContent(p: ProductLike): GeneratedContent {
   void materialLine; void itemNoun;
   const finish = /rose ?gold/.test(nblob) ? "rose-gold" : /antique/.test(nblob) ? "antique-gold" : /oxidis|oxidiz/.test(nblob) ? "oxidised-silver" : /\bsilver\b|rhodium/.test(nblob) ? "silver-tone" : /\bgold\b/.test(nblob) ? "gold-tone" : "";
   const matPhrase = materialsList !== "premium quality materials" ? materialsList.toLowerCase() : "";
-  const setNote = extras.length ? ` The ${joinAnd(extras)} complete the set for a coordinated look.` : "";
+  // Mention extra pieces ONLY when they are real; call it a "set" only when it genuinely has >1 piece.
+  const setNote = extras.length ? ` It comes with ${joinAnd(extras)} to complete the look.` : "";
+  const descNoun = extras.length ? catL : baseType.toLowerCase();
   const description = western
-    ? `Add an effortless touch to your everyday style with this ${finish ? finish + " " : ""}${catL}${matPhrase ? ` featuring ${matPhrase}` : ""}. `
+    ? `Add an effortless touch to your everyday style with this ${finish ? finish + " " : ""}${descNoun}${matPhrase ? ` featuring ${matPhrase}` : ""}. `
       + `Lightweight and comfortable for all-day wear, it pairs beautifully with dresses, kurtis, co-ords and western outfits — an easy pick for the office, college, parties and casual outings.${setNote} `
       + `Crafted from high-quality, skin-friendly materials with a refined finish, it offers durability and a clean, modern look. `
       + `Whether you are a retailer, reseller or wholesale buyer, this trendy ${baseType.toLowerCase()} is a must-have addition to your collection. `
       + `Shop premium fashion jewellery online from BlytheDIVA for the latest wholesale and retail designs at competitive prices.`
-    : `Elevate your jewellery collection with this ${finish ? finish + " " : ""}${catL}${matPhrase ? ` featuring ${matPhrase}` : ""}. `
+    : `Elevate your jewellery collection with this ${finish ? finish + " " : ""}${descNoun}${matPhrase ? ` featuring ${matPhrase}` : ""}. `
       + `Designed to complement ethnic, Indo-western and modern outfits, it is perfect for weddings, festive celebrations, parties and special occasions.${setNote} `
       + `Crafted from high-quality materials with a graceful finish, it offers lightweight comfort, durability and a sophisticated, elegant look. `
       + `Whether you are a retailer, reseller or wholesale buyer, this trendy piece is a must-have addition to your collection. `
