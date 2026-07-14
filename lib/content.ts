@@ -49,10 +49,17 @@ export const DIVA_NAMES = [
  * synthesiser rewrite it (which was inventing a new girl name and flowery wording he disliked).
  * Returns the cleaned name, or null when the name is missing/placeholder so a title can be synthesised.
  */
-export function preferredTitle(p: { name?: string | null }): string | null {
-  const raw = (p.name ?? "").replace(/\s*\([^)]*\)\s*$/, "").replace(/\s+/g, " ").trim(); // drop any trailing (SKU)
+export function preferredTitle(p: { name?: string | null; sku?: string | null }): string | null {
+  const sku = (p.sku ?? "").trim();
+  // Remove the SKU token wherever it appears, plus any trailing "(SKU)".
+  let raw = (p.name ?? "").replace(/\s*\([^)]*\)\s*$/, "");
+  if (sku) raw = raw.replace(new RegExp(`\\b${sku.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "ig"), " ");
+  raw = raw.replace(/\s+/g, " ").trim();
   if (raw.length < 3) return null;
   if (/^(product|untitled|new product|item|sku\b)/i.test(raw)) return null; // placeholder names → synthesise
+  // Reject a bare product CODE used as a name (e.g. "WN111", "ADN186", "E903") — that's a SKU, not a
+  // real title, so we synthesise a proper {name}{descriptors}{type} title instead.
+  if (/^[A-Za-z]{1,4}[-\s]?\d{1,6}[A-Za-z]?$/.test(raw)) return null;
   return raw;
 }
 
@@ -109,7 +116,6 @@ function styleHints(name: string, keywords?: string[]): string[] {
 function westernHints(name: string, keywords?: string[]): string[] {
   const n = (name + " " + (keywords ?? []).join(" ")).toLowerCase(); const t: string[] = [];
   if (/anti[- ]?tarnish/.test(n)) t.push("Anti-Tarnish");
-  if (n.includes("western")) t.push("Western");
   if (/daily ?wear|everyday/.test(n)) t.push("Daily Wear");
   if (n.includes("minimal")) t.push("Minimal");
   if (n.includes("rose gold")) t.push("Rose Gold");
@@ -179,7 +185,7 @@ export function templateContent(p: ProductLike): GeneratedContent {
   const styles = styleHints(`${p.name} ${extra}`, p.keywords);
   const wStyles = westernHints(`${p.name} ${extra}`, p.keywords);
   const pieces = includedPieces(p.keywords);
-  const isSet = pieces.length > 0 || /set/i.test(p.name) || /set/i.test(sub);
+  const isSet = pieces.length > 0 || /set/i.test(p.name) || /set/i.test(sub) || /set/i.test(style);
   // Prefer the REAL piece type from the name/subcategory (pendant, choker, mangalsutra…) over the broad
   // parent category — so a pendant is a "Pendant Set", not a "Necklace Set" or an "Other Accessorie".
   const typeHint = (p.name + " " + sub).toLowerCase();
@@ -220,7 +226,11 @@ export function templateContent(p: ProductLike): GeneratedContent {
   const baseName = preferredTitle(p);
   let title: string;
   if (!baseName) {
-    title = ([name, titleDescriptors, type].filter(Boolean).join(" ") + withPieces).replace(/\s+/g, " ").trim();
+    // No real name (or a bare SKU code): synthesise a BlytheDIVA-style title from a random girl name +
+    // the polish/finish + material/style descriptors + the type from category/sub-category. No SKU.
+    const polish0 = ((p.polishes ?? []).find(Boolean) ?? "").trim();
+    const polishFinish = polish0 && !new RegExp(polish0.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(titleDescriptors) ? titleCasePhrase(polish0.toLowerCase()) : "";
+    title = ([name, titleDescriptors, polishFinish, type].filter(Boolean).join(" ") + withPieces).replace(/\s+/g, " ").trim();
   } else {
     const firstName = baseName.split(/\s+/)[0];
     const enriched = ([firstName, titleDescriptors, type].filter(Boolean).join(" ") + withPieces).replace(/\s+/g, " ").trim();
