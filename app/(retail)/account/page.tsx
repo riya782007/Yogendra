@@ -41,7 +41,7 @@ export default async function Account({ searchParams }: { searchParams: { order?
             <div className="bg-white rounded-2xl p-6 shadow-card mt-4">
               <h2 className="font-medium text-ink mb-3">Items</h2>
               <div className="space-y-2">
-                {data.items.map((it: any, i: number) => (
+                {(data.items ?? []).map((it: any, i: number) => (
                   <div key={i} className="flex justify-between text-sm"><span className="text-ink/80">{it.product?.name} <span className="text-muted">× {it.qty}</span></span><span className="text-ink">{formatPaise(it.line_total)}</span></div>
                 ))}
               </div>
