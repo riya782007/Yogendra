@@ -36,6 +36,7 @@ function prompt(p: ProductLike) {
     `USE all of the above — name, category, sub-category, style, polish/finish, colours and keywords — to describe THIS piece specifically.`,
     ``,
     `GROUNDING RULES (STRICT — the owner REJECTS anything invented or generic):`,
+    `  • The CATEGORY and SUB-CATEGORY the owner selected are the PRIMARY truth for what this piece IS (the jewellery type) and how it should be styled — lead the description with them (e.g. Category "Earrings" + Sub-category "Kundan Earrings" → a Kundan earring; Sub-category "Temple Necklace" → a temple-style necklace). The description MUST match the selected category/sub-category, not guess a different type.`,
     `  • Use ONLY the facts given above (name, category, sub-category, style, polish/finish, colours, keywords/specifications) and the attached photo. Nothing else.`,
     `  • NEVER invent a stone, material, motif, colour, length, layer count, or included piece that none of the inputs mention. If the name does not say "Maang Tikka" (or the specs don't list it), the set does NOT include one — do not add it.`,
     `  • Do NOT claim properties that aren't stated: no "anti-tarnish", "gold-plated", "925 / real silver", "handmade", "hypoallergenic", "adjustable", "waterproof" unless an input says so.`,
@@ -76,23 +77,32 @@ function prompt(p: ProductLike) {
 }
 
 export function buildGateway() {
-  // OpenAI is the PRIMARY writer (the owner sets OPENAI_API_KEY for high-quality BlytheDIVA titles);
-  // Groq is a free secondary if present; deterministic template is the always-there final hop.
+  // GROQ is the PRIMARY writer (free + fast) — the owner sets GROQ_API_KEY; titles + descriptions are
+  // generated from the product's name + CATEGORY + SUB-CATEGORY + keywords. OpenAI (vision-capable) is
+  // the FALLBACK when Groq is missing or fails; deterministic template is the always-there final hop.
+  const groqPrimary = groqConfigured();
+  const openaiFallback = openaiConfigured();
+  const SYSTEM = "You are BlytheDIVA's product copywriter. Return only valid minified JSON.";
   return new AiGateway({
     primary: {
-      name: openaiConfigured() ? "openai" : "gemini",
-      // Vision-capable primary: OpenAI (gpt-4o-mini) when enabled, otherwise Gemini — both read the
-      // owner's product photo. Gemini carries titles while OpenAI billing is capped.
-      run: async (call: any) => JSON.parse(await (openaiConfigured() ? openaiChat : geminiChat)({
-        system: "You are BlytheDIVA's product copywriter. Return only valid minified JSON.",
-        user: call._prompt, json: true,
-        imageBase64: call._product?.imageBase64, imageMime: call._product?.imageMime,
-      })),
+      name: groqPrimary ? "groq" : (openaiFallback ? "openai" : "gemini"),
+      run: async (call: any) => {
+        if (groqPrimary) return JSON.parse(await groqChat({ system: SYSTEM, user: call._prompt, json: true }));
+        // No Groq key → go straight to a vision model so the photo still informs the copy.
+        return JSON.parse(await (openaiFallback ? openaiChat : geminiChat)({
+          system: SYSTEM, user: call._prompt, json: true,
+          imageBase64: call._product?.imageBase64, imageMime: call._product?.imageMime,
+        }));
+      },
     },
     secondary: {
-      // Groq's text models can't see images; it only runs if OpenAI is unavailable, as a text-only writer.
-      name: "groq",
-      run: async (call: any) => JSON.parse(await groqChat({ system: "You are BlytheDIVA's product copywriter. Return only valid minified JSON.", user: call._prompt, json: true })),
+      // Fallback writer: OpenAI (gpt-4o-mini, vision) when configured, else Gemini — both can also read
+      // the product photo for extra grounding when Groq is unavailable.
+      name: openaiFallback ? "openai" : "gemini",
+      run: async (call: any) => JSON.parse(await (openaiFallback ? openaiChat : geminiChat)({
+        system: SYSTEM, user: call._prompt, json: true,
+        imageBase64: call._product?.imageBase64, imageMime: call._product?.imageMime,
+      })),
     },
     deterministic: (call: any) => templateContent(call._product) as GeneratedContent,
     budgetPaise: Number(process.env.AI_BUDGET_PAISE ?? 500000),

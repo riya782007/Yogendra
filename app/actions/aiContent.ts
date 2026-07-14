@@ -38,7 +38,10 @@ export async function generateContentAction(sku: string, keywords?: string[]): P
   if (!p) return { ok: false, sku, error: "not found" };
   const colors = (p.variants ?? []).map((v) => v.color ?? "").filter(Boolean);
   const polishes = (p.variants ?? []).map((v: any) => v.polish ?? "").filter(Boolean);
-  const { imageBase64, imageMime } = await fetchProductImage(p);
+  // Groq (primary) is text-only and writes from the name + category + sub-category + keywords, so when
+  // it's configured we skip the photo download — this keeps bulk "Generate all" fast and avoids timeouts.
+  const img: { imageBase64?: string; imageMime?: string } = process.env.GROQ_API_KEY ? {} : await fetchProductImage(p);
+  const { imageBase64, imageMime } = img;
   const { content, provider, fallbackUsed } = await generateProductContent({
     name: p.name, sku: p.sku, categoryName: p.category?.name,
     subcategoryName: (p as any).subcategory?.name, polishes, colors,
