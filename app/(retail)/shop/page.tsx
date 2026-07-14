@@ -18,10 +18,24 @@ export default async function Shop() {
   const [{ products, formula }, reviews, reels, promos, tree] = await Promise.all([getStorefront(), getFeaturedReviews(), getShoppableReels(), getActivePromotions("retail"), getCategoryTree()]);
   // Category tiles are driven by the catalogue tree, so they always show — even before
   // any products are published (the storefront starts with everything in draft).
-  const cats = tree.filter((c) => c.name?.trim().toLowerCase() !== "uncategorized").map((c) => ({ name: c.name, slug: c.slug }));
-  const bestsellers = [...products].sort((a, b) => b.reviews - a.reviews).slice(0, 8);
-  // New Arrivals first (recently added), then the rest — real feed for the nav link + section.
-  const trending = [...products].sort((a, b) => (b.isNew ? 1 : 0) - (a.isNew ? 1 : 0)).slice(0, 8);
+  // Category tiles get a REAL jewellery photo automatically — the first in-stock product image in that
+  // category — so the "Shop by Category" row never shows bare letter placeholders (HA / N / E).
+  const catImg = new Map<string, string>();
+  for (const p of products as any[]) {
+    const slug = p.category?.slug; const img = p.image;
+    if (slug && img && !catImg.has(slug)) catImg.set(slug, img);
+  }
+  const cats = tree.filter((c) => c.name?.trim().toLowerCase() !== "uncategorized").map((c) => ({ name: c.name, slug: c.slug, image: (c as any).imageUrl || catImg.get(c.slug) || null }));
+  // NEW ARRIVALS — genuinely the most recently ADDED pieces (newest first).
+  const createdMs = (p: any) => (p.created_at ? new Date(p.created_at).getTime() : 0);
+  const trending = [...products].sort((a, b) => createdMs(b) - createdMs(a)).slice(0, 8);
+  // BESTSELLERS — real top sellers once there's sales/review data; until then a curated pick that is
+  // ALWAYS distinct from New Arrivals (no product appears in both), so the two rows never look identical.
+  const newIds = new Set(trending.map((p) => p.sku));
+  const bestsellers = [...products]
+    .sort((a, b) => (b.reviews - a.reviews) || (b.rating - a.rating) || a.sku.localeCompare(b.sku))
+    .filter((p) => !newIds.has(p.sku))
+    .slice(0, 8);
   // Real product photos for the hero collage (falls back to a tasteful placeholder if none yet).
   const heroPics = products.filter((p) => p.image).slice(0, 3);
 
@@ -77,7 +91,11 @@ export default async function Shop() {
           {cats.map((c, i) => (
             <Reveal key={c.slug} delay={i * 70}>
               <Link href={`/shop/c/${c.slug}`} className="group block rounded-2xl overflow-hidden bg-white shadow-card hover:shadow-luxe transition-all hover:-translate-y-1">
-                <div className="aspect-[4/3] overflow-hidden"><div className="card-img h-full w-full"><ProductImage name={c.name} /></div></div>
+                <div className="aspect-[4/3] overflow-hidden">
+                  {c.image
+                    ? <img src={c.image} alt={c.name} className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                    : <div className="card-img h-full w-full"><ProductImage name={c.name} /></div>}
+                </div>
                 <p className="text-center py-4 text-base font-medium text-ink group-hover:text-emerald transition-colors">{c.name}</p>
               </Link>
             </Reveal>
