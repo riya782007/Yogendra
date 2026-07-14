@@ -217,59 +217,57 @@ export function templateContent(p: ProductLike): GeneratedContent {
   // the product has no real name yet.
   const title = preferredTitle(p) ?? ([name, titleDescriptors, type].filter(Boolean).join(" ") + withPieces);
 
-  // ---------- Description in BlytheDIVA's own house format (reference: blythediva.com product pages) ----------
-  // Grounded opening (correct tone: western/daily vs ethnic/festive) + the site's structured blocks.
-  const finishTone = (western ? wStyles : styles).map((s) => s.toLowerCase()).find((s) => /gold|silver|rose|antique|oxidis|rhodium/.test(s))
-    || (/antique/.test(blob) ? "antique gold" : /oxidis|oxidiz/.test(blob) ? "oxidised silver" : /rose ?gold/.test(blob) ? "rose gold" : /silver/.test(blob) ? "silver" : /gold/.test(blob) ? "gold" : "");
-  const antiTarnish = /anti[- ]?tarnish/.test(blob);
-  const motif = ["peacock", "floral", "flower", "butterfly", "leaf", "paisley", "evil eye", "heart", "lotus", "bird", "temple", "chandbali"].find((m) => blob.includes(m));
+  // ---------- Description — SIMPLE (owner's spec): just the labelled blocks, NO opening paragraph.
+  //            Only BOX CONTAINING (the actual pieces) and MATERIAL & CRAFTSMANSHIP (the actual
+  //            materials) vary per product; BRAND / CARE / DISCLAIMER are fixed. ----------
+  const nblob = `${p.name} ${blob}`.toLowerCase();
+  const isEarringType = /earring|jhumka|chandbali|stud|dangler|\bbali\b/i.test(type);
 
-  // BOX CONTAINING — the main piece + any matching pieces the owner's keywords mention.
-  const boxItems: string[] = [];
-  if (/earring|jhumka|chandbali|stud|dangler|\bbali\b/i.test(type)) boxItems.push("a pair of earrings");
-  else boxItems.push(`one ${baseType.toLowerCase()}`);
-  for (const pc of pieces) {
-    const l = pc.toLowerCase();
-    if (/earring/.test(l)) { if (!boxItems.some((b) => /earring/.test(b))) boxItems.push("a pair of earrings"); }
-    else if (/maang ?tikka/.test(l)) boxItems.push("a maang tikka");
-    else if (/ring/.test(l)) boxItems.push("a finger ring");
-    else if (/bracelet/.test(l)) boxItems.push("a bracelet");
-    else if (/nose/.test(l)) boxItems.push("a nose pin");
-    else if (/haathphool/.test(l)) boxItems.push("a haathphool");
-    else if (/bajuband/.test(l)) boxItems.push("a bajuband");
+  // BOX CONTAINING — main piece, then only the extras the piece actually has, e.g.
+  // "One necklace with a pair of earrings and a maang tikka."
+  const boxMain = isEarringType ? "a pair of earrings" : `one ${baseType.toLowerCase()}`;
+  const extras: string[] = [];
+  const hasExtra = (re: RegExp) => extras.some((e) => re.test(e));
+  if (!isEarringType && (isSet || /earring|jhumka|\bbali\b|dangler/.test(nblob)) && !hasExtra(/earring/)) extras.push("a pair of earrings");
+  for (const pc of pieces.map((x) => x.toLowerCase())) {
+    if (/earring|jhumka|\bbali\b|dangler/.test(pc)) { if (!isEarringType && !hasExtra(/earring/)) extras.push("a pair of earrings"); }
+    else if (/tikka/.test(pc)) { if (!hasExtra(/tikka/)) extras.push("a maang tikka"); }
+    else if (/ring/.test(pc)) { if (!hasExtra(/ring/)) extras.push("a finger ring"); }
+    else if (/bracelet|kada|kangan|bangle/.test(pc)) { if (!hasExtra(/bracelet/)) extras.push("a bracelet"); }
+    else if (/nose|nath/.test(pc)) { if (!hasExtra(/nose/)) extras.push("a nose pin"); }
+    else if (/haathphool/.test(pc)) { if (!hasExtra(/haathphool/)) extras.push("a haathphool"); }
+    else if (/bajuband|armlet/.test(pc)) { if (!hasExtra(/bajuband/)) extras.push("a bajuband"); }
   }
-  const boxJoined = joinAnd(boxItems);
-  const box = boxJoined.charAt(0).toUpperCase() + boxJoined.slice(1) + ".";
+  if (/maang ?tikka|\btikka\b/.test(nblob) && !hasExtra(/tikka/)) extras.push("a maang tikka");
+  if (/finger ring|with ring/.test(nblob) && !isEarringType && !hasExtra(/ring/)) extras.push("a finger ring");
+  const boxPhrase = boxMain + (extras.length ? ` with ${joinAnd(extras)}` : "");
+  const box = boxPhrase.charAt(0).toUpperCase() + boxPhrase.slice(1) + ".";
 
-  const matName = (material || (western ? "premium plated alloy" : "brass alloy")).toLowerCase();
-  const materialLine = `Finest quality ${matName}, crafted with environment-friendly non-precious metals — skin-friendly and safe to wear for long hours.`;
+  // MATERIAL & CRAFTSMANSHIP — list ONLY the material(s) actually used (owner's rule: "jo lga hai wo").
+  const mFound: string[] = [];
+  const addM = (re: RegExp, label: string) => { if (re.test(nblob) && !mFound.includes(label)) mFound.push(label); };
+  addM(/american diamond|\bad\b|cubic zircon|\bcz\b|zircon/, "American Diamond");
+  addM(/kundan/, "Kundan");
+  addM(/polki/, "Polki");
+  addM(/meenakari|meena/, "Meenakari");
+  addM(/pearl|moti/, "Pearls");
+  addM(/moissanite/, "Moissanite");
+  addM(/temple/, "Temple work");
+  addM(/turkish/, "Turkish Stone");
+  addM(/crystal/, "Crystal");
+  addM(/oxidis|oxidiz/, "Oxidised finish");
+  addM(/mirror/, "Mirror work");
+  addM(/coloured stone|colored stone|\bstones?\b/, "Stones");
+  if (mFound.length === 0 && material) mFound.push(titleCasePhrase(material));
+  const materialsList = mFound.length ? joinAnd(mFound) : "premium quality materials";
+  const itemNoun = isEarringType ? "these earrings" : `this ${baseType.toLowerCase()}`;
+  const materialLine = `Finest quality ${materialsList} with environment-friendly non-precious metals are used to make ${itemNoun}. It is safe to wear for long hours.`;
 
-  const lc = (x: string) => x.toLowerCase();
-  const styleDesc = (styleWord || (styles[0] ?? "")).toLowerCase();
-  let specOccasion: string, specMaterial: string;
-  let opening: string;
-  if (western) {
-    opening =
-      `The ${title} brings a clean, contemporary look${finishTone ? ` in a ${finishTone} tone` : ""}${styleDesc && !new RegExp(styleDesc, "i").test(title) ? `, styled as a ${styleDesc} ${catL}` : ""}. ` +
-      `${antiTarnish ? "Its anti-tarnish finish keeps the shine and colour lasting through everyday use. " : ""}` +
-      `Lightweight and easy to wear, it pairs effortlessly with dresses, kurtis, co-ords and western outfits — an easy pick for daily wear, office, college and evenings out.`;
-    specOccasion = "Daily wear, office, college & gifting";
-    specMaterial = antiTarnish ? "Anti-tarnish plated alloy" : (finishTone ? `${titleCasePhrase(finishTone)} plated alloy` : "Skin-friendly plated alloy");
-  } else {
-    const lead = motif ? `intricate ${motif} detailing`
-      : material ? `exquisite ${lc(material)} craftsmanship`
-      : "elegant handcrafted detailing";
-    opening =
-      `The ${title} showcases ${lead}${finishTone ? `, finished in a ${finishTone} tone` : ""}. ` +
-      `Crafted with careful attention to detail, this ${catL}${styleDesc && !new RegExp(styleDesc, "i").test(title) ? ` in a graceful ${styleDesc} design` : ""} carries a rich, traditional and festive appeal. ` +
-      `${pieces.length ? `The matching ${joinAnd(pieces.map(lc))} complete the set, making it ` : "It is "}` +
-      `perfect for weddings, engagement ceremonies, festive celebrations and special occasions, and it pairs gracefully with sarees, lehengas and ethnic outfits.`;
-    specOccasion = "Wedding, festive & special occasions";
-    specMaterial = material || "Brass alloy";
-  }
+  // Specs-table values (occasion follows register; material = exactly what we detected).
+  const specOccasion = western ? "Daily wear, office, college & gifting" : "Wedding, festive & special occasions";
+  const specMaterial = mFound.length ? joinAnd(mFound) : (material || "Brass alloy");
 
   const description =
-    `${opening}\n\n` +
     `BRAND: BlytheDIVA\n` +
     `BOX CONTAINING: ${box}\n` +
     `MATERIAL & CRAFTSMANSHIP: ${materialLine}\n` +
