@@ -25,7 +25,7 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
 
   const [tree, fetched, suggestions] = await Promise.all([
     getCategoryTree(),
-    getCatalogProducts({ category, subcategory, style, q, skus: skus.length ? skus : undefined, includeWholesaleOnly: view === "wholesale", excludeRetailOnly: view === "wholesale", includeWholesalePricing: view === "wholesale" }),
+    getCatalogProducts({ category, subcategory, style, q, skus: skus.length ? skus : undefined, includeWholesaleOnly: view === "wholesale", excludeRetailOnly: view === "wholesale", includeWholesalePricing: view === "wholesale", inStock: true }),
     getCatalogSuggestions().catch(() => ({ products: [], categories: [], colours: [] })),
   ]);
   // Never dead-end a shared sub-category link: if nothing is tagged there yet,
@@ -33,7 +33,7 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
   let products = fetched;
   let subFellBack = false;
   if (products.length === 0 && subcategory !== "all" && skus.length === 0) {
-    products = await getCatalogProducts({ category, q });
+    products = await getCatalogProducts({ category, q, inStock: true });
     subFellBack = products.length > 0;
   }
 

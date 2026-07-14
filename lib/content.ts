@@ -213,9 +213,23 @@ export function templateContent(p: ProductLike): GeneratedContent {
     if (descWords.length >= 5) break;
   }
   const titleDescriptors = descWords.join(" ").trim();
-  // Prefer the owner's curated name verbatim; only synthesise a {name}{descriptors}{type} title when
-  // the product has no real name yet.
-  const title = preferredTitle(p) ?? ([name, titleDescriptors, type].filter(Boolean).join(" ") + withPieces);
+  // Title: start from the owner's product name. If his SPEC KEYWORDS add descriptors or pieces the name
+  // doesn't already contain, enrich it into a fuller BlytheDIVA-style title — so "Generate title" turns
+  // "Ananya Necklace" + specs "American Diamond, Maang Tikka" into "Ananya American Diamond Necklace with
+  // Maang Tikka". It NEVER drops a word the owner typed (falls back to his name if enrichment would).
+  const baseName = preferredTitle(p);
+  let title: string;
+  if (!baseName) {
+    title = ([name, titleDescriptors, type].filter(Boolean).join(" ") + withPieces).replace(/\s+/g, " ").trim();
+  } else {
+    const firstName = baseName.split(/\s+/)[0];
+    const enriched = ([firstName, titleDescriptors, type].filter(Boolean).join(" ") + withPieces).replace(/\s+/g, " ").trim();
+    const wordsOf = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter(Boolean);
+    const enrichedWords = new Set(wordsOf(enriched));
+    const addsInfo = titleDescriptors.trim().length > 0 || withPieces.length > 0;
+    const keepsEveryNameWord = wordsOf(baseName).every((w) => enrichedWords.has(w));
+    title = (addsInfo && keepsEveryNameWord) ? enriched : baseName;
+  }
 
   // ---------- Description — SIMPLE (owner's spec): just the labelled blocks, NO opening paragraph.
   //            Only BOX CONTAINING (the actual pieces) and MATERIAL & CRAFTSMANSHIP (the actual
@@ -333,26 +347,21 @@ export function resolveProductContent(p: ProductLike): GeneratedContent {
   if (p.generated_content && p.generated_content.title) {
     const gc = p.generated_content;
     const tpl = templateContent(p); // deterministic, complete — used to fill any field left empty
-    const curated = preferredTitle(p);
-    const title = curated || gc.title;
-    // The AI often wrote its OWN (flowery) title into the description & SEO prose (e.g. "...with Aaradhya
-    // American Diamond Stone Jhumka Earrings by BlytheDIVA"). Since the shown title is the owner's clean
-    // curated name, swap that old title string OUT of every text field so the name is consistent
-    // everywhere — the root cause of "title is right but the description shows the old name".
-    const fixName = (s: string | undefined, fallback: string): string => {
-      const out = (s && s.trim()) ? s : fallback;
-      return (curated && gc.title && curated !== gc.title) ? out.split(gc.title).join(curated) : out;
-    };
-    // TITLE is always the owner's curated name; other fields keep the saved value when present, else
-    // fall back to the complete template — so no product ever shows an empty field ("yeh sab khali").
+    // TITLE = the owner's saved "Display title" (what he generated/typed in the editor) when present,
+    // else his product name. This is why clicking "Generate title" now actually changes the storefront
+    // title — we no longer force the raw product name over the generated one.
+    const title = (gc.title && gc.title.trim()) ? gc.title.trim() : (preferredTitle(p) || tpl.title);
+    const pick = (s: string | undefined, fallback: string): string => (s && s.trim()) ? s : fallback;
+    // Other fields: keep the saved value when present, else the complete template — so no product ever
+    // shows an empty field.
     return {
       title,
-      description: fixName(gc.description, tpl.description),
+      description: pick(gc.description, tpl.description),
       specs: gc.specs && Object.keys(gc.specs).length > 0 ? gc.specs : tpl.specs,
       tags: gc.tags && gc.tags.length > 0 ? gc.tags : tpl.tags,
       seo: {
-        metaTitle: fixName(gc.seo?.metaTitle, tpl.seo.metaTitle),
-        metaDescription: fixName(gc.seo?.metaDescription, tpl.seo.metaDescription),
+        metaTitle: pick(gc.seo?.metaTitle, tpl.seo.metaTitle),
+        metaDescription: pick(gc.seo?.metaDescription, tpl.seo.metaDescription),
         keywords: gc.seo?.keywords && gc.seo.keywords.length > 0 ? gc.seo.keywords : tpl.seo.keywords,
       },
     };
