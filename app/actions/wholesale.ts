@@ -34,21 +34,26 @@ export async function applyForWholesaleAction(formData: FormData): Promise<{ ok:
   const email = String(formData.get("email") ?? "").trim() || null;
   const sb = supabaseServer();
 
-  // Business-proof image (GST cert / shop photo / visiting card) — stored so the team can verify.
-  let proofUrl: string | null = null;
+  // Business-proof image (GST cert / shop photo / visiting card) — MANDATORY so the owner can verify
+  // every dealer before approving. No proof → the application is rejected.
   const file = formData.get("proof");
-  if (file && file instanceof File && file.size > 0) {
-    try {
-      const bytes = Buffer.from(await file.arrayBuffer());
-      const ext = (file.type?.split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "").slice(0, 5) || "jpg";
-      const path = `dealer-proofs/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-      const up = await sb.storage.from("product-media").upload(path, bytes, { contentType: file.type || "image/jpeg", upsert: true });
-      if (!up.error) proofUrl = sb.storage.from("product-media").getPublicUrl(path).data.publicUrl;
-    } catch { /* proof is best-effort — the application still goes through */ }
+  if (!(file instanceof File) || file.size === 0) {
+    return { ok: false, error: "Business proof is required — please upload your GST certificate, shop photo or visiting card." };
+  }
+  let proofUrl: string | null = null;
+  try {
+    const bytes = Buffer.from(await file.arrayBuffer());
+    const ext = (file.type?.split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "").slice(0, 5) || "jpg";
+    const path = `dealer-proofs/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const up = await sb.storage.from("product-media").upload(path, bytes, { contentType: file.type || "image/jpeg", upsert: true });
+    if (!up.error) proofUrl = sb.storage.from("product-media").getPublicUrl(path).data.publicUrl;
+  } catch { /* fall through to the failure check below */ }
+  if (!proofUrl) {
+    return { ok: false, error: "We couldn't upload your business proof — please try a smaller image (JP/PNG) and submit again." };
   }
 
   // Create / refresh the customer as a PENDING wholesale dealer (owner approves + issues code next).
-  const notes = `Dealer application via website${proofUrl ? ` · Business proof: ${proofUrl}` : " · (no proof uploaded)"}`;
+  const notes = `Dealer application via website · Business proof: ${proofUrl}`;
   const { data: existing } = await sb.from("customers").select("id").ilike("phone", `%${phone}`).limit(1);
   const row: any = { name, phone, email, type: "wholesale", gstin, address, city, notes, wholesale_approved: false };
   if (existing && (existing as any[])[0]) await sb.from("customers").update(row).eq("id", (existing as any[])[0].id);

@@ -14,8 +14,11 @@ export function DealerSignup() {
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setBusy(true); setErr("");
     const fd = new FormData(e.currentTarget);
+    // Business proof is MANDATORY — the owner can't verify a dealer without it.
+    const proof = fd.get("proof");
+    if (!(proof instanceof File) || proof.size === 0) { setErr("Please upload your business proof — it's required to verify your account."); return; }
+    setBusy(true); setErr("");
     const res = await applyForWholesaleAction(fd);
     setBusy(false);
     if (res.ok) setDone(true);
@@ -46,11 +49,11 @@ export function DealerSignup() {
         <input name="address" placeholder="Shop / business address" className={`${field} sm:col-span-2`} />
       </div>
       <label className="block mt-3">
-        <span className="block text-xs font-medium text-ink mb-1">Business proof — GST certificate, shop photo or visiting card <span className="text-muted/70 font-normal">(so our team can verify & connect)</span></span>
-        <label className="flex items-center gap-3 rounded-xl border border-dashed border-emerald/50 bg-emerald-mist/30 px-3 py-3 cursor-pointer hover:bg-emerald-mist/50 transition-colors">
+        <span className="block text-xs font-medium text-ink mb-1">Business proof — GST certificate, shop photo or visiting card <span className="text-rose">*</span> <span className="text-muted/70 font-normal">(required — so our team can verify &amp; connect)</span></span>
+        <label className={`flex items-center gap-3 rounded-xl border border-dashed px-3 py-3 cursor-pointer transition-colors ${proofName ? "border-emerald/50 bg-emerald-mist/30 hover:bg-emerald-mist/50" : "border-rose/40 bg-rose/5 hover:bg-rose/10"}`}>
           <span className="text-xl">📄</span>
-          <span className="text-sm text-ink truncate">{proofName || "Tap to upload your business proof"}</span>
-          <input type="file" name="proof" accept="image/*" className="hidden" onChange={(e) => setProofName(e.target.files?.[0]?.name ?? "")} />
+          <span className="text-sm text-ink truncate">{proofName || "Tap to upload your business proof (required)"}</span>
+          <input type="file" name="proof" accept="image/*" required className="hidden" onChange={(e) => setProofName(e.target.files?.[0]?.name ?? "")} />
         </label>
       </label>
       {err && <p className="text-sm text-rose mt-2">{err}</p>}
