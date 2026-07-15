@@ -19,6 +19,7 @@ import { resolvePrices } from "@/lib/pricing";
 import { createRazorpayOrder, verifyRazorpaySignature, isRazorpayConfigured, razorpayPublicKeyId } from "@/lib/payments/razorpay";
 import { notifyOrderPlaced } from "@/lib/whatsapp";
 import { sendPurchase } from "@/lib/ga4";
+import { validateVoucher, bumpVoucherUsage } from "@/app/actions/vouchers";
 
 type CartItem = { sku: string; qty: number; color?: string };
 type Customer = { name: string; phone: string; address: string; pincode?: string; city?: string };
@@ -59,12 +60,21 @@ async function quoteItemsPaise(items: CartItem[]): Promise<number> {
 export async function createRazorpayOrderAction(
   items: CartItem[],
   customer?: Customer,
+  voucher?: string,
 ): Promise<{ ok: boolean; error?: string; orderId?: string; amount?: number; currency?: string; keyId?: string }> {
   if (!isRazorpayConfigured()) return { ok: false, error: "Online payment isn't set up yet. Please choose Cash on Delivery." };
   if (!items?.length) return { ok: false, error: "Your bag is empty." };
   const itemsTotal = await quoteItemsPaise(items);
   if (itemsTotal <= 0) return { ok: false, error: "Couldn't price your bag — please refresh." };
-  const amount = itemsTotal + shippingPaise(itemsTotal);
+  // COUPON — validated server-side on the items subtotal; the customer is charged the discounted amount.
+  let discount = 0;
+  let appliedCode: string | null = null;
+  if (voucher?.trim()) {
+    const v = await validateVoucher(voucher.trim(), itemsTotal, "retail");
+    if (v.ok && v.discountPaise > 0) { discount = Math.min(v.discountPaise, itemsTotal); appliedCode = v.code ?? voucher.trim().toUpperCase(); }
+  }
+  const discountedSubtotal = Math.max(0, itemsTotal - discount);
+  const amount = discountedSubtotal + shippingPaise(discountedSubtotal);
   const order = await createRazorpayOrder(amount, `rcpt_${Date.now()}`);
   if (!order) return { ok: false, error: "Couldn't start the payment. Please try again or use Cash on Delivery." };
 
@@ -80,6 +90,8 @@ export async function createRazorpayOrderAction(
         customer,
         amount: order.amount,
         status: "pending",
+        voucher_code: appliedCode,
+        discount_paise: discount,
       });
     } catch {
       /* non-blocking — the browser handler path still records the order */
@@ -108,11 +120,13 @@ async function finalizeOnlineOrder(args: {
     .update({ status: "placing" })
     .eq("razorpay_order_id", args.razorpayOrderId)
     .eq("status", "pending")
-    .select("items,customer")
+    .select("items,customer,voucher_code,discount_paise")
     .maybeSingle();
 
   let items = args.items;
   let customer = args.customer;
+  let voucherCode: string | null = null;
+  let discount = 0;
 
   if (!claimed) {
     // Someone else already claimed/placed it, or there's no intent row at all.
@@ -128,6 +142,8 @@ async function finalizeOnlineOrder(args: {
   } else {
     items = (claimed.items as CartItem[]) ?? items;
     customer = (claimed.customer as Customer) ?? customer;
+    voucherCode = (claimed as any).voucher_code ?? null;
+    discount = Math.max(0, ((claimed as any).discount_paise as number) ?? 0);
   }
 
   if (!items?.length || !customer) return { ok: false, error: "Order context missing.", retry: false };
@@ -147,16 +163,20 @@ async function finalizeOnlineOrder(args: {
   }
   const orderId = (data as any)?.order_id as string;
   const itemsOnly = (data as any)?.total as number;
-  // The customer was CHARGED items + shipping — the recorded order must say the same.
-  const ship = shippingPaise(itemsOnly);
-  const total = itemsOnly + ship;
+  // The customer was CHARGED (items − coupon) + shipping — the recorded order must say the same.
+  const appliedDiscount = Math.min(discount, itemsOnly);
+  const discountedSubtotal = Math.max(0, itemsOnly - appliedDiscount);
+  const ship = shippingPaise(discountedSubtotal);
+  const total = discountedSubtotal + ship;
   const addr = [ (customer as any).address, (customer as any).city, (customer as any).pincode ].filter(Boolean).join(", ");
 
   // Mark fully paid + record the Razorpay payment id. Razorpay/UPI settles to bank → bank book.
   await sb.from("orders").update({
     total, ...(ship > 0 ? { extra_courier: ship } : {}), ...(addr ? { buyer_address: addr } : {}),
+    ...(appliedDiscount > 0 && voucherCode ? { voucher_code: voucherCode, discount_paise: appliedDiscount } : {}),
     amount_paid: total, payment_mode: "online", payment_ref: args.paymentId, pay_bank: total,
   }).eq("id", orderId);
+  if (appliedDiscount > 0 && voucherCode) await bumpVoucherUsage(voucherCode);
 
   await sb.from("checkout_intents").update({
     status: "placed", order_id: orderId, payment_ref: args.paymentId, placed_at: new Date().toISOString(),

@@ -47,6 +47,7 @@ const GROUPS: { title: string; links: L[] }[] = [
   ]},
   { title: "Growth", links: [
     { href: "/admin/promotions", label: "Promotions", icon: "🎉", perm: "marketing.manage" },
+    { href: "/admin/vouchers", label: "Vouchers & Coupons", icon: "🏷️", perm: "catalog.price_edit" },
     { href: "/admin/reels", label: "Reels", icon: "▷", perm: "reels.manage" },
   ]},
   { title: "Control", links: [

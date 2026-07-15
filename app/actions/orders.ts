@@ -5,6 +5,7 @@ import { isWalkInPlaceholder } from "@/lib/supabase/queries";
 import { requirePerm } from "@/lib/auth";
 import { sendPurchase } from "@/lib/ga4";
 import { notifyOrderPlaced, sendWhatsAppText } from "@/lib/whatsapp";
+import { validateVoucher, bumpVoucherUsage } from "@/app/actions/vouchers";
 
 /** Cash-on-Delivery is capped at ₹5,000 (high-value COD is risky) — above this, only prepaid.
  *  (Not exported: a "use server" file may only export async functions.) */
@@ -14,6 +15,7 @@ export type PlaceOrderInput = {
   items: { sku: string; qty: number; color?: string }[];
   customer: { name: string; phone: string; address: string; pincode: string; city?: string };
   payment: "cod" | "online";
+  voucher?: string; // optional coupon code — re-validated server-side, never trusted from the client
 };
 
 export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: boolean; orderId?: string; total?: number; error?: string }> {
@@ -32,15 +34,30 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
   const orderId = (data as any)?.order_id;
   let total = (data as any)?.total as number;
 
+  // COUPON / VOUCHER — re-validate the code SERVER-SIDE on the items subtotal (never trust the
+  // client's discount). A valid code reduces the subtotal before shipping; the code + amount are
+  // recorded on the order and the voucher's redemption count is bumped.
+  const itemsSubtotal = total;
+  let discount = 0;
+  let appliedCode: string | null = null;
+  if (input.voucher?.trim()) {
+    const v = await validateVoucher(input.voucher.trim(), itemsSubtotal, "retail");
+    if (v.ok && v.discountPaise > 0) { discount = Math.min(v.discountPaise, itemsSubtotal); appliedCode = v.code ?? input.voucher.trim().toUpperCase(); }
+  }
+  const discountedSubtotal = Math.max(0, itemsSubtotal - discount);
+
   // SHIPPING belongs IN the order (free ≥ ₹999, else ₹50 — mirrors the checkout UI): the old code
   // showed it at checkout but never recorded it, so every COD order's total was ₹50 short.
-  const ship = total >= 99900 || total === 0 ? 0 : 5000;
+  const ship = discountedSubtotal >= 99900 || discountedSubtotal === 0 ? 0 : 5000;
+  total = discountedSubtotal + ship;
   // DELIVERY ADDRESS was collected but never saved — the owner had bills with no address to ship to.
   const addr = [input.customer.address, input.customer.city, input.customer.pincode].filter(Boolean).join(", ");
-  const patch: Record<string, unknown> = {};
-  if (ship > 0) { total = total + ship; patch.total = total; patch.extra_courier = ship; }
+  const patch: Record<string, unknown> = { total };
+  if (ship > 0) patch.extra_courier = ship;
   if (addr) patch.buyer_address = addr;
-  if (Object.keys(patch).length) await sb.from("orders").update(patch).eq("id", orderId).then(() => {}, () => {});
+  if (discount > 0 && appliedCode) { patch.voucher_code = appliedCode; patch.discount_paise = discount; }
+  await sb.from("orders").update(patch).eq("id", orderId).then(() => {}, () => {});
+  if (discount > 0 && appliedCode) await bumpVoucherUsage(appliedCode);
 
   // COD CEILING — Cash on Delivery is risky on high-value orders, so anything above ₹5,000 must be
   // prepaid. Roll the order back so no stock is held and the shopper is asked to pay online.
