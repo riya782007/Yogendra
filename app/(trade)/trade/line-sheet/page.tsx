@@ -29,11 +29,16 @@ export default async function LineSheet() {
     if (typeof r.path === "string" && r.path.startsWith("http") && !imgBy.has(r.product_id)) imgBy.set(r.product_id, r.path);
   }
   const pIds = (products as any[]).map((p) => (p as any).id).filter(Boolean);
-  const { data: vRows } = pIds.length
-    ? await sb.from("variants").select("product_id,color,qty,image_paths").in("product_id", pIds)
-    : { data: [] as any[] };
+  // PAGE through variants (12k+ rows, past PostgREST's 1000-row cap) so colours/stock aren't lost.
   const varsBy = new Map<string, any[]>();
-  for (const v of ((vRows as any[]) ?? [])) { const a = varsBy.get(v.product_id) ?? []; a.push(v); varsBy.set(v.product_id, a); }
+  if (pIds.length) {
+    for (let from = 0; ; from += 1000) {
+      const { data: vRows } = await sb.from("variants").select("product_id,color,qty,image_paths").in("product_id", pIds).range(from, from + 999);
+      const rows = (vRows as any[]) ?? [];
+      for (const v of rows) { const a = varsBy.get(v.product_id) ?? []; a.push(v); varsBy.set(v.product_id, a); }
+      if (rows.length < 1000) break;
+    }
+  }
 
   // One row per design (colours listed together — a compact buyer's line-sheet, not per-variant).
   // Shareable sheet: only IN-STOCK colours, prices GST-inclusive, and sold-out designs dropped.

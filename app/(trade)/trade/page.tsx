@@ -36,11 +36,17 @@ export default async function TradeDashboard() {
   // Variants (colours): a wholesale buyer orders specific colours, so configurable designs are
   // expanded into one orderable row PER colour (its own SKU + stock); simple products stay single.
   const pIds = (products as any[]).map((p) => (p as any).id).filter(Boolean);
-  const { data: vRows } = pIds.length
-    ? await sb.from("variants").select("product_id,sku,color,qty,image_paths").in("product_id", pIds)
-    : { data: [] as any[] };
+  // PAGE through variants — there are 12k+ variants, well past PostgREST's 1000-row cap. Without paging
+  // most designs lost their colours/stock and (with the no-photo filter) vanished from the catalogue.
   const varsBy = new Map<string, any[]>();
-  for (const v of ((vRows as any[]) ?? [])) { const a = varsBy.get(v.product_id) ?? []; a.push(v); varsBy.set(v.product_id, a); }
+  if (pIds.length) {
+    for (let from = 0; ; from += 1000) {
+      const { data: vRows } = await sb.from("variants").select("product_id,sku,color,qty,image_paths").in("product_id", pIds).range(from, from + 999);
+      const rows = (vRows as any[]) ?? [];
+      for (const v of rows) { const a = varsBy.get(v.product_id) ?? []; a.push(v); varsBy.set(v.product_id, a); }
+      if (rows.length < 1000) break;
+    }
+  }
 
   // Subcategory ("type") + style names for the dealer-panel filters (client point 14).
   const [{ data: subRows }, { data: styleRows }] = await Promise.all([
@@ -58,7 +64,9 @@ export default async function TradeDashboard() {
   const list = (products as any[]).flatMap((p) => {
     const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));
     const price = gstInc(ps.wholesaleRate);
-    const parentImg = imgBy.get((p as any).id) ?? null;
+    // Use getStorefront's already-resolved cover (it pages through all images) so a design is never
+    // dropped just because the capped product_images fetch missed it.
+    const parentImg = ((p as any).image as string | null) ?? imgBy.get((p as any).id) ?? null;
     const pid = (p as any).id as string;
     const allVs = varsBy.get(pid) ?? [];
     const sub = subName.get((p as any).subcategory_id) ?? null;
