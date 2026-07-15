@@ -32,7 +32,7 @@ export function DealerSignup() {
         <h3 className="font-display text-2xl text-ink">Application received</h3>
         <p className="text-sm text-muted mt-2">Thank you! Our team will verify your business shortly.</p>
         <p className="mt-3 inline-flex items-center gap-2 rounded-xl bg-emerald-mist/60 text-emerald-dark text-sm px-4 py-2.5 font-medium">
-          <span className="text-lg">📲</span> Please check your <b>WhatsApp</b> — once approved, we&apos;ll send your login credentials (phone + access code) there.
+          <span className="text-lg">📲</span> Please check your <b>WhatsApp</b> — we&apos;ll confirm there once approved. After that, just sign in with <b>this same phone number</b> — no code needed.
         </p>
       </div>
     );

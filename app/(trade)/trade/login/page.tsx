@@ -28,12 +28,11 @@ export default async function TradeLogin({ searchParams }: { searchParams: { err
       <div className="grid md:grid-cols-2 gap-6">
         <form action={wholesaleLoginAction} className="bg-white rounded-2xl shadow-card p-7 border border-sand">
           <h2 className="font-display text-2xl text-ink mb-1">Dealer sign in</h2>
-          <p className="text-xs text-muted mb-5">Use the phone number and access code your supplier gave you.</p>
-          <input name="phone" placeholder="Registered phone number" className="w-full rounded-xl border border-sand px-4 py-2.5 text-sm bg-white outline-none focus:border-emerald mb-3" />
-          <input name="code" placeholder="Access code" className="w-full rounded-xl border border-sand px-4 py-2.5 text-sm bg-white outline-none focus:border-emerald uppercase tracking-widest" />
+          <p className="text-xs text-muted mb-5">Enter your registered phone number to sign in. Once your account is approved, that&apos;s all you need — no code.</p>
+          <input name="phone" inputMode="tel" placeholder="Registered phone number" className="w-full rounded-xl border border-sand px-4 py-2.5 text-sm bg-white outline-none focus:border-emerald mb-1" />
           {searchParams.error === "format"
-            ? <p className="text-sm text-rose mt-2">Please enter your phone number as 10 digits — no +91, spaces or leading 0.</p>
-            : searchParams.error && <p className="text-sm text-rose mt-2">Wrong phone or code, or your account isn&apos;t approved yet.</p>}
+            ? <p className="text-sm text-rose mt-2">Please enter a valid phone number (add your country code if outside India).</p>
+            : searchParams.error && <p className="text-sm text-rose mt-2">We couldn&apos;t find an approved dealer with that number. If you&apos;ve just applied, please wait for approval.</p>}
           <button className="btn-primary w-full mt-4 py-3 text-sm font-medium">Sign in to trade pricing</button>
         </form>
 

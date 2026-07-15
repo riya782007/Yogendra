@@ -85,17 +85,16 @@ function samePhone(a: string, b: string): boolean {
   return s.length >= 8 && l.endsWith(s);
 }
 
-/** Wholesale customer logs in with phone + access code (must be approved). */
+/** Wholesale customer logs in with just their PHONE (must be an owner-approved dealer). The access-code
+ *  step was removed (owner: "code wala system faltu lagra hai, hata do") — approval alone gates access. */
 export async function wholesaleLoginAction(formData: FormData) {
   // INTERNATIONAL-SAFE: normalise to digits and match by suffix (see samePhone) so ANY format the dealer
   // types — with or without country code, spaces, dashes, leading 0 — logs the same approved dealer in.
   const entered = String(formData.get("phone") ?? "").replace(/\D/g, "");
-  const code = String(formData.get("code") ?? "").trim().toUpperCase();
   if (entered.length < 8) redirect("/trade/login?error=format"); // clear "phone format" hint
-  if (!code) redirect("/trade/login?error=1");
   const { data } = await supabaseServer()
     .from("customers").select("id,phone")
-    .eq("type", "wholesale").eq("wholesale_approved", true).eq("login_code", code)
+    .eq("type", "wholesale").eq("wholesale_approved", true).ilike("phone", `%${entered.slice(-8)}`)
     .limit(50);
   const match = ((data as any[]) ?? []).find((c) => samePhone(c.phone, entered));
   if (!match) redirect("/trade/login?error=1");
