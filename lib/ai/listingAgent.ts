@@ -6,7 +6,19 @@
 import "server-only";
 import { AiGateway, z } from "./gateway";
 import { groqChat, openaiChat, geminiChat, groqConfigured, openaiConfigured, geminiTextConfigured } from "./providers";
-import { templateContent, type GeneratedContent, type ProductLike } from "../content";
+import { templateContent, pickDivaName, DIVA_NAMES, type GeneratedContent, type ProductLike } from "../content";
+
+/** Force the title to START with the per-SKU assigned girl name. If the model led with a DIFFERENT
+ *  girl name (it clusters on a few), swap that first token for the assigned one; otherwise prepend it. */
+function enforceName(title: string, forced: string): string {
+  const t = (title ?? "").trim();
+  if (!t) return forced;
+  const first = t.split(/\s+/)[0];
+  if (first.toLowerCase() === forced.toLowerCase()) return t; // already correct
+  const namePool = new Set(DIVA_NAMES.map((n) => n.toLowerCase()));
+  if (namePool.has(first.toLowerCase())) return forced + t.slice(first.length); // replace the model's name
+  return `${forced} ${t}`; // no leading name — prepend the assigned one
+}
 
 const schema = z.object({
   title: z.string().min(2),
@@ -21,6 +33,10 @@ function prompt(p: ProductLike) {
   const sub = (p as any).subcategoryName ? ` Sub-category (type): ${(p as any).subcategoryName}.` : "";
   const kw = (p.keywords ?? []).filter(Boolean).join(", ");
   const hasImage = !!p.imageBase64;
+  // The girl's first name is ASSIGNED deterministically from the SKU (not left to the model) — the model
+  // kept defaulting to the same name so many designs shared one (owner: "5 designs me same naam diya").
+  // Seeding on the SKU means each design gets its own stable, different name.
+  const forcedName = pickDivaName(((p as any).sku as string) || p.name || "");
   return [
     `You are the senior product copywriter for "BlytheDIVA", a premium artificial/imitation jewellery brand (Sadar Bazar, Rui Mandi, Delhi; retail + wholesale).`,
     `Write ONE product page as STRICT minified JSON with keys: title, description, specs (object label->value), tags (array), seo (object: metaTitle, metaDescription, keywords array).`,
@@ -51,7 +67,7 @@ function prompt(p: ProductLike) {
         : `• No extra specifications given — infer ONLY from the product name & category; do not invent components or materials.`,
     ``,
     `TITLE — MUST follow BlytheDIVA's exact house style:  «{First name} {material/style descriptors} {jewellery type} with {included pieces}»`,
-    `  1. START with a RANDOM, unique Indian girl's first name — pick a DIFFERENT one every single time and NEVER default to "Ananya". Draw from a wide pool: Dhyani, Khyati, Rutvika, Nashvika, Drishika, Tanisha, Priyanshi, Nidhi, Gitanjali, Aaradhya, Myra, Vanya, Saanvi, Ishika, Kiara, Navya, Prisha, Aadhya, Mahika, Charvi, Vaidehi, Reyna, Anvita, Meher, Avni, Samaira, Nitya, Upasna, Advika, Bhoomika, Akshara, Omya, Shilpa, Sambhavati… (or any other graceful Indian girl name). Never reuse the same name across products.`,
+    `  1. START the title with EXACTLY this first name — do NOT choose your own, do NOT substitute, do NOT default to "Ananya"/"Vanya": «${forcedName}». Use it verbatim as the first word of the title, then continue with the descriptors below. (This name is pre-assigned per design so no two designs share a name.)`,
     `  2. DESCRIPTORS — you MUST weave in whatever the OWNER actually gave, and these OVERRIDE the photo (the owner is describing what he wants sold): first his typed KEYWORDS / specifications${kw ? ` — here: "${kw}"` : ""} written out and Title-Cased, then the selected STYLE, then the POLISH / finish, then any material. Example: keywords "anti tarnish, sleek chain" + polish "Gold" → "Anti-Tarnish Gold Sleek Chain". NEVER drop a keyword the owner typed, and do NOT replace his keywords with your own reading of the photo — use the photo only to fill a gap the inputs don't cover. Recognised descriptors also include material (Kundan, Uncut Kundan, Meenakari, Temple, Polki, Pearl, Moissanite, American Diamond, Turkish Stone, Crystal, Oxidised…), style/length (Semi Long, Long, Double Layer, Layered, Single Line, Choker, Sleek, Anti-Tarnish…) and design (Chandbali, Jhumka, Danglers…).`,
     `  3. Then the jewellery TYPE from the category (Necklace Set, Choker Set, Earrings, Ring, Bracelet…). If it ships with extra pieces, use "Set".`,
     `  4. If the specifications list included pieces (earrings, maang tikka, finger ring…), append "with {those pieces}" — e.g. "with Maang Tikka", "with Maang Tikka and Finger Ring".`,
@@ -115,7 +131,11 @@ export async function generateProductContent(p: ProductLike, opts?: { visionFirs
   const gateway = buildGateway(opts);
   const call: any = { feature: "listing", cacheKey: `listing:${p.sku}`, schema, estCostPaise: 50, _prompt: prompt(p), _product: p };
   const r = await gateway.run(call);
-  return { content: r.data as GeneratedContent, provider: r.provider, fallbackUsed: r.fallbackUsed };
+  const content = r.data as GeneratedContent;
+  // Safety net: guarantee the title leads with the per-SKU assigned name even if the model ignored it.
+  const forcedName = pickDivaName(((p as any).sku as string) || p.name || "");
+  if (content?.title) content.title = enforceName(content.title, forcedName);
+  return { content, provider: r.provider, fallbackUsed: r.fallbackUsed };
 }
 
 export function aiProvidersStatus() {

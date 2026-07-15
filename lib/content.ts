@@ -41,6 +41,16 @@ export const DIVA_NAMES = [
   "Rashika", "Priyanshi", "Nidhi", "Aaradhya", "Ishika", "Myra", "Saanvi", "Vanya", "Aaravi", "Kiara",
   "Anvita", "Reyna", "Navya", "Prisha", "Aadhya", "Mahika", "Siya", "Tara", "Inaya", "Riya", "Avni",
   "Meher", "Kashvi", "Vaidehi", "Charvi", "Diya", "Hiya", "Zara", "Nitya", "Samaira", "Aisha",
+  // Wider pool so 700+ designs don't repeat a name every few products (owner: "5 designs me same naam").
+  "Aarohi", "Ahana", "Amaira", "Anaya", "Anika", "Anushka", "Bhavya", "Devika", "Eesha", "Ela",
+  "Gauri", "Hansika", "Ira", "Jhanvi", "Kavya", "Keya", "Lavanya", "Mannat", "Manvi", "Meera",
+  "Mishka", "Mohana", "Naina", "Nandini", "Netra", "Oorja", "Palak", "Pari", "Pihu", "Rachita",
+  "Radhika", "Raina", "Rhea", "Ridhima", "Rittika", "Ruhi", "Saira", "Sanjana", "Sara", "Shanaya",
+  "Shreya", "Simran", "Sneha", "Suhana", "Tanvi", "Trisha", "Urvi", "Vamika", "Vanshika", "Vedika",
+  "Vidhi", "Yashvi", "Zoya", "Aanya", "Amyra", "Bhoomi", "Chhavi", "Damini", "Divisha", "Falak",
+  "Garima", "Heer", "Jiya", "Kimaya", "Lisha", "Mahi", "Naisha", "Nayra", "Ojasvi", "Ramya",
+  "Sanchi", "Shivika", "Taashi", "Unnati", "Vaani", "Wamika", "Yashika", "Aaruhi", "Bhavika", "Chitra",
+  "Deepika", "Esha", "Gunjan", "Harshita", "Jasmine", "Komal", "Mira", "Poorvi", "Ahaana", "Nayanika",
 ];
 /**
  * The owner curates every product name in the exact house format he wants:
