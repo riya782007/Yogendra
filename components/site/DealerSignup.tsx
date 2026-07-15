@@ -30,7 +30,10 @@ export function DealerSignup() {
       <div className="bg-white rounded-2xl shadow-card p-7 border border-emerald/30 text-center">
         <p className="text-4xl mb-2">✓</p>
         <h3 className="font-display text-2xl text-ink">Application received</h3>
-        <p className="text-sm text-muted mt-2">Thank you! Our team will verify your details and connect with you shortly. Once approved, you'll get your phone number + access code to log in and see wholesale prices. 💛</p>
+        <p className="text-sm text-muted mt-2">Thank you! Our team will verify your business shortly.</p>
+        <p className="mt-3 inline-flex items-center gap-2 rounded-xl bg-emerald-mist/60 text-emerald-dark text-sm px-4 py-2.5 font-medium">
+          <span className="text-lg">📲</span> Please check your <b>WhatsApp</b> — once approved, we&apos;ll send your login credentials (phone + access code) there.
+        </p>
       </div>
     );
   }
@@ -49,10 +52,11 @@ export function DealerSignup() {
         <input name="address" placeholder="Shop / business address" className={`${field} sm:col-span-2`} />
       </div>
       <label className="block mt-3">
-        <span className="block text-xs font-medium text-ink mb-1">Business proof — GST certificate, shop photo or visiting card <span className="text-rose">*</span> <span className="text-muted/70 font-normal">(required — so our team can verify &amp; connect)</span></span>
+        <span className="block text-xs font-medium text-ink mb-1">Business proof <span className="text-rose">*</span> <span className="text-muted/70 font-normal">(required)</span></span>
+        <span className="block text-[11px] text-muted mb-1.5">Upload a screenshot of anything that shows you run a business — your <b>Instagram business page</b>, your <b>website</b>, a GST certificate, shop photo or visiting card. This is only used to verify you as a genuine business — nothing is shared publicly.</span>
         <label className={`flex items-center gap-3 rounded-xl border border-dashed px-3 py-3 cursor-pointer transition-colors ${proofName ? "border-emerald/50 bg-emerald-mist/30 hover:bg-emerald-mist/50" : "border-rose/40 bg-rose/5 hover:bg-rose/10"}`}>
           <span className="text-xl">📄</span>
-          <span className="text-sm text-ink truncate">{proofName || "Tap to upload your business proof (required)"}</span>
+          <span className="text-sm text-ink truncate">{proofName || "Tap to upload a screenshot (Instagram / website / GST / shop)"}</span>
           <input type="file" name="proof" accept="image/*" required className="hidden" onChange={(e) => setProofName(e.target.files?.[0]?.name ?? "")} />
         </label>
       </label>
