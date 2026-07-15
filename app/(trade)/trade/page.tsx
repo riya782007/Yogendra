@@ -83,7 +83,10 @@ export default async function TradeDashboard() {
     // Simple product (no colours): list it only when it has stock.
     if ((p.qty ?? 0) <= 0) return [];
     return [{ pid, sku: p.sku, name: p.name, category: p.category.name, sub, style, colour: null, qty: p.qty, price, mrp: ps.mrp, image: parentImg, images: parentImg ? [parentImg] : [] }];
-  });
+  })
+  // A shareable wholesale catalogue must LOOK good — never show a photo-less design (letter placeholder),
+  // it drives dealers away. Only list rows that actually have a real image.
+  .filter((r) => typeof r.image === "string" && r.image.startsWith("http"));
 
   // Owner's UPI collection details for direct QR payment (no Razorpay → owner keeps 100%).
   const { data: pmRows } = await sb.from("payment_methods").select("name,upi_id,qr_code_url,kind,is_default").eq("active", true);

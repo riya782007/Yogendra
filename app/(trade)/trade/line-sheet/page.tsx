@@ -48,7 +48,9 @@ export default async function LineSheet() {
     const colours = Array.from(new Set(inStock.map((v) => v.color).filter(Boolean))) as string[];
     const vImg = inStock.map((v) => (Array.isArray(v.image_paths) ? v.image_paths.find((x: string) => typeof x === "string" && x.startsWith("http")) : null)).find(Boolean) ?? null;
     return [{ sku: p.sku, name: p.name, category: p.category.name, colours, qty: stock, price: gstInc(ps.wholesaleRate), mrp: ps.mrp, image: imgBy.get((p as any).id) ?? vImg }];
-  });
+  })
+  // Never print a photo-less design on the shareable line-sheet.
+  .filter((r) => typeof r.image === "string" && r.image.startsWith("http"));
 
   const today = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" });
 

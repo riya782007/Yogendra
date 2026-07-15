@@ -345,7 +345,10 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       labels: labelNames.slice(0, 6),
       wholesaleOnly: !!p.wholesale_only,
     };
-  });
+  })
+  // A shareable catalogue must never show a photo-less design (letter placeholder) — it looks unfinished
+  // and drives customers away. Only list products that actually have a real image.
+  .filter((c) => typeof c.image === "string" && c.image.startsWith("http"));
 }
 
 // ---------- customer directory (real customers table) ----------

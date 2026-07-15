@@ -69,15 +69,18 @@ export async function applyForWholesaleAction(formData: FormData): Promise<{ ok:
 
 /** Wholesale customer logs in with phone + access code (must be approved). */
 export async function wholesaleLoginAction(formData: FormData) {
-  const phone = String(formData.get("phone") ?? "").trim();
+  // Match on the last 10 digits + code so any phone format the dealer types (+91, spaces, leading 0)
+  // still works — an exact string match was rejecting valid, approved dealers.
+  const phone10 = String(formData.get("phone") ?? "").replace(/\D/g, "").slice(-10);
   const code = String(formData.get("code") ?? "").trim().toUpperCase();
-  if (!phone || !code) redirect("/trade/login?error=1");
+  if (phone10.length !== 10 || !code) redirect("/trade/login?error=1");
   const { data } = await supabaseServer()
-    .from("customers").select("id")
-    .eq("type", "wholesale").eq("wholesale_approved", true).eq("phone", phone).eq("login_code", code)
-    .maybeSingle();
-  if (!data) redirect("/trade/login?error=1");
-  cookies().set("bd_wholesale", (data as any).id, COOKIE);
+    .from("customers").select("id,phone")
+    .eq("type", "wholesale").eq("wholesale_approved", true).eq("login_code", code)
+    .limit(20);
+  const match = ((data as any[]) ?? []).find((c) => String(c.phone ?? "").replace(/\D/g, "").slice(-10) === phone10);
+  if (!match) redirect("/trade/login?error=1");
+  cookies().set("bd_wholesale", match.id, COOKIE);
   redirect("/trade");
 }
 
