@@ -18,6 +18,55 @@ function genCode(): string {
   return s;
 }
 
+/**
+ * PUBLIC dealer application (from the /trade/login "Become a dealer" form). Creates a PENDING wholesale
+ * customer (auto-appears on Admin → Customers), stores the business-proof image, and pings the owner so
+ * he can approve + issue an access code. No auth — this is how new resellers request wholesale access.
+ */
+export async function applyForWholesaleAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  const name = String(formData.get("name") ?? "").trim();
+  const phone = String(formData.get("phone") ?? "").replace(/\D/g, "").slice(-10);
+  if (name.length < 2) return { ok: false, error: "Please enter your name or firm name." };
+  if (phone.length !== 10) return { ok: false, error: "Please enter a valid 10-digit phone number." };
+  const city = String(formData.get("city") ?? "").trim() || null;
+  const gstin = String(formData.get("gstin") ?? "").trim().toUpperCase() || null;
+  const address = String(formData.get("address") ?? "").trim() || null;
+  const email = String(formData.get("email") ?? "").trim() || null;
+  const sb = supabaseServer();
+
+  // Business-proof image (GST cert / shop photo / visiting card) — stored so the team can verify.
+  let proofUrl: string | null = null;
+  const file = formData.get("proof");
+  if (file && file instanceof File && file.size > 0) {
+    try {
+      const bytes = Buffer.from(await file.arrayBuffer());
+      const ext = (file.type?.split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "").slice(0, 5) || "jpg";
+      const path = `dealer-proofs/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      const up = await sb.storage.from("product-media").upload(path, bytes, { contentType: file.type || "image/jpeg", upsert: true });
+      if (!up.error) proofUrl = sb.storage.from("product-media").getPublicUrl(path).data.publicUrl;
+    } catch { /* proof is best-effort — the application still goes through */ }
+  }
+
+  // Create / refresh the customer as a PENDING wholesale dealer (owner approves + issues code next).
+  const notes = `Dealer application via website${proofUrl ? ` · Business proof: ${proofUrl}` : " · (no proof uploaded)"}`;
+  const { data: existing } = await sb.from("customers").select("id").ilike("phone", `%${phone}`).limit(1);
+  const row: any = { name, phone, email, type: "wholesale", gstin, address, city, notes, wholesale_approved: false };
+  if (existing && (existing as any[])[0]) await sb.from("customers").update(row).eq("id", (existing as any[])[0].id);
+  else await sb.from("customers").insert(row);
+
+  // Ping the owner (best-effort WhatsApp) — the dashboard "Pending dealer applications" card also lists it.
+  try {
+    const owner = process.env.OWNER_WHATSAPP_NUMBER;
+    if (owner) {
+      const lines = [`🔔 New DEALER application`, `Name: ${name}`, `Phone: ${phone}`, city ? `City: ${city}` : "", gstin ? `GSTIN: ${gstin}` : "", proofUrl ? `Proof: ${proofUrl}` : "", `Approve & issue code in Owner Console → Customers.`].filter(Boolean);
+      await sendWhatsAppText(owner, lines.join("\n")).catch(() => {});
+    }
+  } catch { /* never block the applicant */ }
+
+  revalidatePath("/admin/customers"); revalidatePath("/admin/dashboard");
+  return { ok: true };
+}
+
 /** Wholesale customer logs in with phone + access code (must be approved). */
 export async function wholesaleLoginAction(formData: FormData) {
   const phone = String(formData.get("phone") ?? "").trim();

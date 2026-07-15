@@ -1587,6 +1587,18 @@ export async function getDashboardData(fromISO: string, toISO: string, rule: Inv
 
 export type ClassifiedRow = { id: string; sku: string; name: string; category: string; categorySlug: string; status: string; qty: number; lastMovementAt: string | null; cls: string };
 
+/** New reseller/dealer applications (from the /trade/login "Become a dealer" form) awaiting the owner's
+ *  approval — surfaced on the dashboard so he can approve + issue an access code. */
+export type DealerApplication = { id: string; name: string | null; phone: string | null; city: string | null; gstin: string | null; notes: string | null; created_at: string };
+export async function getPendingDealerApplications(limit = 10): Promise<DealerApplication[]> {
+  const sb = supabaseServer();
+  const { data } = await sb.from("customers")
+    .select("id,name,phone,city,gstin,notes,created_at")
+    .eq("type", "wholesale").eq("wholesale_approved", false)
+    .order("created_at", { ascending: false }).limit(limit);
+  return ((data as any[]) ?? []) as DealerApplication[];
+}
+
 export type OrderAlertRow = { id: string; invoice_no: string | null; channel: string | null; status: string | null; total: number; amount_paid: number; customer_name: string | null; created_at: string };
 /** Latest orders + a 24h count — powers the live "New Orders" panel + toast on the dashboard. */
 export async function getOrderAlerts(limit = 8): Promise<{ orders: OrderAlertRow[]; last24h: number }> {

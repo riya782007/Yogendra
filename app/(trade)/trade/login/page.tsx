@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getWholesaleSession } from "@/lib/wholesale";
 import { wholesaleLoginAction } from "@/app/actions/wholesale";
+import { DealerSignup } from "@/components/site/DealerSignup";
 
 export const metadata: Metadata = {
   title: "Dealer Sign In",
@@ -34,10 +35,9 @@ export default async function TradeLogin({ searchParams }: { searchParams: { err
           <button className="btn-primary w-full mt-4 py-3 text-sm font-medium">Sign in to trade pricing</button>
         </form>
 
-        <div className="bg-emerald-mist/60 rounded-2xl p-7 border border-emerald/20">
-          <h2 className="font-display text-2xl text-emerald-dark mb-2">Become a dealer</h2>
-          <p className="text-sm text-emerald-dark/80">Trade pricing is unlocked only after we verify your shop — this protects everyone&apos;s margins. To get an access code, message us with your shop name and GST number:</p>
-          <a href="https://wa.me/919873151767" target="_blank" rel="noopener" className="btn-gold inline-block px-6 py-3 text-sm font-medium mt-4">Request access on WhatsApp</a>
+        <div>
+          <DealerSignup />
+          <p className="text-xs text-muted text-center mt-3">Prefer WhatsApp? <a href="https://wa.me/919582002623" target="_blank" rel="noopener" className="text-emerald nav-link">Message us on +91 95820 02623</a></p>
         </div>
       </div>
     </div>
