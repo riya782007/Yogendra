@@ -25,9 +25,12 @@ function genCode(): string {
  */
 export async function applyForWholesaleAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
   const name = String(formData.get("name") ?? "").trim();
-  const phone = String(formData.get("phone") ?? "").replace(/\D/g, "").slice(-10);
+  // Keep ALL digits (including any country code) so INTERNATIONAL numbers work — a US "+1 415…" or a
+  // UK "+44 20…" is stored whole, not truncated to 10. Login later matches by suffix, so any format
+  // (with/without country code, spaces, dashes, leading 0) still logs the same dealer in.
+  const phone = String(formData.get("phone") ?? "").replace(/\D/g, "");
   if (name.length < 2) return { ok: false, error: "Please enter your name or firm name." };
-  if (phone.length !== 10) return { ok: false, error: "Please enter a valid 10-digit phone number." };
+  if (phone.length < 7 || phone.length > 15) return { ok: false, error: "Please enter a valid phone number (with country code for international numbers)." };
   const city = String(formData.get("city") ?? "").trim() || null;
   const gstin = String(formData.get("gstin") ?? "").trim().toUpperCase() || null;
   const address = String(formData.get("address") ?? "").trim() || null;
@@ -54,7 +57,7 @@ export async function applyForWholesaleAction(formData: FormData): Promise<{ ok:
 
   // Create / refresh the customer as a PENDING wholesale dealer (owner approves + issues code next).
   const notes = `Dealer application via website · Business proof: ${proofUrl}`;
-  const { data: existing } = await sb.from("customers").select("id").ilike("phone", `%${phone}`).limit(1);
+  const { data: existing } = await sb.from("customers").select("id").ilike("phone", `%${phone.slice(-10)}`).limit(1);
   const row: any = { name, phone, email, type: "wholesale", gstin, address, city, notes, wholesale_approved: false };
   if (existing && (existing as any[])[0]) await sb.from("customers").update(row).eq("id", (existing as any[])[0].id);
   else await sb.from("customers").insert(row);
@@ -72,19 +75,29 @@ export async function applyForWholesaleAction(formData: FormData): Promise<{ ok:
   return { ok: true };
 }
 
+/** Two phone numbers are the SAME dealer if the shorter (≥8 digits) is a suffix of the longer. This makes
+ *  login format- AND country-code-agnostic: "+1 415 555 1234", "4155551234", "0091-98765 43210" etc. all
+ *  match the stored number whether or not the country code was included on either side. */
+function samePhone(a: string, b: string): boolean {
+  const na = String(a ?? "").replace(/\D/g, "");
+  const nb = String(b ?? "").replace(/\D/g, "");
+  const [s, l] = na.length <= nb.length ? [na, nb] : [nb, na];
+  return s.length >= 8 && l.endsWith(s);
+}
+
 /** Wholesale customer logs in with phone + access code (must be approved). */
 export async function wholesaleLoginAction(formData: FormData) {
-  // Match on the last 10 digits + code so any phone format the dealer types (+91, spaces, leading 0)
-  // still works — an exact string match was rejecting valid, approved dealers.
-  const phone10 = String(formData.get("phone") ?? "").replace(/\D/g, "").slice(-10);
+  // INTERNATIONAL-SAFE: normalise to digits and match by suffix (see samePhone) so ANY format the dealer
+  // types — with or without country code, spaces, dashes, leading 0 — logs the same approved dealer in.
+  const entered = String(formData.get("phone") ?? "").replace(/\D/g, "");
   const code = String(formData.get("code") ?? "").trim().toUpperCase();
-  if (phone10.length !== 10) redirect("/trade/login?error=format"); // clear "phone format" hint
+  if (entered.length < 8) redirect("/trade/login?error=format"); // clear "phone format" hint
   if (!code) redirect("/trade/login?error=1");
   const { data } = await supabaseServer()
     .from("customers").select("id,phone")
     .eq("type", "wholesale").eq("wholesale_approved", true).eq("login_code", code)
-    .limit(20);
-  const match = ((data as any[]) ?? []).find((c) => String(c.phone ?? "").replace(/\D/g, "").slice(-10) === phone10);
+    .limit(50);
+  const match = ((data as any[]) ?? []).find((c) => samePhone(c.phone, entered));
   if (!match) redirect("/trade/login?error=1");
   cookies().set("bd_wholesale", match.id, COOKIE);
   redirect("/trade");

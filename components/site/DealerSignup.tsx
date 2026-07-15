@@ -45,7 +45,7 @@ export function DealerSignup() {
       <p className="text-xs text-muted mt-1 mb-4">New reseller? Apply for a wholesale account. Our team verifies your business and activates trade prices.</p>
       <div className="grid sm:grid-cols-2 gap-3">
         <input name="name" required placeholder="Name / firm *" className={`${field} sm:col-span-2`} />
-        <input name="phone" required inputMode="numeric" placeholder="Phone (10-digit) *" className={field} />
+        <input name="phone" required inputMode="tel" placeholder="Phone * (add country code if outside India)" className={field} />
         <input name="city" placeholder="City" className={field} />
         <input name="gstin" placeholder="GSTIN (optional)" className={`${field} uppercase`} />
         <input name="email" type="email" placeholder="Email (optional)" className={field} />
