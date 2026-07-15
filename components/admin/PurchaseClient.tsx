@@ -1,7 +1,14 @@
 "use client";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { formatPaise } from "@/lib/pricing";
 import { recordPurchaseAction } from "@/app/actions/purchases";
+import { fileToCsv } from "@/lib/sheetImport";
+
+/** Pull the first number out of a cell like "INR 14.5", "₹ 50", "6 pcs" → 14.5 / 50 / 6. */
+const num = (s: string) => {
+  const m = String(s ?? "").replace(/,/g, "").match(/-?\d+(\.\d+)?/);
+  return m ? Number(m[0]) : 0;
+};
 
 type Sup = { id: string; name: string; city: string | null };
 type Variant = { id: string; sku: string; label: string };
@@ -21,6 +28,10 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
   // How this purchase was paid — a SPLIT across methods. Enter any amount against cash / upi / bank
   // (one, several, or none). Whatever is left unpaid stays owed to the supplier (credit).
   const [pay, setPay] = useState<{ cash: string; upi: string; bank: string }>({ cash: "", upi: "", bank: "" });
+  // Bulk paste / upload — fill dozens of purchase lines at once (like the product bulk upload).
+  const [showBulk, setShowBulk] = useState(false);
+  const [bulkText, setBulkText] = useState("");
+  const [bulkMsg, setBulkMsg] = useState("");
 
   const input = "rounded-xl border border-sand px-3 py-2 text-sm bg-white outline-none focus:border-emerald";
   const set = (i: number, patch: Partial<Line>) => setLines((p) => p.map((l, idx) => idx === i ? { ...l, ...patch } : l));
@@ -47,6 +58,81 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
     const rem = Math.max(0, total - others);
     return { ...s, [m]: rem ? String(rem) : "" };
   });
+
+  // ---- Bulk paste / upload: match each row's SKU to a product/variant, then fill the lines ----
+  // A row's SKU is looked up against every VARIANT sku first (e.g. "NKE1001-Silver"), then the
+  // plain PRODUCT sku. Unmatched SKUs are still added (unmapped) so the bill is complete and the
+  // owner can map them later — exactly like a manually-typed unmapped line.
+  const skuIndex = useMemo(() => {
+    const byVariant = new Map<string, { productId: string; variantId: string; name: string }>();
+    const byProduct = new Map<string, { productId: string; name: string }>();
+    for (const p of products) {
+      if (p.sku) byProduct.set(p.sku.trim().toUpperCase(), { productId: p.id, name: `${p.name} (${p.sku})` });
+      for (const v of p.variants ?? []) {
+        if (v.sku) byVariant.set(v.sku.trim().toUpperCase(), { productId: p.id, variantId: v.id, name: `${p.name} · ${v.label}` });
+      }
+    }
+    return { byVariant, byProduct };
+  }, [products]);
+
+  function parseBulkText(text: string): { sku: string; qty: number; cost: number }[] {
+    const rows = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (!rows.length) return [];
+    const split = (l: string) => l.split(/[\t,]/).map((s) => s.trim());
+    const head = split(rows[0]).map((h) => h.toLowerCase());
+    const joined = head.join(" ");
+    const hasHeader = /sku|item|code/.test(joined) && /(qty|quantity|price|cost|amount|rate)/.test(joined);
+    // SKU column: prefer an exact "sku"; else code/item.
+    const findCol = (prefer: string[], fallback: string[]) => {
+      let i = head.findIndex((h) => prefer.some((n) => h === n || h.includes(n)));
+      if (i < 0) i = head.findIndex((h) => fallback.some((n) => h.includes(n)));
+      return i;
+    };
+    let iSku = 0, iQty = 1, iPrice = 2, iDisc = -1;
+    let body = rows;
+    if (hasHeader) {
+      iSku = findCol(["sku"], ["item code", "code", "item"]);
+      iQty = findCol(["quantity", "qty"], ["pcs", "pieces"]);
+      iPrice = findCol(["price", "cost", "rate", "unit"], ["amount"]);
+      iDisc = head.findIndex((h) => h.includes("discount") || h === "disc");
+      body = rows.slice(1);
+    }
+    return body.map((l) => {
+      const c = split(l);
+      const sku = (iSku >= 0 ? c[iSku] : "")?.trim() ?? "";
+      const qty = Math.max(0, Math.round(num(iQty >= 0 ? c[iQty] : "")));
+      const price = Math.max(0, num(iPrice >= 0 ? c[iPrice] : ""));
+      // Discount (optional): a plain number = ₹ off per unit; "10%" = percent off the unit price.
+      let cost = price;
+      if (iDisc >= 0 && c[iDisc]) {
+        const d = num(c[iDisc]);
+        cost = /%/.test(c[iDisc]) ? price * (1 - d / 100) : price - d;
+      }
+      return { sku, qty, cost: Math.max(0, Math.round(cost * 100) / 100) };
+    }).filter((r) => r.sku);
+  }
+
+  function applyBulk() {
+    const parsed = parseBulkText(bulkText);
+    if (!parsed.length) { setBulkMsg("✕ Couldn't read any rows. Use columns: sku, quantity, price (discount optional)."); return; }
+    let matched = 0, unmapped = 0;
+    const newLines: Line[] = parsed.map((r) => {
+      const key = r.sku.toUpperCase();
+      const v = skuIndex.byVariant.get(key);
+      const p = !v ? skuIndex.byProduct.get(key) : undefined;
+      if (v) { matched++; return { supplierSku: r.sku, mappedProductId: v.productId, mappedName: v.name, variantId: v.variantId, qty: r.qty ? String(r.qty) : "", cost: r.cost ? String(r.cost) : "" }; }
+      if (p) { matched++; return { supplierSku: r.sku, mappedProductId: p.productId, mappedName: p.name, variantId: "", qty: r.qty ? String(r.qty) : "", cost: r.cost ? String(r.cost) : "" }; }
+      unmapped++;
+      return { supplierSku: r.sku, mappedProductId: "", mappedName: "", variantId: "", qty: r.qty ? String(r.qty) : "", cost: r.cost ? String(r.cost) : "" };
+    });
+    // Replace the blank starter line; otherwise append to whatever's already there.
+    setLines((prev) => {
+      const keep = prev.filter((l) => l.supplierSku.trim() || l.mappedProductId || l.qty.trim() || l.cost.trim());
+      return [...keep, ...newLines];
+    });
+    setBulkText(""); setShowBulk(false);
+    setBulkMsg(`✓ Added ${newLines.length} line${newLines.length === 1 ? "" : "s"} · ${matched} matched to products${unmapped ? ` · ${unmapped} unmapped (map them below or leave to skip stock)` : ""}.`);
+  }
 
   async function submit(force = false) {
     // A mapped product that HAS colours must be bought as a specific colour — never the parent.
@@ -84,6 +170,32 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
           {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}{s.city ? ` · ${s.city}` : ""}</option>)}
         </select>
         <input className={input} placeholder="Supplier bill no." value={billNo} onChange={(e) => setBillNo(e.target.value)} />
+      </div>
+
+      {/* Bulk paste / upload — fill the whole purchase from a list instead of one line at a time. */}
+      <div className="mb-3">
+        <button type="button" onClick={() => { setShowBulk((v) => !v); setBulkMsg(""); }}
+          className="text-sm px-3 py-1.5 rounded-full border border-emerald text-emerald-dark hover:bg-emerald-mist">
+          {showBulk ? "✕ Close bulk entry" : "⇪ Bulk paste / upload a list"}
+        </button>
+        {showBulk && (
+          <div className="mt-2 rounded-2xl border border-sand bg-cream/40 p-4">
+            <p className="text-xs text-muted mb-2">
+              Paste your purchase list, or upload an <b>Excel (.xlsx)</b> / CSV. Columns (any order):
+              <code className="bg-cream px-1 rounded ml-1">sku, quantity, price, discount</code> — discount is optional
+              (a number = ₹ off per piece, or <code className="bg-cream px-1 rounded">10%</code>). Each SKU maps to the product/variant automatically.
+              <a download="blythe-diva-purchase-template.csv"
+                href={`data:text/csv;charset=utf-8,${encodeURIComponent("sku,quantity,price,discount\nNKE1001-Silver,6,50,\nNKE1022-Black,6,45,\nNKE1038-Silver,6,14.5,")}`}
+                className="text-emerald nav-link ml-1">⤓ template</a>
+            </p>
+            <input type="file" accept=".csv,text/csv,.txt,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+              onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; try { setBulkText(await fileToCsv(f)); setBulkMsg("File loaded — review below, then Add to purchase."); } catch { setBulkMsg("✕ Couldn't read that file. Save it as .xlsx or .csv and try again."); } }}
+              className="block w-full text-sm text-ink file:mr-3 file:rounded-full file:border-0 file:bg-emerald file:text-white file:px-4 file:py-2 file:text-sm file:cursor-pointer mb-2" />
+            <textarea className={`${input} w-full font-mono text-xs`} rows={6} placeholder={"NKE1001-Silver, 6, 50\nNKE1022-Black, 6, 45\nNKE1038-Silver, 6, 14.5"} value={bulkText} onChange={(e) => setBulkText(e.target.value)} />
+            <button type="button" onClick={applyBulk} className="btn-primary px-5 py-2 text-sm font-medium mt-2">Add to purchase →</button>
+          </div>
+        )}
+        {bulkMsg && <p className={`text-xs mt-2 ${bulkMsg.startsWith("✕") ? "text-rose" : "text-emerald-dark"}`}>{bulkMsg}</p>}
       </div>
 
       <p className="text-xs text-muted mb-2">Type the supplier&apos;s item name/code — we suggest your internal SKU. Map it, or leave unmapped to skip the stock update.</p>
