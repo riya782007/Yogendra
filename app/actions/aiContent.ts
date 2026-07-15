@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { getProductBySku, getPublishedProducts } from "@/lib/supabase/queries";
-import { generateProductContent } from "@/lib/ai/listingAgent";
+import { generateProductContent, generateTitleOptions } from "@/lib/ai/listingAgent";
 import { requirePerm } from "@/lib/auth";
 
 export type ContentResult = { ok: boolean; sku: string; provider?: string; fallbackUsed?: boolean; title?: string; error?: string };
@@ -110,6 +110,76 @@ export async function suggestProductTitleAction(input: { name: string; category?
     return { ok: true, title: cleanTitle, description: content.description, provider, fallbackUsed, usedImage: !!imageBase64 };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Could not suggest a title" };
+  }
+}
+
+/** Suggest 3–4 SEO title OPTIONS by scanning the product photo + its taxonomy (owner picks one). */
+export async function suggestProductTitlesAction(input: { name: string; category?: string; keywords?: string[]; sku?: string; count?: number }): Promise<{ ok: boolean; titles?: string[]; provider?: string; usedImage?: boolean; error?: string }> {
+  if (!(await requirePerm("catalog.edit"))) return { ok: false, error: "not permitted" };
+  const name = (input.name ?? "").trim();
+  const skuStr = (input.sku ?? "").trim();
+  try {
+    let subcategoryName: string | undefined, styleName: string | undefined, polishes: string[] = [];
+    let imageBase64: string | undefined, imageMime: string | undefined;
+    if (input.sku) {
+      const p = await getProductBySku(input.sku);
+      if (p) {
+        subcategoryName = (p as any).subcategory?.name;
+        polishes = (p.variants ?? []).map((v: any) => v.polish ?? "").filter(Boolean);
+        if ((p as any).style_id) {
+          const { data: st } = await supabaseServer().from("styles").select("name").eq("id", (p as any).style_id).maybeSingle();
+          styleName = (st as any)?.name;
+        }
+        const img = await fetchProductImage(p);
+        imageBase64 = img.imageBase64; imageMime = img.imageMime;
+      }
+    }
+    const { titles, provider, usedImage } = await generateTitleOptions({
+      name: nameForAi(name, skuStr), sku: input.sku || name, categoryName: input.category,
+      subcategoryName, styleName, polishes, colors: [],
+      keywords: (input.keywords ?? []).map((k) => k.trim()).filter(Boolean),
+      imageBase64, imageMime,
+    } as any, Math.min(4, Math.max(3, input.count ?? 4)));
+    const clean = titles.map((t) => stripCode(t, skuStr) || t).filter(Boolean);
+    if (!clean.length) return { ok: false, error: "Couldn't suggest titles — try adding a photo or a keyword." };
+    return { ok: true, titles: clean, provider, usedImage };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Could not suggest titles" };
+  }
+}
+
+/** After the owner PICKS a suggested title, write the matching description/specs/tags/SEO aligned to it
+ *  (the chosen title becomes the product's title verbatim). Returns the aligned copy for the editor. */
+export async function alignContentToTitleAction(input: { sku?: string; name?: string; category?: string; title: string; keywords?: string[] }): Promise<{ ok: boolean; title?: string; description?: string; provider?: string; error?: string }> {
+  if (!(await requirePerm("catalog.edit"))) return { ok: false, error: "not permitted" };
+  const chosen = (input.title ?? "").trim();
+  if (!chosen) return { ok: false, error: "No title chosen" };
+  const skuStr = (input.sku ?? "").trim();
+  try {
+    let subcategoryName: string | undefined, styleName: string | undefined, polishes: string[] = [];
+    let imageBase64: string | undefined, imageMime: string | undefined;
+    if (input.sku) {
+      const p = await getProductBySku(input.sku);
+      if (p) {
+        subcategoryName = (p as any).subcategory?.name;
+        polishes = (p.variants ?? []).map((v: any) => v.polish ?? "").filter(Boolean);
+        if ((p as any).style_id) {
+          const { data: st } = await supabaseServer().from("styles").select("name").eq("id", (p as any).style_id).maybeSingle();
+          styleName = (st as any)?.name;
+        }
+        const img = await fetchProductImage(p);
+        imageBase64 = img.imageBase64; imageMime = img.imageMime;
+      }
+    }
+    const { content, provider } = await generateProductContent({
+      name: nameForAi(input.name ?? chosen, skuStr), sku: input.sku || chosen, categoryName: input.category,
+      subcategoryName, styleName, polishes, colors: [],
+      keywords: (input.keywords ?? []).map((k) => k.trim()).filter(Boolean),
+      imageBase64, imageMime, lockedTitle: chosen,
+    } as any, { visionFirst: true });
+    return { ok: true, title: chosen, description: content.description, provider };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Could not write the description" };
   }
 }
 

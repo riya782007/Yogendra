@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
 import { updateProductAction } from "@/app/actions/updateProduct";
-import { suggestProductTitleAction } from "@/app/actions/aiContent";
+import { suggestProductTitleAction, suggestProductTitlesAction, alignContentToTitleAction } from "@/app/actions/aiContent";
 import { computePrices, type PricingFormula } from "@/lib/pricing";
 
 type Cat = { id: string; name: string; slug: string };
@@ -58,6 +58,34 @@ export function ProductEditor({
   // these to build a BlytheDIVA-style title + description.
   const [specKeywords, setSpecKeywords] = useState("");
   const [suggesting, setSuggesting] = useState(false);
+  // Image-scanned title OPTIONS the owner picks from (ChatGPT-style). Picking one aligns name+title+desc.
+  const [titleOptions, setTitleOptions] = useState<string[]>([]);
+  const [suggestingTitles, setSuggestingTitles] = useState(false);
+  const [aligning, setAligning] = useState("");
+
+  async function suggestTitles() {
+    setSuggestingTitles(true); setTitleOptions([]);
+    const catName = categories.find((c) => c.id === product.categoryId)?.name;
+    const keywords = specKeywords.split(/[,\n]/).map((k) => k.trim()).filter(Boolean);
+    const res = await suggestProductTitlesAction({ name, category: catName, keywords, sku: product.sku, count: 4 });
+    setSuggestingTitles(false);
+    if (res.ok && res.titles?.length) {
+      setTitleOptions(res.titles);
+      toast(`${res.titles.length} titles suggested${res.usedImage ? " — from the photo 📸" : ""}. Pick the best one.`);
+    } else toast(res.error ?? "Couldn't suggest titles", "error");
+  }
+
+  /** Owner picked a suggested title → it becomes the name + display title, and the description is
+   *  re-written to match it (aligned to the same photo + keywords). */
+  async function pickTitle(t: string) {
+    setTitle(t); setName(t); setTitleOptions([]); setAligning(t);
+    const catName = categories.find((c) => c.id === product.categoryId)?.name;
+    const keywords = specKeywords.split(/[,\n]/).map((k) => k.trim()).filter(Boolean);
+    const res = await alignContentToTitleAction({ sku: product.sku, name: t, category: catName, title: t, keywords });
+    setAligning("");
+    if (res.ok && res.description) { setDescription(res.description); toast("Title picked — description aligned ✓"); }
+    else toast(res.error ?? "Title set — couldn't auto-write the description; edit it manually.", "error");
+  }
 
   async function suggestTitle() {
     setSuggesting(true);
@@ -207,13 +235,33 @@ export function ProductEditor({
             <input value={specKeywords} onChange={(e) => setSpecKeywords(e.target.value)}
               placeholder="e.g. necklace set, uncut kundan, earrings, maang tikka"
               className={field} />
-            <div className="flex items-center gap-2 mt-2">
+            <div className="flex flex-wrap items-center gap-2 mt-2">
+              <button type="button" onClick={suggestTitles} disabled={suggestingTitles || !!aligning}
+                className="text-xs px-3 py-1.5 rounded-full bg-ink text-white hover:bg-ink/90 disabled:opacity-50">
+                {suggestingTitles ? "Analysing photo…" : "✨ Suggest 3–4 titles"}
+              </button>
               <button type="button" onClick={suggestTitle} disabled={suggesting}
                 className="text-xs px-3 py-1.5 rounded-full bg-emerald text-white hover:bg-emerald-dark disabled:opacity-50">
-                {suggesting ? "Writing…" : "✨ Generate title & description"}
+                {suggesting ? "Writing…" : "Auto title + description"}
               </button>
-              <span className="text-[11px] text-muted">Looks at the product photo + these specs, the name &amp; category. Says which pieces the set includes; no SKU in the title.</span>
+              <span className="text-[11px] text-muted">Scans the product photo + these specs, category, sub-category, style &amp; polish. Titles use only real, visible keywords — no invented pieces.</span>
             </div>
+
+            {/* Image-scanned title options — pick one; name + title + description align to it. */}
+            {(titleOptions.length > 0 || aligning) && (
+              <div className="mt-3 rounded-xl border border-ink/15 bg-white p-3">
+                <p className="text-xs font-medium text-ink mb-2">Pick the best title <span className="text-muted font-normal">— it becomes the product name &amp; title, and the description is written to match</span></p>
+                <div className="space-y-1.5">
+                  {titleOptions.map((t) => (
+                    <button key={t} type="button" onClick={() => pickTitle(t)} disabled={!!aligning}
+                      className="w-full text-left px-3 py-2 rounded-lg border border-sand hover:border-emerald hover:bg-emerald-mist/40 text-sm text-ink disabled:opacity-50 transition-colors">
+                      {t}
+                    </button>
+                  ))}
+                </div>
+                {aligning && <p className="text-[11px] text-emerald-dark mt-2">Writing the matching description for “{aligning}”…</p>}
+              </div>
+            )}
           </div>
           <div>
             <label className={label}>Display title</label>

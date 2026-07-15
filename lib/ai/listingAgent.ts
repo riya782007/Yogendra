@@ -37,6 +37,9 @@ function prompt(p: ProductLike) {
   // kept defaulting to the same name so many designs shared one (owner: "5 designs me same naam diya").
   // Seeding on the SKU means each design gets its own stable, different name.
   const forcedName = pickDivaName(((p as any).sku as string) || p.name || "");
+  // When the owner has already PICKED one of the suggested titles, it's locked — we only write the rest
+  // of the page (description/specs/tags/seo) to MATCH that exact title.
+  const lockedTitle = ((p as any).lockedTitle as string | undefined)?.trim();
   return [
     `You are the senior product copywriter for "BlytheDIVA", a premium artificial/imitation jewellery brand (Sadar Bazar, Rui Mandi, Delhi; retail + wholesale).`,
     `Write ONE product page as STRICT minified JSON with keys: title, description, specs (object label->value), tags (array), seo (object: metaTitle, metaDescription, keywords array).`,
@@ -66,7 +69,9 @@ function prompt(p: ProductLike) {
         ? `• No extra specifications given — infer the material, style, type and included pieces from the ATTACHED PHOTO and the product name & category; do not invent anything not visible in the photo.`
         : `• No extra specifications given — infer ONLY from the product name & category; do not invent components or materials.`,
     ``,
-    `TITLE — MUST follow BlytheDIVA's exact house style:  «{First name} {material/style descriptors} {jewellery type} with {included pieces}»`,
+    lockedTitle
+      ? `TITLE — ALREADY CHOSEN by the owner. Use EXACTLY this title verbatim, do not change a single word: «${lockedTitle}». Then write the description, specs, tags and seo so they MATCH this exact title and the photo.`
+      : `TITLE — MUST follow BlytheDIVA's exact house style:  «{First name} {material/style descriptors} {jewellery type} with {included pieces}»`,
     `  1. START the title with EXACTLY this first name — do NOT choose your own, do NOT substitute, do NOT default to "Ananya"/"Vanya": «${forcedName}». Use it verbatim as the first word of the title, then continue with the descriptors below. (This name is pre-assigned per design so no two designs share a name.)`,
     `  2. AFTER the name, write a natural, SEO-optimised DESCRIPTIVE phrase of 5-7 words — behave EXACTLY like a "give me an SEO-optimised descriptive title of 5-7 words for this piece" request in ChatGPT, describing THE PIECE IN THE PHOTO. Pattern: «{tone/colour + material/finish} {design} {jewellery type} [for Women]». Real ChatGPT examples the owner approved for a gold bar pendant chain: "Gold Bar Pendant Chain Necklace for Women", "Minimal Gold Bar Pendant Necklace Chain", "Elegant Gold Bar Pendant Chain Necklace". Mirror that voice and length.`,
     `  3. GROUND EVERY WORD IN WHAT YOU ACTUALLY SEE (plus the owner's typed keywords, which OVERRIDE the photo${kw ? ` — here: "${kw}"` : ""} and must never be dropped). Read the photo: the tone (gold / rose-gold / silver / oxidised), the material/work (plain metal, Kundan, Polki, Pearl, American Diamond, Meenakari, Temple…), the design (bar, heart, solitaire, chandbali, jhumka, choker, layered…) and the true jewellery type.`,
@@ -132,10 +137,80 @@ export async function generateProductContent(p: ProductLike, opts?: { visionFirs
   const call: any = { feature: "listing", cacheKey: `listing:${p.sku}`, schema, estCostPaise: 50, _prompt: prompt(p), _product: p };
   const r = await gateway.run(call);
   const content = r.data as GeneratedContent;
-  // Safety net: guarantee the title leads with the per-SKU assigned name even if the model ignored it.
-  const forcedName = pickDivaName(((p as any).sku as string) || p.name || "");
-  if (content?.title) content.title = enforceName(content.title, forcedName);
+  const locked = ((p as any).lockedTitle as string | undefined)?.trim();
+  if (locked) {
+    // Owner picked this title — it wins verbatim, no renaming.
+    content.title = locked;
+  } else {
+    // Safety net: guarantee the title leads with the per-SKU assigned name even if the model ignored it.
+    const forcedName = pickDivaName(((p as any).sku as string) || p.name || "");
+    if (content?.title) content.title = enforceName(content.title, forcedName);
+  }
   return { content, provider: r.provider, fallbackUsed: r.fallbackUsed };
+}
+
+/**
+ * Suggest 3–4 SEO title OPTIONS from the product PHOTO + its category/subcategory/style/polish/keywords
+ * — the "analyse the jewellery and give SEO titles" flow the owner likes in ChatGPT. Each option starts
+ * with the design's assigned girl name, then 5–7 keyword-rich, AUTHENTIC descriptors (only what's in the
+ * photo or the typed fields — never invented). Vision model first (OpenAI/Gemini), Groq text as fallback.
+ */
+export async function generateTitleOptions(p: ProductLike, n = 4): Promise<{ titles: string[]; provider: string; usedImage: boolean }> {
+  const forcedName = pickDivaName(((p as any).sku as string) || p.name || "");
+  const wantVision = !!p.imageBase64;
+  const sub = (p as any).subcategoryName ? ` Sub-category: ${(p as any).subcategoryName}.` : "";
+  const style = (p as any).styleName ? ` Style: ${(p as any).styleName}.` : "";
+  const polishes = [...new Set(((p as any).polishes ?? []).filter(Boolean))].join(", ");
+  const kw = (p.keywords ?? []).filter(Boolean).join(", ");
+  const userPrompt = [
+    `You are BlytheDIVA's senior SEO copywriter for premium artificial/imitation jewellery.`,
+    wantVision
+      ? `LOOK CAREFULLY at the attached product PHOTO. Identify the jewellery type (earrings/jhumka/drop/stud, necklace, choker, ring, bracelet…), the design/shape (rectangle, floral, halo, chandbali, solitaire, bar, drop, statement…), the material/work (American Diamond/CZ, Kundan, Polki, Pearl, Meenakari, Temple, Moissanite…) and the finish/tone (gold-plated, rose-gold, silver, oxidised).`
+      : `Infer the piece from the fields below (no photo available).`,
+    `Category: ${p.categoryName ?? "Jewellery"}.${sub}${style}`,
+    polishes ? `Polish / finish: ${polishes}.` : ``,
+    kw ? `Owner keywords (MUST use, they override the photo): ${kw}.` : ``,
+    ``,
+    `Produce ${n} DISTINCT, SEO-optimised website titles as STRICT minified JSON: {"titles":["…","…"]}.`,
+    `RULES for every title:`,
+    `  • Start EXACTLY with the first name «${forcedName}», then descriptive keywords so the WHOLE title is 5–7 words total (name + 4–6 keyword words). Title Case, under ~70 chars, SEO-optimised.`,
+    `  • Use ONLY AUTHENTIC keywords — descriptors that are clearly VISIBLE in the photo, or present in the category/sub-category/style/polish/keywords above. NEVER invent a stone, material, motif or piece that isn't there (no "Mangalsutra", no "Kundan" on a plain CZ piece, no earrings unless it's an earring).`,
+    `  • Make each option a DIFFERENT angle using strong search keywords jewellery buyers type — e.g. Designer, Statement, Rectangle/Floral/Drop, Stone, American Diamond, Gold Plated, Party Wear, Bridal, for Women. Example style the owner loves: "Designer Rectangle Stone Drop Earrings", "American Diamond Statement Drop Earrings", "Gold Plated Party Wear Earrings".`,
+    `  • The jewellery TYPE at the end must be correct for the piece. Return ONLY the JSON.`,
+  ].filter(Boolean).join("\n");
+
+  const SYSTEM = "You are BlytheDIVA's product copywriter. Return only valid minified JSON.";
+  const call = { system: SYSTEM, user: userPrompt, json: true, imageBase64: p.imageBase64, imageMime: p.imageMime };
+  const order: [string, (a: any) => Promise<string>][] = [];
+  if (wantVision && openaiConfigured()) order.push(["openai", openaiChat]);
+  if (wantVision && geminiTextConfigured()) order.push(["gemini", geminiChat]);
+  if (groqConfigured()) order.push(["groq", groqChat]);
+  if (openaiConfigured() && !order.some(([nm]) => nm === "openai")) order.push(["openai", openaiChat]);
+  if (geminiTextConfigured() && !order.some(([nm]) => nm === "gemini")) order.push(["gemini", geminiChat]);
+
+  let titles: string[] = [];
+  let provider = "";
+  for (const [nm, fn] of order) {
+    try {
+      const raw = JSON.parse(await fn(call));
+      const arr = Array.isArray(raw?.titles) ? raw.titles : Array.isArray(raw) ? raw : [];
+      const cleaned = arr.map((t: any) => String(t ?? "").trim()).filter(Boolean);
+      if (cleaned.length) { titles = cleaned; provider = nm; break; }
+    } catch { /* try next provider */ }
+  }
+  if (!titles.length) {
+    // Deterministic fallback so the owner always gets at least one option.
+    const t = (templateContent(p) as GeneratedContent).title;
+    if (t) titles = [t];
+    provider = provider || "deterministic";
+  }
+  // Enforce the assigned name on every option + dedupe.
+  const seen = new Set<string>();
+  titles = titles
+    .map((t) => enforceName(t, forcedName))
+    .filter((t) => { const k = t.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; })
+    .slice(0, n);
+  return { titles, provider, usedImage: wantVision };
 }
 
 export function aiProvidersStatus() {
