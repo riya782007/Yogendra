@@ -90,8 +90,9 @@ export async function suggestProductTitleAction(input: { name: string; category?
     if (input.sku) {
       const p = await getProductBySku(input.sku);
       if (p) {
-        // Groq (primary) is text-only → skip the photo download; otherwise feed the photo to the vision model.
-        if (!process.env.GROQ_API_KEY) ({ imageBase64, imageMime } = await fetchProductImage(p));
+        // Single-product generate: ALWAYS read the photo so a vision model can build a rich title from
+        // the actual piece (this is the "why is my title plain" fix — Groq alone can't see the jewellery).
+        ({ imageBase64, imageMime } = await fetchProductImage(p));
         subcategoryName = (p as any).subcategory?.name;
         polishes = (p.variants ?? []).map((v: any) => v.polish ?? "").filter(Boolean);
         if ((p as any).style_id) {
@@ -105,7 +106,7 @@ export async function suggestProductTitleAction(input: { name: string; category?
       subcategoryName, styleName, polishes, colors: [],
       keywords: (input.keywords ?? []).map((k) => k.trim()).filter(Boolean),
       imageBase64, imageMime,
-    });
+    } as any, { visionFirst: true });
     const cleanTitle = stripCode(content.title, skuStr) || content.title;
     return { ok: true, title: cleanTitle, description: content.description, provider, fallbackUsed, usedImage: !!imageBase64 };
   } catch (e) {

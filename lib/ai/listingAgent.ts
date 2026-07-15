@@ -78,33 +78,30 @@ function prompt(p: ProductLike) {
   ].filter(Boolean).join("\n");
 }
 
-export function buildGateway() {
-  // GROQ is the PRIMARY writer (free + fast) — the owner sets GROQ_API_KEY; titles + descriptions are
-  // generated from the product's name + CATEGORY + SUB-CATEGORY + keywords. OpenAI (vision-capable) is
-  // the FALLBACK when Groq is missing or fails; deterministic template is the always-there final hop.
-  const groqPrimary = groqConfigured();
-  const openaiFallback = openaiConfigured();
+export function buildGateway(opts?: { visionFirst?: boolean }) {
+  // GROQ is the default PRIMARY writer (free + fast) for BULK generation. But for a SINGLE product where
+  // the owner clicks "Generate" and wants a rich title, we prefer a VISION model (OpenAI → Gemini) so the
+  // copy is built from the actual PHOTO (Groq is text-only and can't see the piece). Falls back to Groq
+  // text, then the deterministic template — a title/description is never blank.
+  const openaiOn = openaiConfigured();
+  const geminiOn = geminiTextConfigured();
+  const wantVision = !!opts?.visionFirst && (openaiOn || geminiOn);
+  const groqPrimary = groqConfigured() && !wantVision;
   const SYSTEM = "You are BlytheDIVA's product copywriter. Return only valid minified JSON.";
+  const visionRun = async (call: any) => JSON.parse(await (openaiOn ? openaiChat : geminiChat)({
+    system: SYSTEM, user: call._prompt, json: true,
+    imageBase64: call._product?.imageBase64, imageMime: call._product?.imageMime,
+  }));
+  const groqRun = async (call: any) => JSON.parse(await groqChat({ system: SYSTEM, user: call._prompt, json: true }));
   return new AiGateway({
     primary: {
-      name: groqPrimary ? "groq" : (openaiFallback ? "openai" : "gemini"),
-      run: async (call: any) => {
-        if (groqPrimary) return JSON.parse(await groqChat({ system: SYSTEM, user: call._prompt, json: true }));
-        // No Groq key → go straight to a vision model so the photo still informs the copy.
-        return JSON.parse(await (openaiFallback ? openaiChat : geminiChat)({
-          system: SYSTEM, user: call._prompt, json: true,
-          imageBase64: call._product?.imageBase64, imageMime: call._product?.imageMime,
-        }));
-      },
+      name: groqPrimary ? "groq" : (openaiOn ? "openai" : "gemini"),
+      run: async (call: any) => (groqPrimary ? groqRun(call) : visionRun(call)),
     },
     secondary: {
-      // Fallback writer: OpenAI (gpt-4o-mini, vision) when configured, else Gemini — both can also read
-      // the product photo for extra grounding when Groq is unavailable.
-      name: openaiFallback ? "openai" : "gemini",
-      run: async (call: any) => JSON.parse(await (openaiFallback ? openaiChat : geminiChat)({
-        system: SYSTEM, user: call._prompt, json: true,
-        imageBase64: call._product?.imageBase64, imageMime: call._product?.imageMime,
-      })),
+      // If Groq led, fall back to a vision model; if a vision model led, fall back to Groq text.
+      name: groqPrimary ? (openaiOn ? "openai" : "gemini") : "groq",
+      run: async (call: any) => (groqPrimary ? visionRun(call) : groqRun(call)),
     },
     deterministic: (call: any) => templateContent(call._product) as GeneratedContent,
     budgetPaise: Number(process.env.AI_BUDGET_PAISE ?? 500000),
@@ -114,8 +111,8 @@ export function buildGateway() {
   });
 }
 
-export async function generateProductContent(p: ProductLike): Promise<{ content: GeneratedContent; provider: string; fallbackUsed: boolean }> {
-  const gateway = buildGateway();
+export async function generateProductContent(p: ProductLike, opts?: { visionFirst?: boolean }): Promise<{ content: GeneratedContent; provider: string; fallbackUsed: boolean }> {
+  const gateway = buildGateway(opts);
   const call: any = { feature: "listing", cacheKey: `listing:${p.sku}`, schema, estCostPaise: 50, _prompt: prompt(p), _product: p };
   const r = await gateway.run(call);
   return { content: r.data as GeneratedContent, provider: r.provider, fallbackUsed: r.fallbackUsed };
