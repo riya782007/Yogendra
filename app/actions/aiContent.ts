@@ -58,15 +58,12 @@ export async function generateContentAction(sku: string, keywords?: string[]): P
   const polishes = (p.variants ?? []).map((v: any) => v.polish ?? "").filter(Boolean);
   // Pull the STYLE name too so the AI can build the title from category + sub-category + style + polish.
   const { data: st } = (p as any).style_id ? await sb.from("styles").select("name").eq("id", (p as any).style_id).maybeSingle() : { data: null as any };
-  // Groq (primary) is text-only and writes from the name + category + sub-category + style + keywords, so
-  // when it's configured we skip the photo download — this keeps bulk "Generate all" fast and avoids timeouts.
-  const img: { imageBase64?: string; imageMime?: string } = process.env.GROQ_API_KEY ? {} : await fetchProductImage(p);
-  const { imageBase64, imageMime } = img;
+  // Title/description are built from the owner's TYPED fields only — name + category + sub-category +
+  // style + polish + keywords — never from the photo (owner: "do not inference the image").
   const { content, provider, fallbackUsed } = await generateProductContent({
     name: nameForAi(p.name, p.sku), sku: p.sku, categoryName: p.category?.name,
     subcategoryName: (p as any).subcategory?.name, styleName: (st as any)?.name, polishes, colors,
     keywords: (keywords ?? []).map((k) => k.trim()).filter(Boolean),
-    imageBase64, imageMime,
   } as any);
   content.title = stripCode(content.title, p.sku) || content.title; // never let a SKU/code leak into the title
   const { error } = await sb.from("products").update({ generated_content: content }).eq("id", p.id);
@@ -82,17 +79,14 @@ export async function suggestProductTitleAction(input: { name: string; category?
   const name = (input.name ?? "").trim();
   if (!name) return { ok: false, error: "Enter a product name first" };
   try {
-    // If we know the product (editing an existing one), pull its uploaded photo + the
-    // sub-category / style / polish so the AI writes the title from all of that, not just the name.
-    let imageBase64: string | undefined, imageMime: string | undefined;
+    // Build the title/description from the owner's TYPED fields only — category, sub-category, style,
+    // polish and his keywords — NOT the photo (owner: "do not inference the image"). So we deliberately
+    // do NOT download or send the picture; the copy mirrors exactly what he entered.
     let subcategoryName: string | undefined, styleName: string | undefined, polishes: string[] = [];
     const skuStr = (input.sku ?? "").trim();
     if (input.sku) {
       const p = await getProductBySku(input.sku);
       if (p) {
-        // Single-product generate: ALWAYS read the photo so a vision model can build a rich title from
-        // the actual piece (this is the "why is my title plain" fix — Groq alone can't see the jewellery).
-        ({ imageBase64, imageMime } = await fetchProductImage(p));
         subcategoryName = (p as any).subcategory?.name;
         polishes = (p.variants ?? []).map((v: any) => v.polish ?? "").filter(Boolean);
         if ((p as any).style_id) {
@@ -105,10 +99,9 @@ export async function suggestProductTitleAction(input: { name: string; category?
       name: nameForAi(name, skuStr), sku: input.sku || name, categoryName: input.category,
       subcategoryName, styleName, polishes, colors: [],
       keywords: (input.keywords ?? []).map((k) => k.trim()).filter(Boolean),
-      imageBase64, imageMime,
-    } as any, { visionFirst: true });
+    } as any);
     const cleanTitle = stripCode(content.title, skuStr) || content.title;
-    return { ok: true, title: cleanTitle, description: content.description, provider, fallbackUsed, usedImage: !!imageBase64 };
+    return { ok: true, title: cleanTitle, description: content.description, provider, fallbackUsed, usedImage: false };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Could not suggest a title" };
   }
