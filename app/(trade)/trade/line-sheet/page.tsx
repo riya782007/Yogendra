@@ -28,16 +28,14 @@ export default async function LineSheet() {
   for (const r of ((imgRows as any[]) ?? []).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))) {
     if (typeof r.path === "string" && r.path.startsWith("http") && !imgBy.has(r.product_id)) imgBy.set(r.product_id, r.path);
   }
-  const pIds = (products as any[]).map((p) => (p as any).id).filter(Boolean);
-  // PAGE through variants (12k+ rows, past PostgREST's 1000-row cap) so colours/stock aren't lost.
+  // PAGE through ALL variants (12k+ rows, past the 1000-row cap). No .in(product_id, pIds) — 700+ UUIDs
+  // overflow the request URL and silently return nothing (the "colours missing" bug). Group by product_id.
   const varsBy = new Map<string, any[]>();
-  if (pIds.length) {
-    for (let from = 0; ; from += 1000) {
-      const { data: vRows } = await sb.from("variants").select("product_id,color,qty,image_paths").in("product_id", pIds).range(from, from + 999);
-      const rows = (vRows as any[]) ?? [];
-      for (const v of rows) { const a = varsBy.get(v.product_id) ?? []; a.push(v); varsBy.set(v.product_id, a); }
-      if (rows.length < 1000) break;
-    }
+  for (let from = 0; ; from += 1000) {
+    const { data: vRows } = await sb.from("variants").select("product_id,color,qty,image_paths").order("product_id", { ascending: true }).range(from, from + 999);
+    const rows = (vRows as any[]) ?? [];
+    for (const v of rows) { const a = varsBy.get(v.product_id) ?? []; a.push(v); varsBy.set(v.product_id, a); }
+    if (rows.length < 1000) break;
   }
 
   // One row per design (colours listed together — a compact buyer's line-sheet, not per-variant).

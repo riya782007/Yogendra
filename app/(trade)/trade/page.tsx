@@ -35,17 +35,16 @@ export default async function TradeDashboard() {
   }
   // Variants (colours): a wholesale buyer orders specific colours, so configurable designs are
   // expanded into one orderable row PER colour (its own SKU + stock); simple products stay single.
-  const pIds = (products as any[]).map((p) => (p as any).id).filter(Boolean);
-  // PAGE through variants — there are 12k+ variants, well past PostgREST's 1000-row cap. Without paging
-  // most designs lost their colours/stock and (with the no-photo filter) vanished from the catalogue.
+  // PAGE through ALL variants (12k+ rows, past PostgREST's 1000-row cap). We deliberately do NOT filter
+  // by .in(product_id, pIds): 741 UUIDs overflow the request URL length and the query silently returns
+  // nothing — which made every design fall back to the "no colours" branch (the "variants nahi aa rahe"
+  // bug). Fetch all, ordered for stable paging, then group by product_id.
   const varsBy = new Map<string, any[]>();
-  if (pIds.length) {
-    for (let from = 0; ; from += 1000) {
-      const { data: vRows } = await sb.from("variants").select("product_id,sku,color,qty,image_paths").in("product_id", pIds).range(from, from + 999);
-      const rows = (vRows as any[]) ?? [];
-      for (const v of rows) { const a = varsBy.get(v.product_id) ?? []; a.push(v); varsBy.set(v.product_id, a); }
-      if (rows.length < 1000) break;
-    }
+  for (let from = 0; ; from += 1000) {
+    const { data: vRows } = await sb.from("variants").select("product_id,sku,color,qty,image_paths").order("product_id", { ascending: true }).range(from, from + 999);
+    const rows = (vRows as any[]) ?? [];
+    for (const v of rows) { const a = varsBy.get(v.product_id) ?? []; a.push(v); varsBy.set(v.product_id, a); }
+    if (rows.length < 1000) break;
   }
 
   // Subcategory ("type") + style names for the dealer-panel filters (client point 14).
