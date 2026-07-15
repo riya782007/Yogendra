@@ -5,6 +5,7 @@ import { getOrder } from "@/lib/supabase/queries";
 import { supabaseServer } from "@/lib/supabase/server";
 import { formatPaise } from "@/lib/pricing";
 import { PrintButton } from "@/components/admin/PrintButton";
+import { UpiAmountQr } from "@/components/admin/UpiAmountQr";
 import { CancelOrderButton } from "@/components/admin/CancelOrderButton";
 import { BUSINESS, HSN_JEWELLERY, GST_RATE, gstSplit, gstSplitExclusive, stateCodeFromGstin, stateNameFromCode, bankHasDetails, amountInWords } from "@/lib/business";
 import { getSession, can } from "@/lib/auth";
@@ -64,6 +65,9 @@ export default async function Invoice({ params }: { params: { id: string } }) {
   const invNo = order.invoice_no || ((isCash ? "CM-" : "INV-") + String(order.id).slice(0, 8).toUpperCase());
   const date = new Date(order.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
   const qtyTotal = items.reduce((s: number, it: any) => s + it.qty, 0);
+  // Default UPI for the scan-to-pay QR (exact bill amount).
+  const { data: pmRows } = await supabaseServer().from("payment_methods").select("upi_id,name,is_default").eq("active", true);
+  const defUpi = ((pmRows as any[]) ?? []).filter((m) => m.upi_id).sort((a, b) => (b.is_default ? 1 : 0) - (a.is_default ? 1 : 0))[0] ?? null;
   const session = getSession();
   const PAY_STYLE: Record<string, string> = { Paid: "bg-emerald-mist text-emerald-dark", Partial: "bg-gold/15 text-gold-dark", Unpaid: "bg-rose/10 text-rose" };
 
@@ -183,6 +187,12 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                   <p className="text-muted mb-1">Bank details</p>
                   <p className="text-ink">{BUSINESS.bank.name} · A/C {BUSINESS.bank.account}</p>
                   <p className="text-ink">{[BUSINESS.bank.ifsc && `IFSC ${BUSINESS.bank.ifsc}`, BUSINESS.bank.branch].filter(Boolean).join(" · ")}</p>
+                </div>
+              )}
+              {/* Scan-to-pay UPI QR for the exact amount still due (hidden once fully paid). */}
+              {balanceDue > 0 && defUpi?.upi_id && (
+                <div className="mt-4">
+                  <UpiAmountQr upiId={defUpi.upi_id} payeeName={defUpi.name} amountPaise={balanceDue} note={`Bill ${invNo}`} />
                 </div>
               )}
             </div>

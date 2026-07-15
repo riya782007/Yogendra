@@ -2,8 +2,10 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getEstimate, getProductsLite } from "@/lib/supabase/queries";
+import { supabaseServer } from "@/lib/supabase/server";
 import { formatPaise } from "@/lib/pricing";
 import { PrintButton } from "@/components/admin/PrintButton";
+import { UpiAmountQr } from "@/components/admin/UpiAmountQr";
 import { BUSINESS, amountInWords } from "@/lib/business";
 import { requirePerm } from "@/lib/auth";
 import { updateEstimateCustomerAction, updateEstimateLineAction, updateEstimateLinePriceAction, removeEstimateLineAction, addEstimateLineAction } from "@/app/actions/billing";
@@ -21,6 +23,8 @@ export default async function EstimatePrint({ params }: { params: { id: string }
   const ref = "EST-" + String(estimate.id).slice(0, 8).toUpperCase();
   const date = new Date(estimate.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
   const qtyTotal = items.reduce((s: number, it: any) => s + it.qty, 0);
+  const { data: pmRows } = await supabaseServer().from("payment_methods").select("upi_id,name,is_default").eq("active", true);
+  const defUpi = ((pmRows as any[]) ?? []).filter((m) => m.upi_id).sort((a, b) => (b.is_default ? 1 : 0) - (a.is_default ? 1 : 0))[0] ?? null;
   const th = "py-2 px-2 text-xs font-semibold text-ink/70";
   const td = "py-2 px-2 align-top";
   const inp = "rounded-xl border border-sand px-3 py-2 text-sm bg-white outline-none focus:border-emerald";
@@ -94,9 +98,12 @@ export default async function EstimatePrint({ params }: { params: { id: string }
             </tbody>
           </table>
 
-          <div className="mt-4 text-xs">
-            <p className="text-muted mb-1">Amount in words</p>
-            <p className="text-ink font-medium">{amountInWords(total)}</p>
+          <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
+            <div className="text-xs">
+              <p className="text-muted mb-1">Amount in words</p>
+              <p className="text-ink font-medium">{amountInWords(total)}</p>
+            </div>
+            {defUpi?.upi_id && <UpiAmountQr upiId={defUpi.upi_id} payeeName={defUpi.name} amountPaise={total} note={`Estimate ${String(estimate.id).slice(0, 8).toUpperCase()}`} />}
           </div>
 
           <p className="text-center text-[10px] text-muted mt-6 border-t border-sand pt-3">

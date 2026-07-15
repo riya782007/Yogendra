@@ -1598,6 +1598,7 @@ export async function getPendingDealerApplications(limit = 10): Promise<DealerAp
   const { data } = await sb.from("customers")
     .select("id,name,phone,city,gstin,notes,created_at")
     .eq("type", "wholesale").eq("wholesale_approved", false)
+    .ilike("notes", "%Dealer application%") // only real signup-form applications, not demo/manual entries
     .order("created_at", { ascending: false }).limit(limit);
   return ((data as any[]) ?? []) as DealerApplication[];
 }

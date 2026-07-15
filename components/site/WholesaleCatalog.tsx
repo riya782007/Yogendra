@@ -502,10 +502,14 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
               <button onClick={confirmOrder} disabled={busy} className="btn-gold flex-1 py-2.5 text-sm font-medium disabled:opacity-50">{busy ? "Placing…" : "I've paid — place order"}</button>
               <button onClick={() => !busy && setPaying(false)} className="px-4 py-2.5 rounded-xl bg-ink/5 text-ink text-sm hover:bg-ink/10">Back</button>
             </div>
-            {/* COD — the dealer orders now, pays on delivery; the amount stays due on their ledger. */}
-            <button onClick={confirmOrderCOD} disabled={busy} className="w-full mt-2 py-2.5 rounded-xl border border-sand text-sm text-ink hover:border-emerald disabled:opacity-50">
-              💵 Order on COD — pay {formatPaise(orderTotal + shipSlab(orderTotal) + COD_FEE)} on delivery (incl. ₹120 COD fee)
-            </button>
+            {/* COD — the dealer orders now, pays on delivery; blocked above ₹5,000 (prepaid only). */}
+            {orderTotal > 500000 ? (
+              <p className="w-full mt-2 py-2.5 rounded-xl border border-sand text-xs text-muted text-center">💳 COD isn't available above ₹5,000 — please pay online above using the QR/UPI.</p>
+            ) : (
+              <button onClick={confirmOrderCOD} disabled={busy} className="w-full mt-2 py-2.5 rounded-xl border border-sand text-sm text-ink hover:border-emerald disabled:opacity-50">
+                💵 Order on COD — pay {formatPaise(orderTotal + shipSlab(orderTotal) + COD_FEE)} on delivery (incl. ₹120 COD fee)
+              </button>
+            )}
             <p className="text-[11px] text-muted mt-2 text-center">We verify your payment and dispatch — you'll get a WhatsApp confirmation.</p>
           </div>
         </div>

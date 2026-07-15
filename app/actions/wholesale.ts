@@ -73,7 +73,8 @@ export async function wholesaleLoginAction(formData: FormData) {
   // still works — an exact string match was rejecting valid, approved dealers.
   const phone10 = String(formData.get("phone") ?? "").replace(/\D/g, "").slice(-10);
   const code = String(formData.get("code") ?? "").trim().toUpperCase();
-  if (phone10.length !== 10 || !code) redirect("/trade/login?error=1");
+  if (phone10.length !== 10) redirect("/trade/login?error=format"); // clear "phone format" hint
+  if (!code) redirect("/trade/login?error=1");
   const { data } = await supabaseServer()
     .from("customers").select("id,phone")
     .eq("type", "wholesale").eq("wholesale_approved", true).eq("login_code", code)
@@ -103,7 +104,7 @@ export async function approveWholesaleAction(formData: FormData) {
   } else {
     await sb.from("customers").update({ wholesale_approved: false }).eq("id", id);
   }
-  revalidatePath(`/admin/customer/${id}`); revalidatePath("/admin/customers");
+  revalidatePath(`/admin/customer/${id}`); revalidatePath("/admin/customers"); revalidatePath("/admin/dashboard");
 }
 
 export async function regenWholesaleCodeAction(formData: FormData) {
@@ -167,6 +168,11 @@ export async function placeWholesaleOrderAction(
     // recorded total — what the dealer saw equals what they pay. The shipping slab is judged on the
     // GST-inclusive item value too, matching the dealer panel.
     const itemsGst = Math.round(itemsOnly * (1 + GST_RATE / 100));
+    // COD CEILING — high-value COD is risky, so wholesale orders above ₹5,000 must be prepaid.
+    if (opts?.cod && itemsGst > 500000) {
+      await sb.rpc("cancel_order", { p_order_id: orderId, p_reason: "COD not available above ₹5,000" }).then(() => {}, () => {});
+      return { ok: false, error: "Cash on Delivery isn't available for orders above ₹5,000 — please pay online (prepaid)." };
+    }
     const ship = wholesaleShippingPaise(itemsGst);
     const codFee = opts?.cod ? WHOLESALE_COD_FEE_PAISE : 0;
     total = itemsGst + ship + codFee;

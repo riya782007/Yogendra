@@ -6,6 +6,9 @@ import { requirePerm } from "@/lib/auth";
 import { sendPurchase } from "@/lib/ga4";
 import { notifyOrderPlaced, sendWhatsAppText } from "@/lib/whatsapp";
 
+/** Cash-on-Delivery is capped at ₹5,000 (high-value COD is risky) — above this, only prepaid. */
+export const COD_MAX_PAISE = 500000;
+
 export type PlaceOrderInput = {
   items: { sku: string; qty: number; color?: string }[];
   customer: { name: string; phone: string; address: string; pincode: string; city?: string };
@@ -37,6 +40,13 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
   if (ship > 0) { total = total + ship; patch.total = total; patch.extra_courier = ship; }
   if (addr) patch.buyer_address = addr;
   if (Object.keys(patch).length) await sb.from("orders").update(patch).eq("id", orderId).then(() => {}, () => {});
+
+  // COD CEILING — Cash on Delivery is risky on high-value orders, so anything above ₹5,000 must be
+  // prepaid. Roll the order back so no stock is held and the shopper is asked to pay online.
+  if (input.payment === "cod" && total > COD_MAX_PAISE) {
+    await sb.rpc("cancel_order", { p_order_id: orderId, p_reason: "COD not available above ₹5,000" }).then(() => {}, () => {});
+    return { ok: false, error: "Cash on Delivery isn't available for orders above ₹5,000. Please choose online (prepaid) payment." };
+  }
 
   await sendPurchase({ orderId, valuePaise: total, channel: "retail", items: input.items.map((i) => ({ sku: i.sku, qty: i.qty })) });
   await notifyOrderPlaced({

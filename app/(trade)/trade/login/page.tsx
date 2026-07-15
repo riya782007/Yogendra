@@ -31,7 +31,9 @@ export default async function TradeLogin({ searchParams }: { searchParams: { err
           <p className="text-xs text-muted mb-5">Use the phone number and access code your supplier gave you.</p>
           <input name="phone" placeholder="Registered phone number" className="w-full rounded-xl border border-sand px-4 py-2.5 text-sm bg-white outline-none focus:border-emerald mb-3" />
           <input name="code" placeholder="Access code" className="w-full rounded-xl border border-sand px-4 py-2.5 text-sm bg-white outline-none focus:border-emerald uppercase tracking-widest" />
-          {searchParams.error && <p className="text-sm text-rose mt-2">Wrong phone or code, or your account isn&apos;t approved yet.</p>}
+          {searchParams.error === "format"
+            ? <p className="text-sm text-rose mt-2">Please enter your phone number as 10 digits — no +91, spaces or leading 0.</p>
+            : searchParams.error && <p className="text-sm text-rose mt-2">Wrong phone or code, or your account isn&apos;t approved yet.</p>}
           <button className="btn-primary w-full mt-4 py-3 text-sm font-medium">Sign in to trade pricing</button>
         </form>
 
