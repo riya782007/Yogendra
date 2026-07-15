@@ -6,8 +6,9 @@ import { requirePerm } from "@/lib/auth";
 import { sendPurchase } from "@/lib/ga4";
 import { notifyOrderPlaced, sendWhatsAppText } from "@/lib/whatsapp";
 
-/** Cash-on-Delivery is capped at ₹5,000 (high-value COD is risky) — above this, only prepaid. */
-export const COD_MAX_PAISE = 500000;
+/** Cash-on-Delivery is capped at ₹5,000 (high-value COD is risky) — above this, only prepaid.
+ *  (Not exported: a "use server" file may only export async functions.) */
+const COD_MAX_PAISE = 500000;
 
 export type PlaceOrderInput = {
   items: { sku: string; qty: number; color?: string }[];
