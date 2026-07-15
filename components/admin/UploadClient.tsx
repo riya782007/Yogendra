@@ -10,6 +10,31 @@ import { getProductVariantsAction, addVariantImageAction } from "@/app/actions/v
 import { generateContentAction } from "@/app/actions/aiContent";
 import { compressImage } from "@/lib/image";
 
+/** Load SheetJS from CDN on demand (no build dependency) so bulk import can read real Excel files. */
+async function loadSheetJS(): Promise<any> {
+  const w = window as any;
+  if (w.XLSX) return w.XLSX;
+  await new Promise<void>((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js";
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("Could not load the Excel reader"));
+    document.head.appendChild(s);
+  });
+  return (window as any).XLSX;
+}
+/** Read a bulk file into CSV text — supports .xlsx / .xls (Excel, via SheetJS) and .csv / .txt (plain). */
+async function fileToCsv(f: File): Promise<string> {
+  if (/\.(xlsx|xls)$/i.test(f.name)) {
+    const XLSX = await loadSheetJS();
+    const wb = XLSX.read(await f.arrayBuffer(), { type: "array" });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    return XLSX.utils.sheet_to_csv(ws);
+  }
+  return await f.text();
+}
+
 type Cat = { id: string; name: string };
 type LogLine = { text: string; status: "run" | "ok" | "err" };
 type VariantOptions = { color: string[]; size: string[]; polish: string[] };
@@ -482,8 +507,9 @@ export function UploadClient({
           </div>
         ) : (
           <div className="space-y-3">
-            <p className="text-xs text-muted">Paste any list — even messy. The AI figures out names, prices, stock, colours and SKUs. Or use a header row (any column order): <code className="bg-cream px-1 rounded">name, sku, base_price, qty, type, colours|pipe</code> — <b>sku is optional</b> (blank = auto BD####). · <a download="blythe-diva-bulk-template.csv" href={`data:text/csv;charset=utf-8,${encodeURIComponent("name,sku,base_price,qty,type,colours\nRajwadi Kundan Necklace,KN101,850,12,configurable,Red|Green|Blue\nPearl Studs,PS160,160,40,simple,\nMeenakari Bangles,MB540,540,25,configurable,Red|Green")}`} className="text-emerald nav-link">⤓ Download CSV template</a></p>
-            <input type="file" accept=".csv,text/csv,.txt" onChange={(e) => { const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onload = () => setCsv(String(r.result || "")); r.readAsText(f); } }}
+            <p className="text-xs text-muted">Upload an <b>Excel (.xlsx)</b> or CSV file, or paste any list — even messy. The AI figures out names, prices, stock, colours and SKUs. Recommended columns (any order): <code className="bg-cream px-1 rounded">name, sku, base_price, qty, type, colours|pipe</code> — <b>sku is optional</b> (blank = auto BD####). · <a download="blythe-diva-bulk-template.csv" href={`data:text/csv;charset=utf-8,${encodeURIComponent("name,sku,base_price,qty,type,colours\nRajwadi Kundan Necklace,KN101,850,12,configurable,Red|Green|Blue\nPearl Studs,PS160,160,40,simple,\nMeenakari Bangles,MB540,540,25,configurable,Red|Green")}`} className="text-emerald nav-link">⤓ Download template</a> (open in Excel, fill, save)</p>
+            <input type="file" accept=".csv,text/csv,.txt,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+              onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; try { const text = await fileToCsv(f); setCsv(text); toast("File loaded — review the rows below, then Build."); } catch { toast("Couldn't read that file. Save it as .xlsx or .csv and try again.", "error"); } }}
               className="block w-full text-sm text-ink file:mr-3 file:rounded-full file:border-0 file:bg-emerald file:text-white file:px-4 file:py-2 file:text-sm file:cursor-pointer" />
             <textarea className={`${input} font-mono text-xs`} rows={6} placeholder={"Kundan Choker, 850, 12, configurable, Red|Green|Blue\nPearl Studs 160 rs 40pcs\nMeena bangles - 540 - 25 - red,green"} value={csv} onChange={(e) => setCsv(e.target.value)} />
             <button onClick={buildFromList} disabled={busy} className="btn-primary px-6 py-2.5 text-sm font-medium disabled:opacity-60">{busy ? "Building…" : "✨ Build inventory with AI"}</button>
