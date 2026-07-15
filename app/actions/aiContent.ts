@@ -58,13 +58,15 @@ export async function generateContentAction(sku: string, keywords?: string[]): P
   const polishes = (p.variants ?? []).map((v: any) => v.polish ?? "").filter(Boolean);
   // Pull the STYLE name too so the AI can build the title from category + sub-category + style + polish.
   const { data: st } = (p as any).style_id ? await sb.from("styles").select("name").eq("id", (p as any).style_id).maybeSingle() : { data: null as any };
-  // Title/description are built from the owner's TYPED fields only — name + category + sub-category +
-  // style + polish + keywords — never from the photo (owner: "do not inference the image").
+  // Look at the ACTUAL product photo (like the owner does in ChatGPT) so the title/description describe
+  // the real piece — the text-only path was guessing wrong pieces (e.g. "Mangalsutra") from the category.
+  const img = await fetchProductImage(p);
   const { content, provider, fallbackUsed } = await generateProductContent({
     name: nameForAi(p.name, p.sku), sku: p.sku, categoryName: p.category?.name,
     subcategoryName: (p as any).subcategory?.name, styleName: (st as any)?.name, polishes, colors,
     keywords: (keywords ?? []).map((k) => k.trim()).filter(Boolean),
-  } as any);
+    imageBase64: img.imageBase64, imageMime: img.imageMime,
+  } as any, { visionFirst: true });
   content.title = stripCode(content.title, p.sku) || content.title; // never let a SKU/code leak into the title
   const { error } = await sb.from("products").update({ generated_content: content }).eq("id", p.id);
   if (error) return { ok: false, sku, error: error.message };
@@ -79,10 +81,11 @@ export async function suggestProductTitleAction(input: { name: string; category?
   const name = (input.name ?? "").trim();
   if (!name) return { ok: false, error: "Enter a product name first" };
   try {
-    // Build the title/description from the owner's TYPED fields only — category, sub-category, style,
-    // polish and his keywords — NOT the photo (owner: "do not inference the image"). So we deliberately
-    // do NOT download or send the picture; the copy mirrors exactly what he entered.
+    // Look at the ACTUAL product photo (exactly like the owner does in ChatGPT — "take reference from the
+    // image") so the title/description describe the real piece. The text-only path was inventing wrong
+    // components (e.g. a "Mangalsutra" that isn't there). Owner-typed keywords still override the photo.
     let subcategoryName: string | undefined, styleName: string | undefined, polishes: string[] = [];
+    let imageBase64: string | undefined, imageMime: string | undefined;
     const skuStr = (input.sku ?? "").trim();
     if (input.sku) {
       const p = await getProductBySku(input.sku);
@@ -93,15 +96,18 @@ export async function suggestProductTitleAction(input: { name: string; category?
           const { data: st } = await supabaseServer().from("styles").select("name").eq("id", (p as any).style_id).maybeSingle();
           styleName = (st as any)?.name;
         }
+        const img = await fetchProductImage(p);
+        imageBase64 = img.imageBase64; imageMime = img.imageMime;
       }
     }
     const { content, provider, fallbackUsed } = await generateProductContent({
       name: nameForAi(name, skuStr), sku: input.sku || name, categoryName: input.category,
       subcategoryName, styleName, polishes, colors: [],
       keywords: (input.keywords ?? []).map((k) => k.trim()).filter(Boolean),
-    } as any);
+      imageBase64, imageMime,
+    } as any, { visionFirst: true });
     const cleanTitle = stripCode(content.title, skuStr) || content.title;
-    return { ok: true, title: cleanTitle, description: content.description, provider, fallbackUsed, usedImage: false };
+    return { ok: true, title: cleanTitle, description: content.description, provider, fallbackUsed, usedImage: !!imageBase64 };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Could not suggest a title" };
   }
