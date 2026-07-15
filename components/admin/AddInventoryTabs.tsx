@@ -23,7 +23,7 @@ export function AddInventoryTabs(props: { categories: Cat[]; subcategories?: Sub
       {tab === "new" ? (
         <AddInventoryClient categories={props.categories} subcategories={props.subcategories ?? []} styles={props.styles ?? []} variantOptions={props.variantOptions} colorCodes={props.colorCodes} />
       ) : (
-        <UploadClient categories={props.categories} variantOptions={props.variantOptions} colorCodes={props.colorCodes} initialMode="bulk" />
+        <UploadClient categories={props.categories} subcategories={props.subcategories ?? []} styles={props.styles ?? []} variantOptions={props.variantOptions} colorCodes={props.colorCodes} initialMode="bulk" />
       )}
     </div>
   );

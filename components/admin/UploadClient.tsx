@@ -9,6 +9,7 @@ import {
 import { getProductVariantsAction, addVariantImageAction } from "@/app/actions/variants";
 import { generateContentAction } from "@/app/actions/aiContent";
 import { compressImage } from "@/lib/image";
+import { downloadProductTemplate } from "@/lib/xlsxTemplate";
 
 /** Load SheetJS from CDN on demand (no build dependency) so bulk import can read real Excel files. */
 async function loadSheetJS(): Promise<any> {
@@ -65,11 +66,15 @@ const isRealVariant = (v: VariantRow) =>
 
 export function UploadClient({
   categories,
+  subcategories = [],
+  styles = [],
   variantOptions = { color: [], size: [], polish: [] },
   colorCodes = {},
   initialMode = "single",
 }: {
   categories: Cat[];
+  subcategories?: { id: string; name: string; categoryId: string }[];
+  styles?: { id: string; name: string; categoryId: string }[];
   variantOptions?: VariantOptions;
   /** Lowercased colour name → canonical barcode suffix (RED, MULTI1, SBLUE…). */
   colorCodes?: ColorCodeMap;
@@ -507,7 +512,30 @@ export function UploadClient({
           </div>
         ) : (
           <div className="space-y-3">
-            <p className="text-xs text-muted">Upload an <b>Excel (.xlsx)</b> or CSV file, or paste any list — even messy. The AI figures out names, prices, stock, colours and SKUs. Recommended columns (any order): <code className="bg-cream px-1 rounded">name, sku, base_price, qty, type, colours|pipe</code> — <b>sku is optional</b> (blank = auto BD####). · <a download="blythe-diva-bulk-template.csv" href={`data:text/csv;charset=utf-8,${encodeURIComponent("name,sku,base_price,qty,type,colours\nRajwadi Kundan Necklace,KN101,850,12,configurable,Red|Green|Blue\nPearl Studs,PS160,160,40,simple,\nMeenakari Bangles,MB540,540,25,configurable,Red|Green")}`} className="text-emerald nav-link">⤓ Download template</a> (open in Excel, fill, save)</p>
+            <div className="rounded-2xl border border-emerald/30 bg-emerald-mist/40 p-4">
+              <p className="text-sm font-medium text-ink mb-1">Download the ready-to-fill Excel template</p>
+              <p className="text-xs text-muted mb-3">
+                It has <b>drop-downs</b> for Category, Subcategory, Style, Polish &amp; Type — your team <b>picks</b> from the list
+                (no spelling mistakes). Columns: <code className="bg-cream px-1 rounded">name, sku, base_price, qty, type, category, subcategory, style, polish, colours</code>.
+                SKU is optional (blank = auto BD####); put multiple colours as <code className="bg-cream px-1 rounded">Red|Green|Blue</code>.
+              </p>
+              <button
+                type="button"
+                onClick={() =>
+                  downloadProductTemplate({
+                    categories: categories.map((c) => c.name),
+                    subcategories: subcategories.map((s) => s.name),
+                    styles: styles.map((s) => s.name),
+                    polishes: variantOptions.polish ?? [],
+                  })
+                }
+                className="inline-flex items-center gap-1.5 rounded-full bg-ink text-white px-4 py-2 text-sm font-medium hover:bg-ink/90"
+              >
+                ⤓ Download Excel template (.xlsx)
+              </button>
+              <p className="text-[11px] text-muted mt-2">Open in Excel → pick from the drop-downs → save → upload the file below.</p>
+            </div>
+            <p className="text-xs text-muted">Or paste any list / upload a CSV — the AI still figures out names, prices, stock, colours and SKUs.</p>
             <input type="file" accept=".csv,text/csv,.txt,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
               onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; try { const text = await fileToCsv(f); setCsv(text); toast("File loaded — review the rows below, then Build."); } catch { toast("Couldn't read that file. Save it as .xlsx or .csv and try again.", "error"); } }}
               className="block w-full text-sm text-ink file:mr-3 file:rounded-full file:border-0 file:bg-emerald file:text-white file:px-4 file:py-2 file:text-sm file:cursor-pointer" />

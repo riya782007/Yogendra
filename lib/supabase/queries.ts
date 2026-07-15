@@ -158,7 +158,12 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
   if (opts.stock === "in") query = query.gt("qty", 0);
   else if (opts.stock === "out") query = query.lte("qty", 0);
   const fromIdx = (page - 1) * pageSize;
-  const { data, count } = await query.order("sku").range(fromIdx, fromIdx + pageSize - 1);
+  // Newest-created design on TOP (owner: "jo last product bana wo upar dikhe"). created_at desc, with
+  // nulls last so legacy rows without a timestamp don't jump to the top; sku as a stable tiebreaker.
+  const { data, count } = await query
+    .order("created_at", { ascending: false, nullsFirst: false })
+    .order("sku", { ascending: false })
+    .range(fromIdx, fromIdx + pageSize - 1);
   const rows = (data as any[]) ?? [];
   // Attach a thumbnail (first real photo) per product so the catalogue list shows real images and
   // can flag drafts that still need one. Fetched separately so a bad embed can't blank the list.

@@ -108,6 +108,8 @@ export type VariantInput = {
 };
 export type NewProduct = {
   categoryId: string;
+  subcategoryId?: string;
+  styleId?: string;
   name: string;
   basePriceRupees: number;
   qty: number;
@@ -167,7 +169,8 @@ async function insertOne(sb: ReturnType<typeof supabaseServer>, formula: any, n:
   // Incomplete products (no photo yet) stay DRAFT so they never appear on the storefront
   // looking unfinished. They publish automatically once a photo is added, or via Show.
   const { data: prod, error } = await sb.from("products").insert({
-    category_id: n.categoryId, sku, name: n.name, type: n.type,
+    category_id: n.categoryId, subcategory_id: n.subcategoryId || null, style_id: n.styleId || null,
+    sku, name: n.name, type: n.type,
     base_wholesale: n.basePriceRupees * 100, qty: productQty, status: publish ? "published" : "draft", last_movement_at: new Date().toISOString(),
   }).select("id").single();
   if (error) return { row: skuNum, ok: false, error: error.message };
@@ -344,7 +347,14 @@ export async function createProductWithImageAction(formData: FormData): Promise<
 }
 
 // ---- Live-progress inventory build: parse first, then insert one row at a time ----
-export type ParsedRow = Omit<NewProduct, "categoryId">;
+// Rows may carry per-row taxonomy NAMES from the richer Excel template (category / subcategory / style /
+// polish). They're resolved to IDs at insert time (find-or-create), overriding the Step-1 category.
+export type ParsedRow = Omit<NewProduct, "categoryId"> & {
+  categoryName?: string;
+  subcategoryName?: string;
+  styleName?: string;
+  polishName?: string;
+};
 
 /** AI/naive parse a messy list into clean rows WITHOUT inserting (so the client can show progress). */
 export async function aiParseRowsAction(rawText: string): Promise<{ rows: ParsedRow[]; usedAi: boolean }> {
@@ -352,7 +362,12 @@ export async function aiParseRowsAction(rawText: string): Promise<{ rows: Parsed
   const text = (rawText ?? "").trim().slice(0, 8000);
   let rows: ParsedRow[] = [];
   let usedAi = false;
-  if (text && (groqConfigured() || geminiTextConfigured() || openaiConfigured())) {
+  // If this is our structured Excel template (header has name + category/subcategory/style/polish),
+  // parse it DETERMINISTICALLY — the AI mapper would drop the taxonomy columns. Dropdowns already
+  // guarantee clean spellings, so we just read the columns straight.
+  const firstLine = (text.split("\n")[0] ?? "").toLowerCase();
+  const isStructured = firstLine.includes("name") && /(category|subcategory|sub-category|style|polish)/.test(firstLine);
+  if (!isStructured && text && (groqConfigured() || geminiTextConfigured() || openaiConfigured())) {
     const system = `You convert a messy product list into clean JSON for a jewellery store. Output STRICT JSON:
 {"rows":[{
   "name":string,
@@ -419,11 +434,23 @@ The input may be CSV, tab-separated, or freeform, with columns in any order or d
       const iName = idx("name", "product", "design"), iPrice = idx("base_price", "price", "cost", "wholesale");
       const iQty = idx("qty", "quantity", "stock", "pcs"), iType = idx("type");
       const iColors = idx("colours", "colors", "variants"), iSku = idx("sku", "code", "item code");
+      // Richer template columns (dropdown-driven) — resolved to IDs at insert time.
+      const iCat = idx("category"), iSub = idx("subcategory", "sub-category", "sub category");
+      const iStyle = idx("style"), iPolish = idx("polish", "finish");
       rows = lines.slice(1).map((l) => {
         const c = l.split(",").map((s) => s?.trim() ?? "");
         const colors = iColors >= 0 ? (c[iColors] ?? "").split("|").map((s) => s.trim()).filter(Boolean) : [];
-        const type = ((iType >= 0 && c[iType] === "configurable") || colors.length > 1 ? "configurable" : "simple") as "simple" | "configurable";
-        return { name: iName >= 0 ? c[iName] : "", basePriceRupees: iPrice >= 0 ? Number(c[iPrice]) || 0 : 0, qty: iQty >= 0 ? Number(c[iQty]) || 0 : 0, type, colors, manualSku: iSku >= 0 ? (c[iSku] || undefined) : undefined };
+        const polishName = iPolish >= 0 ? (c[iPolish] || "").trim() : "";
+        // A polish (or >1 colour) means the design has variants → configurable.
+        const type = ((iType >= 0 && c[iType] === "configurable") || colors.length > 1 || !!polishName ? "configurable" : "simple") as "simple" | "configurable";
+        return {
+          name: iName >= 0 ? c[iName] : "", basePriceRupees: iPrice >= 0 ? Number(c[iPrice]) || 0 : 0,
+          qty: iQty >= 0 ? Number(c[iQty]) || 0 : 0, type, colors, manualSku: iSku >= 0 ? (c[iSku] || undefined) : undefined,
+          categoryName: iCat >= 0 ? (c[iCat] || undefined) : undefined,
+          subcategoryName: iSub >= 0 ? (c[iSub] || undefined) : undefined,
+          styleName: iStyle >= 0 ? (c[iStyle] || undefined) : undefined,
+          polishName: polishName || undefined,
+        };
       }).filter((r) => r.name);
     } else {
       // Positional fallback: name, base_price, qty, type, colours|pipe, sku
@@ -436,13 +463,57 @@ The input may be CSV, tab-separated, or freeform, with columns in any order or d
   return { rows, usedAi };
 }
 
-/** Insert ONE product row. The client calls this per row so it can render live progress. */
+/** Find-or-create a taxonomy row by (case-insensitive) name, returning its id. Dropdown-driven values
+ *  match an existing row; a hand-typed new value is created so the import never silently drops it. */
+async function resolveTaxonomyId(
+  sb: ReturnType<typeof supabaseServer>,
+  table: "categories" | "subcategories" | "styles",
+  name: string,
+  categoryId?: string | null,
+): Promise<string | null> {
+  const nm = (name ?? "").trim();
+  if (!nm) return null;
+  let q = sb.from(table).select("id").ilike("name", nm);
+  if (table !== "categories" && categoryId) q = q.eq("category_id", categoryId);
+  const { data: found } = await q.maybeSingle();
+  if ((found as any)?.id) return (found as any).id;
+  const insertRow: any = { name: nm, slug: slugify(nm) };
+  if (table !== "categories") insertRow.category_id = categoryId ?? null;
+  const { data: created } = await sb.from(table).insert(insertRow).select("id").maybeSingle();
+  return (created as any)?.id ?? null;
+}
+
+/** Insert ONE product row. The client calls this per row so it can render live progress.
+ *  Per-row category / subcategory / style / polish (from the richer Excel template) are resolved to
+ *  IDs here; a per-row category overrides the Step-1 default. Polish becomes a variant attribute. */
 export async function createOneRowAction(categoryId: string, row: ParsedRow): Promise<RowResult & { name?: string }> {
   if (!(await requirePerm("catalog.create"))) return { row: 0, ok: false, error: "Your role can't add products." };
   const sb = supabaseServer();
   const formula = await getPricingFormula();
   const skuNum = await nextSku(sb);
-  const res = await insertOne(sb, formula, { ...row, categoryId }, skuNum);
+
+  // Resolve taxonomy names → IDs (find-or-create). A per-row category wins over the Step-1 default.
+  const catId = row.categoryName ? (await resolveTaxonomyId(sb, "categories", row.categoryName)) ?? categoryId : categoryId;
+  const subcategoryId = row.subcategoryName ? (await resolveTaxonomyId(sb, "subcategories", row.subcategoryName, catId)) ?? undefined : undefined;
+  const styleId = row.styleName ? (await resolveTaxonomyId(sb, "styles", row.styleName, catId)) ?? undefined : undefined;
+
+  // Fold a per-row polish into the variant definitions so it's actually recorded on the piece.
+  const polish = (row.polishName ?? "").trim();
+  let variants = row.variants;
+  let type = row.type;
+  if (polish) {
+    type = "configurable";
+    if (variants && variants.length) {
+      variants = variants.map((v) => ({ ...v, polish: (v.polish ?? "").trim() || polish }));
+    } else if (row.colors.length) {
+      const per = Math.floor((row.qty || 0) / row.colors.length);
+      variants = row.colors.map((c) => ({ color: c, polish, qty: per }));
+    } else {
+      variants = [{ polish, qty: row.qty || 0 }];
+    }
+  }
+
+  const res = await insertOne(sb, formula, { ...row, categoryId: catId, subcategoryId, styleId, type, variants }, skuNum);
   revalidatePath("/admin/catalogue"); revalidatePath("/shop");
   return { ...res, name: row.name };
 }
