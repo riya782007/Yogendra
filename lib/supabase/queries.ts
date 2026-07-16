@@ -1842,8 +1842,17 @@ export async function getProductSalesStats(sku: string) {
   const sb = supabaseServer();
   const { data: p } = await sb.from("products").select("id,name,status,qty").eq("sku", sku).maybeSingle();
   if (!p) return null;
-  const { data } = await sb.from("order_items").select("qty,line_total").eq("product_id", (p as any).id);
-  const rows = (data as any[]) ?? [];
+  // Count only REAL sales: exclude CANCELLED / REFUNDED orders and PENDING backorders (held like an
+  // estimate — no stock moved, no revenue posted). Otherwise a cancelled bill wrongly shows units &
+  // revenue on the product even though its "history" has no stock movement (owner's confusion).
+  const { data } = await sb.from("order_items")
+    .select("qty,line_total, orders(status,is_backorder)")
+    .eq("product_id", (p as any).id);
+  const rows = ((data as any[]) ?? []).filter((r) => {
+    const o = Array.isArray(r.orders) ? r.orders[0] : r.orders;
+    if (!o) return false;
+    return o.status !== "cancelled" && o.status !== "refunded" && !o.is_backorder;
+  });
   return {
     name: (p as any).name, status: (p as any).status, stock: (p as any).qty,
     units: rows.reduce((s, r) => s + (r.qty ?? 0), 0),

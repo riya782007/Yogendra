@@ -217,6 +217,38 @@ export async function fulfillBackorderAction(formData: FormData): Promise<void> 
   redirect("/admin/backorders?ok=1");
 }
 
+/**
+ * EDIT a line on an OPEN (pending) backorder — change its quantity or remove it. This is safe and
+ * needs NO stock/ledger reconciliation: a pending backorder is held like an estimate (it hasn't moved
+ * inventory or posted revenue yet), so we only touch order_items and re-total the bill. When the owner
+ * later hits "Convert to sale", the corrected quantities are what move stock and post revenue.
+ * (A wrong entry on a FULFILLED bill isn't editable here — that would need a return; guarded below.)
+ */
+export async function updateBackorderLineAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("billing.sell"))) return;
+  const orderId = String(formData.get("order_id") ?? "").trim();
+  const itemId = String(formData.get("item_id") ?? "").trim();
+  const remove = String(formData.get("remove") ?? "") === "1";
+  const qty = Math.max(0, Math.floor(Number(formData.get("qty") ?? 0)));
+  if (!orderId || !itemId) return;
+  const sb = supabaseServer();
+  // Only a PENDING backorder is editable this way (no stock/ledger to unwind).
+  const { data: o } = await sb.from("orders").select("is_backorder,extra_packing,extra_courier,extra_adjustment").eq("id", orderId).maybeSingle();
+  if (!(o as any)?.is_backorder) { revalidatePath("/admin/backorders"); return; }
+  if (remove || qty <= 0) {
+    await sb.from("order_items").delete().eq("id", itemId).eq("order_id", orderId);
+  } else {
+    const { data: it } = await sb.from("order_items").select("unit_price").eq("id", itemId).eq("order_id", orderId).maybeSingle();
+    if (it) await sb.from("order_items").update({ qty, line_total: ((it as any).unit_price ?? 0) * qty }).eq("id", itemId);
+  }
+  // Re-total from the remaining lines + the bill's extra charges (packing/courier/adjustment).
+  const { data: lines } = await sb.from("order_items").select("line_total").eq("order_id", orderId);
+  const items = ((lines as any[]) ?? []).reduce((s, r) => s + (r.line_total ?? 0), 0);
+  const charges = (((o as any).extra_packing) || 0) + (((o as any).extra_courier) || 0) + (((o as any).extra_adjustment) || 0);
+  await sb.from("orders").update({ total: items + charges }).eq("id", orderId);
+  revalidatePath("/admin/backorders"); revalidatePath(`/admin/invoice/${orderId}`);
+}
+
 /** Lines of ONE order, shaped for the inline return dialog on the Sales page — so a return can be
  *  recorded straight from the bill row without hunting for it in a separate module. */
 export async function fetchOrderForReturnAction(orderId: string): Promise<{ ok: boolean; error?: string; order?: { id: string; total: number; customer_name: string | null; created_at: string; items: { qty: number; returned: number; returnable: number; product: { id: string; name: string; sku: string }; variant: { sku: string; color: string | null } | null }[] } }> {

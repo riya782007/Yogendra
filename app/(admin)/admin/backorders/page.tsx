@@ -1,8 +1,9 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
+import { Fragment } from "react";
 import { supabaseServer } from "@/lib/supabase/server";
 import { formatPaise } from "@/lib/pricing";
-import { fulfillBackorderAction } from "@/app/actions/billing";
+import { fulfillBackorderAction, updateBackorderLineAction } from "@/app/actions/billing";
 
 export const metadata = { title: "Owner Console · Backorders" };
 
@@ -26,6 +27,17 @@ export default async function Backorders({ searchParams }: { searchParams?: { er
   const migrationMissing = !!error && /is_backorder|column|does not exist/i.test(error.message ?? "");
   const rows = (data as any[]) ?? [];
   const pending = rows.reduce((s, r) => s + Math.max(0, (r.total ?? 0) - (r.amount_paid ?? 0)), 0);
+
+  // Line items per backorder, so the owner can FIX a wrong entry (qty or remove) without cancelling
+  // the whole bill. Safe: a pending backorder holds no stock/revenue, so editing just re-totals it.
+  const orderIds = rows.map((r) => r.id);
+  const itemsByOrder = new Map<string, any[]>();
+  if (orderIds.length) {
+    const { data: its } = await sb.from("order_items")
+      .select("id,order_id,qty,unit_price,line_total, product:products(name,sku), variant:variants(sku,color)")
+      .in("order_id", orderIds);
+    for (const it of ((its as any[]) ?? [])) { const a = itemsByOrder.get(it.order_id) ?? []; a.push(it); itemsByOrder.set(it.order_id, a); }
+  }
 
   return (
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
@@ -88,8 +100,10 @@ export default async function Backorders({ searchParams }: { searchParams?: { er
                   const paid = r.amount_paid ?? 0;
                   const st = paid <= 0 ? "Unpaid" : paid >= r.total ? "Paid" : "Partial";
                   const cls: Record<string, string> = { Paid: "bg-emerald-mist text-emerald-dark", Partial: "bg-gold/15 text-gold-dark", Unpaid: "bg-rose/10 text-rose" };
+                  const lines = itemsByOrder.get(r.id) ?? [];
                   return (
-                    <tr key={r.id} className="border-t border-sand/60 hover:bg-cream/40">
+                  <Fragment key={r.id}>
+                    <tr className="border-t border-sand/60 hover:bg-cream/40">
                       <td className="p-3">
                         <Link href={`/admin/invoice/${r.id}`} className="text-emerald nav-link font-medium">
                           {r.invoice_no || String(r.id).slice(0, 8).toUpperCase()} ↗
@@ -107,6 +121,42 @@ export default async function Backorders({ searchParams }: { searchParams?: { er
                         </form>
                       </td>
                     </tr>
+                    {/* Editable line items — fix a wrong qty or remove a wrong line without cancelling the bill. */}
+                    <tr className="border-t border-sand/30 bg-cream/20">
+                      <td colSpan={7} className="px-3 pb-3 pt-0">
+                        <details>
+                          <summary className="cursor-pointer text-xs text-emerald-dark py-1 select-none">✎ Edit items ({lines.length}) — fix a wrong qty or remove a line</summary>
+                          <div className="mt-2 rounded-xl border border-sand bg-white p-2 space-y-1.5">
+                            {lines.length === 0 && <p className="text-xs text-muted px-1">No line items on this bill.</p>}
+                            {lines.map((it: any) => {
+                              const sku = it.variant?.sku ?? it.product?.sku ?? "—";
+                              const nm = `${it.product?.name ?? ""}${it.variant?.color ? " · " + it.variant.color : ""}`;
+                              return (
+                                <div key={it.id} className="flex flex-wrap items-center gap-2 text-xs">
+                                  <span className="font-mono text-muted w-28 shrink-0">{sku}</span>
+                                  <span className="flex-1 min-w-[120px] truncate text-ink">{nm}</span>
+                                  <span className="text-muted">@ {formatPaise(it.unit_price ?? 0)}</span>
+                                  <form action={updateBackorderLineAction} className="flex items-center gap-1">
+                                    <input type="hidden" name="order_id" value={r.id} />
+                                    <input type="hidden" name="item_id" value={it.id} />
+                                    <input name="qty" type="number" min={1} defaultValue={it.qty} className="w-14 rounded-lg border border-sand px-2 py-1 text-center outline-none focus:border-emerald" />
+                                    <button className="px-2 py-1 rounded-lg bg-ink text-white">Save</button>
+                                  </form>
+                                  <form action={updateBackorderLineAction}>
+                                    <input type="hidden" name="order_id" value={r.id} />
+                                    <input type="hidden" name="item_id" value={it.id} />
+                                    <input type="hidden" name="remove" value="1" />
+                                    <button className="px-2 py-1 rounded-lg border border-rose/40 text-rose hover:bg-rose/10">Remove</button>
+                                  </form>
+                                </div>
+                              );
+                            })}
+                            <p className="text-[10px] text-muted px-1 pt-1">Editing is safe — a backorder holds no stock/revenue yet; the bill re-totals automatically. Stock moves only when you Convert to sale.</p>
+                          </div>
+                        </details>
+                      </td>
+                    </tr>
+                  </Fragment>
                   );
                 })}
               </tbody>
