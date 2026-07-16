@@ -26,6 +26,14 @@ export default async function Invoice({ params }: { params: { id: string } }) {
   const returnMoves = ((retMoves as any[]) ?? []);
   if (!data) notFound();
   const { order } = data;
+  // Salesperson who rang up this bill — resolved by name so EVERY bill is attributed to a person
+  // (owner: "if he made an employee, it must be mentioned on the bill"). Counter/POS bills always
+  // carry one; online (storefront/wholesale) orders have none, so the line is simply omitted there.
+  let soldBy: string | null = null;
+  if ((order as any).sales_employee_id) {
+    const { data: emp } = await supabaseServer().from("employees").select("name").eq("id", (order as any).sales_employee_id).maybeSingle();
+    soldBy = (emp as any)?.name ?? null;
+  }
   // #4/#35: list bill lines in A–Z SKU order so picking/checking is predictable.
   const items = [...data.items].sort((a: any, b: any) => String(a.variant?.sku ?? a.product?.sku ?? "").localeCompare(String(b.variant?.sku ?? b.product?.sku ?? "")));
 
@@ -122,6 +130,7 @@ export default async function Invoice({ params }: { params: { id: string } }) {
               <div className="flex justify-between"><span className="text-muted">Invoice No.</span><span className="font-medium text-ink">{invNo}</span></div>
               <div className="flex justify-between"><span className="text-muted">Date</span><span className="text-ink">{date}</span></div>
               <div className="flex justify-between"><span className="text-muted">Payment mode</span><span className="text-ink">{String(order.payment_mode || "—").toUpperCase()}</span></div>
+              {soldBy && <div className="flex justify-between"><span className="text-muted">Sold by</span><span className="text-ink font-medium">{soldBy}</span></div>}
               <div className="flex justify-between"><span className="text-muted">Channel</span><span className="text-ink capitalize">{order.channel}</span></div>
               {!isCash && <div className="flex justify-between"><span className="text-muted">Place of supply</span><span className="text-ink">{stateNameFromCode(buyerStateCode || BUSINESS.stateCode)} ({buyerStateCode || BUSINESS.stateCode})</span></div>}
             </div>
