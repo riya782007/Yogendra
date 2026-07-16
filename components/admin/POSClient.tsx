@@ -44,6 +44,21 @@ export function POSClient({ products, customers = [], methods = [], employees = 
       setSalesEmp(r.id); setNewEmpName(""); setAddingEmp(false); setErr("");
     } else setErr(r.error ?? "Could not add employee");
   }
+  // Auto-fill the salesperson so billing NEVER blocks on picking one every time (owner: "bill save karne
+  // ke liye har baar employee select karna pad raha hai"). Prefer the last person used on this device,
+  // else default to the "Owner" employee (the shop owner bills as himself), else the first employee.
+  // Staff can still change it per bill for correct attribution.
+  useEffect(() => {
+    if (salesEmp) return;
+    const saved = typeof window !== "undefined" ? localStorage.getItem("pos_sales_emp") : null;
+    const isValid = saved && emps.some((e) => e.id === saved);
+    const owner = emps.find((e) => (e.name ?? "").trim().toLowerCase() === "owner");
+    const pick = (isValid ? saved : null) ?? owner?.id ?? emps[0]?.id ?? "";
+    if (pick) setSalesEmp(pick);
+  }, [emps, salesEmp]);
+  useEffect(() => {
+    if (salesEmp && typeof window !== "undefined") localStorage.setItem("pos_sales_emp", salesEmp);
+  }, [salesEmp]);
   const [custPanel, setCustPanel] = useState(false);
   const [billType, setBillType] = useState<"gst" | "cash">("gst");
   // Exclusive = GST added on top of the price; Inclusive = the shown price already contains GST.
