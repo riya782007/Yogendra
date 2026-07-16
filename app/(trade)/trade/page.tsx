@@ -26,6 +26,13 @@ export default async function TradeDashboard() {
   const minOrder = formula.wholesaleMinOrder ?? WHOLESALE_MIN; // configurable in /admin/pricing
   const minRupees = Math.round(minOrder / 100).toLocaleString("en-IN");
 
+  // ROTATION (client request): the design the owner most recently ADDED, PUBLISHED or EDITED shows at
+  // the TOP of the dealer catalogue — so the panel always looks freshly stocked and dealers feel new
+  // pieces keep arriving. Driven by products.updated_at (bumped by DB triggers on any real edit, but NOT
+  // on a plain sale/stock change). Newest first; created_at is the fallback for anything never edited.
+  const touchedAt = (p: any) => new Date(p.updated_at ?? p.created_at ?? 0).getTime();
+  const rotated = [...(products as any[])].sort((a, b) => touchedAt(b) - touchedAt(a));
+
   // First real photo per product (dealers must see the actual piece).
   const sb = supabaseServer();
   const { data: imgRows } = await sb.from("product_images").select("product_id,path,sort");
@@ -60,7 +67,7 @@ export default async function TradeDashboard() {
   // so "price shown" == "amount paid".
   const gstInc = (paise: number) => Math.round(paise * (1 + GST_RATE / 100));
 
-  const list = (products as any[]).flatMap((p) => {
+  const list = rotated.flatMap((p) => {
     const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));
     const price = gstInc(ps.wholesaleRate);
     // Use getStorefront's already-resolved cover (it pages through all images) so a design is never
