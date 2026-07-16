@@ -3,6 +3,7 @@ import Link from "next/link";
 import { getInventoryClassified } from "@/lib/supabase/queries";
 import { Pager } from "@/components/admin/Pager";
 import { StockAdjust } from "@/components/admin/StockAdjust";
+import { BulkStockImport } from "@/components/admin/BulkStockImport";
 import { getSession, can } from "@/lib/auth";
 import { setProductVisibilityAction } from "@/app/actions/catalog";
 import { DeleteProductButton } from "@/components/admin/DeleteProductButton";
@@ -38,6 +39,7 @@ export default async function Inventory({ searchParams }: { searchParams: { dead
       <p className="text-sm text-muted mb-5">Rule: <b>Dead</b> = no movement in <b>{deadDays}</b> days · <b>Low</b> = ≤ <b>{lowQty}</b> pcs · <b>Inactive</b> = never sold or moved even once (checked first — an item can only be Dead or Low once it's had at least one movement). Change the numbers below and the classification updates live.</p>
 
       <StockAdjust />
+      <BulkStockImport />
 
       <form className="flex flex-wrap items-end gap-3 mb-4 bg-white rounded-2xl p-4 shadow-card border border-sand">
         <label className="text-sm text-muted">Dead after (days)
