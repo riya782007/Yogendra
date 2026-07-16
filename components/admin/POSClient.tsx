@@ -163,7 +163,10 @@ export function POSClient({ products, customers = [], methods = [], employees = 
   const remaining = grandTotal - received;
   const addPayLine = () => setPayLines((p) => [...p, { methodId: methods[0]?.id ?? "", amount: "" }]);
   const setPayLine = (i: number, patch: Partial<PayLine>) => setPayLines((p) => p.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
-  function addLine(p: P) { setLines((prev) => { const ex = prev.find((l) => l.sku === p.sku); if (ex) return prev.map((l) => l.sku === p.sku ? { ...l, qty: l.qty + 1 } : l); return [...prev, { sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, mrp: p.mrp, qty: 1, stock: p.qty, override: "", disc: "" }]; }); setQ(""); }
+  // Add (or re-scan) a line. The just-scanned line always moves to the END of the list so — shown
+  // newest-first below — it sits right under the sticky search box; staff instantly SEE what they added
+  // (or that its qty ticked up) without scrolling. Totals/bill are order-independent, so this is display-only.
+  function addLine(p: P) { setLines((prev) => { const ex = prev.find((l) => l.sku === p.sku); if (ex) return [...prev.filter((l) => l.sku !== p.sku), { ...ex, qty: ex.qty + 1 }]; return [...prev, { sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, mrp: p.mrp, qty: 1, stock: p.qty, override: "", disc: "" }]; }); setQ(""); }
   function setQty(sku: string, qty: number) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, qty: Math.max(1, Math.floor(qty || 1)) } : l)); }
   function setOverride(sku: string, val: string) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, override: val } : l)); }
   function setLineDisc(sku: string, val: string) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, disc: val } : l)); }
@@ -237,7 +240,9 @@ export function POSClient({ products, customers = [], methods = [], employees = 
   return (
     <div className="flex flex-col gap-3">
       {/* ================= TOP BAR ================= */}
-      <div className="bg-white rounded-2xl shadow-card p-3 flex flex-wrap items-center gap-3">
+      {/* STICKY so on a big bill (100–150 lines) the scan/search box stays pinned at the top — staff can
+          scan & add from anywhere in the list without scrolling back up (client efficiency request). */}
+      <div className="sticky top-0 z-30 bg-white rounded-2xl shadow-card p-3 flex flex-wrap items-center gap-3">
         {/* Bill type */}
         <div className="inline-flex rounded-lg border border-sand overflow-hidden text-sm shrink-0">
           {([["gst", "GST Invoice"], ["cash", "Cash Memo"]] as const).map(([v, label]) => (
@@ -369,11 +374,13 @@ export function POSClient({ products, customers = [], methods = [], employees = 
               {lines.length === 0 && (
                 <tr><td colSpan={7} className="px-3 py-8 text-center text-muted">Scan or search above to add items. <kbd className="text-[10px] border border-sand rounded px-1">F3</kbd> jumps to search.</td></tr>
               )}
-              {lines.map((l) => {
+              {/* Newest line FIRST so the item just scanned/added shows at the top, right under the search
+                  box — add & verify at the same time. Display-only reverse; the stored order is untouched. */}
+              {[...lines].reverse().map((l, idx) => {
                 const over = l.qty > l.stock;
                 return (
                   <Fragment key={l.sku}>
-                    <tr className="border-t border-sand/60 hover:bg-cream/30">
+                    <tr className={`border-t border-sand/60 hover:bg-cream/30 ${idx === 0 ? "bg-emerald-mist/40" : ""}`}>
                       <td className="px-3 py-1.5 font-mono text-xs text-muted align-middle">{l.sku}</td>
                       <td className="px-3 py-1.5 align-middle">
                         <button onClick={() => setExpanded(expanded === l.sku ? null : l.sku)} className="text-left text-ink hover:text-emerald flex items-center gap-1">
