@@ -15,9 +15,7 @@ export function DealerSignup() {
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
-    // Business proof is MANDATORY — the owner can't verify a dealer without it.
-    const proof = fd.get("proof");
-    if (!(proof instanceof File) || proof.size === 0) { setErr("Please upload your business proof — it's required to verify your account."); return; }
+    // Business proof is OPTIONAL (owner: small resellers were put off by a mandatory upload).
     setBusy(true); setErr("");
     const res = await applyForWholesaleAction(fd);
     setBusy(false);
@@ -52,12 +50,12 @@ export function DealerSignup() {
         <input name="address" placeholder="Shop / business address" className={`${field} sm:col-span-2`} />
       </div>
       <label className="block mt-3">
-        <span className="block text-xs font-medium text-ink mb-1">Business proof <span className="text-rose">*</span> <span className="text-muted/70 font-normal">(required)</span></span>
-        <span className="block text-[11px] text-muted mb-1.5">Upload a screenshot of anything that shows you run a business — your <b>Instagram business page</b>, your <b>website</b>, a GST certificate, shop photo or visiting card. This is only used to verify you as a genuine business — nothing is shared publicly.</span>
-        <label className={`flex items-center gap-3 rounded-xl border border-dashed px-3 py-3 cursor-pointer transition-colors ${proofName ? "border-emerald/50 bg-emerald-mist/30 hover:bg-emerald-mist/50" : "border-rose/40 bg-rose/5 hover:bg-rose/10"}`}>
+        <span className="block text-xs font-medium text-ink mb-1">Business proof <span className="text-muted/70 font-normal">(optional — speeds up approval)</span></span>
+        <span className="block text-[11px] text-muted mb-1.5">If you have one, add a screenshot that shows you run a business — your <b>Instagram business page</b>, <b>website</b>, GST certificate, shop photo or visiting card. It just helps us approve you faster; nothing is shared publicly. No document? No problem — just apply and we&apos;ll reach out on WhatsApp.</span>
+        <label className={`flex items-center gap-3 rounded-xl border border-dashed px-3 py-3 cursor-pointer transition-colors ${proofName ? "border-emerald/50 bg-emerald-mist/30 hover:bg-emerald-mist/50" : "border-sand hover:border-emerald/50 bg-cream/30"}`}>
           <span className="text-xl">📄</span>
-          <span className="text-sm text-ink truncate">{proofName || "Tap to upload a screenshot (Instagram / website / GST / shop)"}</span>
-          <input type="file" name="proof" accept="image/*" required className="hidden" onChange={(e) => setProofName(e.target.files?.[0]?.name ?? "")} />
+          <span className="text-sm text-ink truncate">{proofName || "Tap to add a screenshot (optional)"}</span>
+          <input type="file" name="proof" accept="image/*" className="hidden" onChange={(e) => setProofName(e.target.files?.[0]?.name ?? "")} />
         </label>
       </label>
       {err && <p className="text-sm text-rose mt-2">{err}</p>}
