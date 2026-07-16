@@ -77,6 +77,8 @@ export async function recordPurchaseAction(input: {
   payments?: PurchasePayment[];
   /** Legacy single-method fields — still accepted so older callers keep working. */
   paymentMode?: "cash" | "upi" | "bank" | "credit"; amountPaidRupees?: number;
+  /** Optional extra charges + GST on the supplier bill (all in rupees). GST is OPTIONAL (3% input GST). */
+  packingRupees?: number; shippingRupees?: number; adjustmentRupees?: number; gst?: boolean;
 }): Promise<{ ok: boolean; total?: number; error?: string; duplicateBillNo?: boolean }> {
   if (!input.supplierId) return { ok: false, error: "Choose a supplier" };
   const items = (input.items ?? []).filter((l) => l.qty > 0 && l.unitCostRupees > 0);
@@ -97,7 +99,32 @@ export async function recordPurchaseAction(input: {
   const payload = items.map((l) => ({ supplier_sku: l.supplierSku, mapped_product_id: l.mappedProductId || "", variant_id: l.variantId || "", qty: l.qty, unit_cost: Math.round(l.unitCostRupees * 100) }));
   const { data, error } = await sb.rpc("record_purchase", { p_supplier_id: input.supplierId, p_bill_no: billNo || null, p_items: payload });
   if (error) return { ok: false, error: error.message };
-  const total = (data as any)?.total as number;
+  const purchaseId = (data as any)?.purchase_id as string | undefined;
+  const itemsTotal = (data as any)?.total as number;
+
+  // Extra charges + optional GST fold into the recorded bill total (so the supplier ledger & payment
+  // reconcile to what was actually paid). Packing/Shipping add to cost; Adjustment can be ±; GST is a
+  // 3% input tax added ONLY when the owner ticks it. Best-effort: never unwinds the recorded stock.
+  const rp = (n?: number) => Math.round((Number(n) || 0) * 100);
+  const packing = Math.max(0, rp(input.packingRupees));
+  const shipping = Math.max(0, rp(input.shippingRupees));
+  const adjustment = rp(input.adjustmentRupees);
+  const beforeGst = (Number(itemsTotal) || 0) + packing + shipping + adjustment;
+  const gstAmt = input.gst ? Math.round((beforeGst * 3) / 100) : 0;
+  const extra = (beforeGst - (Number(itemsTotal) || 0)) + gstAmt; // charges + gst on top of items
+  const total = beforeGst + gstAmt;
+  if (purchaseId && extra !== 0) {
+    await sb.from("purchases").update({
+      total, extra_packing: packing, extra_courier: shipping, extra_adjustment: adjustment,
+      gst_amount: gstAmt, gst_enabled: !!input.gst,
+    }).eq("id", purchaseId).then(() => {}, () => {});
+    // Keep the books in step: the RPC posted the ITEMS total to the ledger; add the extra (charges+GST).
+    const { data: led } = await sb.from("ledger").select("balance").order("created_at", { ascending: false }).limit(1).maybeSingle();
+    const bal = (led as any)?.balance ?? 0;
+    await sb.from("ledger").insert({ kind: "purchase", ref_id: purchaseId, debit: extra, credit: 0, balance: bal - extra, note: `Purchase charges/GST ${billNo || ""}`.trim() }).then(() => {}, () => {});
+  } else if (purchaseId) {
+    await sb.from("purchases").update({ gst_enabled: !!input.gst }).eq("id", purchaseId).then(() => {}, () => {});
+  }
 
   // Payment: whatever is paid now is recorded as one supplier_payment PER method (so a bill can be
   // split across cash + upi + bank in a single purchase); anything left unpaid stays owed on the

@@ -95,10 +95,23 @@ export async function addVariantAction(formData: FormData): Promise<void> {
   if (!p) return;
   const dbColorCode = color ? codes[color.toLowerCase()] ?? null : null;
   if (!vsku) vsku = autoSku(productSku, { color, size, polish }, dbColorCode);
-  await sb.from("variants").insert({
+  // Variant SKUs are UNIQUE. If this auto SKU already exists (e.g. the owner re-adds a colour, or a
+  // colour-code clash), the insert used to fail SILENTLY — the variant just never appeared. Make the
+  // SKU unique with a -2/-3 suffix so the variant is ALWAYS created and shows in barcodes/POS.
+  {
+    const base = vsku;
+    for (let n = 2; ; n++) {
+      const { data: clash } = await sb.from("variants").select("id").ilike("sku", vsku).maybeSingle();
+      if (!clash) break;
+      vsku = `${base}-${n}`;
+      if (n > 50) break; // safety
+    }
+  }
+  const { error: vErr } = await sb.from("variants").insert({
     product_id: (p as any).id, color: color || null, size: size || null, polish: polish || null, sku: vsku, qty,
     retail_override: toPaise(formData.get("retail")), wholesale_override: toPaise(formData.get("wholesale")), mrp_override: toPaise(formData.get("mrp")),
   });
+  if (vErr) { console.warn("addVariant insert failed:", vErr.message); return; }
   await rememberOptions(sb, { color, size, polish });
   if ((p as any).type !== "configurable") await sb.from("products").update({ type: "configurable" }).eq("id", (p as any).id);
   await resyncProductQty(sb, productSku);

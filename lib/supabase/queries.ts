@@ -990,10 +990,13 @@ export type LabelItem = {
 export async function getLabelItems(): Promise<LabelItem[]> {
   const sb = supabaseServer();
   const formula = await getPricingFormula();
-  const { data } = await sb
+  // PAGE through ALL products+variants — 4000+ products blow past PostgREST's 1000-row cap, so without
+  // paging products (and any newly-added colour variants) past the first ~1000 never showed on the
+  // barcode screen ("variant SKU not showing in barcodes").
+  const data = await fetchAll((f, t) => sb
     .from("products")
     .select("sku,name,base_wholesale,wholesale_override,retail_override,mrp_override, variants(sku,color,size,polish,wholesale_override,retail_override,mrp_override)")
-    .order("sku");
+    .order("sku").range(f, t));
   const out: LabelItem[] = [];
   for (const p of (data as any[]) ?? []) {
     const vs = ((p.variants as any[]) ?? []).filter((v) => v.sku);

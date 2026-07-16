@@ -45,7 +45,15 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
     return [...prev.slice(0, i), ...rows, ...prev.slice(i + 1)];
   });
   const suggest = (q: string) => q.trim() ? products.filter((p) => (p.name + p.sku).toLowerCase().includes(q.toLowerCase())).slice(0, 6) : [];
-  const total = lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.cost) || 0), 0);
+  const itemsTotal = lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.cost) || 0), 0);
+
+  // Extra charges + OPTIONAL GST on the supplier bill (all in rupees). GST is 3% input tax, only when ticked.
+  const [charges, setCharges] = useState({ packing: "", shipping: "", adjustment: "" });
+  const [gst, setGst] = useState(false);
+  const chargesTotal = (Number(charges.packing) || 0) + (Number(charges.shipping) || 0) + (Number(charges.adjustment) || 0);
+  const beforeGst = itemsTotal + chargesTotal;
+  const gstAmt = gst ? Math.round(beforeGst * 3) / 100 : 0;
+  const total = beforeGst + gstAmt; // grand total the supplier is paid
 
   // Split-payment maths (rupees). paidNow = sum of all methods; the rest stays on credit.
   const METHODS = [["cash", "Cash"], ["upi", "UPI"], ["bank", "Bank"]] as const;
@@ -152,12 +160,14 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
       supplierId, billNo, force,
       items: lines.map((l) => ({ supplierSku: l.supplierSku, mappedProductId: l.mappedProductId, variantId: l.variantId, qty: Number(l.qty) || 0, unitCostRupees: Number(l.cost) || 0 })),
       payments,
+      packingRupees: Number(charges.packing) || 0, shippingRupees: Number(charges.shipping) || 0,
+      adjustmentRupees: Number(charges.adjustment) || 0, gst,
     });
     setBusy(false);
     if (res.ok) {
       const owed = Math.max(0, total - paidNow);
       setMsg(`✓ Purchase recorded (${formatPaise(res.total ?? 0)})${owed > 0 ? ` — ${formatPaise(owed * 100)} on credit to supplier` : " — paid in full"}. Stock updated.`);
-      setLines([{ supplierSku: "", mappedProductId: "", mappedName: "", variantId: "", qty: "", cost: "" }]); setBillNo(""); setPay({ cash: "", upi: "", bank: "" }); setConfirmDup(false);
+      setLines([{ supplierSku: "", mappedProductId: "", mappedName: "", variantId: "", qty: "", cost: "" }]); setBillNo(""); setPay({ cash: "", upi: "", bank: "" }); setCharges({ packing: "", shipping: "", adjustment: "" }); setGst(false); setConfirmDup(false);
     }
     else { setMsg(`✕ ${res.error}`); setConfirmDup(!!res.duplicateBillNo); }
   }
@@ -257,9 +267,27 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
       </div>
       <button onClick={() => setLines((p) => [...p, { supplierSku: "", mappedProductId: "", mappedName: "", variantId: "", qty: "", cost: "" }])} className="text-sm text-emerald nav-link mt-3">+ Add line</button>
 
+      {/* Extra charges + optional GST on the supplier bill. */}
+      <div className="mt-5 border-t border-sand pt-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-[11px] text-muted">Packing ₹<input value={charges.packing} onChange={(e) => setCharges((c) => ({ ...c, packing: e.target.value }))} inputMode="decimal" placeholder="0" className={`${input} w-24 mt-0.5`} /></label>
+          <label className="text-[11px] text-muted">Shipping ₹<input value={charges.shipping} onChange={(e) => setCharges((c) => ({ ...c, shipping: e.target.value }))} inputMode="decimal" placeholder="0" className={`${input} w-24 mt-0.5`} /></label>
+          <label className="text-[11px] text-muted">Adjustment ₹ <span className="text-muted/60">(±)</span><input value={charges.adjustment} onChange={(e) => setCharges((c) => ({ ...c, adjustment: e.target.value }))} inputMode="decimal" placeholder="0" className={`${input} w-24 mt-0.5`} /></label>
+          <label className="inline-flex items-center gap-1.5 text-sm text-ink cursor-pointer rounded-xl border border-sand px-3 py-2 mt-4">
+            <input type="checkbox" checked={gst} onChange={(e) => setGst(e.target.checked)} className="accent-emerald" /> Add GST (3%)
+          </label>
+        </div>
+        {/* Bill breakdown */}
+        <div className="mt-3 text-sm text-ink space-y-0.5 max-w-xs">
+          <div className="flex justify-between text-muted"><span>Items</span><span>{formatPaise(itemsTotal * 100)}</span></div>
+          {chargesTotal !== 0 && <div className="flex justify-between text-muted"><span>Packing + Shipping + Adj.</span><span>{formatPaise(Math.round(chargesTotal * 100))}</span></div>}
+          {gst && <div className="flex justify-between text-muted"><span>GST (3%)</span><span>{formatPaise(Math.round(gstAmt * 100))}</span></div>}
+        </div>
+      </div>
+
       {/* Payment — SPLIT across methods. Enter any amount against cash / upi / bank (one, several,
           or none). Whatever is left unpaid is registered as credit owed to the supplier. */}
-      <div className="mt-5 border-t border-sand pt-4">
+      <div className="mt-4 border-t border-sand pt-4">
         <div className="flex flex-wrap items-center gap-3 mb-2">
           <span className="text-lg font-semibold text-ink">Total: <span className="sensitive">{formatPaise(total * 100)}</span></span>
           <span className="text-[11px] text-muted ml-auto">Split the payment across methods — anything left over stays on credit.</span>
