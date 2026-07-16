@@ -368,12 +368,20 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
                       <td className="p-4 text-right font-semibold text-emerald-dark whitespace-nowrap">{formatPaise(p.price)}</td>
                       <td className="p-4 text-right whitespace-nowrap"><span className="text-muted line-through">{formatPaise(p.mrp)}</span><span className="block text-[11px] text-gold-dark">+{formatPaise(margin)} ({marginPct}%)</span></td>
                       <td className="p-4 text-center">
-                        <div className={`inline-flex items-center rounded-full border border-sand overflow-hidden ${out ? "opacity-40 pointer-events-none" : ""}`}>
-                          <button onClick={() => addQty(p.sku, -1)} className="px-2.5 py-1 hover:bg-cream">−</button>
-                          <QtyField value={n} min={0} onChange={(v) => setQtyAbs(p.sku, v)} className="w-14 text-center border-x border-sand py-1 outline-none focus:bg-emerald-mist" />
-                          <button onClick={() => addQty(p.sku, 1)} className="px-2.5 py-1 hover:bg-cream">+</button>
-                        </div>
-                        {n >= p.qty && p.qty > 0 && <p className="text-[10px] text-gold-dark mt-0.5">max stock</p>}
+                        {out ? (
+                          <span className="text-xs text-muted">Out</span>
+                        ) : n === 0 ? (
+                          <button onClick={() => addQty(p.sku, 1)} className="px-4 py-1.5 rounded-full bg-emerald text-white text-xs font-medium hover:bg-emerald-dark whitespace-nowrap">＋ Add to cart</button>
+                        ) : (
+                          <>
+                            <div className="inline-flex items-center rounded-full border border-emerald overflow-hidden">
+                              <button onClick={() => addQty(p.sku, -1)} className="px-2.5 py-1 hover:bg-cream">−</button>
+                              <QtyField value={n} min={0} onChange={(v) => setQtyAbs(p.sku, v)} className="w-14 text-center border-x border-sand py-1 outline-none focus:bg-emerald-mist" />
+                              <button onClick={() => addQty(p.sku, 1)} className="px-2.5 py-1 hover:bg-cream">+</button>
+                            </div>
+                            {n >= p.qty && p.qty > 0 && <p className="text-[10px] text-gold-dark mt-0.5">max stock</p>}
+                          </>
+                        )}
                       </td>
                       <td className="p-4 text-right font-medium">{n > 0 ? (() => {
                         const off = tierPctOff(sortedTiers, n);
@@ -420,11 +428,15 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
                     {cartColours.length > 0 && <p className="text-[10px] text-emerald-dark mt-0.5">In cart: {cartColours.map((v) => `${v.colour ?? "Default"} ×${qty[v.sku]}`).join(", ")}</p>}
                     <div className="flex items-center justify-between mt-2">
                       <span className="text-xs">{out ? <span className="text-muted">Out of stock</span> : <span className={p.qty <= 3 ? "text-rose" : "text-emerald"}>{p.qty} in stock</span>}</span>
-                      <div className={`inline-flex items-center rounded-full border border-sand overflow-hidden ${out ? "opacity-40 pointer-events-none" : ""}`}>
-                        <button onClick={() => addQty(p.sku, -1)} className="px-3 py-1.5 hover:bg-cream">−</button>
-                        <QtyField value={n} min={0} onChange={(v) => setQtyAbs(p.sku, v)} className="w-12 text-center border-x border-sand py-1.5 outline-none focus:bg-emerald-mist" />
-                        <button onClick={() => addQty(p.sku, 1)} className="px-3 py-1.5 hover:bg-cream">+</button>
-                      </div>
+                      {out ? null : n === 0 ? (
+                        <button onClick={() => addQty(p.sku, 1)} className="px-4 py-1.5 rounded-full bg-emerald text-white text-xs font-medium hover:bg-emerald-dark">＋ Add to cart</button>
+                      ) : (
+                        <div className="inline-flex items-center rounded-full border border-emerald overflow-hidden">
+                          <button onClick={() => addQty(p.sku, -1)} className="px-3 py-1.5 hover:bg-cream">−</button>
+                          <QtyField value={n} min={0} onChange={(v) => setQtyAbs(p.sku, v)} className="w-12 text-center border-x border-sand py-1.5 outline-none focus:bg-emerald-mist" />
+                          <button onClick={() => addQty(p.sku, 1)} className="px-3 py-1.5 hover:bg-cream">+</button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
