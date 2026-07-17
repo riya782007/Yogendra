@@ -2164,6 +2164,31 @@ export async function getRetailers() {
   const { data } = await sb.from("retailers").select("id,name,city,approved").order("name");
   return (data as any[]) ?? [];
 }
+
+/** Wholesale orders AWAITING the owner's payment verification: a dealer has placed a prepaid order
+ *  (and usually uploaded a payment screenshot) but the money isn't marked received yet. This powers
+ *  the owner's "Wholesale payments to approve" dashboard — screenshot on the left, Approve/Reject. */
+export async function getPendingWholesalePayments(): Promise<{
+  id: string; invoice_no: string | null; customer_name: string | null; customer_phone: string | null;
+  total: number; amount_paid: number; payment_ref: string | null; proofUrl: string | null; created_at: string;
+  items: { name: string; qty: number }[];
+}[]> {
+  const sb = supabaseServer();
+  const { data } = await sb.from("orders")
+    .select("id,invoice_no,customer_name,customer_phone,total,amount_paid,payment_ref,payment_proof_path,payment_mode,created_at, order_items(qty, product:products(name), variant:variants(color))")
+    .eq("channel", "wholesale")
+    .not("status", "in", "(cancelled,refunded)")
+    .neq("payment_mode", "cod")
+    .order("created_at", { ascending: false })
+    .limit(200);
+  const rows = ((data as any[]) ?? []).filter((o) => Math.max(0, (o.amount_paid ?? 0)) < (o.total ?? 0));
+  return rows.map((o) => ({
+    id: o.id, invoice_no: o.invoice_no ?? null, customer_name: o.customer_name ?? null, customer_phone: o.customer_phone ?? null,
+    total: o.total ?? 0, amount_paid: o.amount_paid ?? 0, payment_ref: o.payment_ref ?? null,
+    proofUrl: o.payment_proof_path ?? null, created_at: o.created_at,
+    items: ((o.order_items as any[]) ?? []).map((it) => ({ name: `${it.product?.name ?? "Item"}${it.variant?.color ? " · " + it.variant.color : ""}`, qty: it.qty ?? 0 })),
+  }));
+}
 export async function getAbandonedCarts() {
   const sb = supabaseServer();
   // Only surface carts gone quiet for 20+ min — a shopper still browsing isn't "abandoned" yet.

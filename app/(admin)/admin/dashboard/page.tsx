@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
-import { getDashboardData, getDashboardAnalytics, getChannelReport, getOrderAlerts, getPendingDealerApplications } from "@/lib/supabase/queries";
+import { getDashboardData, getDashboardAnalytics, getChannelReport, getOrderAlerts, getPendingDealerApplications, getPendingWholesalePayments } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { OrderNotifications } from "@/components/admin/OrderNotifications";
 import { AnimatedNumber } from "@/components/admin/AnimatedNumber";
@@ -48,7 +48,7 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
   // owner can see exactly which dates the figures cover — the earlier blank-box confusion.
   const fromDate = searchParams.from ?? from.slice(0, 10);
   const toDate = searchParams.to ?? to.slice(0, 10);
-  const [d, a, report, recent, dealerApps] = await Promise.all([getDashboardData(from, to), getDashboardAnalytics(from, to), getChannelReport(from, to), getOrderAlerts(8), getPendingDealerApplications(10)]);
+  const [d, a, report, recent, dealerApps, wholesalePays] = await Promise.all([getDashboardData(from, to), getDashboardAnalytics(from, to), getChannelReport(from, to), getOrderAlerts(8), getPendingDealerApplications(10), getPendingWholesalePayments().catch(() => [])]);
   const label = custom
     ? `${new Date(from).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })} – ${new Date(to).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`
     : (PRESETS.find((p) => p.key === preset)?.label ?? "This month");
@@ -109,6 +109,28 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Wholesale payments waiting for the owner to verify the dealer's UPI screenshot. */}
+      {wholesalePays.length > 0 && (
+        <div className="mb-6 rounded-2xl border border-emerald/40 bg-emerald-mist/40 p-4 shadow-card">
+          <div className="flex items-center justify-between mb-2">
+            <p className="font-medium text-ink">💸 Wholesale payments to verify <span className="ml-1 text-xs bg-emerald text-white rounded-full px-2 py-0.5">{wholesalePays.length}</span></p>
+            <Link href="/admin/wholesale-payments" className="text-xs text-emerald nav-link">Review screenshots & approve →</Link>
+          </div>
+          <div className="space-y-1.5">
+            {wholesalePays.slice(0, 5).map((o) => (
+              <div key={o.id} className="flex flex-wrap items-center justify-between gap-2 text-sm bg-white/70 rounded-lg px-3 py-1.5">
+                <span className="text-ink"><b>{o.customer_name || "Dealer"}</b> · {o.invoice_no || o.id.slice(0, 8).toUpperCase()}</span>
+                <span className="flex items-center gap-3">
+                  <span className="text-ink font-medium">{formatPaise(o.total)}</span>
+                  {o.proofUrl && <span className="text-[11px] text-emerald-dark">📷 screenshot</span>}
+                  <Link href="/admin/wholesale-payments" className="text-xs text-emerald-dark nav-link">Approve →</Link>
+                </span>
+              </div>
+            ))}
           </div>
         </div>
       )}

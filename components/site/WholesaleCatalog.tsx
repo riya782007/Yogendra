@@ -4,6 +4,7 @@ import { formatPaise, tierPctOff, applyTier, type WholesaleTier } from "@/lib/pr
 import { ProductImage } from "@/components/Placeholder";
 import { QtyField } from "@/components/admin/QtyField";
 import { placeWholesaleOrderAction, wholesaleLogoutAction, requestQuoteAction, uploadPaymentProofAction } from "@/app/actions/wholesale";
+import { UpiAmountQr } from "@/components/admin/UpiAmountQr";
 
 type P = { pid: string; sku: string; name: string; category: string; sub?: string | null; style?: string | null; qty: number; price: number; mrp: number; image: string | null; images?: string[]; colour?: string | null };
 /** A design (product) with all of its in-stock colours grouped under one row + a colour dropdown. */
@@ -505,14 +506,21 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
               <p className="text-[10px] text-muted">COD instead? +₹120 COD fee applies — use the COD button below.</p>
             </div>
 
-            {payInfo && (payInfo.qrUrl || payInfo.upiId) ? (
+            {payInfo && payInfo.upiId ? (
               <div className="mt-4 text-center">
                 <p className="text-sm text-ink font-medium">Scan &amp; pay in any UPI app</p>
-                {payInfo.qrUrl
-                  ? <img src={payInfo.qrUrl} alt="UPI QR" className="mx-auto mt-2 w-56 h-56 object-contain rounded-xl border border-sand bg-white" />
-                  : <div className="mx-auto mt-2 w-56 h-56 rounded-xl border border-dashed border-sand grid place-items-center text-xs text-muted p-4">QR will be added soon — use the UPI ID below.</div>}
-                {payInfo.upiId && <p className="mt-2 text-sm text-ink">UPI ID: <b className="font-mono">{payInfo.upiId}</b></p>}
-                <p className="text-[11px] text-muted mt-1">Pay to {payInfo.payeeName}. Then upload your payment screenshot below.</p>
+                {/* Dynamic QR encodes the EXACT amount payable, so the dealer scans, the amount is
+                    pre-filled, and they just confirm — no typing, no wrong amount. */}
+                <div className="mt-2">
+                  <UpiAmountQr upiId={payInfo.upiId} payeeName={payInfo.payeeName} amountPaise={orderTotal + shipSlab(orderTotal)} note={`Wholesale order · ${customerName}`} size={220} />
+                </div>
+                <p className="text-[11px] text-muted mt-1">Pay to {payInfo.payeeName}, then upload your payment screenshot below.</p>
+              </div>
+            ) : payInfo && payInfo.qrUrl ? (
+              <div className="mt-4 text-center">
+                <p className="text-sm text-ink font-medium">Scan &amp; pay in any UPI app</p>
+                <img src={payInfo.qrUrl} alt="UPI QR" className="mx-auto mt-2 w-56 h-56 object-contain rounded-xl border border-sand bg-white" />
+                <p className="text-[11px] text-muted mt-1">Pay to {payInfo.payeeName}, then upload your payment screenshot below.</p>
               </div>
             ) : (
               <p className="mt-4 text-sm text-gold-dark bg-gold/10 rounded-xl px-4 py-3">Payment details will be shared with you on WhatsApp right after you place the order. You can add the UPI reference now or later.</p>

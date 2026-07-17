@@ -273,3 +273,39 @@ export async function setQuoteStatusAction(formData: FormData) {
   await supabaseServer().from("wholesale_quote_requests").update({ status }).eq("id", id);
   revalidatePath("/admin/quotes");
 }
+
+/**
+ * Owner reviews a dealer's UPI payment screenshot and APPROVES or REJECTS it.
+ *  • Approve → marks the order fully paid (amount_paid = total) and records the money as received into
+ *    the UPI account (so Bank & Cash updates), then the owner can dispatch. The stock was already
+ *    committed at order time, so nothing else changes.
+ *  • Reject → flags the order so the owner follows up; nothing is marked paid.
+ */
+export async function verifyWholesalePaymentAction(input: { orderId: string; approve: boolean }): Promise<{ ok: boolean; error?: string }> {
+  if (!(await requirePerm("billing.sell"))) return { ok: false, error: "Your role can't verify payments." };
+  const id = (input.orderId ?? "").trim();
+  if (!id) return { ok: false, error: "Missing order." };
+  const sb = supabaseServer();
+  const { data: o } = await sb.from("orders").select("total,amount_paid,channel,invoice_no").eq("id", id).maybeSingle();
+  if (!o) return { ok: false, error: "Order not found." };
+  if ((o as any).channel !== "wholesale") return { ok: false, error: "Not a wholesale order." };
+  const total = (o as any).total ?? 0;
+  if (input.approve) {
+    await sb.from("orders").update({ amount_paid: total, payment_mode: "upi", admin_note: "✓ Payment verified by owner" }).eq("id", id);
+    // Money received into the UPI account → post to that account's book so Bank & Cash reflects it.
+    try {
+      const { data: m } = await sb.from("payment_methods").select("id").eq("is_default", true).limit(1).maybeSingle();
+      const methodId = (m as any)?.id ?? null;
+      if (methodId && total > 0) {
+        await sb.from("payment_method_transactions").insert({
+          method_id: methodId, txn_type: "sale", direction: "in", amount: total,
+          ref_type: "order", ref_id: id, note: `Wholesale payment verified · ${(o as any).invoice_no ?? ""}`.trim(), created_by: "owner",
+        }).then(() => {}, () => {});
+      }
+    } catch { /* cash-book best-effort */ }
+  } else {
+    await sb.from("orders").update({ admin_note: "⚠ Payment REJECTED — follow up with the dealer" }).eq("id", id);
+  }
+  revalidatePath("/admin/wholesale-payments"); revalidatePath("/admin/dashboard"); revalidatePath(`/admin/invoice/${id}`);
+  return { ok: true };
+}
