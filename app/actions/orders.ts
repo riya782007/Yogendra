@@ -294,6 +294,29 @@ export async function posSaleAction(input: {
     } catch (e) {
       console.warn("payment ledger insert failed:", (e as any)?.message);
     }
+  } else if (payCash > 0 || payBank > 0) {
+    // SIMPLE cash / bank receipt (owner didn't pick a named method — e.g. the "Cash (R)/(W)" quick
+    // bill). Previously this skipped the cash book entirely, so plain cash sales never reached the
+    // Bank & Cash balance (the drawer showed more cash than the app). Post them to the default Cash
+    // method (and, for a bank receipt, the named/first bank account) so EVERY rupee is tracked.
+    try {
+      const { data: pms } = await sb.from("payment_methods").select("id,name,kind,active");
+      const list = ((pms as any[]) ?? []).filter((m) => m.active !== false);
+      const cashM = list.find((m) => String(m.kind).toLowerCase() === "cash");
+      const bankByName = legacyMethodName
+        ? list.find((m) => (m.name ?? "").toLowerCase() === String(legacyMethodName).toLowerCase())
+        : null;
+      const bankM = bankByName ?? list.find((m) => String(m.kind).toLowerCase() !== "cash");
+      const rows: any[] = [];
+      if (payCash > 0 && cashM) rows.push({ method_id: cashM.id, txn_type: "sale", direction: "in", amount: payCash, ref_type: "order", ref_id: orderId, note: "POS sale (cash)", created_by: "owner" });
+      if (payBank > 0 && bankM) rows.push({ method_id: bankM.id, txn_type: "sale", direction: "in", amount: payBank, ref_type: "order", ref_id: orderId, note: "POS sale", created_by: "owner" });
+      if (rows.length) {
+        const { error: ledErr } = await sb.from("payment_method_transactions").insert(rows);
+        if (ledErr) console.warn("cash book not written:", ledErr.message);
+      }
+    } catch (e) {
+      console.warn("cash-book fallback insert failed:", (e as any)?.message);
+    }
   }
 
   await sb.rpc("assign_invoice_no", { p_order: orderId });
