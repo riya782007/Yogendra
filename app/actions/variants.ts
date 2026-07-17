@@ -107,11 +107,19 @@ export async function addVariantAction(formData: FormData): Promise<void> {
       if (n > 50) break; // safety
     }
   }
-  const { error: vErr } = await sb.from("variants").insert({
+  const { data: inserted, error: vErr } = await sb.from("variants").insert({
     product_id: (p as any).id, color: color || null, size: size || null, polish: polish || null, sku: vsku, qty,
     retail_override: toPaise(formData.get("retail")), wholesale_override: toPaise(formData.get("wholesale")), mrp_override: toPaise(formData.get("mrp")),
-  });
+  }).select("id").maybeSingle();
   if (vErr) { console.warn("addVariant insert failed:", vErr.message); return; }
+  // Log the opening stock as a movement so the Stock Movement ledger stays COMPLETE (every unit
+  // traceable, and sum of movements always equals current qty). Best-effort.
+  if (qty > 0 && (inserted as any)?.id) {
+    await sb.from("stock_adjustments").insert({
+      product_id: (p as any).id, variant_id: (inserted as any).id, sku: vsku, delta: qty,
+      kind: "opening", source: "New variant", reason: `Opening stock ${qty}`, created_by: "owner",
+    }).then(() => {}, () => {});
+  }
   await rememberOptions(sb, { color, size, polish });
   if ((p as any).type !== "configurable") await sb.from("products").update({ type: "configurable" }).eq("id", (p as any).id);
   await resyncProductQty(sb, productSku);
@@ -131,11 +139,23 @@ export async function updateVariantAction(formData: FormData): Promise<void> {
   const sb = supabaseServer();
   const codes = color ? await getColorCodeMap() : ({} as Record<string, string>);
   const dbColorCode = color ? codes[color.toLowerCase()] ?? null : null;
+  // Read the current qty first so a manual stock change is logged as a movement (keeps the ledger
+  // complete — the owner can see exactly when/by-how-much a colour's stock was adjusted by hand).
+  const { data: before } = await sb.from("variants").select("qty,product_id").eq("id", id).maybeSingle();
+  const oldQty = Number((before as any)?.qty ?? 0);
+  const finalSku = sku || autoSku(productSku, { color, size, polish }, dbColorCode);
   await sb.from("variants").update({
     color: color || null, size: size || null, polish: polish || null,
-    sku: sku || autoSku(productSku, { color, size, polish }, dbColorCode), qty,
+    sku: finalSku, qty,
     retail_override: toPaise(formData.get("retail")), wholesale_override: toPaise(formData.get("wholesale")), mrp_override: toPaise(formData.get("mrp")),
   }).eq("id", id);
+  const delta = qty - oldQty;
+  if (delta !== 0 && (before as any)?.product_id) {
+    await sb.from("stock_adjustments").insert({
+      product_id: (before as any).product_id, variant_id: id, sku: finalSku, delta,
+      kind: "adjustment", source: "Manual edit", reason: `Stock ${oldQty} → ${qty} (edited)`, created_by: "owner",
+    }).then(() => {}, () => {});
+  }
   await rememberOptions(sb, { color, size, polish });
   await resyncProductQty(sb, productSku);
   reval(productSku);
