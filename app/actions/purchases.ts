@@ -5,13 +5,35 @@ import { requirePerm } from "@/lib/auth";
 
 const OWNER_OTP = () => process.env.OWNER_OTP ?? "482913";
 
-export async function createSupplierAction(formData: FormData) {
-  if (!(await requirePerm("purchases.create"))) return;
-  const name = String(formData.get("name") ?? "").trim();
-  const city = String(formData.get("city") ?? "").trim();
-  if (!name) return;
-  await supabaseServer().from("suppliers").insert({ name, city: city || null });
+export async function createSupplierAction(input: FormData | { name: string; city?: string }): Promise<{ ok: boolean; error?: string; duplicate?: boolean }> {
+  if (!(await requirePerm("purchases.create"))) return { ok: false, error: "Your role can't add suppliers." };
+  const name = String((input instanceof FormData ? input.get("name") : input.name) ?? "").trim();
+  const city = String((input instanceof FormData ? input.get("city") : input.city) ?? "").trim();
+  if (!name) return { ok: false, error: "Enter a supplier name." };
+  const sb = supabaseServer();
+  // Dedupe (case-insensitive by name) so a double/triple click — or re-submitting the same details —
+  // never creates duplicate suppliers. If it already exists, we just treat it as done.
+  const { data: existing } = await sb.from("suppliers").select("id").ilike("name", name).maybeSingle();
+  if (existing) { revalidatePath("/admin/purchases"); return { ok: true, duplicate: true }; }
+  const { error } = await sb.from("suppliers").insert({ name, city: city || null });
+  if (error) return { ok: false, error: error.message };
   revalidatePath("/admin/purchases");
+  return { ok: true };
+}
+
+/** Delete a supplier — but ONLY if it has no purchases (else the books would lose their link).
+ *  The client asks for confirmation before calling this. */
+export async function deleteSupplierAction(input: { supplierId: string }): Promise<{ ok: boolean; error?: string }> {
+  if (!(await requirePerm("purchases.create"))) return { ok: false, error: "Your role can't manage suppliers." };
+  const id = (input.supplierId ?? "").trim();
+  if (!id) return { ok: false, error: "Missing supplier." };
+  const sb = supabaseServer();
+  const { count } = await sb.from("purchases").select("id", { count: "exact", head: true }).eq("supplier_id", id);
+  if ((count ?? 0) > 0) return { ok: false, error: `Can't delete — this supplier has ${count} purchase${count === 1 ? "" : "s"} on record. Keep it for the books.` };
+  const { error } = await sb.from("suppliers").delete().eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/admin/purchases");
+  return { ok: true };
 }
 
 /**
@@ -68,6 +90,82 @@ export async function requestPurchaseDeletionAction(formData: FormData): Promise
 
 export type PurchaseLine = { supplierSku: string; mappedProductId: string; variantId?: string; qty: number; unitCostRupees: number };
 
+const normSku = (s: string) => String(s ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+/** Two colour/suffix tokens are the "same" if one is a prefix of the other (≥3 chars) — so GOLD
+ *  matches GOLDEN, SILVER matches SILVERY, RUBY matches RUBYRED. Prevents a tiny spelling difference
+ *  in the supplier's SKU from leaving a line unmapped. */
+const colourMatch = (a: string, b: string) => {
+  const x = normSku(a), y = normSku(b);
+  if (!x || !y) return false;
+  return x === y || (x.length >= 3 && y.startsWith(x)) || (y.length >= 3 && x.startsWith(y));
+};
+
+/**
+ * Resolve any purchase lines the client left UNMAPPED, using FRESH, COMPLETE database data. The
+ * browser's paste-time matcher can miss a SKU when the product/variant was created after the page
+ * loaded, or when the supplier spelled a colour slightly differently (GOLDEN vs GOLD). Matching here
+ * — at save time — guarantees the stock lands on the right design. Tries, in order: exact variant SKU,
+ * exact product SKU, then base-SKU + fuzzy-colour variant.
+ */
+async function resolvePurchaseLines(sb: ReturnType<typeof supabaseServer>, items: PurchaseLine[]): Promise<PurchaseLine[]> {
+  const need = items.filter((l) => !l.mappedProductId && String(l.supplierSku ?? "").trim());
+  if (!need.length) return items;
+  // Candidate SKUs to look up: the exact supplier SKU + its base (with the trailing "-COLOUR" removed).
+  const exacts = [...new Set(need.map((l) => l.supplierSku.trim()))];
+  const bases = [...new Set(exacts.map((s) => s.replace(/[-_\s][A-Za-z0-9]+$/, "")).filter(Boolean))];
+  const wanted = [...new Set([...exacts, ...bases])];
+  // Fetch matching products + variants in chunks (keep each request URL well under the limit).
+  const chunk = <T,>(a: T[], n: number) => a.reduce<T[][]>((acc, x, i) => { (acc[Math.floor(i / n)] ??= []).push(x); return acc; }, []);
+  const esc = (s: string) => s.replace(/([,()])/g, "");
+  const prodRows: any[] = []; const varRows: any[] = [];
+  for (const grp of chunk(wanted, 60)) {
+    const or = grp.map((s) => `sku.ilike.${esc(s)}`).join(",");
+    const { data } = await sb.from("products").select("id,sku,type").or(or);
+    prodRows.push(...((data as any[]) ?? []));
+  }
+  for (const grp of chunk(exacts, 60)) {
+    const or = grp.map((s) => `sku.ilike.${esc(s)}`).join(",");
+    const { data } = await sb.from("variants").select("id,product_id,sku,color").or(or);
+    varRows.push(...((data as any[]) ?? []));
+  }
+  // Variants of the base products, for colour-fuzzy matching.
+  const baseIds = [...new Set(prodRows.map((p) => p.id))];
+  const varsByProduct = new Map<string, any[]>();
+  for (const grp of chunk(baseIds, 100)) {
+    const { data } = await sb.from("variants").select("id,product_id,sku,color").in("product_id", grp);
+    for (const v of ((data as any[]) ?? [])) { const a = varsByProduct.get(v.product_id) ?? []; a.push(v); varsByProduct.set(v.product_id, a); }
+  }
+  const variantByExact = new Map(varRows.map((v) => [normSku(v.sku), v]));
+  const productByExact = new Map(prodRows.map((p) => [normSku(p.sku), p]));
+
+  return items.map((l) => {
+    if (l.mappedProductId || !String(l.supplierSku ?? "").trim()) return l;
+    const raw = l.supplierSku.trim();
+    const key = normSku(raw);
+    // 1) exact variant SKU
+    const vex = variantByExact.get(key);
+    if (vex) return { ...l, mappedProductId: vex.product_id, variantId: vex.id };
+    // 2) exact product SKU
+    const pex = productByExact.get(key);
+    if (pex) {
+      const vs = varsByProduct.get(pex.id) ?? [];
+      if (!vs.length) return { ...l, mappedProductId: pex.id, variantId: undefined };
+      // configurable but the supplier gave only the base — can't pick a colour, leave for manual map
+      return l;
+    }
+    // 3) base SKU + fuzzy colour  (e.g. "WT1016-GOLDEN" → product WT1016, variant colour GOLD)
+    const suffix = raw.slice(raw.replace(/[-_\s][A-Za-z0-9]+$/, "").length).replace(/[^A-Za-z0-9]/g, "");
+    const baseKey = normSku(raw.replace(/[-_\s][A-Za-z0-9]+$/, ""));
+    const baseProd = productByExact.get(baseKey);
+    if (baseProd && suffix) {
+      const vs = varsByProduct.get(baseProd.id) ?? [];
+      const hit = vs.find((v) => colourMatch(v.color ?? "", suffix)) ?? vs.find((v) => colourMatch(v.sku?.split(/[-_]/).pop() ?? "", suffix));
+      if (hit) return { ...l, mappedProductId: hit.product_id, variantId: hit.id };
+    }
+    return l; // still unmapped — owner maps it on the purchase page
+  });
+}
+
 /** One leg of a split payment made at purchase time. Several may be supplied at once.
  *  `methodId` names the SPECIFIC account it went out of (HDFC / Kotak / SBI / UPI / Cash) so the
  *  same account's balance drops — exactly like POS records which account received a sale. */
@@ -98,7 +196,10 @@ export async function recordPurchaseAction(input: {
     }
   }
 
-  const payload = items.map((l) => ({ supplier_sku: l.supplierSku, mapped_product_id: l.mappedProductId || "", variant_id: l.variantId || "", qty: l.qty, unit_cost: Math.round(l.unitCostRupees * 100) }));
+  // Auto-map any lines the client couldn't (stale/incomplete browser index, or a colour spelled
+  // slightly differently) using fresh DB data — so bulk-uploaded lines land on the right design.
+  const mappedItems = await resolvePurchaseLines(sb, items);
+  const payload = mappedItems.map((l) => ({ supplier_sku: l.supplierSku, mapped_product_id: l.mappedProductId || "", variant_id: l.variantId || "", qty: l.qty, unit_cost: Math.round(l.unitCostRupees * 100) }));
   const { data, error } = await sb.rpc("record_purchase", { p_supplier_id: input.supplierId, p_bill_no: billNo || null, p_items: payload });
   if (error) return { ok: false, error: error.message };
   const purchaseId = (data as any)?.purchase_id as string | undefined;
