@@ -447,7 +447,7 @@ export async function getCustomerSpend(range?: { from?: string; to?: string }): 
   // Count EVERY bill the customer took — cash memos AND GST invoices — at the amount they actually
   // spent (the GST-inclusive grand total, matching the ledger and the printed bill). GST bills store
   // `total` pre-tax, so add the 3% GST rounded to ₹1; cash memos have no tax.
-  let q = sb.from("orders").select("customer_id,total,bill_type,created_at,status,is_backorder").not("customer_id", "is", null).or("is_backorder.is.null,is_backorder.eq.false");
+  let q = sb.from("orders").select("customer_id,total,bill_type,gst_mode,created_at,status,is_backorder").not("customer_id", "is", null).or("is_backorder.is.null,is_backorder.eq.false");
   if (range?.from) q = q.gte("created_at", range.from);
   if (range?.to) q = q.lte("created_at", range.to);
   const { data } = await q;
@@ -455,7 +455,8 @@ export async function getCustomerSpend(range?: { from?: string; to?: string }): 
   for (const o of ((data as any[]) ?? [])) {
     if (o.status === "cancelled" || o.status === "refunded") continue;
     const t = o.total ?? 0;
-    const grand = o.bill_type === "cash" ? t : Math.round((t + Math.round(t * 0.03)) / 100) * 100;
+    // Inclusive GST bills already contain the tax in `total` — don't add 3% again (matches the bill).
+    const grand = o.bill_type === "cash" || o.gst_mode === "inclusive" ? Math.round(t / 100) * 100 : Math.round((t + Math.round(t * 0.03)) / 100) * 100;
     const cur = m.get(o.customer_id) ?? { spend: 0, orders: 0, last: null as string | null };
     cur.spend += grand; cur.orders += 1;
     if (!cur.last || o.created_at > cur.last) cur.last = o.created_at;
@@ -723,7 +724,7 @@ export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?
   const sb = supabaseServer();
   const pageSize = opts.pageSize ?? 25;
   const page = Math.max(1, opts.page ?? 1);
-  let query = sb.from("orders").select("id,total,amount_paid,invoice_no,channel,status,payment_mode,bill_type,customer_name,customer_phone,source_tag,created_at", { count: "exact" });
+  let query = sb.from("orders").select("id,total,amount_paid,invoice_no,channel,status,payment_mode,bill_type,gst_mode,customer_name,customer_phone,source_tag,created_at", { count: "exact" });
   // Open backorders are NOT sales yet — they hold no stock and post no revenue until the owner
   // fulfils them on /admin/backorders. Keep them out of the sales record. (is_backorder may not
   // exist pre-migration-0020; PostgREST treats .not on a missing column as an error, so this is
@@ -2146,13 +2147,14 @@ export async function getActivityLog(limit = 60) {
 // ---------- CRM + abandoned carts + SEO ----------
 export async function getCustomers() {
   const sb = supabaseServer();
-  const { data } = await sb.from("orders").select("customer_name,customer_phone,total,bill_type,created_at");
+  const { data } = await sb.from("orders").select("customer_name,customer_phone,total,bill_type,gst_mode,created_at");
   const map = new Map<string, { name: string; phone: string | null; orders: number; spent: number; last: string }>();
   for (const o of (data as any[]) ?? []) {
     const name = (o.customer_name ?? "").trim(); if (!name) continue;
     if (isWalkInPlaceholder(name, o.customer_phone)) continue; // walk-in cash placeholders aren't directory customers
     const t = o.total ?? 0;
-    const grand = o.bill_type === "cash" ? t : Math.round((t + Math.round(t * 0.03)) / 100) * 100; // amount actually spent (incl. GST)
+    // Inclusive-GST bills already contain the tax in `total`; only exclusive bills add 3% on top.
+    const grand = o.bill_type === "cash" || o.gst_mode === "inclusive" ? Math.round(t / 100) * 100 : Math.round((t + Math.round(t * 0.03)) / 100) * 100;
     const c = map.get(name) ?? { name, phone: o.customer_phone ?? null, orders: 0, spent: 0, last: o.created_at };
     c.orders++; c.spent += grand; if (o.created_at > c.last) c.last = o.created_at; if (!c.phone) c.phone = o.customer_phone ?? null;
     map.set(name, c);
