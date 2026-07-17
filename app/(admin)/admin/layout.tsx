@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { AdminNav } from "@/components/AdminNav";
 import { Diva } from "@/components/admin/Diva";
 import { PrivacyShield } from "@/components/admin/PrivacyShield";
+import { VersionWatcher } from "@/components/admin/VersionWatcher";
 import { getSession } from "@/lib/auth";
 import { supabaseServer } from "@/lib/supabase/server";
 
@@ -24,6 +25,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           PrivacyShield wraps the content so the "Hide figures" toggle + Ctrl+Shift+H work on EVERY page. */}
       <PrivacyShield className="flex-1 min-w-0 pt-14 lg:pt-0">{children}</PrivacyShield>
       <Diva roleName={s.roleName} />
+      {/* Tells any laptop running an older cached build to update — so every device behaves the same. */}
+      <VersionWatcher current={process.env.VERCEL_GIT_COMMIT_SHA ?? "dev"} />
     </div>
   );
 }

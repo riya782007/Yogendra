@@ -68,8 +68,10 @@ export async function requestPurchaseDeletionAction(formData: FormData): Promise
 
 export type PurchaseLine = { supplierSku: string; mappedProductId: string; variantId?: string; qty: number; unitCostRupees: number };
 
-/** One leg of a split payment made at purchase time. Several may be supplied at once. */
-export type PurchasePayment = { mode: "cash" | "upi" | "bank"; amountRupees: number };
+/** One leg of a split payment made at purchase time. Several may be supplied at once.
+ *  `methodId` names the SPECIFIC account it went out of (HDFC / Kotak / SBI / UPI / Cash) so the
+ *  same account's balance drops — exactly like POS records which account received a sale. */
+export type PurchasePayment = { mode: "cash" | "upi" | "bank"; amountRupees: number; methodId?: string };
 
 export async function recordPurchaseAction(input: {
   supplierId: string; billNo: string; items: PurchaseLine[]; force?: boolean;
@@ -144,11 +146,26 @@ export async function recordPurchaseAction(input: {
     if (paise <= 0) continue;
     const ledgerMode = s.mode === "cash" ? "cash" : s.mode === "upi" ? "upi" : "bank";
     const { error: payErr } = await sb.from("supplier_payments").insert({
-      supplier_id: input.supplierId, amount: paise, mode: ledgerMode,
+      supplier_id: input.supplierId, amount: paise, mode: ledgerMode, method_id: s.methodId || null,
       ref: billNo || null, note: `Paid at purchase${billNo ? ` · bill ${billNo}` : ""}`,
     });
-    if (payErr) console.warn("supplier payment not recorded (purchase still saved):", payErr.message);
-    else remaining -= paise;
+    if (payErr) {
+      // `method_id` column may not exist on older DBs — retry without it so the payment still saves.
+      const { error: payErr2 } = await sb.from("supplier_payments").insert({
+        supplier_id: input.supplierId, amount: paise, mode: ledgerMode,
+        ref: billNo || null, note: `Paid at purchase${billNo ? ` · bill ${billNo}` : ""}`,
+      });
+      if (payErr2) console.warn("supplier payment not recorded (purchase still saved):", payErr2.message);
+      else remaining -= paise;
+    } else remaining -= paise;
+    // Draw the money OUT of the SPECIFIC account chosen (HDFC / Kotak / SBI / UPI / Cash) so its
+    // Bank & Cash balance drops — mirrors how POS records which account received a sale. Best-effort.
+    if (s.methodId && purchaseId) {
+      await sb.from("payment_method_transactions").insert({
+        method_id: s.methodId, txn_type: "purchase", direction: "out", amount: paise,
+        ref_type: "purchase", ref_id: purchaseId, note: `Purchase${billNo ? ` · bill ${billNo}` : ""}`, created_by: "owner",
+      }).then(() => {}, () => {});
+    }
   }
   revalidatePath("/admin/purchases"); revalidatePath("/admin/dashboard");
   revalidatePath(`/admin/supplier/${input.supplierId}`); revalidatePath("/admin/cashbook");

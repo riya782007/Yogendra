@@ -14,10 +14,15 @@ type Sup = { id: string; name: string; city: string | null };
 type Variant = { id: string; sku: string; label: string };
 type Prod = { id: string; name: string; sku: string; variants?: Variant[] };
 type Line = { supplierSku: string; mappedProductId: string; mappedName: string; variantId: string; qty: string; cost: string };
+type PayMethod = { id: string; name: string; kind: string };
 
 type LastCosts = { byProduct: Record<string, number>; byVariant: Record<string, number> };
 
-export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: Sup[]; products: Prod[]; lastCosts?: LastCosts }) {
+/** Map a payment method to the coarse mode the supplier ledger stores. */
+const modeOf = (m: PayMethod): "cash" | "upi" | "bank" =>
+  String(m.kind).toLowerCase() === "cash" ? "cash" : /upi/i.test(m.name) ? "upi" : "bank";
+
+export function PurchaseClient({ suppliers, products, lastCosts, methods = [] }: { suppliers: Sup[]; products: Prod[]; lastCosts?: LastCosts; methods?: PayMethod[] }) {
   const [supplierId, setSupplierId] = useState("");
   const [billNo, setBillNo] = useState("");
   const [lines, setLines] = useState<Line[]>([{ supplierSku: "", mappedProductId: "", mappedName: "", variantId: "", qty: "", cost: "" }]);
@@ -25,9 +30,10 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [confirmDup, setConfirmDup] = useState(false);
-  // How this purchase was paid — a SPLIT across methods. Enter any amount against cash / upi / bank
-  // (one, several, or none). Whatever is left unpaid stays owed to the supplier (credit).
-  const [pay, setPay] = useState<{ cash: string; upi: string; bank: string }>({ cash: "", upi: "", bank: "" });
+  // How this purchase was paid — a SPLIT across the SPECIFIC accounts (Cash / HDFC / Kotak / SBI /
+  // UPI), keyed by payment_method id, so the same account's balance drops (just like POS records
+  // which account received a sale). Whatever is left unpaid stays owed to the supplier (credit).
+  const [payById, setPayById] = useState<Record<string, string>>({});
   // Bulk paste / upload — fill dozens of purchase lines at once (like the product bulk upload).
   const [showBulk, setShowBulk] = useState(false);
   const [bulkText, setBulkText] = useState("");
@@ -55,16 +61,19 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
   const gstAmt = gst ? Math.round(beforeGst * 3) / 100 : 0;
   const total = beforeGst + gstAmt; // grand total the supplier is paid
 
-  // Split-payment maths (rupees). paidNow = sum of all methods; the rest stays on credit.
-  const METHODS = [["cash", "Cash"], ["upi", "UPI"], ["bank", "Bank"]] as const;
-  const paidNow = (Number(pay.cash) || 0) + (Number(pay.upi) || 0) + (Number(pay.bank) || 0);
+  // If the owner hasn't set up named accounts, fall back to three generic ones so payment still works.
+  const payMethods: PayMethod[] = methods.length ? methods : [
+    { id: "cash", name: "Cash", kind: "cash" }, { id: "upi", name: "UPI", kind: "bank" }, { id: "bank", name: "Bank", kind: "bank" },
+  ];
+  // Split-payment maths (rupees). paidNow = sum across every account; the rest stays on credit.
+  const paidNow = payMethods.reduce((n, m) => n + (Number(payById[m.id]) || 0), 0);
   const credit = Math.max(0, total - paidNow);
   const over = paidNow > total && total > 0;
-  /** Fill one method with whatever is still unpaid (so "Bank: fill remaining" pays the balance). */
-  const fillRemaining = (m: "cash" | "upi" | "bank") => setPay((s) => {
-    const others = (["cash", "upi", "bank"] as const).filter((k) => k !== m).reduce((n, k) => n + (Number(s[k]) || 0), 0);
+  /** Fill one account with whatever is still unpaid (so "HDFC: fill remaining" pays the balance). */
+  const fillRemaining = (id: string) => setPayById((s) => {
+    const others = payMethods.filter((m) => m.id !== id).reduce((n, m) => n + (Number(s[m.id]) || 0), 0);
     const rem = Math.max(0, total - others);
-    return { ...s, [m]: rem ? String(rem) : "" };
+    return { ...s, [id]: rem ? String(rem) : "" };
   });
 
   // ---- Bulk paste / upload: match each row's SKU to a product/variant, then fill the lines ----
@@ -152,9 +161,10 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
     if (missing) { setMsg(`✕ Pick a colour for "${missing.mappedName}" — products with colours are bought per colour, not as the whole product.`); return; }
     if (over) { setMsg(`✕ Paid ${formatPaise(paidNow * 100)} is more than the bill total ${formatPaise(total * 100)} — reduce a method.`); return; }
     setBusy(true); setMsg(""); if (!force) setConfirmDup(false);
-    // Split payment: send one leg per method that has an amount. The rest is left as credit.
-    const payments = METHODS
-      .map(([m]) => ({ mode: m, amountRupees: Number(pay[m]) || 0 }))
+    // Split payment: one leg per ACCOUNT that has an amount (with its methodId so the exact account's
+    // balance drops). Named accounts pass a real methodId; the generic fallback passes none.
+    const payments = payMethods
+      .map((m) => ({ methodId: methods.length ? m.id : undefined, mode: modeOf(m), amountRupees: Number(payById[m.id]) || 0 }))
       .filter((p) => p.amountRupees > 0);
     const res = await recordPurchaseAction({
       supplierId, billNo, force,
@@ -167,7 +177,7 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
     if (res.ok) {
       const owed = Math.max(0, total - paidNow);
       setMsg(`✓ Purchase recorded (${formatPaise(res.total ?? 0)})${owed > 0 ? ` — ${formatPaise(owed * 100)} on credit to supplier` : " — paid in full"}. Stock updated.`);
-      setLines([{ supplierSku: "", mappedProductId: "", mappedName: "", variantId: "", qty: "", cost: "" }]); setBillNo(""); setPay({ cash: "", upi: "", bank: "" }); setCharges({ packing: "", shipping: "", adjustment: "" }); setGst(false); setConfirmDup(false);
+      setLines([{ supplierSku: "", mappedProductId: "", mappedName: "", variantId: "", qty: "", cost: "" }]); setBillNo(""); setPayById({}); setCharges({ packing: "", shipping: "", adjustment: "" }); setGst(false); setConfirmDup(false);
     }
     else { setMsg(`✕ ${res.error}`); setConfirmDup(!!res.duplicateBillNo); }
   }
@@ -293,19 +303,20 @@ export function PurchaseClient({ suppliers, products, lastCosts }: { suppliers: 
           <span className="text-[11px] text-muted ml-auto">Split the payment across methods — anything left over stays on credit.</span>
         </div>
         <div className="grid sm:grid-cols-3 gap-3">
-          {METHODS.map(([m, label]) => (
-            <div key={m} className="rounded-xl border border-sand p-2.5">
+          {payMethods.map((m) => (
+            <div key={m.id} className="rounded-xl border border-sand p-2.5">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-ink">{label}</span>
-                <button type="button" onClick={() => fillRemaining(m)} className="text-[10px] text-emerald-dark hover:underline" title="Pay the remaining balance with this method">fill remaining</button>
+                <span className="text-xs font-medium text-ink">{m.name}{String(m.kind).toLowerCase() === "cash" ? "" : ""}</span>
+                <button type="button" onClick={() => fillRemaining(m.id)} className="text-[10px] text-emerald-dark hover:underline" title="Pay the remaining balance from this account">fill remaining</button>
               </div>
               <div className="mt-1 flex items-center gap-1">
                 <span className="text-sm text-muted">₹</span>
-                <input value={pay[m]} onChange={(e) => setPay((s) => ({ ...s, [m]: e.target.value }))} inputMode="decimal" placeholder="0" className={`${input} w-full`} />
+                <input value={payById[m.id] ?? ""} onChange={(e) => setPayById((s) => ({ ...s, [m.id]: e.target.value }))} inputMode="decimal" placeholder="0" className={`${input} w-full`} />
               </div>
             </div>
           ))}
         </div>
+        {methods.length > 0 && <p className="text-[11px] text-muted mt-1.5">Enter the amount against the account it was actually paid from — that account&apos;s balance drops accordingly (same as POS).</p>}
         <div className="flex flex-wrap items-center gap-3 mt-3">
           <p className="text-[11px]">
             {over ? (
