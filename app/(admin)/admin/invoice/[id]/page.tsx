@@ -85,9 +85,18 @@ export default async function Invoice({ params }: { params: { id: string } }) {
 
   return (
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
-      {/* #1 (Meeting 2): print invoices on A5 — better paper use for many-SKU orders. Scoped
-          to this route via a page-level @page so the barcode sheet (A4) is unaffected. */}
-      <style dangerouslySetInnerHTML={{ __html: "@media print{@page{size:A5;margin:6mm}.print-area{font-size:11px}.print-area .font-display{font-size:1.25rem}}" }} />
+      {/* Print on A4 with COMPACT item rows so a many-SKU bill fits ~25+ items per page (owner:
+          "1 page pe atleast 20-25 items aajaye"). Rows are tightened and never split across a page.
+          Scoped to this route via a page-level @page so the barcode sheet is unaffected. */}
+      <style dangerouslySetInnerHTML={{ __html: `@media print{
+        @page{size:A4;margin:8mm}
+        .print-area{font-size:10.5px;line-height:1.15}
+        .print-area .font-display{font-size:1.3rem}
+        .print-area table{font-size:10px}
+        .print-area table td,.print-area table th{padding-top:2px !important;padding-bottom:2px !important}
+        .print-area tr{page-break-inside:avoid}
+        .print-area thead{display:table-header-group}
+      }` }} />
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center justify-between mb-4 no-print">
           <Link href="/admin/billing" className="text-sm text-emerald nav-link">← New sale</Link>
