@@ -15,8 +15,9 @@ import { ProductStockAdjust } from "@/components/admin/ProductStockAdjust";
 import { MediaCard } from "@/components/admin/MediaCard";
 import VariantAiPhoto from "@/components/admin/VariantAiPhoto";
 import { requirePerm, getSession, can } from "@/lib/auth";
-import { addVariantAction, updateVariantAction, deleteVariantAction } from "@/app/actions/variants";
+import { updateVariantAction, deleteVariantAction } from "@/app/actions/variants";
 import { VariantPhotos } from "@/components/admin/VariantPhotos";
+import { AddVariantForm } from "@/components/admin/AddVariantForm";
 import { setProductVisibilityAction, moveProductToSubcategoryAction, moveProductToStyleAction, savePricingAction, setWholesaleOnlyAction, setHideOosVariantsAction, toggleProductLabelAction, setDefaultVariantFormAction } from "@/app/actions/catalog";
 
 const LABEL_CHIP: Record<string, string> = {
@@ -353,19 +354,13 @@ export default async function ProductPage({ params, searchParams }: { params: { 
         })}
       </div>
 
-      <form action={addVariantAction} className="flex flex-wrap items-end gap-2 border-t border-sand/60 pt-4">
-        <input type="hidden" name="product_sku" value={p.sku} />
-        <label className="text-[11px] text-muted">Colour<input name="color" list="opt-color" placeholder="e.g. Green" className={`${vInput} w-28 block mt-0.5`} /></label>
-        <label className="text-[11px] text-muted">Size<input name="size" list="opt-size" placeholder="e.g. 2.6" className={`${vInput} w-24 block mt-0.5`} /></label>
-        <label className="text-[11px] text-muted">Polish<input name="polish" list="opt-polish" placeholder="e.g. Oxidised" className={`${vInput} w-28 block mt-0.5`} /></label>
-        <label className="text-[11px] text-muted">SKU<input name="sku" placeholder="blank = auto" className={`${vInput} w-32 block mt-0.5 font-mono`} /></label>
-        <label className="text-[11px] text-muted">Stock<input name="qty" type="number" min={0} defaultValue={0} className={`${vInput} w-14 text-center block mt-0.5`} /></label>
-        <label className="text-[11px] text-muted">Retail ₹<input name="retail" type="number" min={0} step="0.01" placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
-        <label className="text-[11px] text-muted">Wholesale ₹<input name="wholesale" type="number" min={0} step="0.01" placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
-        <label className="text-[11px] text-muted">MRP ₹<input name="mrp" type="number" min={0} step="0.01" placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
-        <button className="btn-primary px-4 py-2 text-sm font-medium">+ Add variant</button>
-      </form>
-      <p className="text-[11px] text-muted mt-2">At least one of colour / size / polish is required. Leave a price <b>blank</b> to use the automatic formula price; enter a value to set that colour&apos;s own retail / wholesale / MRP. Add photos so the storefront shows the right piece per option.</p>
+      <AddVariantForm
+        parentSku={p.sku}
+        colorCodes={colorCodes}
+        effRetail={rs(effective.retailPrice)}
+        effWholesale={rs(effective.wholesaleRate)}
+        effMrp={rs(effective.mrp)}
+      />
     </div>
   );
 

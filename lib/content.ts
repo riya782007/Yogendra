@@ -207,7 +207,8 @@ export function templateContent(p: ProductLike): GeneratedContent {
   else if (/other accessor/i.test(baseType)) baseType = "Accessory";
   const type = isSet && !/set/i.test(baseType) ? `${baseType} Set` : (baseType || "Jewellery");
   const catL = type.toLowerCase();
-  const name = pickDivaName(p.sku || p.name);
+  // Girl name is OFF by default (owner: "Remove diva"); AI_DIVA_NAMES=1 restores it.
+  const name = process.env.AI_DIVA_NAMES === "1" ? pickDivaName(p.sku || p.name) : "";
   const withPieces = pieces.length ? ` with ${joinAnd(pieces)}` : "";
 
   // Prefer the owner's own spec keywords (cleanly parsed & ordered) — this is what he curated, so the

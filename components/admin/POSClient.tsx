@@ -257,7 +257,11 @@ export function POSClient({ products, customers = [], methods = [], employees = 
       {/* ================= TOP BAR ================= */}
       {/* STICKY so on a big bill (100–150 lines) the scan/search box stays pinned at the top — staff can
           scan & add from anywhere in the list without scrolling back up (client efficiency request). */}
-      <div className="sticky top-0 z-30 bg-white rounded-2xl shadow-card p-3 flex flex-wrap items-center gap-3">
+      <div className="sticky top-0 z-30 bg-white rounded-2xl shadow-card p-3 flex flex-col gap-2.5">
+        {/* Row 1 — bill settings on the left, who is selling / to whom on the right. Kept on its own
+            line (separate from the big scan box) so the controls have room to breathe (client asked
+            for the crammed buttons to be spaced out). */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         {/* Bill type */}
         <div className="inline-flex rounded-lg border border-sand overflow-hidden text-sm shrink-0">
           {([["gst", "GST Invoice"], ["cash", "Cash Memo"]] as const).map(([v, label]) => (
@@ -276,35 +280,8 @@ export function POSClient({ products, customers = [], methods = [], employees = 
           </div>
         )}
 
-        {/* Unified product search + scan (F3, autofocus) */}
-        <div className="relative flex-1 min-w-[220px]">
-          <div className="flex items-center gap-2 rounded-xl border-2 border-emerald/40 bg-emerald-mist/30 px-3 py-2">
-            <span className="text-emerald">▥</span>
-            <input ref={searchRef} autoFocus value={q} onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); submitSearch(); } }}
-              placeholder="Scan barcode, or search SKU / product / category… (F3)"
-              className="flex-1 bg-transparent outline-none text-sm placeholder:text-emerald-dark/50" />
-            <kbd className="text-[10px] text-emerald-dark/60 border border-emerald/30 rounded px-1">Enter</kbd>
-          </div>
-          {matches.length > 0 && (
-            <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl shadow-luxe border border-sand overflow-hidden">
-              {/* One-tap bulk add: every colour of a matched design in a single click. */}
-              {matchParents.map((pp) => (
-                <button key={`all-${pp.sku}`} onClick={() => { addAllVariants(pp.sku); searchRef.current?.focus(); }} className="w-full text-left px-3 py-2 text-sm bg-emerald-mist/60 hover:bg-emerald-mist flex justify-between items-center border-b border-sand/60">
-                  <span className="truncate font-medium text-emerald-dark">➕ All {pp.count} colours — {pp.name}</span>
-                  <span className="text-[11px] text-emerald-dark/70 shrink-0 ml-2">adds {pp.count} lines</span>
-                </button>
-              ))}
-              {matches.map((p) => (
-                <button key={p.sku} onClick={() => { addLine(p); searchRef.current?.focus(); }} className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-mist flex justify-between items-center">
-                  <span className="truncate">{p.name} <span className="text-muted">· {p.sku}</span> <span className={`text-[11px] ${p.qty <= 0 ? "text-rose" : "text-muted"}`}>({p.qty})</span></span>
-                  <span className="text-ink shrink-0 ml-2">{formatPaise(baseUnit(p))}</span>
-                </button>
-              ))}
-            </div>
-          )}
-          {scanMsg && <p className={`text-[11px] mt-0.5 absolute ${scanMsg.ok ? "text-emerald-dark" : "text-rose"}`}>{scanMsg.text}</p>}
-        </div>
+        {/* Spacer pushes the people controls to the right so they sit apart from the bill toggles. */}
+        <div className="flex-1 min-w-[8px]" />
 
         {/* Salesperson (employee sales attribution) — REQUIRED so every bill is tracked. Staff can
             pick from the roster or add their own name on the spot. */}
@@ -367,6 +344,38 @@ export function POSClient({ products, customers = [], methods = [], employees = 
               <button onClick={() => setCustPanel(false)} className="w-full py-1.5 rounded-lg bg-ink text-white text-sm">Done</button>
             </div>
           )}
+        </div>
+        </div>{/* end Row 1 */}
+
+        {/* Row 2 — unified product search + scan (F3, autofocus). On its own full-width line, pinned,
+            so staff can scan & add from anywhere on a 100–150 line bill. */}
+        <div className="relative">
+          <div className="flex items-center gap-2 rounded-xl border-2 border-emerald/40 bg-emerald-mist/30 px-3 py-2">
+            <span className="text-emerald">▥</span>
+            <input ref={searchRef} autoFocus value={q} onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); submitSearch(); } }}
+              placeholder="Scan barcode, or search SKU / product / category… (F3)"
+              className="flex-1 bg-transparent outline-none text-sm placeholder:text-emerald-dark/50" />
+            <kbd className="text-[10px] text-emerald-dark/60 border border-emerald/30 rounded px-1">Enter</kbd>
+          </div>
+          {matches.length > 0 && (
+            <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl shadow-luxe border border-sand overflow-hidden">
+              {/* One-tap bulk add: every colour of a matched design in a single click. */}
+              {matchParents.map((pp) => (
+                <button key={`all-${pp.sku}`} onClick={() => { addAllVariants(pp.sku); searchRef.current?.focus(); }} className="w-full text-left px-3 py-2 text-sm bg-emerald-mist/60 hover:bg-emerald-mist flex justify-between items-center border-b border-sand/60">
+                  <span className="truncate font-medium text-emerald-dark">➕ All {pp.count} colours — {pp.name}</span>
+                  <span className="text-[11px] text-emerald-dark/70 shrink-0 ml-2">adds {pp.count} lines</span>
+                </button>
+              ))}
+              {matches.map((p) => (
+                <button key={p.sku} onClick={() => { addLine(p); searchRef.current?.focus(); }} className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-mist flex justify-between items-center">
+                  <span className="truncate">{p.name} <span className="text-muted">· {p.sku}</span> <span className={`text-[11px] ${p.qty <= 0 ? "text-rose" : "text-muted"}`}>({p.qty})</span></span>
+                  <span className="text-ink shrink-0 ml-2">{formatPaise(baseUnit(p))}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {scanMsg && <p className={`text-[11px] mt-0.5 absolute ${scanMsg.ok ? "text-emerald-dark" : "text-rose"}`}>{scanMsg.text}</p>}
         </div>
       </div>
 

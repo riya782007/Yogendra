@@ -392,12 +392,15 @@ export async function getEmployees(opts: { activeOnly?: boolean } = {}): Promise
 export async function getEmployeePerformance(range?: { from?: string; to?: string }): Promise<{ id: string; name: string; active: boolean; orders: number; sales: number; collected: number }[]> {
   const sb = supabaseServer();
   const emps = await getEmployees({});
-  let q = sb.from("orders").select("sales_employee_id,total,amount_paid,created_at").not("sales_employee_id", "is", null);
+  // Exclude pending backorders (not sold yet — held like an estimate) and cancelled/refunded bills,
+  // so a salesperson isn't credited for a sale that never actually happened.
+  let q = sb.from("orders").select("sales_employee_id,total,amount_paid,created_at,status,is_backorder").not("sales_employee_id", "is", null).or("is_backorder.is.null,is_backorder.eq.false");
   if (range?.from) q = q.gte("created_at", range.from);
   if (range?.to) q = q.lte("created_at", range.to);
   const { data } = await q;
   const agg = new Map<string, { orders: number; sales: number; collected: number }>();
   for (const o of ((data as any[]) ?? [])) {
+    if (o.status === "cancelled" || o.status === "refunded") continue;
     const cur = agg.get(o.sales_employee_id) ?? { orders: 0, sales: 0, collected: 0 };
     cur.orders += 1; cur.sales += (o.total ?? 0); cur.collected += (o.amount_paid ?? 0);
     agg.set(o.sales_employee_id, cur);
@@ -414,13 +417,14 @@ export async function getEmployeeSalesLedger(range?: { from?: string; to?: strin
   const emps = await getEmployees({});
   const nameById = new Map(emps.map((e) => [e.id, e.name]));
   let q = sb.from("orders")
-    .select("id,invoice_no,sales_employee_id,customer_name,total,amount_paid,bill_type,channel,created_at")
+    .select("id,invoice_no,sales_employee_id,customer_name,total,amount_paid,bill_type,channel,created_at,status")
     .not("sales_employee_id", "is", null)
+    .or("is_backorder.is.null,is_backorder.eq.false")
     .order("created_at", { ascending: false }).limit(limit);
   if (range?.from) q = q.gte("created_at", range.from);
   if (range?.to) q = q.lte("created_at", range.to);
   const { data } = await q;
-  return ((data as any[]) ?? []).map((o) => ({
+  return ((data as any[]) ?? []).filter((o) => o.status !== "cancelled" && o.status !== "refunded").map((o) => ({
     id: o.id as string,
     invoice_no: (o.invoice_no ?? null) as string | null,
     employee: (nameById.get(o.sales_employee_id) ?? "—") as string,
@@ -440,12 +444,13 @@ export async function getCustomerSpend(range?: { from?: string; to?: string }): 
   // Count EVERY bill the customer took — cash memos AND GST invoices — at the amount they actually
   // spent (the GST-inclusive grand total, matching the ledger and the printed bill). GST bills store
   // `total` pre-tax, so add the 3% GST rounded to ₹1; cash memos have no tax.
-  let q = sb.from("orders").select("customer_id,total,bill_type,created_at").not("customer_id", "is", null);
+  let q = sb.from("orders").select("customer_id,total,bill_type,created_at,status,is_backorder").not("customer_id", "is", null).or("is_backorder.is.null,is_backorder.eq.false");
   if (range?.from) q = q.gte("created_at", range.from);
   if (range?.to) q = q.lte("created_at", range.to);
   const { data } = await q;
   const m = new Map<string, { spend: number; orders: number; last: string | null }>();
   for (const o of ((data as any[]) ?? [])) {
+    if (o.status === "cancelled" || o.status === "refunded") continue;
     const t = o.total ?? 0;
     const grand = o.bill_type === "cash" ? t : Math.round((t + Math.round(t * 0.03)) / 100) * 100;
     const cur = m.get(o.customer_id) ?? { spend: 0, orders: 0, last: null as string | null };
@@ -1563,13 +1568,15 @@ export async function getDashboardData(fromISO: string, toISO: string, rule: Inv
   const sb = supabaseServer();
   const now = new Date();
   const [ordersRes, prods, catRes, retRes, apprRes] = await Promise.all([
-    sb.from("orders").select("total,channel,payment_mode,pay_cash,pay_bank,created_at").gte("created_at", fromISO).lte("created_at", toISO),
+    sb.from("orders").select("total,channel,payment_mode,pay_cash,pay_bank,created_at,status,is_backorder").gte("created_at", fromISO).lte("created_at", toISO).or("is_backorder.is.null,is_backorder.eq.false"),
     fetchAll((f, t) => sb.from("products").select("sku,name,qty,last_movement_at,created_at,category:categories(name)").range(f, t)),
     sb.from("categories").select("id"),
     sb.from("retailers").select("id,approved"),
     sb.from("approvals").select("id,status"),
   ]);
-  const orders = ordersRes.data ?? [];
+  // Pending backorders (held, not sold) are already filtered above; also drop cancelled/refunded so
+  // the dashboard revenue matches the sales record (owner: "revenue dikha raha hai but no stock movement").
+  const orders = (ordersRes.data ?? []).filter((o: any) => o.status !== "cancelled" && o.status !== "refunded");
   const products = (prods as any[]) ?? [];
 
   const revenue = orders.reduce((s, o: any) => s + (o.total ?? 0), 0);
