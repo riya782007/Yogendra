@@ -146,6 +146,13 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
   function goToPay() {
     if (lines.length === 0 || belowMin) return;
     setErr(""); setUtr(""); setPaying(true);
+    // Tell the owner IMMEDIATELY that this dealer reached checkout (finalised) — so he can call/close
+    // the deal (esp. international dealers who settle over a video call), not wait for it to "abandon".
+    const items = lines.map(([sku, n]) => { const p = bySku.get(sku.toUpperCase()); return { sku, name: p?.name ?? sku, qty: n, price: p?.price ?? 0 }; });
+    fetch("/api/cart/track", {
+      method: "POST", headers: { "content-type": "application/json" }, keepalive: true,
+      body: JSON.stringify({ items, total: orderTotal, name: customerName, phone: customerPhone, channel: "wholesale", stage: "checkout" }),
+    }).catch(() => {});
   }
   /** Finalise: record the order with the UPI reference; the owner is WhatsApp'd to verify & dispatch. */
   async function confirmOrderCOD() {

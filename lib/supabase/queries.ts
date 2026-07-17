@@ -2193,11 +2193,17 @@ export async function getPendingWholesalePayments(): Promise<{
 }
 export async function getAbandonedCarts() {
   const sb = supabaseServer();
-  // Only surface carts gone quiet for 20+ min — a shopper still browsing isn't "abandoned" yet.
+  // Surface carts gone quiet for 20+ min (a shopper still browsing isn't "abandoned" yet) — OR any cart
+  // that REACHED CHECKOUT (finalised), which the owner wants to see immediately so he can close it.
   const idleSince = new Date(Date.now() - 20 * 60 * 1000).toISOString();
-  const { data } = await sb.from("abandoned_carts")
-    .select("*").eq("recovered", false).lt("updated_at", idleSince)
+  let res = await sb.from("abandoned_carts")
+    .select("*").eq("recovered", false).or(`updated_at.lt.${idleSince},reached_checkout.eq.true`)
     .order("updated_at", { ascending: false });
+  if (res.error) {
+    // `reached_checkout` column may not be deployed yet — fall back to the idle-only rule.
+    res = await sb.from("abandoned_carts").select("*").eq("recovered", false).lt("updated_at", idleSince).order("updated_at", { ascending: false });
+  }
+  const { data } = res;
   return (data as any[]) ?? [];
 }
 export async function getSitemapData() {

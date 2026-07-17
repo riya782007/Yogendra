@@ -89,11 +89,13 @@ export default async function Invoice({ params }: { params: { id: string } }) {
           "1 page pe atleast 20-25 items aajaye"). Rows are tightened and never split across a page.
           Scoped to this route via a page-level @page so the barcode sheet is unaffected. */}
       <style dangerouslySetInnerHTML={{ __html: `@media print{
-        @page{size:A4;margin:8mm}
-        .print-area{font-size:10.5px;line-height:1.15}
-        .print-area .font-display{font-size:1.3rem}
-        .print-area table{font-size:10px}
-        .print-area table td,.print-area table th{padding-top:2px !important;padding-bottom:2px !important}
+        @page{size:A4;margin:11mm}
+        /* Standard, readable font + comfortable row spacing (owner: "bada karo, details saaf dikhe").
+           A4 still fits ~18-20 items per page; header repeats and rows never split across pages. */
+        .print-area{font-size:12px;line-height:1.4}
+        .print-area .font-display{font-size:1.6rem}
+        .print-area table{font-size:11.5px}
+        .print-area table td,.print-area table th{padding-top:5px !important;padding-bottom:5px !important}
         .print-area tr{page-break-inside:avoid}
         .print-area thead{display:table-header-group}
       }` }} />

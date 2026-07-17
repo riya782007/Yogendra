@@ -43,7 +43,12 @@ export async function POST(req: Request) {
       price: Math.max(0, Math.round(Number(i?.price) || 0)),
     }));
 
+    // When the shopper opens the payment step, flag it so the owner is informed IMMEDIATELY (a dealer
+    // who reached "Pay to confirm" has finalised — the owner can call/close it, esp. international ones)
+    // instead of waiting for the 20-min "abandoned" window.
+    const reachedCheckout = String(body?.stage ?? "").toLowerCase() === "checkout" || body?.reachedCheckout === true;
     const row: any = { session_id: sid, items: clean, total, customer_name: name, phone, recovered: false, channel, updated_at: new Date().toISOString() };
+    if (reachedCheckout) row.reached_checkout = true;
     let up = await sb.from("abandoned_carts").upsert(row, { onConflict: "session_id" });
     if (up.error) {
       // `channel` column may not be deployed yet — retry without it so tracking never breaks.

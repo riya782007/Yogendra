@@ -275,6 +275,49 @@ export async function setQuoteStatusAction(formData: FormData) {
 }
 
 /**
+ * Owner places a wholesale order ON BEHALF of a dealer, straight from a captured cart (the dealer
+ * reached checkout but finished the deal on a call/video — the "inform me, close on video call" flow).
+ * Resolves the dealer by the cart's phone, bills the cart's items at live wholesale prices, and marks
+ * the cart recovered so it drops off the "not completed" list. `markPaid` records it as already paid.
+ */
+export async function placeWholesaleOrderFromCartAction(input: { sessionId: string; markPaid?: boolean }): Promise<{ ok: boolean; error?: string; orderId?: string; total?: number }> {
+  if (!(await requirePerm("billing.sell"))) return { ok: false, error: "Your role can't place orders." };
+  const sid = (input.sessionId ?? "").trim();
+  if (!sid) return { ok: false, error: "Missing cart." };
+  const sb = supabaseServer();
+  const { data: cart } = await sb.from("abandoned_carts").select("session_id,customer_name,phone,items,channel").eq("session_id", sid).maybeSingle();
+  if (!cart) return { ok: false, error: "Cart not found (maybe already ordered)." };
+  const items = (((cart as any).items as any[]) ?? []).filter((i) => i?.sku && Number(i?.qty) > 0).map((i) => ({ sku: String(i.sku), qty: Math.floor(Number(i.qty)) }));
+  if (!items.length) return { ok: false, error: "This cart has no billable items." };
+
+  // Resolve the dealer by phone — must be an approved wholesale customer. Suffix match handles any
+  // format (with/without country code), same as wholesale login.
+  const digits = String((cart as any).phone ?? "").replace(/\D/g, "");
+  let dealerId: string | null = null;
+  if (digits.length >= 8) {
+    const { data: c } = await sb.from("customers").select("id").eq("type", "wholesale").eq("wholesale_approved", true).ilike("phone", `%${digits.slice(-8)}`).limit(1).maybeSingle();
+    dealerId = (c as any)?.id ?? null;
+  }
+  if (!dealerId) return { ok: false, error: `No approved wholesale dealer found for ${(cart as any).phone ?? "this cart"}. Approve them under Customers first, then place the order.` };
+
+  const formula = await getPricingFormula().catch(() => null);
+  const pTiers = (formula?.wholesaleTiers ?? []).map((t) => ({ min_qty: t.minQty, pct_off: t.pctOff }));
+  const { data, error } = await sb.rpc("place_wholesale_order", { p_customer: dealerId, p_items: items, p_allow_oversell: false, p_tiers: pTiers });
+  if (error) return { ok: false, error: error.message };
+  const orderId = (data as any)?.order_id as string | undefined;
+  const total = (data as any)?.total as number | undefined;
+  if (orderId) {
+    await sb.rpc("assign_invoice_no", { p_order: orderId }).then(() => {}, () => {});
+    await sb.from("orders").update({ payment_mode: "upi", admin_note: "Placed by owner from captured cart (dealer confirmed on call)" }).eq("id", orderId).then(() => {}, () => {});
+    if (input.markPaid && total) await sb.from("orders").update({ amount_paid: total }).eq("id", orderId).then(() => {}, () => {});
+  }
+  // Mark the cart recovered so it leaves the "not completed" list.
+  await sb.from("abandoned_carts").update({ recovered: true }).eq("session_id", sid).then(() => {}, () => {});
+  revalidatePath("/admin/abandoned"); revalidatePath("/admin/dashboard"); revalidatePath("/admin/wholesale-payments");
+  return { ok: true, orderId, total };
+}
+
+/**
  * Owner reviews a dealer's UPI payment screenshot and APPROVES or REJECTS it.
  *  • Approve → marks the order fully paid (amount_paid = total) and records the money as received into
  *    the UPI account (so Bank & Cash updates), then the owner can dispatch. The stock was already

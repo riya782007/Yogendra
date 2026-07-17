@@ -1,11 +1,13 @@
 "use client";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { formatPaise } from "@/lib/pricing";
 import { ProductImage } from "@/components/Placeholder";
+import { placeWholesaleOrderFromCartAction } from "@/app/actions/wholesale";
 
 type Item = { sku?: string; name: string; qty: number; price: number };
-type Cart = { id: string; customer_name?: string | null; phone?: string | null; total: number; created_at: string; items: Item[]; channel?: string | null };
+type Cart = { id: string; session_id?: string | null; customer_name?: string | null; phone?: string | null; total: number; created_at: string; items: Item[]; channel?: string | null; reached_checkout?: boolean | null };
 
 const agoText = (d: string) => {
   const h = Math.round((Date.now() - new Date(d).getTime()) / 3600000);
@@ -14,10 +16,24 @@ const agoText = (d: string) => {
 
 /** One abandoned cart — a compact summary that expands to full product + customer detail. */
 export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMap: Record<string, string>; slugMap: Record<string, string> }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [placing, setPlacing] = useState(false);
+  const [confirmPlace, setConfirmPlace] = useState(false);
+  const [placeMsg, setPlaceMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const items = cart.items ?? [];
   const totalQty = items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
   const phone = cart.phone ? String(cart.phone).replace(/\D/g, "") : "";
+
+  async function placeOrder(markPaid: boolean) {
+    if (!cart.session_id) { setPlaceMsg({ text: "Missing cart id.", ok: false }); return; }
+    setPlacing(true); setPlaceMsg(null);
+    const r = await placeWholesaleOrderFromCartAction({ sessionId: cart.session_id, markPaid });
+    setPlacing(false); setConfirmPlace(false);
+    if (!r.ok) { setPlaceMsg({ text: r.error ?? "Couldn't place the order.", ok: false }); return; }
+    setPlaceMsg({ text: `Order placed ✓${markPaid ? " (marked paid)" : ""} — now in your pipeline.`, ok: true });
+    router.refresh();
+  }
   const isWholesale = String(cart.channel ?? "").toLowerCase() === "wholesale";
   const waMsg = isWholesale
     ? `Hi ${cart.customer_name || "there"}! You added ${totalQty} piece${totalQty === 1 ? "" : "s"} to your Blythe Diva wholesale cart but didn't place the order. Need help or a better rate? Reply here and we'll sort it out. 🙏`
@@ -32,6 +48,7 @@ export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMa
           <span className="text-muted mr-1 inline-block transition-transform" style={{ transform: open ? "rotate(90deg)" : "none" }}>▸</span>
           {cart.customer_name || "Anonymous visitor"}
           {isWholesale && <span className="ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-wine/10 text-wine align-middle">WHOLESALE</span>}
+          {cart.reached_checkout && <span className="ml-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald text-white align-middle">REACHED PAYMENT</span>}
           <span className="text-xs text-muted"> · {agoText(cart.created_at)} · {totalQty} item{totalQty === 1 ? "" : "s"}</span>
         </p>
         <div className="text-right shrink-0">
@@ -39,6 +56,24 @@ export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMa
           {wa ? <a href={wa} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-xs text-emerald nav-link">WhatsApp nudge →</a> : <span className="text-xs text-muted">no contact</span>}
         </div>
       </button>
+
+      {/* Wholesale: after confirming with the dealer (e.g. on a call), place the order in one click —
+          it converts this captured cart into a real wholesale order in the pipeline. */}
+      {isWholesale && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-sand/50 pt-2">
+          {confirmPlace ? (
+            <>
+              <span className="text-[11px] text-muted">Place this order for the dealer?</span>
+              <button onClick={() => placeOrder(false)} disabled={placing} className="px-3 py-1.5 rounded-full bg-emerald text-white text-xs font-medium disabled:opacity-50">{placing ? "Placing…" : "Place (unpaid)"}</button>
+              <button onClick={() => placeOrder(true)} disabled={placing} className="px-3 py-1.5 rounded-full bg-ink text-white text-xs font-medium disabled:opacity-50">Place &amp; mark paid</button>
+              <button onClick={() => setConfirmPlace(false)} className="px-3 py-1.5 rounded-full border border-sand text-muted text-xs">Cancel</button>
+            </>
+          ) : (
+            <button onClick={() => setConfirmPlace(true)} className="px-3 py-1.5 rounded-full border border-emerald text-emerald-dark text-xs font-medium hover:bg-emerald-mist/40">✓ Place this order for the dealer</button>
+          )}
+          {placeMsg && <span className={`text-[11px] ${placeMsg.ok ? "text-emerald-dark" : "text-rose"}`}>{placeMsg.text}</span>}
+        </div>
+      )}
 
       {/* Collapsed: mini-catalog of thumbnails */}
       {!open && (
