@@ -24,7 +24,13 @@ export function POSClient({ products: propProducts, customers = [], methods = []
   const [q, setQ] = useState("");
   const [scanMsg, setScanMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const listTopRef = useRef<HTMLDivElement>(null);
   const discRef = useRef<HTMLInputElement>(null);
+  // After adding/scanning an item, bring the top of the list (where the newest line shows) into view.
+  // On a long bill (100+ lines) the staffer is scrolled to the bottom, so the just-added line — which
+  // renders at the TOP — was landing off-screen and looked like "nothing got added". This makes every
+  // add visibly jump to the newest line, right under the sticky search box.
+  const revealNewest = () => { requestAnimationFrame(() => listTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })); };
   const payRef = useRef<HTMLSelectElement>(null);
   const [lines, setLines] = useState<Line[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -162,7 +168,7 @@ export function POSClient({ products: propProducts, customers = [], methods = []
       const added = vars.filter((v) => !have.has(v.sku)).map((v) => ({ sku: v.sku, name: v.name, price: v.price, wholesale: v.wholesale, mrp: v.mrp, qty: 1, stock: v.qty, override: "", disc: "" }));
       return [...prev, ...added];
     });
-    setQ("");
+    setQ(""); revealNewest();
   }
 
   const toPaise = (v: string) => { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) : 0; };
@@ -186,7 +192,7 @@ export function POSClient({ products: propProducts, customers = [], methods = []
   // Add (or re-scan) a line. The just-scanned line always moves to the END of the list so — shown
   // newest-first below — it sits right under the sticky search box; staff instantly SEE what they added
   // (or that its qty ticked up) without scrolling. Totals/bill are order-independent, so this is display-only.
-  function addLine(p: P) { setLines((prev) => { const ex = prev.find((l) => l.sku === p.sku); if (ex) return [...prev.filter((l) => l.sku !== p.sku), { ...ex, qty: ex.qty + 1 }]; return [...prev, { sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, mrp: p.mrp, qty: 1, stock: p.qty, override: "", disc: "" }]; }); setQ(""); }
+  function addLine(p: P) { setLines((prev) => { const ex = prev.find((l) => l.sku === p.sku); if (ex) return [...prev.filter((l) => l.sku !== p.sku), { ...ex, qty: ex.qty + 1 }]; return [...prev, { sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, mrp: p.mrp, qty: 1, stock: p.qty, override: "", disc: "" }]; }); setQ(""); revealNewest(); }
   function setQty(sku: string, qty: number) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, qty: Math.max(1, Math.floor(qty || 1)) } : l)); }
   function setOverride(sku: string, val: string) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, override: val } : l)); }
   function setLineDisc(sku: string, val: string) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, disc: val } : l)); }
@@ -398,6 +404,11 @@ export function POSClient({ products: propProducts, customers = [], methods = []
           {scanMsg && <p className={`text-[11px] mt-0.5 absolute ${scanMsg.ok ? "text-emerald-dark" : "text-rose"}`}>{scanMsg.text}</p>}
         </div>
       </div>
+
+      {/* Scroll anchor: after each add we scroll here so the newest line (rendered at the top of the
+          table) is visible right under the sticky search bar, even on a 100+ line bill. The margin
+          clears the sticky top bar so the row isn't hidden behind it. */}
+      <div ref={listTopRef} className="scroll-mt-44" aria-hidden />
 
       {/* ================= PRODUCT TABLE (center, largest) ================= */}
       <div className="bg-white rounded-2xl shadow-card overflow-hidden">
