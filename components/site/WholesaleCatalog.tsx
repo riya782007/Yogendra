@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { formatPaise, tierPctOff, applyTier, type WholesaleTier } from "@/lib/pricing";
 import { ProductImage } from "@/components/Placeholder";
 import { QtyField } from "@/components/admin/QtyField";
@@ -22,8 +22,8 @@ function shipSlab(totalPaise: number): number {
 }
 const COD_FEE = 12000; // ₹120 per COD order
 
-export function WholesaleCatalog({ products, customerName, minOrder = 300000, history = [], payInfo = null, outstanding = 0, tiers = [] }: {
-  products: P[]; customerName: string; minOrder?: number; history?: Hist[]; payInfo?: PayInfo | null; outstanding?: number; tiers?: WholesaleTier[];
+export function WholesaleCatalog({ products, customerName, customerPhone = "", minOrder = 300000, history = [], payInfo = null, outstanding = 0, tiers = [] }: {
+  products: P[]; customerName: string; customerPhone?: string; minOrder?: number; history?: Hist[]; payInfo?: PayInfo | null; outstanding?: number; tiers?: WholesaleTier[];
 }) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
@@ -115,6 +115,23 @@ export function WholesaleCatalog({ products, customerName, minOrder = 300000, hi
   const itemCount = lines.reduce((s, [, n]) => s + n, 0);
   const belowMin = orderTotal > 0 && orderTotal < minOrder;
   const shortBy = Math.max(0, minOrder - orderTotal);
+
+  // ---- Abandoned-cart pipeline (wholesale) ----------------------------------------------------
+  // The dealer's live cart is saved (debounced) so a cart left un-ordered surfaces on the owner's
+  // Abandoned Carts page WITH the dealer's name + phone — the owner can then nudge them on WhatsApp.
+  // Placing the order empties the cart, which clears the saved row (no longer "abandoned").
+  useEffect(() => {
+    const items = lines.map(([sku, n]) => { const p = bySku.get(sku.toUpperCase()); return { sku, name: p?.name ?? sku, qty: n, price: p?.price ?? 0 }; });
+    const t = setTimeout(() => {
+      fetch("/api/cart/track", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ items, total: orderTotal, name: customerName, phone: customerPhone, channel: "wholesale" }),
+        keepalive: true,
+      }).catch(() => {});
+    }, 1200);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qty]);
 
   /** Never let a line exceed available stock (the owner's "select jyada ho rha hai"). */
   const clamp = (sku: string, n: number) => {

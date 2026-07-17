@@ -158,9 +158,12 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
   if (opts.stock === "in") query = query.gt("qty", 0);
   else if (opts.stock === "out") query = query.lte("qty", 0);
   const fromIdx = (page - 1) * pageSize;
-  // Newest-created design on TOP (owner: "jo last product bana wo upar dikhe"). created_at desc, with
-  // nulls last so legacy rows without a timestamp don't jump to the top; sku as a stable tiebreaker.
+  // IN-STOCK designs on top, OUT-OF-STOCK pushed to the very end (owner's efficiency request) — done
+  // at the DB level so it holds across pages. Within each group, newest-created shows first
+  // ("jo last product bana wo upar dikhe"); sku is a stable tiebreaker. When the owner explicitly
+  // filters by stock, the group sort is a no-op, so newest-first still applies.
   const { data, count } = await query
+    .order("in_stock", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false, nullsFirst: false })
     .order("sku", { ascending: false })
     .range(fromIdx, fromIdx + pageSize - 1);

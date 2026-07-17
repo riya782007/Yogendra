@@ -5,7 +5,7 @@ import { formatPaise } from "@/lib/pricing";
 import { ProductImage } from "@/components/Placeholder";
 
 type Item = { sku?: string; name: string; qty: number; price: number };
-type Cart = { id: string; customer_name?: string | null; phone?: string | null; total: number; created_at: string; items: Item[] };
+type Cart = { id: string; customer_name?: string | null; phone?: string | null; total: number; created_at: string; items: Item[]; channel?: string | null };
 
 const agoText = (d: string) => {
   const h = Math.round((Date.now() - new Date(d).getTime()) / 3600000);
@@ -18,7 +18,11 @@ export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMa
   const items = cart.items ?? [];
   const totalQty = items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
   const phone = cart.phone ? String(cart.phone).replace(/\D/g, "") : "";
-  const wa = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(`Hi ${cart.customer_name || "there"}! You left some beautiful pieces in your Blythe Diva bag. Complete your order and enjoy 20% off ✨`)}` : null;
+  const isWholesale = String(cart.channel ?? "").toLowerCase() === "wholesale";
+  const waMsg = isWholesale
+    ? `Hi ${cart.customer_name || "there"}! You added ${totalQty} piece${totalQty === 1 ? "" : "s"} to your Blythe Diva wholesale cart but didn't place the order. Need help or a better rate? Reply here and we'll sort it out. 🙏`
+    : `Hi ${cart.customer_name || "there"}! You left some beautiful pieces in your Blythe Diva bag. Complete your order and enjoy 20% off ✨`;
+  const wa = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(waMsg)}` : null;
   const when = new Date(cart.created_at).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
   return (
@@ -26,7 +30,9 @@ export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMa
       <button onClick={() => setOpen((v) => !v)} className="w-full flex items-start justify-between gap-4 text-left">
         <p className="font-medium text-ink">
           <span className="text-muted mr-1 inline-block transition-transform" style={{ transform: open ? "rotate(90deg)" : "none" }}>▸</span>
-          {cart.customer_name || "Anonymous visitor"} <span className="text-xs text-muted">· {agoText(cart.created_at)} · {totalQty} item{totalQty === 1 ? "" : "s"}</span>
+          {cart.customer_name || "Anonymous visitor"}
+          {isWholesale && <span className="ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-wine/10 text-wine align-middle">WHOLESALE</span>}
+          <span className="text-xs text-muted"> · {agoText(cart.created_at)} · {totalQty} item{totalQty === 1 ? "" : "s"}</span>
         </p>
         <div className="text-right shrink-0">
           <p className="font-semibold text-ink">{formatPaise(cart.total)}</p>

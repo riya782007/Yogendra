@@ -20,6 +20,7 @@ export async function POST(req: Request) {
     const total = Math.max(0, Math.round(Number(body?.total) || 0));
     const name = (body?.name ?? "").toString().trim().slice(0, 120) || null;
     const phone = (body?.phone ?? "").toString().replace(/[^\d+]/g, "").slice(0, 20) || null;
+    const channel = (body?.channel ?? "").toString().trim().toLowerCase() === "wholesale" ? "wholesale" : "retail";
 
     const jar = cookies();
     let sid = jar.get(SID)?.value;
@@ -42,10 +43,13 @@ export async function POST(req: Request) {
       price: Math.max(0, Math.round(Number(i?.price) || 0)),
     }));
 
-    await sb.from("abandoned_carts").upsert(
-      { session_id: sid, items: clean, total, customer_name: name, phone, recovered: false, updated_at: new Date().toISOString() },
-      { onConflict: "session_id" },
-    );
+    const row: any = { session_id: sid, items: clean, total, customer_name: name, phone, recovered: false, channel, updated_at: new Date().toISOString() };
+    let up = await sb.from("abandoned_carts").upsert(row, { onConflict: "session_id" });
+    if (up.error) {
+      // `channel` column may not be deployed yet — retry without it so tracking never breaks.
+      delete row.channel;
+      up = await sb.from("abandoned_carts").upsert(row, { onConflict: "session_id" });
+    }
     return NextResponse.json({ ok: true });
   } catch (e) {
     // Never break the storefront over analytics.
