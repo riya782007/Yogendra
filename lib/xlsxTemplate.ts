@@ -80,7 +80,10 @@ function sheetXml(rows: string[][], validations: { sqref: string; list: string }
       validations
         .map(
           (v) =>
-            `<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="${v.sqref}"><formula1>${xesc(v.list)}</formula1></dataValidation>`,
+            // errorStyle="information" + showErrorMessage="0": the dropdown SUGGESTS the known values
+            // but NEVER blocks a new one — so an employee can type a brand-new polish/style/colour
+            // (e.g. "Mehendi") right in the sheet and the import will create it. No more dead-ends.
+            `<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="0" errorStyle="information" sqref="${v.sqref}"><formula1>${xesc(v.list)}</formula1></dataValidation>`,
         )
         .join("") +
       `</dataValidations>`
