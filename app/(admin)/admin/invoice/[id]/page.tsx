@@ -7,6 +7,7 @@ import { formatPaise } from "@/lib/pricing";
 import { PrintButton } from "@/components/admin/PrintButton";
 import { UpiAmountQr } from "@/components/admin/UpiAmountQr";
 import { CancelOrderButton } from "@/components/admin/CancelOrderButton";
+import { EditBillPanel } from "@/components/admin/EditBillPanel";
 import { BUSINESS, HSN_JEWELLERY, GST_RATE, gstSplit, gstSplitExclusive, stateCodeFromGstin, stateNameFromCode, bankHasDetails, amountInWords } from "@/lib/business";
 import { getSession, can } from "@/lib/auth";
 import { recordPaymentAction, setDocTypeAction, saveOrderNoteAction, setBillTypeAction, setGstModeAction } from "@/app/actions/payments";
@@ -316,6 +317,13 @@ export default async function Invoice({ params }: { params: { id: string } }) {
         {/* Admin controls (never printed) */}
         {(can(session, "billing.sell") || can(session, "billing.gst")) && (
           <div className="no-print grid sm:grid-cols-2 gap-4 mt-5">
+            {/* OTP-gated bill editing — fix a wrong qty / mis-scanned line without cancelling. Only on a
+                live (non-cancelled) bill. */}
+            {can(session, "billing.sell") && order.status !== "cancelled" && (
+              <div className="sm:col-span-2">
+                <EditBillPanel orderId={String(order.id)} />
+              </div>
+            )}
             {can(session, "billing.sell") && (
               <div className="bg-white rounded-2xl p-5 shadow-card sm:col-span-2">
                 <h2 className="font-medium text-ink mb-1">Internal note <span className="text-xs text-muted font-normal">· staff only, never printed</span></h2>

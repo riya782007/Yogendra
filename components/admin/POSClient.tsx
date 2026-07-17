@@ -3,6 +3,7 @@ import { useState, useMemo, useRef, useEffect, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import { formatPaise } from "@/lib/pricing";
 import { posSaleAction } from "@/app/actions/orders";
+import { posLookupAction } from "@/app/actions/billing";
 import { quickAddEmployeeAction } from "@/app/actions/employees";
 import { QtyField } from "@/components/admin/QtyField";
 
@@ -14,8 +15,12 @@ type Method = { id: string; name: string; kind: string };
 type Emp = { id: string; name: string };
 type PayLine = { methodId: string; amount: string };
 
-export function POSClient({ products, customers = [], methods = [], employees = [] }: { products: P[]; customers?: Cust[]; methods?: Method[]; employees?: Emp[] }) {
+export function POSClient({ products: propProducts, customers = [], methods = [], employees = [] }: { products: P[]; customers?: Cust[]; methods?: Method[]; employees?: Emp[] }) {
   const router = useRouter();
+  // Live, growable catalogue: starts from what the page loaded, but products the owner just created
+  // (or any SKU not in memory) are fetched on demand and merged in — so a fresh SKU always shows.
+  const [products, setProducts] = useState<P[]>(propProducts);
+  const [looking, setLooking] = useState(false);
   const [q, setQ] = useState("");
   const [scanMsg, setScanMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -191,15 +196,30 @@ export function POSClient({ products, customers = [], methods = [], employees = 
    *  1) the EXACT SKU, else 2) the single result when exactly one matches.
    *  It never grabs "the first of many" — a scanner misread (e.g. KN10…) must NOT silently
    *  bill some other design that merely contains the same letters (the CCKN9582 bug). */
-  function submitSearch() {
+  async function submitSearch() {
     const code = q.trim();
     if (!code) return;
     const exact = products.find((x) => x.sku.toLowerCase() === code.toLowerCase());
     const p = exact ?? (matches.length === 1 ? matches[0] : undefined);
-    if (p) { addLine(p); setScanMsg({ text: `✓ ${p.name} · ${p.qty} in stock${p.qty <= 0 ? " (OUT)" : ""}`, ok: p.qty > 0 }); setQ(""); }
-    else if (matches.length > 1) { setScanMsg({ text: `✕ “${code}” is not an exact SKU — ${matches.length} similar items, pick one from the list`, ok: false }); }
-    else { setScanMsg({ text: `✕ No product “${code}” — check the label/SKU`, ok: false }); setQ(""); }
-    searchRef.current?.focus();
+    if (p) { addLine(p); setScanMsg({ text: `✓ ${p.name} · ${p.qty} in stock${p.qty <= 0 ? " (OUT)" : ""}`, ok: p.qty > 0 }); setQ(""); searchRef.current?.focus(); return; }
+    if (matches.length > 1) { setScanMsg({ text: `✕ “${code}” is not an exact SKU — ${matches.length} similar items, pick one from the list`, ok: false }); searchRef.current?.focus(); return; }
+    // Nothing in memory — the SKU may be a product created after this page loaded. Look it up LIVE
+    // from the database so a brand-new SKU always bills without a reload (client's request).
+    setLooking(true); setScanMsg({ text: `Looking up “${code}”…`, ok: true });
+    try {
+      const found = await posLookupAction(code);
+      if (found.length) {
+        // Merge any newly-found items into the working catalogue so they scan/search instantly next time.
+        setProducts((prev) => { const have = new Set(prev.map((x) => x.sku.toUpperCase())); return [...prev, ...found.filter((f) => !have.has(f.sku.toUpperCase()))]; });
+        const hit = found.find((f) => f.sku.toLowerCase() === code.toLowerCase()) ?? (found.length === 1 ? found[0] : undefined);
+        if (hit) { addLine(hit); setScanMsg({ text: `✓ ${hit.name} · ${hit.qty} in stock${hit.qty <= 0 ? " (OUT)" : ""}`, ok: hit.qty > 0 }); setQ(""); }
+        else { setScanMsg({ text: `${found.length} matches for “${code}” — pick one from the list`, ok: true }); }
+      } else {
+        setScanMsg({ text: `✕ No product “${code}” — check the label/SKU`, ok: false }); setQ("");
+      }
+    } catch {
+      setScanMsg({ text: `✕ Couldn't look up “${code}” — try again`, ok: false });
+    } finally { setLooking(false); searchRef.current?.focus(); }
   }
 
   async function complete() {

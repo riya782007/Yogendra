@@ -76,6 +76,72 @@ export async function removeEstimateLineAction(formData: FormData): Promise<void
   revalidatePath(`/admin/estimate/${estimateId}`);
 }
 
+type PosItem = { sku: string; name: string; price: number; wholesale: number; mrp: number; category: string; qty: number; parentSku?: string; parentName?: string };
+
+/** LIVE SKU lookup for the POS counter. The billing page loads the product list once; a product the
+ *  owner creates AFTER that (or on another tab) isn't in memory — so a fresh SKU "doesn't come up".
+ *  This resolves any SKU straight from the database on the spot (exact variant, exact product, then a
+ *  fuzzy name/SKU search) so the counter can always find and bill it without reloading. */
+export async function posLookupAction(rawCode: string): Promise<PosItem[]> {
+  if (!(await requirePerm("billing.sell"))) return [];
+  const code = (rawCode ?? "").trim();
+  if (!code) return [];
+  const sb = supabaseServer();
+  const formula = await getPricingFormula();
+  const priceOf = (base: number, vOv: any, pOv: any) => {
+    const r = resolvePrices(base ?? 0, formula, vOv ?? {}, pOv ?? {});
+    return { price: r.retailPrice, wholesale: r.wholesaleRate, mrp: r.mrp };
+  };
+  const out: PosItem[] = [];
+  const seen = new Set<string>();
+  const push = (it: PosItem) => { const k = it.sku.toUpperCase(); if (!seen.has(k)) { seen.add(k); out.push(it); } };
+
+  // Load a product + its category + variants and emit POS rows (variant rows if it has colours).
+  const emitProduct = (p: any) => {
+    const cat = p.category?.name ?? "";
+    const vs = (p.variants as any[]) ?? [];
+    if (vs.length) {
+      for (const v of vs) {
+        const pr = priceOf(p.base_wholesale, overridesOf(v), overridesOf(p));
+        push({ sku: v.sku, name: `${p.name}${v.color ? " · " + v.color : ""}`, ...pr, category: cat, qty: v.qty ?? 0, parentSku: p.sku, parentName: p.name });
+      }
+    } else {
+      const pr = priceOf(p.base_wholesale, {}, overridesOf(p));
+      push({ sku: p.sku, name: p.name, ...pr, category: cat, qty: p.qty ?? 0 });
+    }
+  };
+  const PSEL = "id,sku,name,qty,base_wholesale,retail_override,wholesale_override,mrp_override, category:categories(name), variants(sku,color,qty,retail_override,wholesale_override,mrp_override)";
+
+  // 1) Exact variant SKU (what's printed on the physical barcode label).
+  const { data: vexact } = await sb.from("variants")
+    .select("sku,color,qty,retail_override,wholesale_override,mrp_override, product:products(" + PSEL + ")")
+    .ilike("sku", code).limit(1).maybeSingle();
+  if (vexact && (vexact as any).product) {
+    const p = (vexact as any).product; const v = vexact as any;
+    const pr = priceOf(p.base_wholesale, overridesOf(v), overridesOf(p));
+    push({ sku: v.sku, name: `${p.name}${v.color ? " · " + v.color : ""}`, ...pr, category: p.category?.name ?? "", qty: v.qty ?? 0, parentSku: p.sku, parentName: p.name });
+    return out;
+  }
+
+  // 2) Exact product SKU (simple product, or a configurable's parent → list its colours).
+  const { data: pexact } = await sb.from("products").select(PSEL).ilike("sku", code).limit(1).maybeSingle();
+  if (pexact) { emitProduct(pexact); if (out.length) return out; }
+
+  // 3) Fuzzy fallback — name / SKU contains the text (so typed searches also work live).
+  const like = `%${code}%`;
+  const [{ data: pmatch }, { data: vmatch }] = await Promise.all([
+    sb.from("products").select(PSEL).or(`sku.ilike.${like},name.ilike.${like}`).limit(8),
+    sb.from("variants").select("sku,color,qty,retail_override,wholesale_override,mrp_override, product:products(" + PSEL + ")").ilike("sku", like).limit(8),
+  ]);
+  for (const p of ((pmatch as any[]) ?? [])) emitProduct(p);
+  for (const v of ((vmatch as any[]) ?? [])) {
+    const p = (v as any).product; if (!p) continue;
+    const pr = priceOf(p.base_wholesale, overridesOf(v), overridesOf(p));
+    push({ sku: (v as any).sku, name: `${p.name}${(v as any).color ? " · " + (v as any).color : ""}`, ...pr, category: p.category?.name ?? "", qty: (v as any).qty ?? 0, parentSku: p.sku, parentName: p.name });
+  }
+  return out.slice(0, 12);
+}
+
 /** #18: add a line (by SKU, at the current retail price) to an open estimate. */
 export async function addEstimateLineAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("estimates.create"))) return;
@@ -247,6 +313,54 @@ export async function updateBackorderLineAction(formData: FormData): Promise<voi
   const charges = (((o as any).extra_packing) || 0) + (((o as any).extra_courier) || 0) + (((o as any).extra_adjustment) || 0);
   await sb.from("orders").update({ total: items + charges }).eq("id", orderId);
   revalidatePath("/admin/backorders"); revalidatePath(`/admin/invoice/${orderId}`);
+}
+
+type EditableBill = {
+  id: string; invoice_no: string | null; total: number; amount_paid: number;
+  is_backorder: boolean; status: string; customer_name: string | null;
+  items: { id: string; sku: string; name: string; qty: number; unit_price: number; line_total: number }[];
+};
+
+/** Load a bill + its lines for the OTP-gated "edit bill" dialog. */
+export async function fetchOrderForEditAction(orderId: string): Promise<{ ok: boolean; error?: string; bill?: EditableBill }> {
+  if (!(await requirePerm("billing.sell"))) return { ok: false, error: "Your role can't edit bills." };
+  const id = (orderId ?? "").trim();
+  if (!id) return { ok: false, error: "Missing bill" };
+  const sb = supabaseServer();
+  const { data, error } = await sb.from("orders")
+    .select("id,invoice_no,total,amount_paid,is_backorder,status, order_items(id,qty,unit_price,line_total, product:products(name,sku), variant:variants(sku,color))")
+    .eq("id", id).maybeSingle();
+  if (error || !data) return { ok: false, error: error?.message ?? "Bill not found" };
+  const o = data as any;
+  return { ok: true, bill: {
+    id: o.id, invoice_no: o.invoice_no ?? null, total: o.total ?? 0, amount_paid: o.amount_paid ?? 0,
+    is_backorder: !!o.is_backorder, status: o.status ?? "",
+    customer_name: o.customer_name ?? null,
+    items: ((o.order_items as any[]) ?? []).map((it) => ({
+      id: it.id,
+      sku: (it.variant?.sku ?? it.product?.sku ?? "") as string,
+      name: `${it.product?.name ?? ""}${it.variant?.color ? " · " + it.variant.color : ""}`,
+      qty: it.qty ?? 0, unit_price: it.unit_price ?? 0, line_total: it.line_total ?? (it.unit_price ?? 0) * (it.qty ?? 0),
+    })) } };
+}
+
+/** OTP-gated edit of ONE line on an existing bill (fix a mistake without cancelling the whole bill).
+ *  The RPC keeps stock, revenue and the total correct. The owner's OTP protects it so staff can't
+ *  quietly rewrite a completed sale. Set newQty=0 to remove the line. */
+export async function editOrderLineAction(input: { orderId: string; itemId: string; newQty: number; otp: string }): Promise<{ ok: boolean; error?: string; total?: number; removed?: boolean }> {
+  if (!(await requirePerm("billing.sell"))) return { ok: false, error: "Your role can't edit bills." };
+  const otp = (input.otp ?? "").trim();
+  if (!otp || otp !== OWNER_OTP()) return { ok: false, error: "Wrong OTP — ask the owner for the code." };
+  const orderId = (input.orderId ?? "").trim();
+  const itemId = (input.itemId ?? "").trim();
+  if (!orderId || !itemId) return { ok: false, error: "Missing bill / line." };
+  const newQty = Math.max(0, Math.floor(Number(input.newQty ?? 0)));
+  const sb = supabaseServer();
+  const { data, error } = await sb.rpc("edit_order_line", { p_order_id: orderId, p_item_id: itemId, p_new_qty: newQty });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/admin/invoice/${orderId}`);
+  revalidatePath("/admin/sales"); revalidatePath("/admin/backorders"); revalidatePath("/admin/dashboard");
+  return { ok: true, total: (data as any)?.total, removed: (data as any)?.removed };
 }
 
 /** Lines of ONE order, shaped for the inline return dialog on the Sales page — so a return can be
