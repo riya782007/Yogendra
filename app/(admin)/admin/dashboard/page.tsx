@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
-import { getDashboardData, getDashboardAnalytics, getChannelReport, getOrderAlerts, getPendingDealerApplications, getPendingWholesalePayments } from "@/lib/supabase/queries";
+import { getDashboardData, getDashboardAnalytics, getChannelReport, getOrderAlerts, getPendingDealerApplications, getPendingWholesalePayments, getAbandonedCarts } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { OrderNotifications } from "@/components/admin/OrderNotifications";
 import { AnimatedNumber } from "@/components/admin/AnimatedNumber";
@@ -48,7 +48,10 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
   // owner can see exactly which dates the figures cover — the earlier blank-box confusion.
   const fromDate = searchParams.from ?? from.slice(0, 10);
   const toDate = searchParams.to ?? to.slice(0, 10);
-  const [d, a, report, recent, dealerApps, wholesalePays] = await Promise.all([getDashboardData(from, to), getDashboardAnalytics(from, to), getChannelReport(from, to), getOrderAlerts(8), getPendingDealerApplications(10), getPendingWholesalePayments().catch(() => [])]);
+  const [d, a, report, recent, dealerApps, wholesalePays, allCarts] = await Promise.all([getDashboardData(from, to), getDashboardAnalytics(from, to), getChannelReport(from, to), getOrderAlerts(8), getPendingDealerApplications(10), getPendingWholesalePayments().catch(() => []), getAbandonedCarts().catch(() => [])]);
+  // Dealers who reached checkout but didn't complete "I've paid — place order" — their cart is captured
+  // here (name, phone, items) so no order is ever silently lost; the owner can call and confirm.
+  const wholesaleCarts = (allCarts as any[]).filter((c) => String(c.channel ?? "").toLowerCase() === "wholesale" && !c.recovered);
   const label = custom
     ? `${new Date(from).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })} – ${new Date(to).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`
     : (PRESETS.find((p) => p.key === preset)?.label ?? "This month");
@@ -105,6 +108,30 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
                   <span className="flex items-center gap-3">
                     {proof && <a href={proof} target="_blank" rel="noreferrer" className="text-xs text-emerald nav-link">📄 Proof</a>}
                     <Link href="/admin/customers?type=wholesale" className="text-xs text-gold-dark nav-link">Approve →</Link>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Dealers who added to cart / reached checkout but didn't place the order — call & confirm. */}
+      {wholesaleCarts.length > 0 && (
+        <div className="mb-6 rounded-2xl border border-wine/40 bg-wine/5 p-4 shadow-card">
+          <div className="flex items-center justify-between mb-2">
+            <p className="font-medium text-ink">🛒 Wholesale carts not completed <span className="ml-1 text-xs bg-wine text-white rounded-full px-2 py-0.5">{wholesaleCarts.length}</span></p>
+            <Link href="/admin/abandoned" className="text-xs text-emerald nav-link">See all →</Link>
+          </div>
+          <div className="space-y-1.5">
+            {wholesaleCarts.slice(0, 5).map((c) => {
+              const ph = c.phone ? String(c.phone).replace(/\D/g, "") : "";
+              return (
+                <div key={c.id} className="flex flex-wrap items-center justify-between gap-2 text-sm bg-white/70 rounded-lg px-3 py-1.5">
+                  <span className="text-ink"><b>{c.customer_name || "Dealer"}</b>{c.phone ? ` · ${c.phone}` : ""} · {(c.items ?? []).length} items</span>
+                  <span className="flex items-center gap-3">
+                    <span className="text-ink font-medium">{formatPaise(c.total ?? 0)}</span>
+                    {ph && <a href={`https://wa.me/${ph}`} target="_blank" rel="noreferrer" className="text-xs text-emerald nav-link">WhatsApp →</a>}
                   </span>
                 </div>
               );
