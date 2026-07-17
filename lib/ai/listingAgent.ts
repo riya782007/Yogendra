@@ -8,21 +8,10 @@ import { AiGateway, z } from "./gateway";
 import { groqChat, openaiChat, geminiChat, groqConfigured, openaiConfigured, geminiTextConfigured } from "./providers";
 import { templateContent, pickDivaName, DIVA_NAMES, type GeneratedContent, type ProductLike } from "../content";
 
-/** Whether titles are prefixed with a per-design girl name. The owner asked to REMOVE the girl name
- *  ("Remove diva from tomorrow"), so this is OFF by default; set AI_DIVA_NAMES=1 to switch it back on. */
-const USE_DIVA_NAME = process.env.AI_DIVA_NAMES === "1";
-
 /** Force the title to START with the per-SKU assigned girl name. If the model led with a DIFFERENT
- *  girl name (it clusters on a few), swap that first token for the assigned one; otherwise prepend it.
- *  When girl names are turned off, this strips any leading name the model added and returns the title. */
+ *  girl name (it clusters on a few), swap that first token for the assigned one; otherwise prepend it. */
 function enforceName(title: string, forced: string): string {
   const t = (title ?? "").trim();
-  if (!USE_DIVA_NAME) {
-    // Names are off — if the model still led with a known girl name, drop it so the title is pure SEO.
-    const first = t.split(/\s+/)[0] ?? "";
-    const namePool = new Set(DIVA_NAMES.map((n) => n.toLowerCase()));
-    return namePool.has(first.toLowerCase()) ? t.slice(first.length).trim() : t;
-  }
   if (!t) return forced;
   const first = t.split(/\s+/)[0];
   if (first.toLowerCase() === forced.toLowerCase()) return t; // already correct
@@ -82,22 +71,14 @@ function prompt(p: ProductLike) {
     ``,
     lockedTitle
       ? `TITLE — ALREADY CHOSEN by the owner. Use EXACTLY this title verbatim, do not change a single word: «${lockedTitle}». Then write the description, specs, tags and seo so they MATCH this exact title and the photo.`
-      : USE_DIVA_NAME
-        ? `TITLE — MUST follow BlytheDIVA's exact house style:  «{First name} {material/style descriptors} {jewellery type} with {included pieces}»`
-        : `TITLE — MUST follow BlytheDIVA's exact house style:  «{material/style descriptors} {jewellery type} with {included pieces}»`,
-    USE_DIVA_NAME
-      ? `  1. START the title with EXACTLY this first name — do NOT choose your own, do NOT substitute, do NOT default to "Ananya"/"Vanya": «${forcedName}». Use it verbatim as the first word of the title, then continue with the descriptors below. (This name is pre-assigned per design so no two designs share a name.)`
-      : `  1. Do NOT begin the title with a person's or girl's first name — start DIRECTLY with the descriptive keywords. (Any example titles below that start with a name show a name for format only; omit the name entirely.)`,
-    `  2. ${USE_DIVA_NAME ? "AFTER the name, write" : "Write"} a natural, SEO-optimised DESCRIPTIVE phrase of 5-7 words — behave EXACTLY like a "give me an SEO-optimised descriptive title of 5-7 words for this piece" request in ChatGPT, describing THE PIECE IN THE PHOTO. Pattern: «{tone/colour + material/finish} {design} {jewellery type} [for Women]». Real ChatGPT examples the owner approved for a gold bar pendant chain: "Gold Bar Pendant Chain Necklace for Women", "Minimal Gold Bar Pendant Necklace Chain", "Elegant Gold Bar Pendant Chain Necklace". Mirror that voice and length.`,
+      : `TITLE — MUST follow BlytheDIVA's exact house style:  «{First name} {material/style descriptors} {jewellery type} with {included pieces}»`,
+    `  1. START the title with EXACTLY this first name — do NOT choose your own, do NOT substitute, do NOT default to "Ananya"/"Vanya": «${forcedName}». Use it verbatim as the first word of the title, then continue with the descriptors below. (This name is pre-assigned per design so no two designs share a name.)`,
+    `  2. AFTER the name, write a natural, SEO-optimised DESCRIPTIVE phrase of 5-7 words — behave EXACTLY like a "give me an SEO-optimised descriptive title of 5-7 words for this piece" request in ChatGPT, describing THE PIECE IN THE PHOTO. Pattern: «{tone/colour + material/finish} {design} {jewellery type} [for Women]». Real ChatGPT examples the owner approved for a gold bar pendant chain: "Gold Bar Pendant Chain Necklace for Women", "Minimal Gold Bar Pendant Necklace Chain", "Elegant Gold Bar Pendant Chain Necklace". Mirror that voice and length.`,
     `  3. GROUND EVERY WORD IN WHAT YOU ACTUALLY SEE (plus the owner's typed keywords, which OVERRIDE the photo${kw ? ` — here: "${kw}"` : ""} and must never be dropped). Read the photo: the tone (gold / rose-gold / silver / oxidised), the material/work (plain metal, Kundan, Polki, Pearl, American Diamond, Meenakari, Temple…), the design (bar, heart, solitaire, chandbali, jhumka, choker, layered…) and the true jewellery type.`,
     `  4. NEVER invent or append a component that is NOT clearly visible in the photo and NOT in the typed keywords. This is the owner's #1 rule — a wrong component is unacceptable. Do NOT write "Mangalsutra", "with Maang Tikka", "with Earrings", "Set", "Bridal", "Kundan", "Temple", etc. unless it is genuinely there. A plain gold-tone pendant on a chain is a "Pendant Chain Necklace" — NOT a "Pendant Set with Mangalsutra". Only say "Set" / "with {piece}" when the extra piece is actually shown or typed.`,
-    USE_DIVA_NAME
-      ? `  LENGTH: the whole title = the name + 5-7 descriptive words (about 6-8 words total). Title Case, under ~70 characters.`
-      : `  LENGTH: the whole title = 5-7 descriptive words. Title Case, under ~70 characters. No person's name.`,
-    USE_DIVA_NAME
-      ? `  Accurate BlytheDIVA-style examples (each descriptor is REAL for that piece): "Dhyani Uncut Kundan Necklace Set with Maang Tikka" (only because a tikka is shown), "Gitanjali Turkish Stone Single Line Choker", "Tanisha Moissanite Choker Set", "Priyanshi Crystal Stone Danglers", "Kiara Gold Bar Pendant Chain Necklace", "Navya Minimal Gold Heart Pendant Necklace". If the piece is a simple daily-wear pendant, keep it simple and western like the ChatGPT examples — do NOT force ethnic/bridal words onto it.`
-      : `  Accurate BlytheDIVA-style examples (NO name — start with the descriptor): "Uncut Kundan Necklace Set with Maang Tikka" (only because a tikka is shown), "Turkish Stone Single Line Choker", "Moissanite Choker Set", "Crystal Stone Danglers", "Gold Bar Pendant Chain Necklace", "Minimal Gold Heart Pendant Necklace". If the piece is a simple daily-wear pendant, keep it simple and western like the ChatGPT examples — do NOT force ethnic/bridal words onto it.`,
-    `  CRITICAL — the "product name" the owner typed may be JUST a code / SKU (e.g. "WN111", "ADN186", "E903"). If the name looks like a code (a few letters followed by numbers), IGNORE it completely and build the whole title from the CATEGORY, SUB-CATEGORY, STYLE and POLISH/finish${USE_DIVA_NAME ? " + a random girl name" : " (no person's name)"}. NEVER put a SKU, product code, hyphen+code, price, or the word "BlytheDIVA" anywhere in the title.`,
+    `  LENGTH: the whole title = the name + 5-7 descriptive words (about 6-8 words total). Title Case, under ~70 characters.`,
+    `  Accurate BlytheDIVA-style examples (each descriptor is REAL for that piece): "Dhyani Uncut Kundan Necklace Set with Maang Tikka" (only because a tikka is shown), "Gitanjali Turkish Stone Single Line Choker", "Tanisha Moissanite Choker Set", "Priyanshi Crystal Stone Danglers", "Kiara Gold Bar Pendant Chain Necklace", "Navya Minimal Gold Heart Pendant Necklace". If the piece is a simple daily-wear pendant, keep it simple and western like the ChatGPT examples — do NOT force ethnic/bridal words onto it.`,
+    `  CRITICAL — the "product name" the owner typed may be JUST a code / SKU (e.g. "WN111", "ADN186", "E903"). If the name looks like a code (a few letters followed by numbers), IGNORE it completely and build the whole title from the CATEGORY, SUB-CATEGORY, STYLE and POLISH/finish + a random girl name. NEVER put a SKU, product code, hyphen+code, price, or the word "BlytheDIVA" anywhere in the title.`,
     `  Draw the descriptors from the CATEGORY, SUB-CATEGORY, STYLE and POLISH the owner selected — e.g. Sub-category "Kundan Earrings" + Polish "Gold" → "…Gold Kundan …Earrings"; Style "Layered Sets" → "Layered … Set"; Sub-category "Oxidised Necklace" → "Oxidised … Necklace". Title Case, under ~70 characters.`,
     ``,
     `REGISTER — read the name + specifications and pick the RIGHT voice:`,
@@ -192,9 +173,7 @@ export async function generateTitleOptions(p: ProductLike, n = 4): Promise<{ tit
     ``,
     `Produce ${n} DISTINCT, SEO-optimised website titles as STRICT minified JSON: {"titles":["…","…"]}.`,
     `RULES for every title:`,
-    USE_DIVA_NAME
-      ? `  • Start EXACTLY with the first name «${forcedName}», then descriptive keywords so the WHOLE title is 5–7 words total (name + 4–6 keyword words). Title Case, under ~70 chars, SEO-optimised.`
-      : `  • Do NOT use any person's / girl's first name. Start DIRECTLY with descriptive keywords; the WHOLE title is 5–7 keyword words. Title Case, under ~70 chars, SEO-optimised.`,
+    `  • Start EXACTLY with the first name «${forcedName}», then descriptive keywords so the WHOLE title is 5–7 words total (name + 4–6 keyword words). Title Case, under ~70 chars, SEO-optimised.`,
     `  • Use ONLY AUTHENTIC keywords — descriptors that are clearly VISIBLE in the photo, or present in the category/sub-category/style/polish/keywords above. NEVER invent a stone, material, motif or piece that isn't there (no "Mangalsutra", no "Kundan" on a plain CZ piece, no earrings unless it's an earring).`,
     `  • Make each option a DIFFERENT angle using strong search keywords jewellery buyers type — e.g. Designer, Statement, Rectangle/Floral/Drop, Stone, American Diamond, Gold Plated, Party Wear, Bridal, for Women. Example style the owner loves: "Designer Rectangle Stone Drop Earrings", "American Diamond Statement Drop Earrings", "Gold Plated Party Wear Earrings".`,
     `  • The jewellery TYPE at the end must be correct for the piece. Return ONLY the JSON.`,

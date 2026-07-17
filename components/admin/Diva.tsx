@@ -186,7 +186,8 @@ export function Diva({ roleName = "Owner" }: { roleName?: string }) {
   );
 }
 
-/** Stylised "DIVA" human-figure avatar (brand emerald/gold). */
+/** DIVA emblem — a faceted gold gem on the brand emerald disc. Deliberately NOT a human figure
+ *  (the owner asked to drop the girl mascot); it reads as a jewellery mark, nothing more. */
 function DivaAvatar({ className = "" }: { className?: string }) {
   return (
     <svg viewBox="0 0 100 100" className={className} xmlns="http://www.w3.org/2000/svg" aria-hidden>
@@ -199,19 +200,16 @@ function DivaAvatar({ className = "" }: { className?: string }) {
         </linearGradient>
       </defs>
       <circle cx="50" cy="50" r="48" fill="url(#dv-bg)" stroke="#C8A24C" strokeWidth="2.5" />
-      {/* hair */}
-      <path d="M30 48c0-15 9-25 20-25s20 10 20 25c0 6-2 12-4 16-1-10-2-20-8-24-3 6-18 6-22 0-4 5-5 14-6 22-1-4-0-9 0-14z" fill="#241B2E" />
-      {/* face */}
-      <path d="M37 44c0 11 6 19 13 19s13-8 13-19c0-9-6-14-13-14s-13 5-13 14z" fill="#F2D7BE" />
-      {/* eyes + smile */}
-      <circle cx="45" cy="45" r="1.6" fill="#241B2E" /><circle cx="55" cy="45" r="1.6" fill="#241B2E" />
-      <path d="M46 52c2 2 6 2 8 0" stroke="#A07E2E" strokeWidth="1.4" fill="none" strokeLinecap="round" />
-      {/* earrings */}
-      <circle cx="37" cy="50" r="2.3" fill="url(#dv-gold)" /><circle cx="63" cy="50" r="2.3" fill="url(#dv-gold)" />
-      {/* shoulders + necklace */}
-      <path d="M28 84c2-12 10-18 22-18s20 6 22 18z" fill="#6E2238" />
-      <path d="M42 70c3 5 13 5 16 0" stroke="url(#dv-gold)" strokeWidth="2" fill="none" strokeLinecap="round" />
-      <circle cx="50" cy="74" r="2.4" fill="url(#dv-gold)" />
+      {/* faceted gem / diamond */}
+      <g stroke="#8C6E2A" strokeWidth="1" strokeLinejoin="round">
+        <path d="M34 42h32l-16 30z" fill="url(#dv-gold)" />
+        <path d="M34 42l7-11h18l7 11z" fill="#EBD79A" />
+        <path d="M41 31l4 11h10l4-11z" fill="#D9BD6B" />
+      </g>
+      {/* crown facet lines */}
+      <path d="M34 42l16 30 16-30M41 42l9 30 9-30M50 31v11" stroke="#A9863A" strokeWidth="0.9" fill="none" />
+      {/* sparkle */}
+      <path d="M74 30l1.6 4.2L80 36l-4.4 1.8L74 42l-1.6-4.2L68 36l4.4-1.8z" fill="#F4E7B8" />
     </svg>
   );
 }
