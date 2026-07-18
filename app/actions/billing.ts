@@ -461,6 +461,65 @@ export async function editOrderLineAction(input: { orderId: string; itemId: stri
   return { ok: true, total: (data as any)?.total, removed: (data as any)?.removed };
 }
 
+/**
+ * Add a line to an ISSUED bill — the other half of editing.
+ *
+ * The owner could REMOVE a wrongly-picked colour but not add the right one, so correcting a mistake
+ * meant scrapping the bill and re-making it. Same OTP gate as editing, and the price is resolved
+ * server-side from the live pricing formula so a corrected line is charged exactly like a fresh one.
+ */
+export async function addOrderLineAction(input: { orderId: string; sku: string; qty: number; priceRupees?: number; otp: string }): Promise<{ ok: boolean; error?: string; total?: number; sku?: string }> {
+  if (!(await requirePerm("billing.sell"))) return { ok: false, error: "Your role can't edit bills." };
+  const otp = (input.otp ?? "").trim();
+  if (!otp || otp !== OWNER_OTP()) return { ok: false, error: "Wrong OTP — ask the owner for the code." };
+  const orderId = (input.orderId ?? "").trim();
+  const sku = (input.sku ?? "").trim();
+  if (!orderId || !sku) return { ok: false, error: "Enter the SKU to add." };
+  const qty = Math.max(1, Math.floor(Number(input.qty ?? 1)));
+
+  const sb = supabaseServer();
+  const formula = await getPricingFormula();
+
+  // Which tier this bill was raised on, so a corrected line matches the rest of the bill.
+  const { data: ord } = await sb.from("orders").select("channel,bill_type").eq("id", orderId).maybeSingle();
+  const wholesale = String((ord as any)?.channel ?? "").toLowerCase() === "wholesale";
+
+  // Variant SKU first — that's what the barcode carries.
+  const { data: v } = await sb.from("variants")
+    .select("id,sku,product_id,retail_override,wholesale_override,mrp_override, product:products(id,sku,base_wholesale,retail_override,wholesale_override,mrp_override)")
+    .ilike("sku", sku).maybeSingle();
+  let productId: string | null = null, variantId: string | null = null, base = 0, vOv: any = {}, pOv: any = {};
+  if (v) {
+    const p = (v as any).product;
+    productId = p?.id ?? (v as any).product_id; variantId = (v as any).id;
+    base = p?.base_wholesale ?? 0; vOv = overridesOf(v); pOv = overridesOf(p ?? {});
+  } else {
+    const { data: p } = await sb.from("products")
+      .select("id,sku,base_wholesale,retail_override,wholesale_override,mrp_override, variants(id,sku)")
+      .ilike("sku", sku).maybeSingle();
+    if (!p) return { ok: false, error: `No product “${sku}” — check the SKU.` };
+    const vs = ((p as any).variants as any[]) ?? [];
+    // Several colours and no colour named: refuse rather than guess which one to bill and de-stock.
+    if (vs.length > 1) return { ok: false, error: `“${sku}” has ${vs.length} colours — enter the exact colour SKU (e.g. ${vs[0].sku}).` };
+    productId = (p as any).id; variantId = vs.length === 1 ? vs[0].id : null;
+    base = (p as any).base_wholesale ?? 0; pOv = overridesOf(p);
+  }
+
+  const pr = resolvePrices(base, formula, vOv, pOv);
+  const typed = Number(input.priceRupees);
+  const unitPrice = Number.isFinite(typed) && typed >= 0 ? Math.round(typed * 100) : (wholesale ? pr.wholesaleRate : pr.retailPrice);
+
+  const { data, error } = await sb.rpc("add_order_line", {
+    p_order_id: orderId, p_product_id: productId, p_variant_id: variantId,
+    p_qty: qty, p_unit_price: unitPrice, p_unit_mrp: pr.mrp ?? null, p_allow_oversell: false,
+  });
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(`/admin/invoice/${orderId}`);
+  revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard"); revalidatePath("/admin/stock-movements");
+  return { ok: true, total: (data as any)?.total, sku: (data as any)?.sku };
+}
+
 /** Lines of ONE order, shaped for the inline return dialog on the Sales page — so a return can be
  *  recorded straight from the bill row without hunting for it in a separate module. */
 export async function fetchOrderForReturnAction(orderId: string): Promise<{ ok: boolean; error?: string; order?: { id: string; total: number; customer_name: string | null; created_at: string; items: { qty: number; returned: number; returnable: number; product: { id: string; name: string; sku: string }; variant: { sku: string; color: string | null } | null }[] } }> {
