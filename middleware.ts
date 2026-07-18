@@ -46,7 +46,11 @@ export function middleware(req: NextRequest) {
   // first, cheap gate (cookie presence); the authoritative approved-dealer check runs in each
   // page via getWholesaleSession(). Note: an admin's bd_session does NOT grant trade access.
   if (path === "/trade" || path.startsWith("/trade/")) {
-    if (path === "/trade/login") return NextResponse.next();
+    // OPEN CATALOGUE: /trade itself is public. Dealers were bouncing rather than hand over a phone
+    // number before seeing a single rate, so guests browse designs + trade rates freely; the page
+    // renders in guest mode (no ordering) and asks for their details only after real interest.
+    // Everything else under /trade — ordering, line-sheet, account pages — still needs the dealer cookie.
+    if (path === "/trade" || path === "/trade/login") return NextResponse.next();
     const dealer = req.cookies.get("bd_wholesale")?.value;
     if (!dealer) {
       const url = req.nextUrl.clone();
