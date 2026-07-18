@@ -3,7 +3,7 @@ import { useState, useMemo, useRef, useEffect, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import { formatPaise } from "@/lib/pricing";
 import { posSaleAction } from "@/app/actions/orders";
-import { posLookupAction } from "@/app/actions/billing";
+import { posLookupAction, posStockAction } from "@/app/actions/billing";
 import { quickAddEmployeeAction } from "@/app/actions/employees";
 import { QtyField } from "@/components/admin/QtyField";
 
@@ -192,7 +192,19 @@ export function POSClient({ products: propProducts, customers = [], methods = []
   // Add (or re-scan) a line. The just-scanned line always moves to the END of the list so — shown
   // newest-first below — it sits right under the sticky search box; staff instantly SEE what they added
   // (or that its qty ticked up) without scrolling. Totals/bill are order-independent, so this is display-only.
-  function addLine(p: P) { setLines((prev) => { const ex = prev.find((l) => l.sku === p.sku); if (ex) return [...prev.filter((l) => l.sku !== p.sku), { ...ex, qty: ex.qty + 1 }]; return [...prev, { sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, mrp: p.mrp, qty: 1, stock: p.qty, override: "", disc: "" }]; }); setQ(""); revealNewest(); }
+  /** Pull TRUE stock for these SKUs and patch both the bill lines and the working catalogue. */
+  function refreshStock(skus: string[]) {
+    posStockAction(skus).then((fresh) => {
+      if (!fresh.length) return;
+      const by = new Map(fresh.map((f) => [f.sku.toUpperCase(), f.qty]));
+      setLines((prev) => prev.map((l) => (by.has(l.sku.toUpperCase()) ? { ...l, stock: by.get(l.sku.toUpperCase())! } : l)));
+      setProducts((prev) => prev.map((x) => (by.has(x.sku.toUpperCase()) ? { ...x, qty: by.get(x.sku.toUpperCase())! } : x)));
+    }).catch(() => { /* never block billing on a stock refresh */ });
+  }
+
+  function addLine(p: P) { setLines((prev) => { const ex = prev.find((l) => l.sku === p.sku); if (ex) return [...prev.filter((l) => l.sku !== p.sku), { ...ex, qty: ex.qty + 1 }]; return [...prev, { sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, mrp: p.mrp, qty: 1, stock: p.qty, override: "", disc: "" }]; }); setQ(""); revealNewest();
+    // The snapshot this page loaded with may predate today's purchases — confirm the real number now.
+    refreshStock([p.sku]); }
   function setQty(sku: string, qty: number) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, qty: Math.max(1, Math.floor(qty || 1)) } : l)); }
   function setOverride(sku: string, val: string) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, override: val } : l)); }
   function setLineDisc(sku: string, val: string) { setLines((p) => p.map((l) => l.sku === sku ? { ...l, disc: val } : l)); }
@@ -238,6 +250,19 @@ export function POSClient({ products: propProducts, customers = [], methods = []
       return;
     }
     setBusy(true); setErr("");
+    // Re-read stock from the database RIGHT NOW. The catalogue snapshot this screen loaded with can be
+    // hours old, and stock bought since then would otherwise look like 0 — which used to push a bill
+    // into backorder while the goods were sitting on the shelf. Fresh numbers decide, never the snapshot.
+    let liveLines = lines;
+    try {
+      const fresh = await posStockAction(lines.map((l) => l.sku));
+      if (fresh.length) {
+        const by = new Map(fresh.map((f) => [f.sku.toUpperCase(), f.qty]));
+        liveLines = lines.map((l) => (by.has(l.sku.toUpperCase()) ? { ...l, stock: by.get(l.sku.toUpperCase())! } : l));
+        setLines(liveLines);
+        setProducts((prev) => prev.map((p) => (by.has(p.sku.toUpperCase()) ? { ...p, qty: by.get(p.sku.toUpperCase())! } : p)));
+      }
+    } catch { /* offline or slow — fall back to what we have rather than block the sale */ }
     const validPays = payLines.filter((l) => l.methodId && (Number(l.amount) || 0) > 0).map((l) => ({ methodId: l.methodId, amount: Number(l.amount) || 0 }));
     const res = await posSaleAction({
       items: lines.map((l) => {
@@ -255,7 +280,8 @@ export function POSClient({ products: propProducts, customers = [], methods = []
       // Credit sale: record EXACTLY what was received (₹0 for full credit) — never default to paid.
       ...(credit ? { amountPaidRupees: received / 100 } : {}),
       allowOversell: allowBackorder, tier: custType, salesEmployeeId: salesEmp || undefined,
-      backorder: allowBackorder && lines.some((l) => l.qty > l.stock),
+      // Judged on LIVE stock, so a bill is only ever a backorder when the goods genuinely aren't there.
+      backorder: allowBackorder && liveLines.some((l) => l.qty > l.stock),
       packingRupees: Number(packing) || 0, courierRupees: Number(courier) || 0, adjustmentRupees: Number(adjustment) || 0,
     });
     setBusy(false);

@@ -134,6 +134,38 @@ type PosItem = { sku: string; name: string; price: number; wholesale: number; mr
  *  owner creates AFTER that (or on another tab) isn't in memory — so a fresh SKU "doesn't come up".
  *  This resolves any SKU straight from the database on the spot (exact variant, exact product, then a
  *  fuzzy name/SKU search) so the counter can always find and bill it without reloading. */
+/**
+ * LIVE stock for the exact SKUs on the bill.
+ *
+ * The POS holds a snapshot of the catalogue taken when the page rendered. If stock arrives afterwards
+ * (a purchase entered on another tab or another laptop), that snapshot still says 0 — which made the
+ * till show "out of stock" and silently flag the bill as a BACKORDER even though the goods were on the
+ * shelf. Stock is therefore re-read from the database when a line is added and again before the bill
+ * is placed; the snapshot is never trusted for an inventory decision.
+ */
+export async function posStockAction(skus: string[]): Promise<{ sku: string; qty: number }[]> {
+  if (!(await requirePerm("billing.sell"))) return [];
+  const list = (skus ?? []).map((s) => String(s ?? "").trim()).filter(Boolean).slice(0, 200);
+  if (!list.length) return [];
+  const sb = supabaseServer();
+  const out = new Map<string, number>();
+  // Chunked so a long bill never overflows the PostgREST URL length.
+  const chunk = <T,>(a: T[], n: number) => a.reduce<T[][]>((acc, x, i) => { (acc[Math.floor(i / n)] ??= []).push(x); return acc; }, []);
+  for (const grp of chunk(list, 60)) {
+    const or = grp.map((s) => `sku.ilike.${s.replace(/[,()]/g, "")}`).join(",");
+    const [{ data: vs }, { data: ps }] = await Promise.all([
+      sb.from("variants").select("sku,qty").or(or),
+      sb.from("products").select("sku,qty").or(or),
+    ]);
+    // A variant SKU wins over a product SKU of the same name — that's what the barcode represents.
+    for (const p of ((ps as any[]) ?? [])) out.set(String(p.sku).toUpperCase(), p.qty ?? 0);
+    for (const v of ((vs as any[]) ?? [])) out.set(String(v.sku).toUpperCase(), v.qty ?? 0);
+  }
+  return list
+    .filter((s) => out.has(s.toUpperCase()))
+    .map((s) => ({ sku: s, qty: out.get(s.toUpperCase()) ?? 0 }));
+}
+
 export async function posLookupAction(rawCode: string): Promise<PosItem[]> {
   if (!(await requirePerm("billing.sell"))) return [];
   const code = (rawCode ?? "").trim();
