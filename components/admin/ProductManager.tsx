@@ -174,6 +174,9 @@ export function ProductManager({ data, initialTab }: { data: any; initialTab?: s
         <form action={saveProductInventoryAction} className={card}>
           <input type="hidden" name="id" value={p.id} />
           <div className="grid sm:grid-cols-3 gap-4">
+            {/* Stock as it stood when this tab was opened. If a purchase or sale moves it before you
+                save, the server keeps the newer figure rather than writing this stale one back. */}
+            <input type="hidden" name="qty_was" value={p.qty ?? 0} />
             <div><label className={label}>Current quantity</label><input name="qty" type="number" defaultValue={p.qty ?? 0} className={field} /></div>
             <div><label className={label}>Reserved (from estimates)</label><input value={data.reserved} disabled className={`${field} bg-cream/50`} /></div>
             <div><label className={label}>Available</label><input value={data.available} disabled className={`${field} bg-cream/50`} /></div>

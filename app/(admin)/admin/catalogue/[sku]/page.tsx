@@ -323,6 +323,9 @@ export default async function ProductPage({ params, searchParams }: { params: { 
                 <label className="text-[11px] text-muted">Size<input name="size" list="opt-size" defaultValue={v.size ?? ""} placeholder="Size" className={`${vInput} w-24 block mt-0.5`} /></label>
                 <label className="text-[11px] text-muted">Polish<input name="polish" list="opt-polish" defaultValue={v.polish ?? ""} placeholder="Polish" className={`${vInput} w-28 block mt-0.5`} /></label>
                 <label className="text-[11px] text-muted">SKU<input name="sku" defaultValue={v.sku ?? ""} placeholder="auto" className={`${vInput} w-32 block mt-0.5 font-mono`} /></label>
+                {/* The stock this page was rendered with. If a purchase or sale moves it before this
+                    form is saved, the server keeps the newer number instead of writing this one back. */}
+                <input type="hidden" name="qty_was" value={v.qty ?? 0} />
                 <label className="text-[11px] text-muted">Stock<input name="qty" type="number" min={0} defaultValue={v.qty ?? 0} className={`${vInput} w-14 text-center block mt-0.5`} /></label>
                 <label className="text-[11px] text-muted">Retail ₹<input name="retail" type="number" min={0} step="0.01" defaultValue={v.retail_override != null ? (v.retail_override / 100).toFixed(2) : ""} placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
                 <label className="text-[11px] text-muted">Wholesale ₹<input name="wholesale" type="number" min={0} step="0.01" defaultValue={v.wholesale_override != null ? (v.wholesale_override / 100).toFixed(2) : ""} placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>

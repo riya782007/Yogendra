@@ -85,9 +85,14 @@ export async function saveProductInventoryAction(formData: FormData): Promise<vo
   const { data: cur } = await sb.from("products").select("qty,sku").eq("id", id).maybeSingle();
   const oldQty = (cur as any)?.qty ?? 0;
   const newQty = Math.floor(Number(formData.get("qty") ?? oldQty) || 0);
+  // LOST-UPDATE GUARD (same reasoning as the colour editor): this form carries the stock as it stood
+  // when the tab was opened. If a purchase or sale has moved it since, writing this number back would
+  // silently erase that movement — so we keep the database value and save only the other settings.
+  const wasRaw = formData.get("qty_was");
+  const stockMovedElsewhere = wasRaw !== null && Number(wasRaw) !== oldQty;
 
   await sb.from("products").update({
-    qty: newQty,
+    ...(stockMovedElsewhere ? {} : { qty: newQty }),
     reorder_level: intOrNull(formData.get("reorder_level")),
     min_stock: intOrNull(formData.get("min_stock")),
     max_stock: intOrNull(formData.get("max_stock")),
@@ -99,14 +104,18 @@ export async function saveProductInventoryAction(formData: FormData): Promise<vo
     hide_oos_variants: bool(formData, "hide_oos_variants"),
   }).eq("id", id);
 
-  // Keep the stock ledger consistent: a manual qty edit is an 'adjustment' movement.
-  if (newQty !== oldQty) {
+  // Keep the stock ledger consistent: a manual qty edit is an 'adjustment' movement. Skipped when the
+  // quantity was left untouched above, so the ledger never records a correction that didn't happen.
+  if (!stockMovedElsewhere && newQty !== oldQty) {
     await sb.from("stock_adjustments").insert({
       product_id: id, sku: (cur as any)?.sku ?? null, delta: newQty - oldQty,
       kind: "adjustment", source: "PIM inventory edit", reason: "Manual stock correction", created_by: "owner",
     });
   }
-  await logActivity({ action: "inventory_changed", ref: (cur as any)?.sku ?? id, detail: `Stock ${oldQty} → ${newQty}` });
+  await logActivity({
+    action: "inventory_changed", ref: (cur as any)?.sku ?? id,
+    detail: stockMovedElsewhere ? `Settings saved; stock left at ${oldQty} (changed elsewhere)` : `Stock ${oldQty} → ${newQty}`,
+  });
   refresh(id);
 }
 

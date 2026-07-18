@@ -143,13 +143,22 @@ export async function updateVariantAction(formData: FormData): Promise<void> {
   // complete — the owner can see exactly when/by-how-much a colour's stock was adjusted by hand).
   const { data: before } = await sb.from("variants").select("qty,product_id").eq("id", id).maybeSingle();
   const oldQty = Number((before as any)?.qty ?? 0);
+  // LOST-UPDATE GUARD. This form carries the stock number as it stood when the page was rendered. If a
+  // purchase (or a sale) landed since then, saving an unrelated edit — a colour name, a price — would
+  // write that stale number back and silently destroy the new stock. So the form also submits what it
+  // BELIEVED the stock was; if that no longer matches the database, someone else moved it and we leave
+  // the quantity strictly alone, saving only the other fields.
+  const wasRaw = formData.get("qty_was");
+  const stockMovedElsewhere = wasRaw !== null && Number(wasRaw) !== oldQty;
   const finalSku = sku || autoSku(productSku, { color, size, polish }, dbColorCode);
-  await sb.from("variants").update({
+  const patch: any = {
     color: color || null, size: size || null, polish: polish || null,
-    sku: finalSku, qty,
+    sku: finalSku,
     retail_override: toPaise(formData.get("retail")), wholesale_override: toPaise(formData.get("wholesale")), mrp_override: toPaise(formData.get("mrp")),
-  }).eq("id", id);
-  const delta = qty - oldQty;
+  };
+  if (!stockMovedElsewhere) patch.qty = qty;
+  await sb.from("variants").update(patch).eq("id", id);
+  const delta = stockMovedElsewhere ? 0 : qty - oldQty;
   if (delta !== 0 && (before as any)?.product_id) {
     await sb.from("stock_adjustments").insert({
       product_id: (before as any).product_id, variant_id: id, sku: finalSku, delta,
