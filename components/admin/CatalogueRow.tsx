@@ -5,6 +5,7 @@ import { CatalogueRowActions } from "@/components/admin/CatalogueRowActions";
 import { GeneratePhotoButton } from "@/components/admin/GeneratePhotoButton";
 import { DeleteProductButton } from "@/components/admin/DeleteProductButton";
 import { ProductTags } from "@/components/admin/ProductTags";
+import { MoreDesignsToggle } from "@/components/admin/MoreDesignsToggle";
 
 type V = { sku: string; color: string | null; qty: number };
 export type CatalogueRowProduct = {
@@ -12,6 +13,8 @@ export type CatalogueRowProduct = {
   image: string | null; categoryName: string; categorySlug: string;
   qty: number; priceLabel: string; offerPct: number; hasOffer: boolean;
   hasAi: boolean; variants: V[]; adminTags: string[]; wholesaleLabel: string;
+  /** Design has more colourways than the catalogue lists — dealers can request the full range. */
+  moreDesigns?: boolean;
 };
 
 /** One catalogue row: a clean summary line (photo · name · category · price) that EXPANDS on click
@@ -118,6 +121,7 @@ export function CatalogueRow({
               {/* Actions */}
               <div className="flex flex-wrap items-start gap-2">
                 {canEdit && <Link href={editHref} className="px-3 py-1.5 rounded-full bg-ink/5 text-ink text-xs font-medium hover:bg-ink/10">✎ Edit</Link>}
+                {canEdit && <MoreDesignsToggle sku={p.sku} initial={!!p.moreDesigns} />}
                 <Link href={`/admin/product/${p.sku}`} className="px-3 py-1.5 rounded-full bg-ink/5 text-ink text-xs hover:bg-ink/10">360°</Link>
                 <Link href={`/shop/${p.categorySlug}/${p.sku}`} target="_blank" className="px-3 py-1.5 rounded-full bg-emerald-mist text-emerald-dark text-xs hover:bg-emerald-mist/70">View ↗</Link>
                 {canAi && (

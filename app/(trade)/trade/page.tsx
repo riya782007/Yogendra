@@ -35,6 +35,12 @@ export default async function TradeDashboard() {
 
   // First real photo per product (dealers must see the actual piece).
   const sb = supabaseServer();
+  // Designs whose full colour range is too large to list here — the dealer is invited to see the rest
+  // in the store or over a video call. Fetched on its own (tiny set) so it never depends on which
+  // columns getStorefront happens to select.
+  const { data: moreRows } = await (sb.from("products") as any).select("id,more_designs_note").eq("more_designs", true);
+  const moreBy = new Map<string, string | null>(((moreRows as any[]) ?? []).map((r) => [r.id as string, (r.more_designs_note as string) ?? null]));
+
   const { data: imgRows } = await sb.from("product_images").select("product_id,path,sort");
   const imgBy = new Map<string, string>();
   for (const r of ((imgRows as any[]) ?? []).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))) {
@@ -91,12 +97,13 @@ export default async function TradeDashboard() {
           pid, sku: v.sku, name: p.name, category: p.category.name, sub, style, colour: v.color ?? null,
           qty: v.qty ?? 0, price, mrp: ps.mrp,
           image: images[0] ?? parentImg, images,
+          moreDesigns: moreBy.has(pid), moreDesignsNote: moreBy.get(pid) ?? null,
         };
       });
     }
     // Simple product (no colours): list it only when it has stock.
     if ((p.qty ?? 0) <= 0) return [];
-    return [{ pid, sku: p.sku, name: p.name, category: p.category.name, sub, style, colour: null, qty: p.qty, price, mrp: ps.mrp, image: parentImg, images: parentImg ? [parentImg] : [] }];
+    return [{ pid, sku: p.sku, name: p.name, category: p.category.name, sub, style, colour: null, qty: p.qty, price, mrp: ps.mrp, image: parentImg, images: parentImg ? [parentImg] : [], moreDesigns: moreBy.has(pid), moreDesignsNote: moreBy.get(pid) ?? null }];
   })
   // A shareable wholesale catalogue must LOOK good — never show a photo-less design (letter placeholder),
   // it drives dealers away. Only list rows that actually have a real image.

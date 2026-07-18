@@ -5,8 +5,11 @@ import { ProductImage } from "@/components/Placeholder";
 import { QtyField } from "@/components/admin/QtyField";
 import { placeWholesaleOrderAction, wholesaleLogoutAction, requestQuoteAction, uploadPaymentProofAction } from "@/app/actions/wholesale";
 import { UpiAmountQr } from "@/components/admin/UpiAmountQr";
+import { MoreDesignsButton } from "@/components/site/MoreDesignsButton";
 
-type P = { pid: string; sku: string; name: string; category: string; sub?: string | null; style?: string | null; qty: number; price: number; mrp: number; image: string | null; images?: string[]; colour?: string | null };
+type P = { pid: string; sku: string; name: string; category: string; sub?: string | null; style?: string | null; qty: number; price: number; mrp: number; image: string | null; images?: string[]; colour?: string | null;
+  /** Owner-flagged: this design has many more colourways than the catalogue can list. */
+  moreDesigns?: boolean; moreDesignsNote?: string | null };
 /** A design (product) with all of its in-stock colours grouped under one row + a colour dropdown. */
 type Grp = { pid: string; name: string; category: string; sub?: string | null; style?: string | null; variants: P[] };
 type HistItem = { sku: string; name: string; qty: number };
@@ -385,6 +388,7 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
                               </select>
                             ) : p.colour ? <span className="block text-xs text-emerald-dark">{p.colour}</span> : null}
                             {cartColours.length > 0 && <span className="block text-[10px] text-emerald-dark mt-0.5">In cart: {cartColours.map((v) => `${v.colour ?? "Default"} ×${qty[v.sku]}`).join(", ")}</span>}
+                            {p.moreDesigns && <MoreDesignsButton sku={p.sku} productName={p.name} note={p.moreDesignsNote} dealerName={customerName} />}
                           </div>
                         </div>
                       </td>
@@ -451,6 +455,7 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
                       <span className="text-[11px] text-gold-dark">+{formatPaise(margin)} ({marginPct}%)</span>
                     </div>
                     {cartColours.length > 0 && <p className="text-[10px] text-emerald-dark mt-0.5">In cart: {cartColours.map((v) => `${v.colour ?? "Default"} ×${qty[v.sku]}`).join(", ")}</p>}
+                    {p.moreDesigns && <MoreDesignsButton sku={p.sku} productName={p.name} note={p.moreDesignsNote} dealerName={customerName} />}
                     <div className="flex items-center justify-between mt-2">
                       <span className="text-xs">{out ? <span className="text-muted">Out of stock</span> : <span className={p.qty <= 3 ? "text-rose" : "text-emerald"}>{p.qty} in stock</span>}</span>
                       {out ? null : n === 0 ? (

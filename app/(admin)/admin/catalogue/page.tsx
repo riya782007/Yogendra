@@ -10,6 +10,7 @@ import { generateEmbeddingsAction } from "@/app/actions/embeddings";
 import { Pager } from "@/components/admin/Pager";
 import { getSession, can } from "@/lib/auth";
 import { CatalogueRow } from "@/components/admin/CatalogueRow";
+import { MoreDesignsBulk } from "@/components/admin/MoreDesignsBulk";
 
 export const metadata = { title: "Owner Console · Catalogue" };
 const PAGE_SIZE = 25;
@@ -78,6 +79,8 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
       </div>
 
       {/* search + filters */}
+      <MoreDesignsBulk categories={categories.map((c) => ({ id: c.id, name: c.name }))} />
+
       <form action="/admin/catalogue" className="flex flex-wrap gap-2 mb-4">
         <input name="q" defaultValue={q} placeholder="Search name or SKU…" className="rounded-xl border border-sand bg-white px-4 py-2 text-sm outline-none focus:border-emerald flex-1 min-w-[180px]" />
         <select name="category" defaultValue={category} className={sel}>
@@ -126,6 +129,7 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
                     qty: p.qty ?? 0, priceLabel: formatPaise(o.price), offerPct: o.offerPct, hasOffer: o.hasOffer,
                     hasAi: !!(p.generated_content && p.generated_content.title), variants: p.variants ?? [],
                     adminTags: p.admin_tags ?? [], wholesaleLabel: formatPaise(wholesaleRate),
+                    moreDesigns: !!p.more_designs,
                   }}
                   canEdit={canEdit} canAi={canAi} canDelete={canDelete} canPublish={canPublish}
                   genContent={genContent} ret={ret}

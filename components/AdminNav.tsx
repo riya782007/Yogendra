@@ -29,6 +29,7 @@ const GROUPS: { title: string; links: L[] }[] = [
     { href: "/admin/billing", label: "Billing (POS)", icon: "₹", perm: "billing.sell" },
     { href: "/admin/orders", label: "Storefront Orders", icon: "🛒", perm: "billing.sell" },
     { href: "/admin/wholesale-payments", label: "Wholesale Payments", icon: "✅", perm: "billing.sell" },
+    { href: "/admin/enquiries", label: "Design Enquiries", icon: "✨", perm: "billing.sell" },
     { href: "/admin/sales", label: "Sales Records", icon: "❑", perm: "sales.view" },
     { href: "/admin/backorders", label: "Backorders", icon: "⏳", perm: "sales.view" },
     { href: "/admin/estimates", label: "Estimates", icon: "≈", perm: "estimates.create" },
