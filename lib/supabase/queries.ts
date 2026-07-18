@@ -2147,11 +2147,14 @@ export async function getActivityLog(limit = 60) {
 // ---------- CRM + abandoned carts + SEO ----------
 export async function getCustomers() {
   const sb = supabaseServer();
-  const { data } = await sb.from("orders").select("customer_name,customer_phone,total,bill_type,gst_mode,created_at");
+  const { data } = await sb.from("orders").select("customer_name,customer_phone,total,bill_type,gst_mode,status,is_backorder,created_at");
   const map = new Map<string, { name: string; phone: string | null; orders: number; spent: number; last: string }>();
   for (const o of (data as any[]) ?? []) {
     const name = (o.customer_name ?? "").trim(); if (!name) continue;
     if (isWalkInPlaceholder(name, o.customer_phone)) continue; // walk-in cash placeholders aren't directory customers
+    // Not a real sale: a cancelled/refunded bill, or a pending backorder (held, no revenue) — skip so
+    // "top customers" doesn't count a cancelled backorder's revenue (owner's report).
+    if (o.status === "cancelled" || o.status === "refunded" || o.is_backorder === true) continue;
     const t = o.total ?? 0;
     // Inclusive-GST bills already contain the tax in `total`; only exclusive bills add 3% on top.
     const grand = o.bill_type === "cash" || o.gst_mode === "inclusive" ? Math.round(t / 100) * 100 : Math.round((t + Math.round(t * 0.03)) / 100) * 100;
