@@ -8,7 +8,7 @@ import { PrintButton } from "@/components/admin/PrintButton";
 import { UpiAmountQr } from "@/components/admin/UpiAmountQr";
 import { BUSINESS, HSN_JEWELLERY, GST_RATE, gstSplit, gstSplitExclusive, stateCodeFromGstin, bankHasDetails, amountInWords } from "@/lib/business";
 import { requirePerm } from "@/lib/auth";
-import { updateEstimateCustomerAction, updateEstimateLineAction, updateEstimateLinePriceAction, removeEstimateLineAction, addEstimateLineAction, setEstimateGstAction } from "@/app/actions/billing";
+import { updateEstimateCustomerAction, updateEstimateLineAction, updateEstimateLinePriceAction, removeEstimateLineAction, addEstimateLineAction, setEstimateGstAction, updateEstimateChargesAction } from "@/app/actions/billing";
 
 export const metadata = { title: "Estimate / Quotation" };
 
@@ -33,7 +33,9 @@ export default async function EstimatePrint({ params }: { params: { id: string }
   const xPacking = ((estimate as any).extra_packing as number) || 0;
   const xCourier = ((estimate as any).extra_courier as number) || 0;
   const xAdjust = ((estimate as any).extra_adjustment as number) || 0;
-  const xCharges = xPacking + xCourier + xAdjust;
+  const xDiscount = ((estimate as any).extra_discount as number) || 0;
+  const xTcs = ((estimate as any).extra_tcs as number) || 0;
+  const xCharges = xPacking + xCourier + xAdjust + xTcs - xDiscount;
   const itemsTotal = total - xCharges;
   const itemsTaxable = (!gstOn || gstExclusive) ? itemsTotal : Math.round(itemsTotal / (1 + GST_RATE / 100));
   const payable = !gstOn ? total : gstExclusive ? total + (g?.tax ?? 0) : total;
@@ -96,21 +98,32 @@ export default async function EstimatePrint({ params }: { params: { id: string }
             </div>
           </div>
 
-          <div className="border border-t-0 border-sand rounded-b-lg p-4 -mt-px">
-            <p className="text-[10px] uppercase tracking-wide text-muted mb-1">{gstOn ? "Estimate for / Buyer" : "Prepared for"}</p>
-            <p className="text-ink font-medium">{estimate.customer_name || "—"}</p>
-            {(estimate as any).buyer_address && <p className="text-muted text-xs">{(estimate as any).buyer_address}</p>}
-            {estimate.customer_phone && <p className="text-muted text-xs">Ph: {estimate.customer_phone}</p>}
-            {gstOn && (estimate as any).buyer_gstin && <p className="text-xs text-ink mt-0.5"><b>GSTIN:</b> {(estimate as any).buyer_gstin}</p>}
+          {/* Billing & shipping parties side by side — dealers ship to a different address often enough
+              that a quote without it gets queried. Shipping falls back to billing when not set. */}
+          <div className="grid sm:grid-cols-2 gap-0 border border-t-0 border-sand rounded-b-lg -mt-px">
+            <div className="p-4 border-b sm:border-b-0 sm:border-r border-sand">
+              <p className="text-[10px] uppercase tracking-wide text-gold-dark font-semibold mb-1">Billing Address</p>
+              <p className="text-ink font-medium">{estimate.customer_name || "—"}</p>
+              {(estimate as any).buyer_address && <p className="text-muted text-xs whitespace-pre-line">{(estimate as any).buyer_address}</p>}
+              {estimate.customer_phone && <p className="text-muted text-xs">Ph: {estimate.customer_phone}</p>}
+              {(estimate as any).buyer_email && <p className="text-muted text-xs">{(estimate as any).buyer_email}</p>}
+              {gstOn && (estimate as any).buyer_gstin && <p className="text-xs text-ink mt-0.5"><b>GSTIN:</b> {(estimate as any).buyer_gstin}</p>}
+            </div>
+            <div className="p-4">
+              <p className="text-[10px] uppercase tracking-wide text-gold-dark font-semibold mb-1">Shipping Address</p>
+              <p className="text-ink font-medium">{(estimate as any).ship_to_name || estimate.customer_name || "—"}</p>
+              <p className="text-muted text-xs whitespace-pre-line">{(estimate as any).ship_to_address || (estimate as any).buyer_address || "Same as billing address"}</p>
+              {estimate.customer_phone && <p className="text-muted text-xs">Ph: {estimate.customer_phone}</p>}
+            </div>
           </div>
 
           <table className="w-full mt-4 border border-sand">
             <thead className="bg-cream border-b border-sand">
               <tr className="text-left">
-                <th className={th}>#</th><th className={th}>Description</th>
+                <th className={th}>#</th><th className={th}>Item</th><th className={th}>SKU</th>
                 {gstOn && <th className={`${th} text-center`}>HSN</th>}
-                <th className={`${th} text-right`}>Qty</th><th className={`${th} text-right`}>Rate</th>
-                <th className={`${th} text-right`}>{gstOn ? "Taxable Value" : "Amount"}</th>
+                <th className={`${th} text-right`}>Qty</th><th className={`${th} text-right`}>Price</th>
+                <th className={`${th} text-right`}>{gstOn ? "Taxable Value" : "Total Amount"}</th>
               </tr>
             </thead>
             <tbody>
@@ -121,7 +134,8 @@ export default async function EstimatePrint({ params }: { params: { id: string }
                 return (
                   <tr key={i} className="border-b border-sand/60">
                     <td className={`${td} text-muted`}>{i + 1}</td>
-                    <td className={`${td} text-ink`}>{it.product?.name}{it.variant?.color ? <span className="text-ink"> · {it.variant.color}</span> : ""}<span className="text-muted text-xs"> · {it.variant?.sku ?? it.product?.sku}</span></td>
+                    <td className={`${td} text-ink`}>{it.product?.name}{it.variant?.color ? <span className="text-ink"> · {it.variant.color}</span> : ""}</td>
+                    <td className={`${td} font-mono text-xs text-muted`}>{it.variant?.sku ?? it.product?.sku}</td>
                     {gstOn && <td className={`${td} text-center text-muted`}>{HSN_JEWELLERY}</td>}
                     <td className={`${td} text-right`}>{it.qty}</td>
                     <td className={`${td} text-right`}>{formatPaise(unit)}</td>
@@ -130,7 +144,7 @@ export default async function EstimatePrint({ params }: { params: { id: string }
                 );
               })}
               <tr className="bg-cream/50 font-medium">
-                <td className={td}></td><td className={`${td} text-ink`}>Total</td>{gstOn && <td className={td}></td>}
+                <td className={td}></td><td className={`${td} text-ink`}>Total</td><td className={td}></td>{gstOn && <td className={td}></td>}
                 <td className={`${td} text-right`}>{qtyTotal}</td><td className={td}></td>
                 <td className={`${td} text-right`}>{formatPaise(itemsTaxable)}</td>
               </tr>
@@ -156,9 +170,13 @@ export default async function EstimatePrint({ params }: { params: { id: string }
               )}
             </div>
             <div className="text-sm space-y-1">
-              <div className="flex justify-between text-muted"><span>{gstOn ? "Taxable value (goods)" : "Sub-total"}</span><span>{formatPaise(itemsTaxable)}</span></div>
+              <div className="flex justify-between text-muted"><span>Total Quantity</span><span>{qtyTotal}</span></div>
+              {gstOn && g && <div className="flex justify-between text-muted"><span>Total Tax ({gstExclusive ? "EXCL" : "INCL"})</span><span>{formatPaise(g.tax)}</span></div>}
+              <div className="flex justify-between text-muted border-t border-sand/40 pt-1"><span>{gstOn ? "Taxable value (goods)" : "Subtotal"}</span><span>{formatPaise(itemsTaxable)}</span></div>
+              {xDiscount > 0 && <div className="flex justify-between text-emerald-dark"><span>Discount</span><span>− {formatPaise(xDiscount)}</span></div>}
               {xPacking > 0 && <div className="flex justify-between text-muted"><span>Packing</span><span>{formatPaise(xPacking)}</span></div>}
-              {xCourier > 0 && <div className="flex justify-between text-muted"><span>Courier</span><span>{formatPaise(xCourier)}</span></div>}
+              {xCourier > 0 && <div className="flex justify-between text-muted"><span>Shipping / Courier</span><span>{formatPaise(xCourier)}</span></div>}
+              {xTcs > 0 && <div className="flex justify-between text-muted"><span>TCS</span><span>{formatPaise(xTcs)}</span></div>}
               {xAdjust !== 0 && <div className="flex justify-between text-muted"><span>Adjustment</span><span>{formatPaise(xAdjust)}</span></div>}
               {gstOn && g && xCharges !== 0 && <div className="flex justify-between text-muted font-medium border-t border-sand/40 pt-1"><span>Taxable value</span><span>{formatPaise(g.taxable)}</span></div>}
               {gstOn && g && !g.interState && <>
@@ -212,6 +230,17 @@ export default async function EstimatePrint({ params }: { params: { id: string }
             <p>2. Valid till {validTill}. Prices and availability may change after this date.</p>
             <p>3. Stock is reserved only on confirmation; goods remain subject to availability until then.</p>
             {gstOn && <p>4. {gstExclusive ? `GST @${GST_RATE}% is charged extra as shown.` : `Rates shown are inclusive of GST @${GST_RATE}%.`} A tax invoice will be issued on billing.</p>}
+            <p>5. Please read the return policy for clarification on the return process.</p>
+            <p className="mt-2">Thanks for doing business with us. We hope to grow the relationship furthermore.</p>
+            <p>We declare that this document shows the actual price of the goods described and that all particulars are true and correct.</p>
+            <div className="flex justify-between items-end mt-6">
+              <span>&nbsp;</span>
+              <div className="text-center">
+                <div className="h-10" />
+                <p className="border-t border-ink/40 pt-1 px-6">Authorised Signatory</p>
+                <p className="text-ink">for {BUSINESS.legalName}</p>
+              </div>
+            </div>
             <p className="text-center mt-3">{BUSINESS.brand} · {BUSINESS.phone}</p>
           </div>
         </div>
@@ -243,8 +272,22 @@ export default async function EstimatePrint({ params }: { params: { id: string }
               <label className="text-[11px] text-muted">Customer<input name="customer_name" defaultValue={estimate.customer_name ?? ""} className={`${inp} w-44 block mt-0.5`} /></label>
               <label className="text-[11px] text-muted">Phone<input name="customer_phone" defaultValue={estimate.customer_phone ?? ""} className={`${inp} w-36 block mt-0.5`} /></label>
               <label className="text-[11px] text-muted">Buyer GSTIN<input name="buyer_gstin" defaultValue={(estimate as any).buyer_gstin ?? ""} placeholder="07AAAAA0000A1Z5" className={`${inp} w-44 block mt-0.5 font-mono uppercase`} /></label>
-              <label className="text-[11px] text-muted">Address<input name="buyer_address" defaultValue={(estimate as any).buyer_address ?? ""} placeholder="City, State" className={`${inp} w-52 block mt-0.5`} /></label>
+              <label className="text-[11px] text-muted">Billing address<input name="buyer_address" defaultValue={(estimate as any).buyer_address ?? ""} placeholder="Street, City, State - PIN" className={`${inp} w-52 block mt-0.5`} /></label>
+              <label className="text-[11px] text-muted">Email<input name="buyer_email" defaultValue={(estimate as any).buyer_email ?? ""} className={`${inp} w-44 block mt-0.5`} /></label>
+              <label className="text-[11px] text-muted">Ship to (name)<input name="ship_to_name" defaultValue={(estimate as any).ship_to_name ?? ""} placeholder="same as billing" className={`${inp} w-40 block mt-0.5`} /></label>
+              <label className="text-[11px] text-muted">Ship to (address)<input name="ship_to_address" defaultValue={(estimate as any).ship_to_address ?? ""} placeholder="same as billing" className={`${inp} w-52 block mt-0.5`} /></label>
               <button className="px-3 py-2 rounded-xl bg-ink/5 text-ink text-xs hover:bg-ink/10">Save customer</button>
+            </form>
+
+            {/* Discount / charges — these drive the totals block on the printed estimate. */}
+            <form action={updateEstimateChargesAction} className="flex flex-wrap items-end gap-2 mb-4 border-t border-sand/60 pt-3">
+              <input type="hidden" name="id" value={estimate.id} />
+              <label className="text-[11px] text-muted">Discount ₹<input name="discount" type="number" step="0.01" min={0} defaultValue={(xDiscount / 100).toFixed(2)} className={`${inp} w-24 text-right block mt-0.5`} /></label>
+              <label className="text-[11px] text-muted">Packing ₹<input name="packing" type="number" step="0.01" min={0} defaultValue={(xPacking / 100).toFixed(2)} className={`${inp} w-24 text-right block mt-0.5`} /></label>
+              <label className="text-[11px] text-muted">Shipping ₹<input name="courier" type="number" step="0.01" min={0} defaultValue={(xCourier / 100).toFixed(2)} className={`${inp} w-24 text-right block mt-0.5`} /></label>
+              <label className="text-[11px] text-muted">TCS ₹<input name="tcs" type="number" step="0.01" min={0} defaultValue={(xTcs / 100).toFixed(2)} className={`${inp} w-24 text-right block mt-0.5`} /></label>
+              <label className="text-[11px] text-muted">Adjustment ₹<input name="adjustment" type="number" step="0.01" defaultValue={(xAdjust / 100).toFixed(2)} className={`${inp} w-24 text-right block mt-0.5`} /></label>
+              <button className="px-3 py-2 rounded-xl bg-ink/5 text-ink text-xs hover:bg-ink/10">Save charges</button>
             </form>
 
             <div className="space-y-2 mb-3">

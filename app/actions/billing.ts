@@ -16,9 +16,14 @@ async function recomputeEstimateTotal(sb: ReturnType<typeof supabaseServer>, est
   // Fold in the estimate's extra charges (Packing/Courier/Adjustment) so the quote total — and
   // the bill it converts to — matches the screen. Columns absent pre-migration ⇒ treated as 0.
   let charges = 0;
-  const { data: est } = await sb.from("estimates").select("extra_packing,extra_courier,extra_adjustment").eq("id", estimateId).maybeSingle();
-  if (est) charges = (((est as any).extra_packing) || 0) + (((est as any).extra_courier) || 0) + (((est as any).extra_adjustment) || 0);
-  await sb.from("estimates").update({ total: items + charges }).eq("id", estimateId);
+  const { data: est } = await sb.from("estimates").select("*").eq("id", estimateId).maybeSingle();
+  if (est) {
+    const e = est as any;
+    // Discount comes OFF; packing/courier/TCS/adjustment go ON. Columns absent pre-migration ⇒ 0.
+    charges = (e.extra_packing || 0) + (e.extra_courier || 0) + (e.extra_adjustment || 0)
+            + (e.extra_tcs || 0) - (e.extra_discount || 0);
+  }
+  await sb.from("estimates").update({ total: Math.max(0, items + charges) }).eq("id", estimateId);
 }
 
 /** #18: edit an open estimate — customer details. */
@@ -31,12 +36,37 @@ export async function updateEstimateCustomerAction(formData: FormData): Promise<
   // Buyer tax details, so a GST quotation carries the same particulars as the invoice it becomes.
   const gstin = String(formData.get("buyer_gstin") ?? "").trim().toUpperCase() || null;
   const address = String(formData.get("buyer_address") ?? "").trim() || null;
-  const patch: any = { customer_name: name, customer_phone: phone, buyer_gstin: gstin, buyer_address: address };
+  const email = String(formData.get("buyer_email") ?? "").trim() || null;
+  const shipName = String(formData.get("ship_to_name") ?? "").trim() || null;
+  const shipAddr = String(formData.get("ship_to_address") ?? "").trim() || null;
+  const patch: any = {
+    customer_name: name, customer_phone: phone, buyer_gstin: gstin, buyer_address: address,
+    buyer_email: email, ship_to_name: shipName, ship_to_address: shipAddr,
+  };
   let res = await (supabaseServer().from("estimates") as any).update(patch).eq("id", id);
   if (res.error) {
     // Columns absent pre-migration — never lose the name/phone edit over the new fields.
     await supabaseServer().from("estimates").update({ customer_name: name, customer_phone: phone }).eq("id", id);
   }
+  revalidatePath(`/admin/estimate/${id}`);
+}
+
+/** Discount / packing / shipping / TCS / adjustment on an open estimate. Rupees in, paise stored. */
+export async function updateEstimateChargesAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("estimates.create"))) return;
+  const id = String(formData.get("id") ?? "");
+  if (!id) return;
+  const paise = (k: string) => Math.round((Number(formData.get(k) ?? 0) || 0) * 100);
+  const patch: any = {
+    extra_discount: Math.max(0, paise("discount")),
+    extra_packing: Math.max(0, paise("packing")),
+    extra_courier: Math.max(0, paise("courier")),
+    extra_tcs: Math.max(0, paise("tcs")),
+    extra_adjustment: paise("adjustment"),
+  };
+  const sb = supabaseServer();
+  const res = await (sb.from("estimates") as any).update(patch).eq("id", id);
+  if (!res.error) await recomputeEstimateTotal(sb, id);
   revalidatePath(`/admin/estimate/${id}`);
 }
 
@@ -272,7 +302,10 @@ export async function billEstimateAction(formData: FormData) {
       const r = await (sb.from("orders") as any).update(carry).eq("id", orderId);
       if (r.error) console.warn("estimate→bill: could not carry tax details:", r.error.message);
     }
-    const xp = ((est as any)?.extra_packing) || 0, xc = ((est as any)?.extra_courier) || 0, xa = ((est as any)?.extra_adjustment) || 0;
+    const xp = ((est as any)?.extra_packing) || 0, xc = ((est as any)?.extra_courier) || 0;
+    // Orders have no discount/TCS columns, so fold those into the order's adjustment — otherwise the
+    // bill total would silently differ from the estimate the customer accepted.
+    const xa = (((est as any)?.extra_adjustment) || 0) + (((est as any)?.extra_tcs) || 0) - (((est as any)?.extra_discount) || 0);
     if (xp !== 0 || xc !== 0 || xa !== 0) {
       const { data: oi } = await sb.from("order_items").select("line_total").eq("order_id", orderId);
       const itemsSum = ((oi as any[]) ?? []).reduce((s, r) => s + (r.line_total ?? 0), 0);
