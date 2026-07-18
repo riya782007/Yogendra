@@ -134,7 +134,9 @@ export default async function TradeDashboard() {
       {/* Guests are asked for their details only after they've actually browsed — see TradeLeadPopup. */}
       {guest && <TradeLeadPopup totalDesigns={list.length} />}
 
-      {/* Trade partners can offer their own designs for us to stock. */}
+      {/* Trade partners can offer their own designs for us to stock. Submissions are tied to a verified
+          trade account, so this is hidden from guests — they see the sign-in call to action instead. */}
+      {session && (
       <section className="mt-12 border-t border-sand pt-8">
         <div className="grid md:grid-cols-2 gap-8 items-start">
           <div>
@@ -155,6 +157,7 @@ export default async function TradeDashboard() {
           </div>
         </div>
       </section>
+      )}
     </div>
   );
 }
