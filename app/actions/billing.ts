@@ -28,7 +28,29 @@ export async function updateEstimateCustomerAction(formData: FormData): Promise<
   if (!id) return;
   const name = String(formData.get("customer_name") ?? "").trim() || null;
   const phone = String(formData.get("customer_phone") ?? "").trim() || null;
-  await supabaseServer().from("estimates").update({ customer_name: name, customer_phone: phone }).eq("id", id);
+  // Buyer tax details, so a GST quotation carries the same particulars as the invoice it becomes.
+  const gstin = String(formData.get("buyer_gstin") ?? "").trim().toUpperCase() || null;
+  const address = String(formData.get("buyer_address") ?? "").trim() || null;
+  const patch: any = { customer_name: name, customer_phone: phone, buyer_gstin: gstin, buyer_address: address };
+  let res = await (supabaseServer().from("estimates") as any).update(patch).eq("id", id);
+  if (res.error) {
+    // Columns absent pre-migration — never lose the name/phone edit over the new fields.
+    await supabaseServer().from("estimates").update({ customer_name: name, customer_phone: phone }).eq("id", id);
+  }
+  revalidatePath(`/admin/estimate/${id}`);
+}
+
+/** Choose how an estimate is quoted: with GST (inclusive/exclusive) or as a plain no-tax estimate. */
+export async function setEstimateGstAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("estimates.create"))) return;
+  const id = String(formData.get("id") ?? "");
+  if (!id) return;
+  const choice = String(formData.get("tax") ?? "exclusive");   // exclusive | inclusive | none
+  const patch: any = choice === "none"
+    ? { gst: false }
+    : { gst: true, gst_mode: choice === "inclusive" ? "inclusive" : "exclusive" };
+  const res = await (supabaseServer().from("estimates") as any).update(patch).eq("id", id);
+  if (res.error) await supabaseServer().from("estimates").update({ gst: choice !== "none" }).eq("id", id);
   revalidatePath(`/admin/estimate/${id}`);
 }
 
@@ -238,7 +260,18 @@ export async function billEstimateAction(formData: FormData) {
   if (orderId) {
     // Carry the estimate's extra charges onto the new order so the bill itemises them and GST
     // applies — order.total is recomputed as items + charges to stay authoritative.
-    const { data: est } = await sb.from("estimates").select("extra_packing,extra_courier,extra_adjustment").eq("id", id).maybeSingle();
+    const { data: est } = await sb.from("estimates").select("*").eq("id", id).maybeSingle();
+    // Carry the QUOTED tax treatment and buyer tax details onto the bill, so the invoice can never
+    // contradict the estimate the customer already agreed to (an inclusive quote stays inclusive).
+    const carry: any = {};
+    const em = (est as any)?.gst_mode;
+    if (billType === "gst" && (em === "inclusive" || em === "exclusive")) carry.gst_mode = em;
+    if ((est as any)?.buyer_gstin) carry.buyer_gstin = (est as any).buyer_gstin;
+    if ((est as any)?.buyer_address) carry.buyer_address = (est as any).buyer_address;
+    if (Object.keys(carry).length) {
+      const r = await (sb.from("orders") as any).update(carry).eq("id", orderId);
+      if (r.error) console.warn("estimate→bill: could not carry tax details:", r.error.message);
+    }
     const xp = ((est as any)?.extra_packing) || 0, xc = ((est as any)?.extra_courier) || 0, xa = ((est as any)?.extra_adjustment) || 0;
     if (xp !== 0 || xc !== 0 || xa !== 0) {
       const { data: oi } = await sb.from("order_items").select("line_total").eq("order_id", orderId);
