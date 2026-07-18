@@ -26,8 +26,10 @@ function shipSlab(totalPaise: number): number {
 }
 const COD_FEE = 12000; // ₹120 per COD order
 
-export function WholesaleCatalog({ products, customerName, customerPhone = "", minOrder = 300000, history = [], payInfo = null, outstanding = 0, tiers = [] }: {
+export function WholesaleCatalog({ products, customerName, customerPhone = "", minOrder = 300000, history = [], payInfo = null, outstanding = 0, tiers = [], guest = false }: {
   products: P[]; customerName: string; customerPhone?: string; minOrder?: number; history?: Hist[]; payInfo?: PayInfo | null; outstanding?: number; tiers?: WholesaleTier[];
+  /** Browsing without a dealer account: designs + rates are visible, ordering is not. */
+  guest?: boolean;
 }) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
@@ -125,6 +127,9 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
   // Abandoned Carts page WITH the dealer's name + phone — the owner can then nudge them on WhatsApp.
   // Placing the order empties the cart, which clears the saved row (no longer "abandoned").
   useEffect(() => {
+    // A guest has no name or number yet — tracking them here would fill Abandoned Carts with
+    // anonymous rows the owner can't act on. Their details are captured by TradeLeadPopup instead.
+    if (guest) return;
     const items = lines.map(([sku, n]) => { const p = bySku.get(sku.toUpperCase()); return { sku, name: p?.name ?? sku, qty: n, price: p?.price ?? 0 }; });
     const t = setTimeout(() => {
       fetch("/api/cart/track", {
@@ -147,6 +152,7 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
 
   /** Open the payment step (scan QR → pay → enter UTR). */
   function goToPay() {
+    if (guest) return;                       // guests are routed to sign-in instead
     if (lines.length === 0 || belowMin) return;
     setErr(""); setUtr(""); setPaying(true);
     // Tell the owner IMMEDIATELY that this dealer reached checkout (finalised) — so he can call/close
@@ -251,17 +257,21 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div>
-          <p className="text-sm text-muted">Signed in as</p>
-          <p className="font-medium text-ink">{customerName} · <span className="text-emerald">Wholesale</span></p>
+          <p className="text-sm text-muted">{guest ? "Viewing" : "Signed in as"}</p>
+          <p className="font-medium text-ink">
+            {guest ? <>Trade catalogue · <span className="text-emerald">wholesale rates</span></> : <>{customerName} · <span className="text-emerald">Wholesale</span></>}
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <div className="inline-flex rounded-full bg-cream p-1 text-sm">
             <button onClick={() => setTab("order")} className={`px-3 py-1 rounded-full ${tab === "order" ? "bg-ink text-white" : "text-muted"}`}>Order</button>
-            <button onClick={() => setTab("history")} className={`px-3 py-1 rounded-full ${tab === "history" ? "bg-ink text-white" : "text-muted"}`}>History {history.length ? `(${history.length})` : ""}</button>
+            {!guest && <button onClick={() => setTab("history")} className={`px-3 py-1 rounded-full ${tab === "history" ? "bg-ink text-white" : "text-muted"}`}>History {history.length ? `(${history.length})` : ""}</button>}
           </div>
           <a href="/trade/line-sheet" target="_blank" rel="noreferrer" className="text-sm px-3 py-1 rounded-full border border-sand text-ink hover:border-emerald">↓ Line-sheet (PDF)</a>
-          <button onClick={() => { setRfqOpen(true); setRfqDone(false); setRfqErr(""); }} className="text-sm px-3 py-1 rounded-full border border-gold text-gold-dark hover:bg-gold/10">Request a quote</button>
-          <form action={wholesaleLogoutAction}><button className="text-sm text-muted hover:text-ink">Sign out</button></form>
+          {!guest && <button onClick={() => { setRfqOpen(true); setRfqDone(false); setRfqErr(""); }} className="text-sm px-3 py-1 rounded-full border border-gold text-gold-dark hover:bg-gold/10">Request a quote</button>}
+          {guest
+            ? <a href="/trade/login" className="text-sm px-3 py-1 rounded-full bg-ink text-cream hover:opacity-90">Dealer sign in</a>
+            : <form action={wholesaleLogoutAction}><button className="text-sm text-muted hover:text-ink">Sign out</button></form>}
         </div>
       </div>
 
@@ -483,9 +493,15 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
                 {savings > 0 && <span className="ml-3 text-sm text-emerald-light">saved {formatPaise(savings)}</span>}
                 {err && <span className="ml-4 text-rose-light text-sm">{err}</span>}
               </div>
-              <button onClick={goToPay} disabled={busy || lines.length === 0 || belowMin} className="btn-gold px-6 py-2.5 text-sm font-medium disabled:opacity-50">
-                {belowMin ? `Add ${formatPaise(shortBy)} more` : "Review & pay →"}
-              </button>
+              {guest ? (
+                /* A guest can price up a full order and see the total — only the final step needs an
+                   approved dealer account, so the owner still chooses who he sells to. */
+                <a href="/trade/login" className="btn-gold px-6 py-2.5 text-sm font-medium">Dealer sign in to order →</a>
+              ) : (
+                <button onClick={goToPay} disabled={busy || lines.length === 0 || belowMin} className="btn-gold px-6 py-2.5 text-sm font-medium disabled:opacity-50">
+                  {belowMin ? `Add ${formatPaise(shortBy)} more` : "Review & pay →"}
+                </button>
+              )}
             </div>
             {belowMin && (
               <div className="mt-2">

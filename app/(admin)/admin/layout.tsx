@@ -28,9 +28,14 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     const { count } = await (supabaseServer().from("design_enquiries") as any).select("id", { count: "exact", head: true }).eq("status", "new");
     openEnquiries = count ?? 0;
   } catch { /* badge is optional */ }
+  let newVisitors = 0;
+  try {
+    const { count } = await (supabaseServer().from("trade_visitors") as any).select("id", { count: "exact", head: true }).eq("status", "new");
+    newVisitors = count ?? 0;
+  } catch { /* badge is optional */ }
   return (
     <div className="flex min-h-screen bg-diva-cream">
-      <AdminNav perms={s.permissions} roleName={s.roleName} badges={{ "/admin/submissions": pendingSubmissions, "/admin/wholesale-payments": pendingWholesalePay, "/admin/enquiries": openEnquiries }} />
+      <AdminNav perms={s.permissions} roleName={s.roleName} badges={{ "/admin/submissions": pendingSubmissions, "/admin/wholesale-payments": pendingWholesalePay, "/admin/enquiries": openEnquiries, "/admin/visitors": newVisitors }} />
       {/* pt-14 clears the fixed mobile top bar; lg has the in-flow sidebar instead.
           PrivacyShield wraps the content so the "Hide figures" toggle + Ctrl+Shift+H work on EVERY page. */}
       <PrivacyShield className="flex-1 min-w-0 pt-14 lg:pt-0">{children}</PrivacyShield>

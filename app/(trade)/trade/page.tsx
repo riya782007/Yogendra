@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
+import { TradeLeadPopup } from "@/components/site/TradeLeadPopup";
 import { getStorefront, getWholesaleOrderHistory, getCategories, getActivePromotions } from "@/lib/supabase/queries";
 import { supabaseServer } from "@/lib/supabase/server";
 import { PromoHero } from "@/components/site/PromoHero";
@@ -18,9 +18,12 @@ export const metadata: Metadata = {
 const WHOLESALE_MIN = 300000; // ₹3,000 in paise (#27)
 
 export default async function TradeDashboard() {
-  // Authoritative gate: only an approved, signed-in dealer may see trade pricing.
+  // OPEN CATALOGUE (client request): dealers were bouncing rather than hand over a phone number before
+  // seeing a single rate, so browsing no longer requires an account. A guest sees the designs and trade
+  // rates; ORDERING still requires an approved dealer account, so the owner keeps control of who he
+  // actually sells to. We ask a guest for their details only after they've shown real interest.
   const session = await getWholesaleSession();
-  if (!session) redirect("/trade/login");
+  const guest = !session;
 
   const { products, formula } = await getStorefront({ includeWholesaleOnly: true, excludeRetailOnly: true });
   const minOrder = formula.wholesaleMinOrder ?? WHOLESALE_MIN; // configurable in /admin/pricing
@@ -115,7 +118,7 @@ export default async function TradeDashboard() {
   const upi = pms.find((m) => m.is_default) ?? pms.find((m) => String(m.kind ?? "").toLowerCase().includes("upi")) ?? pms[0] ?? null;
   const payInfo = upi ? { payeeName: (upi.name as string) ?? "Blythe Diva", upiId: (upi.upi_id as string) ?? null, qrUrl: (upi.qr_code_url as string) ?? null } : null;
 
-  const history = await getWholesaleOrderHistory(session.id).catch(() => []);
+  const history = session ? await getWholesaleOrderHistory(session.id).catch(() => []) : [];
   // What this dealer still owes across their recent wholesale orders (transparency + gentle nudge).
   const outstanding = (history as any[]).reduce((s, h) => s + Math.max(0, (h.total ?? 0) - (h.amountPaid ?? 0)), 0);
   const categories = (await getCategories()).map((c) => ({ id: c.id, name: c.name }));
@@ -126,7 +129,10 @@ export default async function TradeDashboard() {
       {promos.length > 0 && <div className="rounded-2xl overflow-hidden mb-6 shadow-card"><PromoHero promos={promos} /></div>}
       <h1 className="font-display text-4xl text-ink mb-1">Dealer Dashboard</h1>
       <p className="text-sm text-muted mb-6">Factory-direct trade rates. Enter quantities and place your order — ₹{minRupees} minimum. Your margin vs MRP is shown on every line.</p>
-      <WholesaleCatalog products={list} customerName={session.name} customerPhone={session.phone} minOrder={minOrder} history={history} payInfo={payInfo} outstanding={outstanding} tiers={formula.wholesaleTiers ?? []} />
+      <WholesaleCatalog products={list} customerName={session?.name ?? "Guest"} customerPhone={session?.phone ?? ""} minOrder={minOrder} history={history} payInfo={payInfo} outstanding={outstanding} tiers={formula.wholesaleTiers ?? []} guest={guest} />
+
+      {/* Guests are asked for their details only after they've actually browsed — see TradeLeadPopup. */}
+      {guest && <TradeLeadPopup totalDesigns={list.length} />}
 
       {/* Trade partners can offer their own designs for us to stock. */}
       <section className="mt-12 border-t border-sand pt-8">
