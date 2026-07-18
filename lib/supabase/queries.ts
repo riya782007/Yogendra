@@ -1286,7 +1286,12 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   // (row.balance − row.delta = the row below it). The old "sum forward from 0" drifted whenever an
   // opening count or a PIM stock edit changed qty without leaving a matching ledger row.
   const deltaSum = allRows.reduce((s, r) => s + (r.delta ?? 0), 0);
-  const currentStock = prod.qty ?? deltaSum;
+  // For a product WITH colours, the real on-hand stock is the sum of its colours — that is what the
+  // Variants tab and the catalogue show the owner. Anchoring to the separate product-level qty column
+  // made the History header disagree with the Variants tab (10 vs 9) and fabricated a phantom
+  // "Adjustment −1" baseline row to explain a gap that did not exist. One number, one source.
+  const variantStock = variants.reduce((s, v) => s + (Number((v as any).qty) || 0), 0);
+  const currentStock = variants.length > 0 ? variantStock : (prod.qty ?? deltaSum);
   let running = currentStock;
   for (let i = allRows.length - 1; i >= 0; i--) {
     allRows[i].runningBalance = running;

@@ -104,8 +104,12 @@ export function CatalogueRow({
                         <span className={`font-medium ${v.qty <= 2 ? "text-rose" : "text-ink"}`}>{v.qty}</span>
                       </li>
                     ))}
+                    {/* The Total MUST equal the colours printed above it — the owner adds them up by eye.
+                        So we sum the very same lines we just rendered instead of reading the separate
+                        product-level qty column (which could drift and made "Golden 8 / Total 7" appear). */}
                     <li className="flex items-center justify-between gap-4 border-t border-sand/60 pt-1 mt-0.5 font-medium">
-                      <span className="text-muted">Total</span><span className="text-ink">{p.qty}</span>
+                      <span className="text-muted">Total</span>
+                      <span className="text-ink">{p.variants.reduce((s, v) => s + (Number(v.qty) || 0), 0)}</span>
                     </li>
                   </ul>
                 )}
