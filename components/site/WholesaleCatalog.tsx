@@ -34,6 +34,7 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
   const [colour, setColour] = useState("all");
+  const [bracket, setBracket] = useState("all");   // "min-max" in paise; max 0 = no upper limit
   const [inStock, setInStock] = useState(false);
   const [sort, setSort] = useState<"featured" | "price_asc" | "price_desc" | "margin">("featured");
   const [qty, setQty] = useState<Record<string, number>>({});
@@ -86,6 +87,11 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
       (sub === "all" || g.sub === sub) &&
       (styleF === "all" || g.style === styleF) &&
       (colour === "all" || g.variants.some((v) => (v.colour ?? "").toLowerCase() === colour.toLowerCase())) &&
+      // Price bracket: a design qualifies if ANY of its colours falls inside the band.
+      (bracket === "all" || (() => {
+        const [lo, hi] = bracket.split("-").map(Number);
+        return g.variants.some((v) => v.price >= lo && (hi === 0 || v.price < hi));
+      })()) &&
       (!inStock || g.variants.some((v) => v.qty > 0)) &&
       (!s || (g.name + " " + g.category + " " + g.variants.map((v) => v.sku).join(" ")).toLowerCase().includes(s)));
     const lead = (g: Grp) => g.variants[0]?.price ?? 0;
@@ -94,7 +100,7 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
     else if (sort === "price_desc") arr.sort((a, b) => lead(b) - lead(a));
     else if (sort === "margin") arr.sort((a, b) => leadMargin(b) - leadMargin(a));
     return arr;
-  }, [q, cat, sub, styleF, colour, inStock, sort, products]);
+  }, [q, cat, sub, styleF, colour, bracket, inStock, sort, products]);
 
   /** The colour currently shown for a design: the global colour filter wins, then the dealer's
    *  dropdown pick, then any colour already in the cart, then the first colour. */
@@ -335,6 +341,17 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
                 {colours.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             )}
+            {/* Price bracket — dealers buy to a budget ("₹200-500 ka maal dikhao"), so let them say so
+                directly instead of scrolling. Brackets are on the GST-inclusive rate they actually pay. */}
+            <select value={bracket} onChange={(e) => setBracket(e.target.value)} className="rounded-full border border-sand px-4 py-2 text-sm bg-white outline-none focus:border-emerald">
+              <option value="all">All prices</option>
+              <option value="0-10000">Under ₹100</option>
+              <option value="10000-20000">₹100 – ₹200</option>
+              <option value="20000-35000">₹200 – ₹350</option>
+              <option value="35000-50000">₹350 – ₹500</option>
+              <option value="50000-100000">₹500 – ₹1,000</option>
+              <option value="100000-0">₹1,000 +</option>
+            </select>
             <select value={sort} onChange={(e) => setSort(e.target.value as any)} className="rounded-full border border-sand px-4 py-2 text-sm bg-white outline-none focus:border-emerald">
               <option value="featured">Sort: Featured</option>
               <option value="price_asc">Price: low → high</option>

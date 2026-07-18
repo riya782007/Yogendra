@@ -2000,7 +2000,7 @@ export async function getReturnsDetailed(limit = 40): Promise<{
 }[]> {
   const sb = supabaseServer();
   const { data } = await sb.from("returns")
-    .select("id,kind,ref_order_id,reason,qty,amount,created_at")
+    .select("id,kind,ref_order_id,reason,qty,amount,created_at,party")
     .order("created_at", { ascending: false }).limit(limit);
   const rets = (data as any[]) ?? [];
   if (!rets.length) return [];
@@ -2010,10 +2010,14 @@ export async function getReturnsDetailed(limit = 40): Promise<{
   const purchRefs = [...new Set(rets.filter((r) => r.kind === "purchase" && r.ref_order_id).map((r) => r.ref_order_id))];
   const allRefs = [...saleRefs, ...purchRefs];
 
+  // Movements are linked either by the bill they came from (ref_id) OR directly by return_id — the
+  // latter is how an OPEN return (goods back without a bill) records its lines. Fetch both, else a
+  // bill-less return would show an empty item list in the register.
   const [{ data: moves }, { data: ords }, { data: purs }] = await Promise.all([
-    allRefs.length
+    (allRefs.length || retIds.length)
       ? sb.from("stock_adjustments").select("ref_id,return_id,sku,delta,created_at, variant:variants(color)")
-          .in("kind", ["return", "purchase_return"]).in("ref_id", allRefs)
+          .in("kind", ["return", "purchase_return"])
+          .or(`return_id.in.(${retIds.join(",")})${allRefs.length ? `,ref_id.in.(${allRefs.join(",")})` : ""}`)
       : Promise.resolve({ data: [] as any[] }),
     saleRefs.length ? sb.from("orders").select("id,invoice_no,customer_name").in("id", saleRefs) : Promise.resolve({ data: [] as any[] }),
     purchRefs.length ? sb.from("purchases").select("id,bill_no, supplier:suppliers(name)").in("id", purchRefs) : Promise.resolve({ data: [] as any[] }),
@@ -2032,9 +2036,11 @@ export async function getReturnsDetailed(limit = 40): Promise<{
     const p = r.kind === "purchase" ? purBy.get(r.ref_order_id) : null;
     return {
       id: r.id as string, kind: r.kind as string, refId: (r.ref_order_id as string | null) ?? null,
-      billRef: (o?.invoice_no as string) || (p?.bill_no as string) || (r.ref_order_id ? String(r.ref_order_id).slice(0, 8).toUpperCase() : "—"),
+      // A return with no bill is a legitimate case (marketplace stock coming back), not missing data —
+      // label it plainly so the register reads honestly instead of showing a blank reference.
+      billRef: (o?.invoice_no as string) || (p?.bill_no as string) || (r.ref_order_id ? String(r.ref_order_id).slice(0, 8).toUpperCase() : "No bill"),
       billHref: r.ref_order_id ? (r.kind === "sales" ? `/admin/invoice/${r.ref_order_id}` : `/admin/purchase/${r.ref_order_id}`) : null,
-      party: (o?.customer_name as string) || (p?.supplier?.name as string) || "—",
+      party: (o?.customer_name as string) || (p?.supplier?.name as string) || (r.party as string) || "—",
       qty: (r.qty as number) ?? 0, amount: (r.amount as number) ?? 0,
       reason: (r.reason as string | null) ?? null, created_at: r.created_at as string,
       lines,
