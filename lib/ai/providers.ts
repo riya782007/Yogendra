@@ -22,6 +22,8 @@ type ChatArgs = {
   imageBase64?: string;
   /** MIME type of imageBase64, e.g. "image/jpeg". Defaults to image/jpeg. */
   imageMime?: string;
+  /** Sampling spread. Low = repeatable (detection/extraction); high = varied wording (title ideas). */
+  temperature?: number;
 };
 
 async function chat(endpoint: string, key: string, model: string, a: ChatArgs): Promise<string> {
@@ -41,7 +43,7 @@ async function chat(endpoint: string, key: string, model: string, a: ChatArgs): 
       body: JSON.stringify({
         model,
         messages: [{ role: "system", content: a.system }, { role: "user", content: userContent }],
-        temperature: 0.7,
+        temperature: a.temperature ?? 0.7,
         ...(a.json ? { response_format: { type: "json_object" } } : {}),
       }),
       signal: controller.signal,
@@ -98,7 +100,7 @@ export async function geminiChat(a: ChatArgs): Promise<string> {
             ...(a.imageBase64 ? [{ inline_data: { mime_type: a.imageMime ?? "image/jpeg", data: a.imageBase64 } }] : []),
           ],
         }],
-        generationConfig: { temperature: 0.3, ...(a.json ? { responseMimeType: "application/json" } : {}) },
+        generationConfig: { temperature: a.temperature ?? 0.3, ...(a.json ? { responseMimeType: "application/json" } : {}) },
       }),
       signal: controller.signal,
     });

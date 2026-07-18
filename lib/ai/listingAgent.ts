@@ -155,8 +155,38 @@ export async function generateProductContent(p: ProductLike, opts?: { visionFirs
  * with the design's assigned girl name, then 5–7 keyword-rich, AUTHENTIC descriptors (only what's in the
  * photo or the typed fields — never invented). Vision model first (OpenAI/Gemini), Groq text as fallback.
  */
+/** Empty adjectives that carry ZERO search value. The model reaches for these by default, which is why
+ *  seven different designs all came back "Classic / Elegant / Designer". Banned outright — unless the
+ *  owner deliberately typed one as a keyword, in which case he wins. */
+const FILLER_WORDS = [
+  "classic", "elegant", "designer", "beautiful", "stylish", "premium", "exclusive", "trendy", "fancy",
+  "attractive", "gorgeous", "charming", "lovely", "stunning", "luxury", "luxurious", "chic", "modern",
+  "unique", "special", "adorable", "graceful",
+];
+
+/** The four angles a jewellery title can lead with. Every suggestion must take a DIFFERENT one, so the
+ *  options differ by SUBSTANCE (shape vs stone vs finish vs occasion) instead of by adjective. The
+ *  starting angle rotates per SKU, so two different designs never come back phrased the same way. */
+const TITLE_ANGLES: { key: string; label: string; vocab: string }[] = [
+  { key: "SHAPE", label: "the design / shape / motif you can actually see",
+    vocab: "Floral, Rectangle, Square, Round, Oval, Teardrop, Marquise, Leaf, Vine, Paisley, Peacock, Butterfly, Heart, Halo, Cluster, Drop, Layered, Geometric, Chandbali, Jhumka" },
+  { key: "STONE", label: "the stone / craft / material you can actually see",
+    vocab: "American Diamond, CZ, Zircon, Kundan, Polki, Pearl, Meenakari, Enamel, Temple, Ruby, Emerald, Stone Studded, Beaded, Mirror, Moissanite" },
+  { key: "FINISH", label: "the plating / metal tone",
+    vocab: "Gold Plated, Rose Gold, Silver Tone, Oxidised, Antique Finish, Matte Gold, Two Tone, Rhodium" },
+  { key: "OCCASION", label: "who wears it and when",
+    vocab: "Party Wear, Bridal, Wedding, Festive, Daily Wear, Office Wear, Traditional, Ethnic, Cocktail, Gifting, for Women" },
+];
+
+const hashOf = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; };
+
 export async function generateTitleOptions(p: ProductLike, n = 4): Promise<{ titles: string[]; provider: string; usedImage: boolean }> {
   const forcedName = pickDivaName(((p as any).sku as string) || p.name || "");
+  // Rotate which angle leads, keyed off the SKU — deterministic, but different for every design.
+  const rot = hashOf(((p as any).sku as string) || p.name || "") % TITLE_ANGLES.length;
+  const angles = [...TITLE_ANGLES.slice(rot), ...TITLE_ANGLES.slice(0, rot)].slice(0, n);
+  const ownerKw = (p.keywords ?? []).map((k) => String(k).toLowerCase());
+  const banned = FILLER_WORDS.filter((w) => !ownerKw.some((k) => k.includes(w)));
   const wantVision = !!p.imageBase64;
   const sub = (p as any).subcategoryName ? ` Sub-category: ${(p as any).subcategoryName}.` : "";
   const style = (p as any).styleName ? ` Style: ${(p as any).styleName}.` : "";
@@ -173,14 +203,23 @@ export async function generateTitleOptions(p: ProductLike, n = 4): Promise<{ tit
     ``,
     `Produce ${n} DISTINCT, SEO-optimised website titles as STRICT minified JSON: {"titles":["…","…"]}.`,
     `RULES for every title:`,
-    `  • Start EXACTLY with the first name «${forcedName}», then descriptive keywords so the WHOLE title is 5–7 words total (name + 4–6 keyword words). Title Case, under ~70 chars, SEO-optimised.`,
-    `  • Use ONLY AUTHENTIC keywords — descriptors that are clearly VISIBLE in the photo, or present in the category/sub-category/style/polish/keywords above. NEVER invent a stone, material, motif or piece that isn't there (no "Mangalsutra", no "Kundan" on a plain CZ piece, no earrings unless it's an earring).`,
-    `  • Make each option a DIFFERENT angle using strong search keywords jewellery buyers type — e.g. Designer, Statement, Rectangle/Floral/Drop, Stone, American Diamond, Gold Plated, Party Wear, Bridal, for Women. Example style the owner loves: "Designer Rectangle Stone Drop Earrings", "American Diamond Statement Drop Earrings", "Gold Plated Party Wear Earrings".`,
-    `  • The jewellery TYPE at the end must be correct for the piece. Return ONLY the JSON.`,
+    `  • Start EXACTLY with the first name «${forcedName}», then descriptive keywords so the WHOLE title is 5–7 words total (name + 4–6 keyword words). Title Case, under ~70 chars.`,
+    `  • Use ONLY AUTHENTIC keywords — descriptors clearly VISIBLE in the photo, or present in the category/sub-category/style/polish/keywords above. NEVER invent a stone, material, motif or piece that isn't there (no "Mangalsutra", no "Kundan" on a plain CZ piece, no earrings unless it's an earring).`,
+    `  • The jewellery TYPE at the end must be correct for the piece.`,
+    ``,
+    `The ${n} titles must differ by SUBSTANCE, not by adjective. Give exactly ONE title per angle, in this order:`,
+    ...angles.map((a, i) => `  ${i + 1}. ${a.key} — lead with ${a.label}. Draw from: ${a.vocab}. (Only if it is genuinely true of THIS piece.)`),
+    ``,
+    `  • BANNED WORDS — never output any of these, they describe nothing and make every product sound identical: ${banned.join(", ")}.`,
+    `  • No descriptive word may repeat across the ${n} titles. Only «${forcedName}» and the jewellery type may appear more than once.`,
+    `  • If an angle isn't truthfully available for this piece, use a different REAL detail from the photo for that slot — never pad with a filler adjective.`,
+    `Return ONLY the JSON.`,
   ].filter(Boolean).join("\n");
 
   const SYSTEM = "You are BlytheDIVA's product copywriter. Return only valid minified JSON.";
-  const call = { system: SYSTEM, user: userPrompt, json: true, imageBase64: p.imageBase64, imageMime: p.imageMime };
+  // Higher spread than the default: title IDEAS should vary between runs and between designs. (Detection
+  // and extraction calls keep their low temperature — this override is scoped to this one request.)
+  const call = { system: SYSTEM, user: userPrompt, json: true, imageBase64: p.imageBase64, imageMime: p.imageMime, temperature: 0.95 };
   const order: [string, (a: any) => Promise<string>][] = [];
   if (wantVision && openaiConfigured()) order.push(["openai", openaiChat]);
   if (wantVision && geminiTextConfigured()) order.push(["gemini", geminiChat]);
@@ -204,10 +243,18 @@ export async function generateTitleOptions(p: ProductLike, n = 4): Promise<{ tit
     if (t) titles = [t];
     provider = provider || "deterministic";
   }
+  // Belt-and-braces: if a model ignores the ban and still writes "Classic/Elegant/Designer", strip it
+  // here so the owner never sees the filler again. Keep the original if removing it guts the title.
+  const bannedRe = banned.length ? new RegExp(`\\b(${banned.join("|")})\\b`, "ig") : null;
+  const deFiller = (t: string) => {
+    if (!bannedRe) return t;
+    const stripped = t.replace(bannedRe, " ").replace(/\s+/g, " ").trim();
+    return stripped.split(" ").length >= 3 ? stripped : t;
+  };
   // Enforce the assigned name on every option + dedupe.
   const seen = new Set<string>();
   titles = titles
-    .map((t) => enforceName(t, forcedName))
+    .map((t) => enforceName(deFiller(t), forcedName))
     .filter((t) => { const k = t.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; })
     .slice(0, n);
   return { titles, provider, usedImage: wantVision };
