@@ -39,6 +39,7 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
   const [sort, setSort] = useState<"featured" | "price_asc" | "price_desc" | "margin">("featured");
   const [qty, setQty] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState(false);
+  const [reviewing, setReviewing] = useState(false); // cart review (full item list + images) before pay
   const [paying, setPaying] = useState(false);   // payment (QR + screenshot) step
   const [proof, setProof] = useState<File | null>(null); // dealer's payment screenshot
   const [utr, setUtr] = useState("");
@@ -538,10 +539,10 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
                 {savings > 0 && <span className="ml-3 text-sm text-emerald-light">saved {formatPaise(savings)}</span>}
                 {err && <span className="ml-4 text-rose-light text-sm">{err}</span>}
               </div>
-              {/* Direct checkout for everyone (owner: "seedha checkout, no approval"). A guest enters
-                  name + phone at the pay step; their dealer account is created automatically. */}
-              <button onClick={goToPay} disabled={busy || lines.length === 0 || belowMin} className="btn-gold px-6 py-2.5 text-sm font-medium disabled:opacity-50">
-                {belowMin ? `Add ${formatPaise(shortBy)} more` : "Checkout →"}
+              {/* Checkout opens a REVIEW of the whole cart (every design with its photo) first, so the
+                  dealer can confirm his full order before paying — then Proceed to pay. */}
+              <button onClick={() => { setErr(""); setReviewing(true); }} disabled={busy || lines.length === 0 || belowMin} className="btn-gold px-6 py-2.5 text-sm font-medium disabled:opacity-50">
+                {belowMin ? `Add ${formatPaise(shortBy)} more` : "Review & checkout →"}
               </button>
             </div>
             {belowMin && (
@@ -552,6 +553,65 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
             )}
           </div>
         </>
+      )}
+
+      {/* Cart review — the WHOLE order in one list with photos, so the dealer confirms every design
+          (and can tweak qty or remove a line) before paying. Owner: "apna order sab check kar paye,
+          list form me images ke saath." */}
+      {reviewing && (
+        <div className="fixed inset-0 z-[90] bg-ink/60 backdrop-blur-sm grid place-items-center p-4" onClick={() => setReviewing(false)}>
+          <div className="bg-white rounded-2xl shadow-luxe w-full max-w-lg max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 bg-white/95 backdrop-blur border-b border-sand px-5 py-3 flex items-center justify-between">
+              <div>
+                <h3 className="font-display text-2xl text-ink">Your order</h3>
+                <p className="text-xs text-muted">{itemCount} pcs · {lines.length} design{lines.length === 1 ? "" : "s"}</p>
+              </div>
+              <button onClick={() => setReviewing(false)} className="text-muted hover:text-ink text-lg leading-none">✕</button>
+            </div>
+
+            <div className="divide-y divide-sand/60">
+              {lines.map(([sku, n]) => {
+                const p = bySku.get(sku.toUpperCase());
+                if (!p) return null;
+                const unit = unitFor(sku, n);
+                return (
+                  <div key={sku} className="flex gap-3 items-center p-3">
+                    <Img p={p} className="w-16 h-20 rounded-lg shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-ink font-medium leading-tight line-clamp-2">{p.name}</p>
+                      <p className="text-[11px] text-muted font-mono">{p.sku}{p.colour ? ` · ${p.colour}` : ""}</p>
+                      <p className="text-xs text-emerald-dark mt-0.5">{formatPaise(unit)} each</p>
+                    </div>
+                    <div className="flex flex-col items-end gap-1 shrink-0">
+                      <div className="inline-flex items-center rounded-full border border-sand overflow-hidden">
+                        <button onClick={() => addQty(sku, -1)} className="px-2 py-1 text-sm hover:bg-cream">−</button>
+                        <QtyField value={n} min={0} onChange={(v) => setQtyAbs(sku, v)} className="w-12 text-center border-x border-sand py-1 text-sm outline-none focus:bg-emerald-mist" />
+                        <button onClick={() => addQty(sku, 1)} className="px-2 py-1 text-sm hover:bg-cream">+</button>
+                      </div>
+                      <p className="text-sm font-semibold text-ink">{formatPaise(unit * n)}</p>
+                      <button onClick={() => setQtyAbs(sku, 0)} className="text-[11px] text-rose hover:underline">Remove</button>
+                    </div>
+                  </div>
+                );
+              })}
+              {lines.length === 0 && <p className="p-6 text-center text-sm text-muted">Your order is empty.</p>}
+            </div>
+
+            <div className="sticky bottom-0 bg-white border-t border-sand px-5 py-3">
+              <div className="flex items-center justify-between mb-1 text-sm">
+                <span className="text-muted">Items{savings > 0 && <span className="text-emerald-dark"> · saved {formatPaise(savings)}</span>}</span>
+                <span className="font-semibold text-ink text-lg">{formatPaise(orderTotal)}</span>
+              </div>
+              {belowMin
+                ? <p className="text-[11px] text-gold-dark mb-2">{formatPaise(minOrder)} minimum — add {formatPaise(shortBy)} more to check out.</p>
+                : <p className="text-[11px] text-muted mb-2">+ shipping calculated at payment. GST included in the rates shown.</p>}
+              <div className="flex gap-2">
+                <button onClick={() => setReviewing(false)} className="px-4 py-2.5 rounded-xl bg-ink/5 text-ink text-sm hover:bg-ink/10">Keep shopping</button>
+                <button onClick={() => { setReviewing(false); goToPay(); }} disabled={lines.length === 0 || belowMin} className="btn-gold flex-1 py-2.5 text-sm font-medium disabled:opacity-50">Proceed to pay →</button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Payment step — scan the owner's UPI QR, pay, submit the reference. No Razorpay = owner keeps 100%. */}
