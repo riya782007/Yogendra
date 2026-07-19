@@ -3,7 +3,7 @@ import { useState, useMemo, useEffect } from "react";
 import { formatPaise, tierPctOff, applyTier, type WholesaleTier } from "@/lib/pricing";
 import { ProductImage } from "@/components/Placeholder";
 import { QtyField } from "@/components/admin/QtyField";
-import { placeWholesaleOrderAction, wholesaleLogoutAction, requestQuoteAction, uploadPaymentProofAction } from "@/app/actions/wholesale";
+import { placeWholesaleOrderAction, placeGuestWholesaleOrderAction, wholesaleLogoutAction, requestQuoteAction, uploadPaymentProofAction, uploadGuestPaymentProofAction } from "@/app/actions/wholesale";
 import { UpiAmountQr } from "@/components/admin/UpiAmountQr";
 import { MoreDesignsButton } from "@/components/site/MoreDesignsButton";
 
@@ -42,6 +42,10 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
   const [paying, setPaying] = useState(false);   // payment (QR + screenshot) step
   const [proof, setProof] = useState<File | null>(null); // dealer's payment screenshot
   const [utr, setUtr] = useState("");
+  // Guest self-checkout details (name / phone / city) — captured inline at the payment step, no login.
+  const [gName, setGName] = useState("");
+  const [gPhone, setGPhone] = useState(customerPhone || "");
+  const [gCity, setGCity] = useState("");
   const [done, setDone] = useState<{ id: string; total: number } | null>(null);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState<"order" | "history">("order");
@@ -158,8 +162,7 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
 
   /** Open the payment step (scan QR → pay → enter UTR). */
   function goToPay() {
-    if (guest) return;                       // guests are routed to sign-in instead
-    if (lines.length === 0 || belowMin) return;
+    if (lines.length === 0 || belowMin) return;   // guests check out too — details captured in the modal
     setErr(""); setUtr(""); setPaying(true);
     // Tell the owner IMMEDIATELY that this dealer reached checkout (finalised) — so he can call/close
     // the deal (esp. international dealers who settle over a video call), not wait for it to "abandon".
@@ -170,10 +173,28 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
     }).catch(() => {});
   }
   /** Finalise: record the order with the UPI reference; the owner is WhatsApp'd to verify & dispatch. */
+  // A guest must give name + phone before ordering (their dealer account is created from these).
+  function guestDetailsMissing(): string | null {
+    if (!guest) return null;
+    if (gName.trim().length < 2) return "Please enter your name / firm name.";
+    if (gPhone.replace(/\D/g, "").length < 7) return "Please enter your WhatsApp number.";
+    return null;
+  }
+
+  /** Place the order — as a logged-in dealer OR a guest (auto-creating their account from the form). */
+  async function placeOrder(opts: { cod?: boolean; proofPath?: string }) {
+    const items = lines.map(([sku, n]) => ({ sku, qty: n }));
+    if (guest) {
+      return placeGuestWholesaleOrderAction({ name: gName.trim(), phone: gPhone.trim(), city: gCity.trim() }, items, opts);
+    }
+    return placeWholesaleOrderAction(items, opts);
+  }
+
   async function confirmOrderCOD() {
     if (lines.length === 0 || busy) return;
+    const miss = guestDetailsMissing(); if (miss) { setErr(miss); return; }
     setBusy(true); setErr("");
-    const res = await placeWholesaleOrderAction(lines.map(([sku, n]) => ({ sku, qty: n })), { cod: true });
+    const res = await placeOrder({ cod: true });
     setBusy(false);
     if (res.ok) { setDone({ id: res.orderId!, total: res.total ?? 0 }); setQty({}); setPaying(false); }
     else setErr(res.error ?? "Could not place order");
@@ -181,15 +202,16 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
 
   async function confirmOrder() {
     if (lines.length === 0) return;
+    const miss = guestDetailsMissing(); if (miss) { setErr(miss); return; }
     setBusy(true); setErr("");
     let proofUrl: string | undefined;
     if (proof) {
       const fd = new FormData(); fd.set("file", proof);
-      const up = await uploadPaymentProofAction(fd);
+      const up = guest ? await uploadGuestPaymentProofAction(fd) : await uploadPaymentProofAction(fd);
       if (!up.ok) { setBusy(false); setErr(up.error ?? "Could not upload the screenshot — try a smaller image."); return; }
       proofUrl = up.url;
     }
-    const res = await placeWholesaleOrderAction(lines.map(([sku, n]) => ({ sku, qty: n })), { proofPath: proofUrl, paymentRef: utr.trim() || undefined });
+    const res = await placeOrder({ proofPath: proofUrl, paymentRef: utr.trim() || undefined });
     setBusy(false);
     if (res.ok) { setDone({ id: res.orderId!, total: res.total ?? 0 }); setQty({}); setProof(null); setPaying(false); }
     else setErr(res.error ?? "Could not place order");
@@ -224,10 +246,17 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
   if (done) {
     return (
       <div className="rounded-3xl bg-white border border-sand shadow-card p-10 text-center max-w-lg mx-auto">
-        <p className="text-5xl mb-3">✓</p>
-        <h2 className="font-display text-3xl text-ink">Order placed</h2>
-        <p className="text-muted mt-2">Wholesale order <b className="text-ink">{done.id.slice(0, 8).toUpperCase()}</b> for <b className="text-emerald">{formatPaise(done.total)}</b> is in. We'll confirm dispatch on WhatsApp.</p>
-        <button onClick={() => setDone(null)} className="btn-primary px-6 py-2.5 text-sm font-medium mt-5">Place another order</button>
+        <p className="text-5xl mb-3">🎉</p>
+        <h2 className="font-display text-3xl text-ink">Thank you{gName.trim() || customerName ? `, ${(gName.trim() || customerName).split(" ")[0]}` : ""}!</h2>
+        <p className="text-muted mt-2">
+          Order <b className="text-ink">{done.id.slice(0, 8).toUpperCase()}</b> for <b className="text-emerald">{formatPaise(done.total)}</b> is confirmed.
+          We&apos;ve received your payment screenshot and will verify &amp; dispatch shortly — you&apos;ll get a WhatsApp update.
+        </p>
+        <div className="mt-4 rounded-2xl bg-emerald-mist/50 border border-emerald/20 px-4 py-3 text-sm text-emerald-dark">
+          ✨ New designs drop every day — keep stocking up and unlock bigger bulk discounts on your next order!
+        </div>
+        <button onClick={() => { setDone(null); setTab("order"); }} className="btn-gold px-6 py-2.5 text-sm font-medium mt-5">🛍️ Shop more designs</button>
+        <p className="mt-3 text-xs text-muted">Your details are saved — next time just checkout, no re-typing.</p>
       </div>
     );
   }
@@ -510,15 +539,11 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
                 {savings > 0 && <span className="ml-3 text-sm text-emerald-light">saved {formatPaise(savings)}</span>}
                 {err && <span className="ml-4 text-rose-light text-sm">{err}</span>}
               </div>
-              {guest ? (
-                /* A guest can price up a full order and see the total — only the final step needs an
-                   approved dealer account, so the owner still chooses who he sells to. */
-                <a href="/trade/login" className="btn-gold px-6 py-2.5 text-sm font-medium">Dealer sign in to order →</a>
-              ) : (
-                <button onClick={goToPay} disabled={busy || lines.length === 0 || belowMin} className="btn-gold px-6 py-2.5 text-sm font-medium disabled:opacity-50">
-                  {belowMin ? `Add ${formatPaise(shortBy)} more` : "Review & pay →"}
-                </button>
-              )}
+              {/* Direct checkout for everyone (owner: "seedha checkout, no approval"). A guest enters
+                  name + phone at the pay step; their dealer account is created automatically. */}
+              <button onClick={goToPay} disabled={busy || lines.length === 0 || belowMin} className="btn-gold px-6 py-2.5 text-sm font-medium disabled:opacity-50">
+                {belowMin ? `Add ${formatPaise(shortBy)} more` : "Checkout →"}
+              </button>
             </div>
             {belowMin && (
               <div className="mt-2">
@@ -541,6 +566,19 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
               </div>
               <button onClick={() => !busy && setPaying(false)} className="text-muted hover:text-ink text-lg leading-none">✕</button>
             </div>
+
+            {/* Guest: capture the delivery details up front — this becomes their dealer account. */}
+            {guest && (
+              <div className="mt-3 grid gap-2">
+                <p className="text-xs font-medium text-ink">Your details</p>
+                <input value={gName} onChange={(e) => setGName(e.target.value)} placeholder="Name / firm name"
+                  className="rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald" />
+                <input value={gPhone} onChange={(e) => setGPhone(e.target.value)} inputMode="tel" placeholder="WhatsApp number"
+                  className="rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald" />
+                <input value={gCity} onChange={(e) => setGCity(e.target.value)} placeholder="City (for delivery)"
+                  className="rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald" />
+              </div>
+            )}
 
             <div className="mt-3 rounded-xl bg-cream/70 px-4 py-3 space-y-1">
               <div className="flex items-center justify-between text-sm"><span className="text-muted">Items{savings > 0 && <span className="block text-[11px] text-emerald-dark">incl. {formatPaise(savings)} bulk savings</span>}</span><span className="text-ink">{formatPaise(orderTotal)}</span></div>

@@ -146,6 +146,24 @@ export async function uploadPaymentProofAction(formData: FormData): Promise<{ ok
   return { ok: true, url: `${base}/storage/v1/object/public/payment-proofs/${path}` };
 }
 
+/** Guest self-checkout screenshot upload — no session yet (the account is created when the order is
+ *  placed). Stored in the same public bucket so it reaches the owner's Wholesale Payments dashboard. */
+export async function uploadGuestPaymentProofAction(formData: FormData): Promise<{ ok: boolean; url?: string; error?: string }> {
+  const file = formData.get("file") as unknown as File | null;
+  if (!file || typeof (file as any).arrayBuffer !== "function") return { ok: false, error: "No image selected." };
+  const sb = supabaseServer();
+  const type = (file as any).type || "image/jpeg";
+  if (!String(type).startsWith("image/")) return { ok: false, error: "Please upload an image." };
+  const ext = (String(type).split("/")[1] || "jpg").replace(/[^a-z0-9]/gi, "").slice(0, 5) || "jpg";
+  const path = `guest/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const buf = Buffer.from(await (file as any).arrayBuffer());
+  if (buf.length > 8 * 1024 * 1024) return { ok: false, error: "Image is too large — please use one under 8 MB." };
+  const { error } = await sb.storage.from("payment-proofs").upload(path, buf, { contentType: type, upsert: false });
+  if (error) return { ok: false, error: error.message };
+  const base = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, "");
+  return { ok: true, url: `${base}/storage/v1/object/public/payment-proofs/${path}` };
+}
+
 /**
  * Place a wholesale order. Prices are recomputed server-side at the wholesale rate.
  * Payment is by direct UPI (the dealer scans the owner's QR and pays) — NO Razorpay, so the owner
@@ -158,6 +176,57 @@ export async function placeWholesaleOrderAction(
 ): Promise<{ ok: boolean; orderId?: string; total?: number; error?: string }> {
   const sess = await getWholesaleSession();
   if (!sess) return { ok: false, error: "Please log in as an approved wholesale customer." };
+  return placeWholesaleCore({ id: sess.id, name: (sess as any).name ?? null }, items, opts);
+}
+
+/**
+ * GUEST wholesale checkout — direct, standard-shopping style (owner: "no approval, seedha checkout").
+ * A new buyer fills name / phone / city at the payment step and orders immediately. We auto-create (and
+ * auto-APPROVE) their dealer record so they show on the owner's Customers list and can reorder later by
+ * phone with no re-typing, and we sign them into the trade session. Payment still runs the same way —
+ * scan QR, upload screenshot — and that screenshot lands on the owner's Wholesale Payments dashboard.
+ *
+ * Trade-off the owner accepted: with no approval gate, anyone with a phone number can order at wholesale
+ * rates. The ₹3,000 minimum and the pay-first-then-dispatch flow remain the only guards.
+ */
+export async function placeGuestWholesaleOrderAction(
+  buyer: { name: string; phone: string; city?: string },
+  items: { sku: string; qty: number }[],
+  opts?: { paymentRef?: string; cod?: boolean; proofPath?: string },
+): Promise<{ ok: boolean; orderId?: string; total?: number; error?: string }> {
+  const name = String(buyer?.name ?? "").trim();
+  const phone = String(buyer?.phone ?? "").replace(/\D/g, "");
+  const city = String(buyer?.city ?? "").trim() || null;
+  if (name.length < 2) return { ok: false, error: "Please enter your name or firm name." };
+  if (phone.length < 7 || phone.length > 15) return { ok: false, error: "Please enter a valid WhatsApp number." };
+
+  const sb = supabaseServer();
+  // Reuse an existing record for this number (so repeat buyers don't duplicate); else create one.
+  const { data: existing } = await sb.from("customers").select("id").ilike("phone", `%${phone.slice(-10)}`).limit(1);
+  let customerId: string;
+  if (existing && (existing as any[])[0]) {
+    customerId = (existing as any[])[0].id;
+    await sb.from("customers").update({ name, city, type: "wholesale", wholesale_approved: true }).eq("id", customerId);
+  } else {
+    const { data: created, error: cErr } = await sb.from("customers")
+      .insert({ name, phone, city, type: "wholesale", wholesale_approved: true, notes: "Self-checkout dealer (auto-approved)" })
+      .select("id").single();
+    if (cErr || !created) return { ok: false, error: cErr?.message ?? "Could not save your details." };
+    customerId = (created as any).id;
+  }
+  // Sign them into the trade session so history / reorder work without a separate login.
+  cookies().set("bd_wholesale", customerId, COOKIE);
+
+  return placeWholesaleCore({ id: customerId, name }, items, opts);
+}
+
+/** Shared order-placement core used by both the logged-in dealer and the guest self-checkout. */
+async function placeWholesaleCore(
+  customer: { id: string; name: string | null },
+  items: { sku: string; qty: number }[],
+  opts?: { paymentRef?: string; cod?: boolean; proofPath?: string },
+): Promise<{ ok: boolean; orderId?: string; total?: number; error?: string }> {
+  const sess = { id: customer.id, name: customer.name } as any;
   const clean = (items ?? []).filter((i) => i.sku && i.qty > 0).map((i) => ({ sku: i.sku, qty: Math.floor(i.qty) }));
   if (!clean.length) return { ok: false, error: "Enter quantities for at least one product." };
   const sb = supabaseServer();
