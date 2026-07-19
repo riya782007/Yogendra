@@ -37,19 +37,42 @@ const ROUTE_PERM: [string, string | string[]][] = [
   ["/admin/roles", "roles.manage"],
 ];
 
+// Custom subdomains → internal paths. Set TRADE_HOST / ADMIN_HOST in Vercel env when the domain is
+// live (e.g. trade.blythediva.com and a private admin-bd.blythediva.com). Until then these defaults
+// simply never match the vercel.app host, so nothing changes on the current URL.
+const TRADE_HOST = (process.env.TRADE_HOST || "trade.blythediva.com").toLowerCase();
+const ADMIN_HOST = (process.env.ADMIN_HOST || "admin-bd.blythediva.com").toLowerCase();
+
 export function middleware(req: NextRequest) {
-  const path = req.nextUrl.pathname;
+  const host = (req.headers.get("host") || "").split(":")[0].toLowerCase();
+
+  // Map the subdomain to the section it serves, so trade.blythediva.com shows the wholesale catalogue
+  // and the private admin subdomain shows the console — while blythediva.com stays the retail store.
+  let path = req.nextUrl.pathname;
+  let rewritten = false;
+  if (host === TRADE_HOST && !path.startsWith("/trade")) {
+    path = "/trade" + (path === "/" ? "" : path); rewritten = true;
+  } else if (host === ADMIN_HOST && !path.startsWith("/admin")) {
+    path = "/admin" + (path === "/" ? "" : path); rewritten = true;
+  }
+  // Keep the sections apart: the trade subdomain must never expose /admin, and vice-versa.
+  if (host === TRADE_HOST && path.startsWith("/admin")) {
+    const url = req.nextUrl.clone(); url.pathname = "/trade"; url.search = ""; return NextResponse.redirect(url);
+  }
+  if (host === ADMIN_HOST && path.startsWith("/trade")) {
+    const url = req.nextUrl.clone(); url.pathname = "/admin/dashboard"; url.search = ""; return NextResponse.redirect(url);
+  }
+  const pass = () => {
+    if (!rewritten) return NextResponse.next();
+    const u = req.nextUrl.clone(); u.pathname = path; return NextResponse.rewrite(u);
+  };
 
   // ---- TRADE (wholesale) portal ----------------------------------------------------------
-  // Completely separate auth domain from /admin. Dealers carry a `bd_wholesale` cookie set by
-  // wholesaleLoginAction. Every /trade route is protected EXCEPT the login screen. This is the
-  // first, cheap gate (cookie presence); the authoritative approved-dealer check runs in each
-  // page via getWholesaleSession(). Note: an admin's bd_session does NOT grant trade access.
   if (path === "/trade" || path.startsWith("/trade/")) {
     // NO DEALER PORTAL (owner: "remove the login entirely, no friction"). The catalogue is fully open
     // and anyone can check out directly. /trade needs no cookie. The remaining logged-in-only sub-pages
     // (account, orders, line-sheet) simply fall back to the open catalogue instead of a sign-in wall.
-    if (path === "/trade") return NextResponse.next();
+    if (path === "/trade") return pass();
     const dealer = req.cookies.get("bd_wholesale")?.value;
     if (!dealer) {
       const url = req.nextUrl.clone();
@@ -57,36 +80,42 @@ export function middleware(req: NextRequest) {
       url.search = "";
       return NextResponse.redirect(url);
     }
-    return NextResponse.next();
+    return pass();
   }
 
   // ---- ADMIN console -----------------------------------------------------------------------
-  const session = req.cookies.get("bd_session")?.value;
-  const authed = session === OWNER || session === STAFF;
-  if (!authed) {
-    const url = req.nextUrl.clone();
-    url.pathname = "/login";
-    url.searchParams.set("next", req.nextUrl.pathname);
-    return NextResponse.redirect(url);
-  }
-
-  // Owner → unrestricted.
-  if (session === OWNER) return NextResponse.next();
-
-  // Staff → enforce route permission.
-  const perms = (req.cookies.get("bd_perms")?.value ?? "").split(",").filter(Boolean);
-  const match = ROUTE_PERM.filter(([p]) => path === p || path.startsWith(p + "/")).sort((a, b) => b[0].length - a[0].length)[0];
-  if (match) {
-    const required = Array.isArray(match[1]) ? match[1] : [match[1]];
-    const ok = required.some((r) => perms.includes(r));
-    if (!ok) {
+  if (path === "/admin" || path.startsWith("/admin/")) {
+    const session = req.cookies.get("bd_session")?.value;
+    const authed = session === OWNER || session === STAFF;
+    if (!authed) {
       const url = req.nextUrl.clone();
-      url.pathname = "/admin/dashboard";
-      url.searchParams.set("denied", match[0].replace("/admin/", ""));
+      url.pathname = "/login";
+      url.searchParams.set("next", path);
       return NextResponse.redirect(url);
     }
+    // Owner → unrestricted.
+    if (session === OWNER) return pass();
+
+    // Staff → enforce route permission.
+    const perms = (req.cookies.get("bd_perms")?.value ?? "").split(",").filter(Boolean);
+    const match = ROUTE_PERM.filter(([p]) => path === p || path.startsWith(p + "/")).sort((a, b) => b[0].length - a[0].length)[0];
+    if (match) {
+      const required = Array.isArray(match[1]) ? match[1] : [match[1]];
+      const ok = required.some((r) => perms.includes(r));
+      if (!ok) {
+        const url = req.nextUrl.clone();
+        url.pathname = "/admin/dashboard";
+        url.searchParams.set("denied", match[0].replace("/admin/", ""));
+        return NextResponse.redirect(url);
+      }
+    }
+    return pass();
   }
-  return NextResponse.next();
+
+  // Everything else (retail store, shop pages) — public, plus any subdomain rewrite.
+  return pass();
 }
 
-export const config = { matcher: ["/admin/:path*", "/trade/:path*"] };
+// Runs on all page routes (needed for host-based subdomain routing); skips Next internals, static
+// files and API routes so those are never rewritten.
+export const config = { matcher: ["/((?!_next/static|_next/image|favicon.ico|api/).*)"] };
