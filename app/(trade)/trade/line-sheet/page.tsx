@@ -17,7 +17,7 @@ type Row = { sku: string; name: string; category: string; colours: string[]; qty
 
 export default async function LineSheet() {
   const session = await getWholesaleSession();
-  if (!session) redirect("/trade/login");
+  if (!session) redirect("/trade");
 
   const { products, formula } = await getStorefront({ includeWholesaleOnly: true, excludeRetailOnly: true });
   const tiers = [...(formula.wholesaleTiers ?? [])].sort((a, b) => a.minQty - b.minQty);

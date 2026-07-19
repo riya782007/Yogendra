@@ -182,7 +182,7 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
   }
 
   /** Place the order — as a logged-in dealer OR a guest (auto-creating their account from the form). */
-  async function placeOrder(opts: { cod?: boolean; proofPath?: string }) {
+  async function placeOrder(opts: { cod?: boolean; proofPath?: string; paymentRef?: string }) {
     const items = lines.map(([sku, n]) => ({ sku, qty: n }));
     if (guest) {
       return placeGuestWholesaleOrderAction({ name: gName.trim(), phone: gPhone.trim(), city: gCity.trim() }, items, opts);
@@ -304,9 +304,8 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
           </div>
           <a href="/trade/line-sheet" target="_blank" rel="noreferrer" className="text-sm px-3 py-1 rounded-full border border-sand text-ink hover:border-emerald">↓ Line-sheet (PDF)</a>
           {!guest && <button onClick={() => { setRfqOpen(true); setRfqDone(false); setRfqErr(""); }} className="text-sm px-3 py-1 rounded-full border border-gold text-gold-dark hover:bg-gold/10">Request a quote</button>}
-          {guest
-            ? <a href="/trade/login" className="text-sm px-3 py-1 rounded-full bg-ink text-cream hover:opacity-90">Dealer sign in</a>
-            : <form action={wholesaleLogoutAction}><button className="text-sm text-muted hover:text-ink">Sign out</button></form>}
+          {/* No dealer sign-in — checkout is open to everyone. Returning buyers just check out again. */}
+          {!guest && <form action={wholesaleLogoutAction}><button className="text-sm text-muted hover:text-ink">Sign out</button></form>}
         </div>
       </div>
 

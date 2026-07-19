@@ -127,8 +127,8 @@ export default async function TradeDashboard() {
   return (
     <div className="max-w-7xl mx-auto px-5 py-8">
       {promos.length > 0 && <div className="rounded-2xl overflow-hidden mb-6 shadow-card"><PromoHero promos={promos} /></div>}
-      <h1 className="font-display text-4xl text-ink mb-1">Dealer Dashboard</h1>
-      <p className="text-sm text-muted mb-6">Factory-direct trade rates. Enter quantities and place your order — ₹{minRupees} minimum. Your margin vs MRP is shown on every line.</p>
+      <h1 className="font-display text-4xl text-ink mb-1">Wholesale Catalogue</h1>
+      <p className="text-sm text-muted mb-6">Factory-direct trade rates — browse freely and check out directly. ₹{minRupees} minimum order. Your margin vs MRP is shown on every line.</p>
       <WholesaleCatalog products={list} customerName={session?.name ?? "Guest"} customerPhone={session?.phone ?? ""} minOrder={minOrder} history={history} payInfo={payInfo} outstanding={outstanding} tiers={formula.wholesaleTiers ?? []} guest={guest} />
 
       {/* Guests are asked for their details only after they've actually browsed — see TradeLeadPopup. */}

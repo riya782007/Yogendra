@@ -13,7 +13,7 @@ export const metadata: Metadata = {
 
 export default async function TradeOrders() {
   const session = await getWholesaleSession();
-  if (!session) redirect("/trade/login");
+  if (!session) redirect("/trade");
   const history = await getWholesaleOrderHistory(session.id).catch(() => []);
 
   return (

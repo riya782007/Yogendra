@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 
 export default async function TradeAccount() {
   const session = await getWholesaleSession();
-  if (!session) redirect("/trade/login");
+  if (!session) redirect("/trade");
 
   return (
     <div className="max-w-2xl mx-auto px-5 py-8">
