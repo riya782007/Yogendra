@@ -5,6 +5,7 @@ import Link from "next/link";
 import { formatPaise } from "@/lib/pricing";
 import { ProductImage } from "@/components/Placeholder";
 import { placeWholesaleOrderFromCartAction } from "@/app/actions/wholesale";
+import { deleteAbandonedCartAction } from "@/app/actions/abandoned";
 
 type Item = { sku?: string; name: string; qty: number; price: number };
 type Cart = { id: string; session_id?: string | null; customer_name?: string | null; phone?: string | null; total: number; created_at: string; items: Item[]; channel?: string | null; reached_checkout?: boolean | null };
@@ -21,7 +22,18 @@ export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMa
   const [placing, setPlacing] = useState(false);
   const [confirmPlace, setConfirmPlace] = useState(false);
   const [placeMsg, setPlaceMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const [confirmDel, setConfirmDel] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [gone, setGone] = useState(false);
   const items = cart.items ?? [];
+
+  async function remove() {
+    setDeleting(true);
+    const r = await deleteAbandonedCartAction(cart.id);
+    setDeleting(false); setConfirmDel(false);
+    if (r.ok) { setGone(true); router.refresh(); }
+    else setPlaceMsg({ text: r.error ?? "Couldn't delete.", ok: false });
+  }
   const totalQty = items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
   const phone = cart.phone ? String(cart.phone).replace(/\D/g, "") : "";
 
@@ -41,6 +53,8 @@ export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMa
   const wa = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(waMsg)}` : null;
   const when = new Date(cart.created_at).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
+  if (gone) return null;
+
   return (
     <div className="bg-white rounded-2xl p-5 shadow-card">
       <button onClick={() => setOpen((v) => !v)} className="w-full flex items-start justify-between gap-4 text-left">
@@ -51,9 +65,20 @@ export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMa
           {cart.reached_checkout && <span className="ml-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald text-white align-middle">REACHED PAYMENT</span>}
           <span className="text-xs text-muted"> · {agoText(cart.created_at)} · {totalQty} item{totalQty === 1 ? "" : "s"}</span>
         </p>
-        <div className="text-right shrink-0">
-          <p className="font-semibold text-ink">{formatPaise(cart.total)}</p>
-          {wa ? <a href={wa} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-xs text-emerald nav-link">WhatsApp nudge →</a> : <span className="text-xs text-muted">no contact</span>}
+        <div className="text-right shrink-0 flex items-start gap-2">
+          <div>
+            <p className="font-semibold text-ink">{formatPaise(cart.total)}</p>
+            {wa ? <a href={wa} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-xs text-emerald nav-link">WhatsApp nudge →</a> : <span className="text-xs text-muted">no contact</span>}
+          </div>
+          {/* Delete — for irrelevant carts (anonymous, tiny, junk). Confirm inline so it's never a mis-tap. */}
+          {confirmDel ? (
+            <span className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              <button onClick={remove} disabled={deleting} className="text-[11px] px-2 py-0.5 rounded-full bg-rose text-white disabled:opacity-50">{deleting ? "…" : "Delete"}</button>
+              <button onClick={() => setConfirmDel(false)} className="text-[11px] px-2 py-0.5 rounded-full border border-sand text-muted">No</button>
+            </span>
+          ) : (
+            <button onClick={(e) => { e.stopPropagation(); setConfirmDel(true); }} title="Remove this cart" className="text-muted hover:text-rose text-sm leading-none px-1">✕</button>
+          )}
         </div>
       </button>
 

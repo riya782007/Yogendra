@@ -59,6 +59,8 @@ export function Footer({ categories }: { categories: { name: string; slug: strin
           <span className="flex gap-2 items-center text-cream/40">
             Visa · Mastercard · UPI · Paytm · COD
             <Link href="/trade" className="ml-3 text-cream/30 hover:text-cream/60 transition-colors">Wholesale</Link>
+            {/* Discreet owner-console link so the shop can always reach the login even if a bookmark is lost. */}
+            <Link href="/login" className="ml-2 text-cream/20 hover:text-cream/50 transition-colors">Owner</Link>
           </span>
         </div>
       </div>
