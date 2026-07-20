@@ -93,19 +93,22 @@ export default async function Invoice({ params }: { params: { id: string } }) {
         /* READABILITY FIRST (owner: "elderly ko chhota lagta hai — bada aur saaf karo"). Larger base
            type, roomier rows, and NO tiny 10-11px text anywhere on paper — every line is legible at
            arm's length. A4 still fits ~16-18 items per page; the header repeats and rows never split. */
-        .print-area{font-size:13.5px !important;line-height:1.55 !important;padding:0 !important;box-shadow:none !important;border-radius:0 !important}
+        .print-area{font-size:14px !important;line-height:1.55 !important;padding:0 !important;box-shadow:none !important;border-radius:0 !important}
         .print-area .font-display{font-size:2rem !important}
-        .print-area table{font-size:13px !important}
-        .print-area table td,.print-area table th{padding-top:7px !important;padding-bottom:7px !important}
+        .print-area table{font-size:14px !important}
+        .print-area table th{font-size:13px !important}
+        .print-area table td,.print-area table th{padding-top:8px !important;padding-bottom:8px !important}
+        /* SKU sits in its own column — decent, clearly legible size (not oversized), bold mono. */
+        .print-area .bill-sku{font-size:14.5px !important;font-weight:700 !important}
         /* Raise the floor on all the small muted text (tax rows, terms, bank details, footer) so a
            document that used 10-11px on screen prints at a comfortable size. Substring match on the
            Tailwind arbitrary-size utilities means we lift them all without editing each element. */
-        .print-area [class*="text-[10px]"]{font-size:12px !important}
-        .print-area [class*="text-[11px]"]{font-size:12.5px !important}
-        .print-area [class*="text-xs"]{font-size:12.5px !important}
-        .print-area [class*="text-[13px]"]{font-size:13.5px !important}
+        .print-area [class*="text-[10px]"]{font-size:12.5px !important}
+        .print-area [class*="text-[11px]"]{font-size:13px !important}
+        .print-area [class*="text-xs"]{font-size:13px !important}
+        .print-area [class*="text-[13px]"]{font-size:14px !important}
         /* The grand total is what he and the customer look for first — make it stand out clearly. */
-        .print-area .grand-total{font-size:17px !important;font-weight:700 !important}
+        .print-area .grand-total{font-size:18px !important;font-weight:700 !important}
         .print-area tr{page-break-inside:avoid}
         .print-area thead{display:table-header-group}
       }` }} />
@@ -172,7 +175,8 @@ export default async function Invoice({ params }: { params: { id: string } }) {
             <thead className="bg-cream border-b border-sand">
               <tr className="text-left">
                 <th className={th}>#</th>
-                <th className={th}>Description</th>
+                <th className={th}>SKU · Colour</th>
+                <th className={th}>Item</th>
                 {!isCash && <th className={`${th} text-center`}>HSN</th>}
                 <th className={`${th} text-right`}>Qty</th>
                 <th className={`${th} text-right`}>Rate</th>
@@ -191,7 +195,12 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                 return (
                   <tr key={i} className="border-b border-sand/60">
                     <td className={`${td} text-muted`}>{i + 1}</td>
-                    <td className={`${td} text-ink`}>{it.product?.name}{it.variant?.color ? ` – ${it.variant.color}` : ""} <span className="font-mono font-semibold text-ink bg-cream border border-sand rounded px-1.5 py-0.5 text-[11px] whitespace-nowrap">{it.variant?.sku ?? it.product?.sku}</span></td>
+                    {/* SKU has its OWN column with the colour — the field they rely on most. Name is secondary. */}
+                    <td className={td}>
+                      <span className="bill-sku font-mono font-bold text-[14px] text-ink block leading-tight whitespace-nowrap">{it.variant?.sku ?? it.product?.sku}</span>
+                      {it.variant?.color && <span className="text-[12.5px] font-medium text-emerald-dark">{it.variant.color}</span>}
+                    </td>
+                    <td className={`${td} text-ink text-[13px] leading-snug`}>{it.product?.name}</td>
                     {!isCash && <td className={`${td} text-center text-muted`}>{HSN_JEWELLERY}</td>}
                     <td className={`${td} text-right`}>{it.qty}</td>
                     <td className={`${td} text-right ${discPct > 0 ? "text-muted line-through" : ""}`}>{formatPaise(origUnit)}</td>
@@ -201,7 +210,7 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                 );
               })}
               <tr className="bg-cream/50 font-medium">
-                <td className={td}></td><td className={`${td} text-ink`}>Total</td>{!isCash && <td className={td}></td>}
+                <td className={td}></td><td className={td}></td><td className={`${td} text-ink`}>Total</td>{!isCash && <td className={td}></td>}
                 <td className={`${td} text-right`}>{qtyTotal}</td><td className={td}></td><td className={td}></td>
                 <td className={`${td} text-right`}>{formatPaise(itemsTaxable)}</td>
               </tr>
@@ -239,7 +248,7 @@ export default async function Invoice({ params }: { params: { id: string } }) {
               </>}
               {!isCash && g.interState && <div className="flex justify-between text-muted"><span>IGST @{GST_RATE}%</span><span>{formatPaise(g.igst)}</span></div>}
               {roundOff !== 0 && <div className="flex justify-between text-muted"><span>Round off</span><span>{formatPaise(roundOff)}</span></div>}
-              <div className="flex justify-between font-semibold text-ink border-t border-sand pt-2 text-base"><span>Grand Total</span><span>{formatPaise(roundedTotal)}</span></div>
+              <div className="grand-total flex justify-between font-semibold text-ink border-t border-sand pt-2 text-base"><span>Grand Total</span><span>{formatPaise(roundedTotal)}</span></div>
               <div className="flex justify-between text-emerald-dark"><span>Amount paid</span><span>{formatPaise(paid)}</span></div>
               {(order.pay_cash > 0 || order.pay_bank > 0) && (order.pay_cash > 0 && order.pay_bank > 0) && (
                 <div className="flex justify-between text-[11px] text-muted"><span>— Cash {formatPaise(order.pay_cash)} · UPI/Bank {formatPaise(order.pay_bank)}</span><span /></div>
