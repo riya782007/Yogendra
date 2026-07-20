@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { formatPaise } from "@/lib/pricing";
 import { verifyWholesalePaymentAction } from "@/app/actions/wholesale";
 
@@ -84,6 +85,8 @@ export function WholesalePaymentCard({ order }: { order: Order }) {
           ) : (
             <button onClick={() => setConfirmReject(true)} disabled={busy} className="px-4 py-2 rounded-full border border-rose/40 text-rose text-sm hover:bg-rose/5 disabled:opacity-50">Reject</button>
           )}
+          {/* Printable packing slip (Print → Save as PDF) to hand staff for dispatch. */}
+          <Link href={`/admin/orders/${order.id}/pack`} target="_blank" className="px-4 py-2 rounded-full border border-sand text-ink text-sm hover:border-emerald">🖨️ Packing slip PDF</Link>
           {msg && <span className={`text-xs ${msg.ok ? "text-emerald-dark" : "text-rose"}`}>{msg.text}</span>}
         </div>
       </div>
