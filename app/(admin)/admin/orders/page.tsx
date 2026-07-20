@@ -137,6 +137,8 @@ export default async function StorefrontOrders({ searchParams }: { searchParams?
                     </div>
                     <div className="text-right shrink-0">
                       <p className="text-xl font-semibold text-ink">{formatPaise(r.total ?? 0)}</p>
+                      {/* Printable packing slip (browser Print → Save as PDF) for staff to pack & dispatch. */}
+                      <Link href={`/admin/orders/${r.id}/pack`} target="_blank" className="inline-block mt-1 text-xs px-3 py-1 rounded-full border border-sand text-ink hover:border-emerald">🖨️ Packing slip PDF</Link>
                       {tab === "new" && (
                         <div className="flex gap-2 mt-2">
                           <form action={acceptStorefrontOrderAction}>
