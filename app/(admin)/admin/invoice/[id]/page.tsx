@@ -89,13 +89,23 @@ export default async function Invoice({ params }: { params: { id: string } }) {
           "1 page pe atleast 20-25 items aajaye"). Rows are tightened and never split across a page.
           Scoped to this route via a page-level @page so the barcode sheet is unaffected. */}
       <style dangerouslySetInnerHTML={{ __html: `@media print{
-        @page{size:A4;margin:11mm}
-        /* Standard, readable font + comfortable row spacing (owner: "bada karo, details saaf dikhe").
-           A4 still fits ~18-20 items per page; header repeats and rows never split across pages. */
-        .print-area{font-size:12px;line-height:1.4}
-        .print-area .font-display{font-size:1.6rem}
-        .print-area table{font-size:11.5px}
-        .print-area table td,.print-area table th{padding-top:5px !important;padding-bottom:5px !important}
+        @page{size:A4;margin:12mm}
+        /* READABILITY FIRST (owner: "elderly ko chhota lagta hai — bada aur saaf karo"). Larger base
+           type, roomier rows, and NO tiny 10-11px text anywhere on paper — every line is legible at
+           arm's length. A4 still fits ~16-18 items per page; the header repeats and rows never split. */
+        .print-area{font-size:13.5px !important;line-height:1.55 !important;padding:0 !important;box-shadow:none !important;border-radius:0 !important}
+        .print-area .font-display{font-size:2rem !important}
+        .print-area table{font-size:13px !important}
+        .print-area table td,.print-area table th{padding-top:7px !important;padding-bottom:7px !important}
+        /* Raise the floor on all the small muted text (tax rows, terms, bank details, footer) so a
+           document that used 10-11px on screen prints at a comfortable size. Substring match on the
+           Tailwind arbitrary-size utilities means we lift them all without editing each element. */
+        .print-area [class*="text-[10px]"]{font-size:12px !important}
+        .print-area [class*="text-[11px]"]{font-size:12.5px !important}
+        .print-area [class*="text-xs"]{font-size:12.5px !important}
+        .print-area [class*="text-[13px]"]{font-size:13.5px !important}
+        /* The grand total is what he and the customer look for first — make it stand out clearly. */
+        .print-area .grand-total{font-size:17px !important;font-weight:700 !important}
         .print-area tr{page-break-inside:avoid}
         .print-area thead{display:table-header-group}
       }` }} />

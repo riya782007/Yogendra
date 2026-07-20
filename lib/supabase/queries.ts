@@ -2187,22 +2187,50 @@ export async function getRetailers() {
 export async function getPendingWholesalePayments(): Promise<{
   id: string; invoice_no: string | null; customer_name: string | null; customer_phone: string | null;
   total: number; amount_paid: number; payment_ref: string | null; proofUrl: string | null; created_at: string;
-  items: { name: string; qty: number }[];
+  items: { name: string; sku: string | null; qty: number; image: string | null }[];
 }[]> {
   const sb = supabaseServer();
   const { data } = await sb.from("orders")
-    .select("id,invoice_no,customer_name,customer_phone,total,amount_paid,payment_ref,payment_proof_path,payment_mode,created_at, order_items(qty, product:products(name), variant:variants(color))")
+    .select("id,invoice_no,customer_name,customer_phone,total,amount_paid,payment_ref,payment_proof_path,payment_mode,created_at, order_items(qty, product:products(name,sku), variant:variants(sku,color))")
     .eq("channel", "wholesale")
     .not("status", "in", "(cancelled,refunded)")
     .neq("payment_mode", "cod")
     .order("created_at", { ascending: false })
     .limit(200);
   const rows = ((data as any[]) ?? []).filter((o) => Math.max(0, (o.amount_paid ?? 0)) < (o.total ?? 0));
+
+  // Resolve a thumbnail per line so the approval card reads as a list with photos, not a cramped
+  // comma line — the owner verifies WHAT he's shipping at a glance. Variant colour photo, else parent.
+  const imgByUpper = new Map<string, string>();
+  const allSkus = Array.from(new Set(rows.flatMap((o: any) =>
+    ((o.order_items as any[]) ?? []).flatMap((it: any) => [it.variant?.sku, it.product?.sku].filter(Boolean)))));
+  if (allSkus.length) {
+    const firstHttp = (arr: any[]) => (arr ?? []).filter((i: any) => typeof i?.path === "string" && i.path.startsWith("http")).sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0))[0]?.path as string | undefined;
+    const chunk = <T,>(a: T[], n: number) => a.reduce<T[][]>((acc, x, i) => { (acc[Math.floor(i / n)] ??= []).push(x); return acc; }, []);
+    for (const grp of chunk(allSkus as string[], 60)) {
+      const or = grp.map((s) => `sku.ilike.${String(s).replace(/[,()]/g, "")}`).join(",");
+      const [{ data: vs }, { data: ps }] = await Promise.all([
+        sb.from("variants").select("sku,image_paths, product:products(images:product_images(path,sort))").or(or),
+        sb.from("products").select("sku, images:product_images(path,sort)").or(or),
+      ]);
+      for (const p of ((ps as any[]) ?? [])) { const img = firstHttp(p.images); if (img) imgByUpper.set(String(p.sku).toUpperCase(), img); }
+      for (const v of ((vs as any[]) ?? [])) {
+        const vimg = ((v.image_paths as string[]) ?? []).find((u: string) => typeof u === "string" && u.startsWith("http"));
+        const img = vimg ?? firstHttp(v.product?.images);
+        if (img && !imgByUpper.has(String(v.sku).toUpperCase())) imgByUpper.set(String(v.sku).toUpperCase(), img);
+      }
+    }
+  }
+
   return rows.map((o) => ({
     id: o.id, invoice_no: o.invoice_no ?? null, customer_name: o.customer_name ?? null, customer_phone: o.customer_phone ?? null,
     total: o.total ?? 0, amount_paid: o.amount_paid ?? 0, payment_ref: o.payment_ref ?? null,
     proofUrl: o.payment_proof_path ?? null, created_at: o.created_at,
-    items: ((o.order_items as any[]) ?? []).map((it) => ({ name: `${it.product?.name ?? "Item"}${it.variant?.color ? " · " + it.variant.color : ""}`, qty: it.qty ?? 0 })),
+    items: ((o.order_items as any[]) ?? []).map((it) => {
+      const sku = it.variant?.sku ?? it.product?.sku ?? null;
+      const image = imgByUpper.get(String(it.variant?.sku ?? "").toUpperCase()) ?? imgByUpper.get(String(it.product?.sku ?? "").toUpperCase()) ?? null;
+      return { name: `${it.product?.name ?? "Item"}${it.variant?.color ? " · " + it.variant.color : ""}`, sku, qty: it.qty ?? 0, image };
+    }),
   }));
 }
 export async function getAbandonedCarts() {

@@ -36,6 +36,30 @@ export default async function StorefrontOrders({ searchParams }: { searchParams?
     rows = (data as any[]) ?? [];
   }
 
+  // Thumbnails per item — the order used to show a cramped comma-line of names ("list with images"
+  // request). Resolve each SKU to the colour's own photo, else the parent product's first image.
+  const imgByUpper = new Map<string, string>();
+  const allSkus = Array.from(new Set(rows.flatMap((r: any) =>
+    ((r.order_items as any[]) ?? []).flatMap((it: any) => [it.variant?.sku, it.product?.sku].filter(Boolean)))));
+  if (allSkus.length) {
+    const firstHttp = (arr: any[]) => (arr ?? []).filter((i: any) => typeof i?.path === "string" && i.path.startsWith("http")).sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0))[0]?.path as string | undefined;
+    const chunk = <T,>(a: T[], n: number) => a.reduce<T[][]>((acc, x, i) => { (acc[Math.floor(i / n)] ??= []).push(x); return acc; }, []);
+    for (const grp of chunk(allSkus as string[], 60)) {
+      const or = grp.map((s) => `sku.ilike.${String(s).replace(/[,()]/g, "")}`).join(",");
+      const [{ data: vs }, { data: ps }] = await Promise.all([
+        sb.from("variants").select("sku,image_paths, product:products(images:product_images(path,sort))").or(or),
+        sb.from("products").select("sku, images:product_images(path,sort)").or(or),
+      ]);
+      for (const p of ((ps as any[]) ?? [])) { const img = firstHttp(p.images); if (img) imgByUpper.set(String(p.sku).toUpperCase(), img); }
+      for (const v of ((vs as any[]) ?? [])) {
+        const vimg = ((v.image_paths as string[]) ?? []).find((u: string) => typeof u === "string" && u.startsWith("http"));
+        const img = vimg ?? firstHttp(v.product?.images);
+        if (img && !imgByUpper.has(String(v.sku).toUpperCase())) imgByUpper.set(String(v.sku).toUpperCase(), img);
+      }
+    }
+  }
+  const imgFor = (it: any) => imgByUpper.get(String(it.variant?.sku ?? "").toUpperCase()) ?? imgByUpper.get(String(it.product?.sku ?? "").toUpperCase());
+
   const tabCls = (k: string) => `px-3.5 py-1.5 rounded-full text-sm ${tab === k ? "bg-ink text-white" : "bg-white border border-sand text-muted hover:border-emerald"}`;
 
   return (
@@ -91,9 +115,25 @@ export default async function StorefrontOrders({ searchParams }: { searchParams?
                           <span className="text-xs text-emerald nav-link">📷 Payment screenshot ↗</span>
                         </a>
                       )}
-                      <p className="text-xs text-muted mt-1.5">
-                        {items.map((it: any) => `${it.product?.name ?? it.variant?.sku ?? "item"}${it.variant?.color ? ` (${it.variant.color})` : ""} ×${it.qty}`).join(" · ") || "—"}
-                      </p>
+                      {/* Items as a readable list — each on its own line with its photo, colour and qty. */}
+                      <div className="mt-2.5 grid gap-1.5">
+                        {items.length === 0 && <p className="text-sm text-muted">—</p>}
+                        {items.map((it: any, i: number) => {
+                          const img = imgFor(it);
+                          return (
+                            <div key={i} className="flex items-center gap-2.5">
+                              <div className="h-12 w-11 rounded-lg overflow-hidden bg-cream border border-sand shrink-0">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                {img ? <img src={img} alt="" className="w-full h-full object-cover" /> : <span className="flex items-center justify-center h-full text-[10px] text-muted">—</span>}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-sm text-ink leading-tight">{it.product?.name ?? it.variant?.sku ?? "item"}{it.variant?.color ? <span className="text-muted"> · {it.variant.color}</span> : ""}</p>
+                                <p className="text-xs text-muted"><span className="font-mono">{it.variant?.sku ?? it.product?.sku}</span> · Qty <b className="text-ink">{it.qty}</b></p>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                     <div className="text-right shrink-0">
                       <p className="text-xl font-semibold text-ink">{formatPaise(r.total ?? 0)}</p>

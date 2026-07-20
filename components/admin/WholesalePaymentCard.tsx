@@ -8,7 +8,7 @@ import { verifyWholesalePaymentAction } from "@/app/actions/wholesale";
 type Order = {
   id: string; invoice_no: string | null; customer_name: string | null; customer_phone: string | null;
   total: number; amount_paid: number; payment_ref: string | null; proofUrl: string | null; created_at: string;
-  items: { name: string; qty: number }[];
+  items: { name: string; sku: string | null; qty: number; image: string | null }[];
 };
 
 /** One wholesale order awaiting payment approval: the dealer's screenshot on the left, the order + a
@@ -53,7 +53,21 @@ export function WholesalePaymentCard({ order }: { order: Order }) {
           <span className="text-xs text-muted">· {order.invoice_no || order.id.slice(0, 8).toUpperCase()} · {when}</span>
           {wa && <a href={wa} target="_blank" rel="noreferrer" className="text-xs text-emerald nav-link">WhatsApp →</a>}
         </div>
-        <p className="text-sm text-muted truncate mt-0.5">{order.items.map((i) => `${i.name} ×${i.qty}`).join(", ") || "—"}</p>
+        {/* Items as a photo list — verify exactly what's being shipped, not a cramped comma line. */}
+        <div className="mt-2 grid gap-1.5">
+          {order.items.length === 0 && <p className="text-sm text-muted">—</p>}
+          {order.items.map((it, i) => (
+            <div key={i} className="flex items-center gap-2.5">
+              <div className="h-11 w-10 rounded-lg overflow-hidden bg-cream border border-sand shrink-0">
+                {it.image ? <img src={it.image} alt="" className="w-full h-full object-cover" /> : <span className="flex items-center justify-center h-full text-[10px] text-muted">—</span>}
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm text-ink leading-tight">{it.name}</p>
+                <p className="text-xs text-muted"><span className="font-mono">{it.sku}</span> · Qty <b className="text-ink">{it.qty}</b></p>
+              </div>
+            </div>
+          ))}
+        </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5 text-sm">
           <span>Amount: <b className="text-ink">{formatPaise(order.total)}</b></span>
           {order.payment_ref && <span className="text-muted">UPI ref: <span className="font-mono text-ink">{order.payment_ref}</span></span>}
