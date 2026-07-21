@@ -11,6 +11,7 @@ import { Pager } from "@/components/admin/Pager";
 import { getSession, can } from "@/lib/auth";
 import { CatalogueRow } from "@/components/admin/CatalogueRow";
 import { MoreDesignsBulk } from "@/components/admin/MoreDesignsBulk";
+import { SeoTitlesButton } from "@/components/admin/SeoTitlesButton";
 
 export const metadata = { title: "Owner Console · Catalogue" };
 const PAGE_SIZE = 25;
@@ -70,6 +71,7 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
             <form action={genAllContent}><button className="btn-primary px-4 py-2.5 text-sm font-medium">✨ Generate all AI pages</button></form>
             <form action={genEmbeddings}><button className="px-4 py-2.5 text-sm font-medium rounded-full border border-emerald text-emerald hover:bg-emerald-mist transition-colors">⌖ Build recommendations</button></form>
           </>}
+          <SeoTitlesButton />
         </div>
       </div>
 
