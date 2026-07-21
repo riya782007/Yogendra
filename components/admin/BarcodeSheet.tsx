@@ -160,7 +160,7 @@ export function BarcodeSheet({ products }: { products: P[] }) {
                        display: flex; flex-direction: column; align-items: center; justify-content: center;
                        text-align: center; font-family: Arial, Helvetica, sans-serif; color: #000; }
       .bc-name { font-size: 6pt; line-height: 1.1; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .bc-sku { font-size: 6pt; margin-bottom: 0.4mm; line-height: 1; letter-spacing: 0.02em; }
+      .bc-sku { font-size: 6.5pt; margin-bottom: 0.4mm; line-height: 1; letter-spacing: 0.02em; font-weight: 700; }
       .bc-price { font-size: 7.5pt; line-height: 1.05; font-weight: 700; -webkit-text-stroke: 0.15pt #000; }
       .barcode-label svg { height: 9mm; width: ${barW}%; display: block; margin: 0 auto; }
     </style></head><body></body></html>`);
@@ -346,7 +346,7 @@ export function BarcodeSheet({ products }: { products: P[] }) {
                 <div key={i} className="barcode-label text-center bg-white break-inside-avoid">
                   {opts.name && <p className="bc-name font-semibold text-ink truncate">{it.name}</p>}
                   {/* SKU sits ABOVE the barcode to match the reference tag layout. */}
-                  {opts.sku && <p className="bc-sku tracking-wide text-ink">SKU {it.sku}</p>}
+                  {opts.sku && <p className="bc-sku tracking-wide text-ink font-bold">SKU: {it.sku}</p>}
                   <Barcode value={it.sku} height={28} unit={cols >= 8 ? 0.85 : 1.1} />
                   {line && <p className="bc-price font-bold text-ink">{line}</p>}
                 </div>
