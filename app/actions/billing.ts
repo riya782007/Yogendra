@@ -167,7 +167,9 @@ export async function posStockAction(skus: string[]): Promise<{ sku: string; qty
 }
 
 export async function posLookupAction(rawCode: string): Promise<PosItem[]> {
-  if (!(await requirePerm("billing.sell"))) return [];
+  // Read-only product lookup — used by the POS billing screen AND the Estimates screen, so allow
+  // either permission (a user who can raise an estimate must be able to find the product).
+  if (!(await requirePerm("billing.sell")) && !(await requirePerm("estimates.create"))) return [];
   const code = (rawCode ?? "").trim();
   if (!code) return [];
   const sb = supabaseServer();

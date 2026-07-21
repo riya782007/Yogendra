@@ -1,7 +1,7 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { formatPaise } from "@/lib/pricing";
-import { createEstimateAction } from "@/app/actions/billing";
+import { createEstimateAction, posLookupAction } from "@/app/actions/billing";
 import { QtyField } from "@/components/admin/QtyField";
 
 type P = { sku: string; name: string; price: number; wholesale: number; parentSku?: string; parentName?: string };
@@ -25,17 +25,46 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
-  const matches = useMemo(() => (q.trim() ? products.filter((p) => (p.name + p.sku).toLowerCase().includes(q.toLowerCase())).slice(0, 6) : []), [q, products]);
+  // Products/variants created AFTER this page loaded — or any SKU beyond the initially-loaded list —
+  // aren't in `products`. When a search finds nothing locally, look it up LIVE from the database (the
+  // exact same lookup the POS billing screen uses) and merge it in, so EVERY product is findable here.
+  const [extra, setExtra] = useState<P[]>([]);
+  const pool = useMemo(() => {
+    const seen = new Set(products.map((p) => p.sku.toUpperCase()));
+    return [...products, ...extra.filter((e) => !seen.has(e.sku.toUpperCase()))];
+  }, [products, extra]);
+
+  const matches = useMemo(() => (q.trim() ? pool.filter((p) => (p.name + p.sku).toLowerCase().includes(q.toLowerCase())).slice(0, 6) : []), [q, pool]);
+
+  useEffect(() => {
+    const code = q.trim();
+    if (code.length < 2) return;
+    // Already have a local hit → no need to hit the server.
+    if (pool.some((p) => (p.name + p.sku).toLowerCase().includes(code.toLowerCase()))) return;
+    const t = setTimeout(() => {
+      posLookupAction(code).then((hits) => {
+        if (!hits?.length) return;
+        setExtra((prev) => {
+          const have = new Set(prev.map((x) => x.sku.toUpperCase()));
+          const add = (hits as any[])
+            .filter((h) => !have.has(String(h.sku).toUpperCase()))
+            .map((h) => ({ sku: h.sku, name: h.name, price: h.price, wholesale: h.wholesale, parentSku: h.parentSku, parentName: h.parentName }));
+          return add.length ? [...prev, ...add] : prev;
+        });
+      }).catch(() => { /* search never blocks the counter */ });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [q, pool]);
   // Bulk shortcut: any matched design with 2+ colours gets a single "add all colours" row.
   const matchParents = useMemo(() => {
     const seen = new Map<string, { sku: string; name: string; count: number }>();
     for (const m of matches) {
       if (!m.parentSku || seen.has(m.parentSku)) continue;
-      const count = products.filter((p) => p.parentSku === m.parentSku).length;
+      const count = pool.filter((p) => p.parentSku === m.parentSku).length;
       if (count >= 2) seen.set(m.parentSku, { sku: m.parentSku, name: m.parentName ?? m.name, count });
     }
     return [...seen.values()].slice(0, 3);
-  }, [matches, products]);
+  }, [matches, pool]);
   const custMatches = useMemo(() => {
     const s = custQ.trim().toLowerCase();
     if (!s) return [];
@@ -55,7 +84,7 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
 
   const add = (p: P) => { setLines((prev) => (prev.find((l) => l.sku === p.sku) ? prev.map((l) => (l.sku === p.sku ? { ...l, qty: l.qty + 1 } : l)) : [...prev, { sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, qty: 1, override: "" }])); setQ(""); };
   const addAllVariants = (parentSku: string) => {
-    const vars = products.filter((p) => p.parentSku === parentSku);
+    const vars = pool.filter((p) => p.parentSku === parentSku);
     setLines((prev) => {
       const have = new Set(prev.map((l) => l.sku));
       return [...prev, ...vars.filter((v) => !have.has(v.sku)).map((v) => ({ sku: v.sku, name: v.name, price: v.price, wholesale: v.wholesale, qty: 1, override: "" }))];
