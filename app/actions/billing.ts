@@ -256,7 +256,7 @@ export async function addEstimateLineAction(formData: FormData): Promise<void> {
   revalidatePath(`/admin/estimate/${estimateId}`);
 }
 
-export async function createEstimateAction(input: { items: { sku: string; qty: number; priceRupees?: number }[]; customer: { name?: string; phone?: string }; packingRupees?: number; courierRupees?: number; adjustmentRupees?: number }): Promise<{ ok: boolean; estimateId?: string; total?: number; error?: string }> {
+export async function createEstimateAction(input: { items: { sku: string; qty: number; priceRupees?: number }[]; customer: { name?: string; phone?: string }; packingRupees?: number; courierRupees?: number; adjustmentRupees?: number; gst?: "none" | "inclusive" | "exclusive" }): Promise<{ ok: boolean; estimateId?: string; total?: number; error?: string }> {
   if (!(await requirePerm("estimates.create"))) return { ok: false, error: "Your role can't create estimates." };
   if (!input.items?.length) return { ok: false, error: "Add at least one item" };
   const sb = supabaseServer();
@@ -290,6 +290,13 @@ export async function createEstimateAction(input: { items: { sku: string; qty: n
       }
     }
     if (priced.length || hasCharges) await recomputeEstimateTotal(sb, estimateId);
+    // GST choice from the creation screen. GST is OPTIONAL — default is a plain no-tax estimate;
+    // the owner turns it on (extra / included) only when the buyer needs a tax quote.
+    if (input.gst === "inclusive" || input.gst === "exclusive") {
+      await sb.from("estimates").update({ gst: true, gst_mode: input.gst }).eq("id", estimateId);
+    } else {
+      await sb.from("estimates").update({ gst: false, gst_mode: "none" }).eq("id", estimateId);
+    }
     // The RPC stores only the name; persist the phone too.
     if (input.customer?.phone) await sb.from("estimates").update({ customer_phone: input.customer.phone }).eq("id", estimateId);
     const { data: est } = await sb.from("estimates").select("total").eq("id", estimateId).maybeSingle();

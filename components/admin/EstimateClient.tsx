@@ -1,6 +1,7 @@
 "use client";
 import { useState, useMemo, useEffect } from "react";
 import { formatPaise } from "@/lib/pricing";
+import { GST_RATE } from "@/lib/business";
 import { createEstimateAction, posLookupAction } from "@/app/actions/billing";
 import { QtyField } from "@/components/admin/QtyField";
 
@@ -20,6 +21,7 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
   const [packing, setPacking] = useState("");
   const [courier, setCourier] = useState("");
   const [adjustment, setAdjustment] = useState(""); // ± round-off / concession
+  const [gst, setGst] = useState<"none" | "exclusive" | "inclusive">("none"); // GST is OPTIONAL — off by default
   const [custQ, setCustQ] = useState("");
   const [custOpen, setCustOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -82,6 +84,10 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
   const toPaise = (v: string) => { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) : 0; };
   const chargesTotal = Math.max(0, toPaise(packing)) + Math.max(0, toPaise(courier)) + toPaise(adjustment);
   const total = lines.reduce((s, l) => s + effUnit(l) * l.qty, 0) + chargesTotal;
+  // GST is optional. "exclusive" adds it on top (shown as a separate line); "inclusive" means the rates
+  // already include it; "none" is a plain quotation with no tax.
+  const gstAmt = gst === "exclusive" ? Math.round((total * GST_RATE) / 100) : 0;
+  const grand = total + gstAmt;
 
   const add = (p: P) => { setLines((prev) => (prev.find((l) => l.sku === p.sku) ? prev.map((l) => (l.sku === p.sku ? { ...l, qty: l.qty + 1 } : l)) : [...prev, { sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, qty: 1, override: "" }])); setQ(""); };
   const addAllVariants = (parentSku: string) => {
@@ -125,9 +131,10 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
       items: lines.map((l) => ({ sku: l.sku, qty: l.qty, priceRupees: effUnit(l) / 100 })),
       customer: { name, phone },
       packingRupees: Number(packing) || 0, courierRupees: Number(courier) || 0, adjustmentRupees: Number(adjustment) || 0,
+      gst,
     });
     setBusy(false);
-    if (res.ok) { setMsg(`✓ Estimate saved (${formatPaise(res.total ?? 0)}) — find it below to bill or hold.`); setLines([]); setName(""); setPhone(""); setCustType("retail"); setPacking(""); setCourier(""); setAdjustment(""); }
+    if (res.ok) { setMsg(`✓ Estimate saved (${formatPaise(res.total ?? 0)}${gst !== "none" ? " + GST" : ""}) — find it below to bill or hold.`); setLines([]); setName(""); setPhone(""); setCustType("retail"); setPacking(""); setCourier(""); setAdjustment(""); setGst("none"); }
     else setMsg(`✕ ${res.error}`);
   }
 
@@ -213,8 +220,24 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
           <label className="text-[11px] text-muted">Adjust ± ₹<input value={adjustment} onChange={(e) => setAdjustment(e.target.value)} inputMode="decimal" placeholder="0" className={`${input} mt-0.5`} /></label>
         </div>
       )}
-      <div className="flex items-center justify-end gap-3 mt-4">
-        <span className="text-lg font-semibold text-ink whitespace-nowrap">{formatPaise(total)}</span>
+      {/* GST — OPTIONAL. A new estimate is a plain no-tax quotation by default; turn GST on only when
+          the buyer needs a tax quote. This is the control the owner asked to see while making estimates. */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mt-4 pt-3 border-t border-sand">
+        <label className="flex items-center gap-2 text-sm text-muted">
+          <span className="font-medium text-ink">GST</span>
+          <select value={gst} onChange={(e) => setGst(e.target.value as any)} className="rounded-xl border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-emerald">
+            <option value="none">No GST — plain estimate</option>
+            <option value="exclusive">Add GST {GST_RATE}% (extra)</option>
+            <option value="inclusive">GST {GST_RATE}% included in price</option>
+          </select>
+        </label>
+        <div className="text-right">
+          {gst === "exclusive" && <p className="text-xs text-muted">Subtotal {formatPaise(total)} + GST {formatPaise(gstAmt)}</p>}
+          {gst === "inclusive" && <p className="text-xs text-muted">Price includes {GST_RATE}% GST</p>}
+          <span className="text-lg font-semibold text-ink whitespace-nowrap">{formatPaise(grand)}</span>
+        </div>
+      </div>
+      <div className="flex justify-end mt-3">
         <button onClick={save} disabled={busy || !lines.length} className="btn-primary px-5 py-2.5 text-sm font-medium disabled:opacity-50">{busy ? "Saving…" : "Save estimate"}</button>
       </div>
       {msg && <p className="text-sm mt-2 text-ink">{msg}</p>}
