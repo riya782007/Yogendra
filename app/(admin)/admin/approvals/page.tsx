@@ -44,7 +44,7 @@ export default async function Approvals() {
                 <input name="otp" placeholder="Owner OTP" className="rounded border border-diva-ink/15 px-3 py-1.5 text-sm" />
                 <button name="approve" value="1" className="px-4 py-1.5 rounded-full bg-green-600 text-white text-sm">Approve</button>
                 <button name="approve" value="0" className="px-4 py-1.5 rounded-full bg-diva-ink/10 text-diva-ink text-sm">Reject</button>
-                <span className="text-xs text-diva-ink/40">Demo OTP: 482913</span>
+                <span className="text-xs text-diva-ink/40">Enter the owner's private OTP to apply.</span>
               </form>
             )}
           </div>
