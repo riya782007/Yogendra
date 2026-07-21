@@ -8,6 +8,7 @@ import { liveOffer } from "@/lib/offers";
 import { formatPaise, resolvePrices, overridesOf } from "@/lib/pricing";
 import { Gallery } from "@/components/site/Gallery";
 import { BuyBox } from "@/components/site/BuyBox";
+import { VariantImageProvider } from "@/components/site/VariantImageSync";
 import { Stars } from "@/components/site/Stars";
 import { Back } from "@/components/site/Back";
 import { Reveal } from "@/components/site/Reveal";
@@ -100,6 +101,7 @@ export default async function ProductPage({ params }: Params) {
         </nav>
       </div>
 
+      <VariantImageProvider>
       <div className="grid md:grid-cols-2 gap-10">
         <div className="animate-fadeIn md:sticky md:top-24 self-start"><Gallery name={p.name} images={galleryImages} /></div>
 
@@ -152,6 +154,7 @@ export default async function ProductPage({ params }: Params) {
           )}
         </div>
       </div>
+      </VariantImageProvider>
 
       {/* REVIEWS */}
       <section id="reviews" className="mt-16 grid md:grid-cols-3 gap-8">

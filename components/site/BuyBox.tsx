@@ -5,6 +5,7 @@ import { useCart } from "@/components/cart/CartContext";
 import { useToast } from "@/components/ui/Toast";
 import { formatPaise } from "@/lib/pricing";
 import { requestNotifyAction } from "@/app/actions/notify";
+import { useVariantImage } from "@/components/site/VariantImageSync";
 
 export type BuyVariant = { sku: string; label: string; image: string | null; price: number; qty: number };
 
@@ -16,6 +17,7 @@ export function BuyBox({ variants = [], waHref, item }: {
   const { add } = useCart();
   const { toast } = useToast();
   const router = useRouter();
+  const { setActivePath } = useVariantImage();
   const hasVariants = variants.length > 0;
   const [vi, setVi] = useState(0);
   const [qty, setQty] = useState(1);
@@ -70,7 +72,7 @@ export function BuyBox({ variants = [], waHref, item }: {
             {variants.map((v, i) => {
               const on = i === vi;
               return (
-                <button key={v.sku} onClick={() => { setVi(i); setQty(1); }} title={v.label}
+                <button key={v.sku} onClick={() => { setVi(i); setQty(1); if (v.image) setActivePath(v.image); }} title={v.label}
                   className={`relative w-16 rounded-xl border p-1 text-center transition-all ${on ? "border-emerald ring-2 ring-emerald/30" : "border-sand hover:border-gold"} ${v.qty <= 0 ? "opacity-50" : ""}`}>
                   <div className="aspect-square rounded-lg overflow-hidden bg-cream grid place-items-center">
                     {v.image ? <img src={v.image} alt={v.label} className="w-full h-full object-cover" /> : <span className="text-[10px] text-muted px-1 leading-tight">{v.label}</span>}

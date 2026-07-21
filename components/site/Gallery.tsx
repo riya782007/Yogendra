@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { isRealImage } from "@/components/Placeholder";
+import { useVariantImage } from "@/components/site/VariantImageSync";
 
 const GRAD = "linear-gradient(135deg,#E7C9D2,#F2EADA,#E2C887)";
 
@@ -25,6 +26,15 @@ export function Gallery({ name, images }: { name: string; images: { path: string
   const [active, setActive] = useState(0);
   const [open, setOpen] = useState(false);
   const initials = name.split(" ").slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+
+  // When the buyer picks a colour in the BuyBox, jump the hero to that colour's photo.
+  const { activePath } = useVariantImage();
+  useEffect(() => {
+    if (!activePath) return;
+    const i = real.findIndex((im) => im.path === activePath);
+    if (i >= 0) setActive(i);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePath]);
 
   if (real.length === 0) {
     return (
