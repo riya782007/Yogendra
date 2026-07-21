@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 // Set NEXT_PUBLIC_SITE_URL in Vercel to the final brand domain (e.g. https://blythediva.com).
 // Fallback = the stable production alias, never the per-deployment URL.
-const BASE = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://yogendra-ten.vercel.app").replace(/\/$/, "");
+const BASE = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://blythediva.com").replace(/\/$/, "");
 export default function robots(): MetadataRoute.Robots {
   return {
     rules: [{

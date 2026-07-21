@@ -59,10 +59,16 @@ const GROUPS: { title: string; links: L[] }[] = [
     { href: "/admin/roles", label: "Roles", icon: "⚿", perm: "roles.manage" },
   ]},
 ];
+// ABSOLUTE brand-domain links: the owner opens the admin from various hosts, and relative links used to
+// resolve to whatever host he was on (e.g. the raw *.vercel.app URL). These always point at the real
+// customer/dealer domains. Derived from NEXT_PUBLIC_SITE_URL (set to https://blythediva.com in Vercel);
+// the trade subdomain is derived from it (https://blythediva.com → https://trade.blythediva.com).
+const SITE = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://blythediva.com").replace(/\/$/, "");
+const TRADE = SITE.replace("://", "://trade.");
 const EXTERNAL: L[] = [
-  { href: "/shop", label: "Retail store", icon: "🛍" },
-  { href: "/trade", label: "Trade Portal", icon: "📦" },
-  { href: "/catalog", label: "Share Catalogue", icon: "📤" },
+  { href: `${SITE}/shop`, label: "Retail store", icon: "🛍" },
+  { href: TRADE, label: "Trade Portal", icon: "📦" },
+  { href: `${SITE}/catalog`, label: "Share Catalogue", icon: "📤" },
 ];
 
 const allow = (perms: Perms, perm?: string) => !perm || perms === "*" || perms.includes(perm);
