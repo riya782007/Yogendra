@@ -49,6 +49,7 @@ export function BarcodeSheet({ products }: { products: P[] }) {
   const [adjTop, setAdjTop] = useState(0);   // mm added to the top margin
   const [adjRow, setAdjRow] = useState(0);   // mm added to EACH row's height
   const [barW, setBarW] = useState(92);      // printed bar width as % of the label
+  const [scanMsg, setScanMsg] = useState(""); // feedback for scan / Enter-to-add
 
   // Products/variants created AFTER this page loaded aren't in `products`. When a search finds nothing
   // locally, look it up LIVE from the database and merge the results in — so a just-created SKU always
@@ -101,6 +102,25 @@ export function BarcodeSheet({ products }: { products: P[] }) {
     });
     setQ("");
   };
+  // SCAN / Enter: queue the label for the typed-or-scanned code instantly (same behaviour as POS &
+  // Estimates). Exact SKU wins; a single fuzzy match is queued too; anything not in memory is looked
+  // up live from the database so a freshly-created SKU always adds.
+  async function scanAdd() {
+    const code = q.trim();
+    if (!code) return;
+    const exact = pool.find((p) => p.sku.toLowerCase() === code.toLowerCase());
+    if (exact) { add(exact); setScanMsg(`✓ Queued ${exact.sku}`); return; }
+    const fuzzy = pool.filter((p) => (p.name + p.sku).toLowerCase().includes(code.toLowerCase()));
+    if (fuzzy.length === 1) { add(fuzzy[0]); setScanMsg(`✓ Queued ${fuzzy[0].sku}`); return; }
+    if (fuzzy.length > 1) { setScanMsg(`“${code}” matches ${fuzzy.length} items — pick one from the list`); return; }
+    try {
+      const hits = await barcodeLookupAction(code);
+      const pick = hits.find((h) => h.sku.toLowerCase() === code.toLowerCase()) ?? (hits.length === 1 ? hits[0] : null);
+      if (pick) { add(pick as P); setScanMsg(`✓ Queued ${pick.sku}`); }
+      else setScanMsg(`✕ “${code}” not found`);
+    } catch { setScanMsg(`✕ “${code}” not found`); }
+  }
+
   const patch = (sku: string, p: Partial<Row>) => setRows((prev) => prev.map((x) => (x.sku === sku ? { ...x, ...p } : x)));
   const rm = (sku: string) => setRows((prev) => prev.filter((x) => x.sku !== sku));
 
@@ -203,7 +223,10 @@ export function BarcodeSheet({ products }: { products: P[] }) {
           those variant codes scan at billing to pick the exact piece. Use <b>Add all variants</b> to queue every colour of a design.
         </p>
         <div className="relative mb-4">
-          <input className={input} placeholder="Search product or variant by name / SKU…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <input className={input} placeholder="🔍 Scan barcode or search by name / SKU, then Enter…" value={q}
+            onChange={(e) => { setQ(e.target.value); setScanMsg(""); }}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); scanAdd(); } }} />
+          {scanMsg && <p className={`text-xs mt-1 ${scanMsg.startsWith("✓") ? "text-emerald-dark" : "text-rose"}`}>{scanMsg}</p>}
           {matches.length > 0 && (
             <div className="absolute z-10 left-0 right-0 mt-1 bg-white rounded-xl shadow-luxe border border-sand overflow-hidden">
               {matches.map((p) => {
