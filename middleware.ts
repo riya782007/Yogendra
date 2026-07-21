@@ -50,9 +50,13 @@ export function middleware(req: NextRequest) {
   // and the private admin subdomain shows the console — while blythediva.com stays the retail store.
   let path = req.nextUrl.pathname;
   let rewritten = false;
-  if (host === TRADE_HOST && !path.startsWith("/trade")) {
+  // Auth pages must stay reachable on the custom subdomains WITHOUT being prefixed — otherwise the
+  // admin host rewrites /login → /admin/login, which needs auth, which redirects back to /login…
+  // an infinite ERR_TOO_MANY_REDIRECTS loop. Keep /login (and its assets) un-prefixed.
+  const isAuthPath = path === "/login" || path.startsWith("/login/");
+  if (host === TRADE_HOST && !path.startsWith("/trade") && !isAuthPath) {
     path = "/trade" + (path === "/" ? "" : path); rewritten = true;
-  } else if (host === ADMIN_HOST && !path.startsWith("/admin")) {
+  } else if (host === ADMIN_HOST && !path.startsWith("/admin") && !isAuthPath) {
     path = "/admin" + (path === "/" ? "" : path); rewritten = true;
   }
   // Keep the sections apart: the trade subdomain must never expose /admin, and vice-versa.
