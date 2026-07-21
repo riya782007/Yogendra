@@ -1,7 +1,8 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Barcode } from "@/components/admin/Barcode";
 import { QtyField } from "@/components/admin/QtyField";
+import { barcodeLookupAction } from "@/app/actions/barcodes";
 
 type P = {
   sku: string; name: string;
@@ -49,10 +50,37 @@ export function BarcodeSheet({ products }: { products: P[] }) {
   const [adjRow, setAdjRow] = useState(0);   // mm added to EACH row's height
   const [barW, setBarW] = useState(92);      // printed bar width as % of the label
 
+  // Products/variants created AFTER this page loaded aren't in `products`. When a search finds nothing
+  // locally, look it up LIVE from the database and merge the results in — so a just-created SKU always
+  // appears without a reload. Debounced so it fires once the owner stops typing.
+  const [extra, setExtra] = useState<P[]>([]);
+  const pool = useMemo(() => {
+    const seen = new Set(products.map((p) => p.sku.toUpperCase()));
+    return [...products, ...extra.filter((e) => !seen.has(e.sku.toUpperCase()))];
+  }, [products, extra]);
+
   const matches = useMemo(
-    () => (q.trim() ? products.filter((p) => (p.name + p.sku).toLowerCase().includes(q.toLowerCase())).slice(0, 10) : []),
-    [q, products],
+    () => (q.trim() ? pool.filter((p) => (p.name + p.sku).toLowerCase().includes(q.toLowerCase())).slice(0, 12) : []),
+    [q, pool],
   );
+
+  useEffect(() => {
+    const code = q.trim();
+    if (code.length < 2) return;
+    // Already have a local hit → no need to hit the server.
+    if (pool.some((p) => (p.name + p.sku).toLowerCase().includes(code.toLowerCase()))) return;
+    const t = setTimeout(() => {
+      barcodeLookupAction(code).then((hits) => {
+        if (!hits?.length) return;
+        setExtra((prev) => {
+          const have = new Set(prev.map((x) => x.sku.toUpperCase()));
+          const add = hits.filter((h) => !have.has(h.sku.toUpperCase())) as P[];
+          return add.length ? [...prev, ...add] : prev;
+        });
+      }).catch(() => { /* search never blocks */ });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [q, pool]);
   const G = PAPER.find((p) => p.key === paper) ?? PAPER[0];
   // Handover: the owner uses one fixed pre-cut sheet and never changes these, so the paper-size,
   // label-content and printer-alignment controls are hidden (defaults kept). Set true to expose them.
@@ -66,7 +94,7 @@ export function BarcodeSheet({ products }: { products: P[] }) {
   const add = (p: P) => { setRows((prev) => (prev.find((x) => x.sku === p.sku) ? prev : [...prev, toRow(p)])); setQ(""); };
   /** Variant SKUs are what the POS scans — a design with colours should print one per variant. */
   const addAllVariants = (parentSku: string) => {
-    const vars = products.filter((x) => x.kind === "variant" && x.parentSku === parentSku);
+    const vars = pool.filter((x) => x.kind === "variant" && x.parentSku === parentSku);
     setRows((prev) => {
       const have = new Set(prev.map((x) => x.sku));
       return [...prev, ...vars.filter((v) => !have.has(v.sku)).map(toRow)];
