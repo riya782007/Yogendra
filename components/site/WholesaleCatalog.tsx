@@ -268,7 +268,7 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
     const imgs = imgsOf(p);
     return (
       <button onClick={() => imgs.length && setZoom({ imgs, i: 0, name: p.name })} className={`relative block bg-cream overflow-hidden ${imgs.length ? "cursor-zoom-in" : ""} ${className ?? ""}`} aria-label="Enlarge">
-        {imgs[0] ? <img src={imgs[0]} alt={p.name} className="w-full h-full object-cover" /> : <ProductImage name={p.name} />}
+        {imgs[0] ? <img src={imgs[0]} alt={p.name} loading="lazy" decoding="async" className="w-full h-full object-cover" /> : <ProductImage name={p.name} />}
         {imgs.length > 1 && <span className="absolute bottom-0.5 right-0.5 bg-ink/75 text-white text-[9px] leading-none px-1 py-0.5 rounded">1/{imgs.length}</span>}
       </button>
     );
@@ -282,7 +282,7 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
       <div className="flex gap-1 mt-1">
         {imgs.slice(0, 4).map((u, k) => (
           <button key={k} onClick={() => setZoom({ imgs, i: k, name: p.name })} className={`${size} rounded overflow-hidden bg-cream ring-1 ring-sand cursor-zoom-in`} aria-label={`Photo ${k + 1}`}>
-            <img src={u} alt="" className="w-full h-full object-cover" />
+            <img src={u} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
           </button>
         ))}
       </div>
