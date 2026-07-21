@@ -24,6 +24,7 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
   const [custOpen, setCustOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const [scanMsg, setScanMsg] = useState("");
 
   // Products/variants created AFTER this page loaded — or any SKU beyond the initially-loaded list —
   // aren't in `products`. When a search finds nothing locally, look it up LIVE from the database (the
@@ -95,6 +96,25 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
   function pickCustomer(c: Cust) { setName(c.name); setPhone(c.phone); setCustType(c.type === "wholesale" ? "wholesale" : "retail"); setCustQ(""); setCustOpen(false); }
   function walkIn(type: "retail" | "wholesale") { setName(type === "wholesale" ? "Cash (W)" : "Cash (R)"); setPhone(""); setCustType(type); }
 
+  // SCAN (Enter / barcode-gun): resolve the typed-or-scanned code and add it as a line instantly —
+  // exactly like the POS billing screen. Exact SKU wins; a single fuzzy match is added too; anything
+  // not in memory is looked up live from the database so a scanned label always adds.
+  async function scanAdd() {
+    const code = q.trim();
+    if (!code) return;
+    const exact = pool.find((p) => p.sku.toLowerCase() === code.toLowerCase());
+    if (exact) { add(exact); setScanMsg(`✓ Added ${exact.sku}`); return; }
+    const fuzzy = pool.filter((p) => (p.name + p.sku).toLowerCase().includes(code.toLowerCase()));
+    if (fuzzy.length === 1) { add(fuzzy[0]); setScanMsg(`✓ Added ${fuzzy[0].sku}`); return; }
+    if (fuzzy.length > 1) { setScanMsg(`“${code}” matches ${fuzzy.length} items — pick one from the list`); return; }
+    try {
+      const hits = await posLookupAction(code);
+      const pick = (hits as any[]).find((h) => String(h.sku).toLowerCase() === code.toLowerCase()) ?? (hits.length === 1 ? (hits as any[])[0] : null);
+      if (pick) { add({ sku: pick.sku, name: pick.name, price: pick.price, wholesale: pick.wholesale, parentSku: pick.parentSku, parentName: pick.parentName } as P); setScanMsg(`✓ Added ${pick.sku}`); }
+      else setScanMsg(`✕ “${code}” not found`);
+    } catch { setScanMsg(`✕ “${code}” not found`); }
+  }
+
   const input = "w-full rounded-xl border border-sand px-4 py-2.5 text-sm bg-white outline-none focus:border-emerald";
 
   async function save() {
@@ -150,9 +170,11 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
         </div>
       </div>
 
-      {/* Products */}
-      <div className="relative mb-3">
-        <input className={input} placeholder="Search product to add…" value={q} onChange={(e) => setQ(e.target.value)} />
+      {/* Products — type to search, or SCAN a barcode and press Enter to add instantly (like POS). */}
+      <div className="relative mb-1">
+        <input className={input} placeholder="🔍 Scan barcode or search product to add…" value={q}
+          onChange={(e) => { setQ(e.target.value); setScanMsg(""); }}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); scanAdd(); } }} />
         {matches.length > 0 && (
           <div className="absolute z-10 left-0 right-0 mt-1 bg-white rounded-xl shadow-luxe border border-sand overflow-hidden">
             {matchParents.map((pp) => (
@@ -165,6 +187,7 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
           </div>
         )}
       </div>
+      {scanMsg && <p className={`text-xs mb-2 ${scanMsg.startsWith("✓") ? "text-emerald-dark" : "text-rose"}`}>{scanMsg}</p>}
       {lines.map((l) => (
         <div key={l.sku} className="flex items-center gap-2 border-b border-sand/60 py-2 text-sm">
           <span className="flex-1 min-w-0 truncate">{l.name} <span className="text-muted">· {l.sku}</span></span>
