@@ -804,6 +804,31 @@ export async function savePricingAction(formData: FormData): Promise<void> {
   revalidatePath("/trade");
 }
 
+/**
+ * "Follow pricing formula" — clears EVERY price override on the product AND all its colour variants,
+ * so wholesale rate / retail / MRP are computed purely from the Base wholesale cost via the formula.
+ * This is what the owner wants when he says "change the base and let everything recompute": once the
+ * overrides are gone, editing the Base on the Basic tab cascades to every price automatically. To set
+ * one colour at a special price afterwards, he just edits that variant (which re-creates an override
+ * for that colour only — so a manual variant price still stays fixed, exactly as expected).
+ */
+export async function repriceFromFormulaAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("catalog.price_edit"))) return;
+  const sku = String(formData.get("sku") ?? "").trim();
+  if (!sku) return;
+  const sb = supabaseServer();
+  const { data: prod } = await sb.from("products").select("id").eq("sku", sku).maybeSingle();
+  if (!prod) return;
+  const clear = { wholesale_override: null, retail_override: null, mrp_override: null };
+  await sb.from("products").update(clear).eq("id", (prod as any).id);
+  await sb.from("variants").update(clear).eq("product_id", (prod as any).id);
+  await logActivity({ action: "price_changed", ref: sku, detail: `${sku} reset to formula pricing — all overrides cleared, prices now follow the base + formula.` });
+  revalidatePath(`/admin/catalogue/${sku}`);
+  revalidatePath(`/admin/product/${sku}`);
+  revalidatePath("/shop");
+  revalidatePath("/trade");
+}
+
 /** Module 4 — save the GLOBAL pricing formula (pricing_settings): the %-build-up
  *  (cost → +shipping% → +packing% → +promotion% → +reseller% (wholesale) →
  *  +customer_discount% (retail) → +mrp% (MRP)) plus the legacy multipliers and rounding.

@@ -1070,7 +1070,22 @@ export async function getStockHistory(productId: string, limit = 25): Promise<{ 
     .eq("product_id", productId)
     .order("created_at", { ascending: false })
     .limit(limit);
-  return (data as any[]) ?? [];
+  const rows = (data as any[]) ?? [];
+  // The old-system import logged a one-time "Stock reconciliation" entry (a ±1–2 physical-count tweak)
+  // separately from the opening balance. It's not a day-to-day adjustment, and shown as its own line it
+  // looks like a phantom "Adjustment" that confuses the owner. Fold it INTO the Opening line so the
+  // history reads cleanly (Opening N → then real sales/returns). The running balance is unchanged
+  // because the reconciliation's units are simply added to the opening's units.
+  const isRecon = (r: any) => (r.source ?? "").toLowerCase().includes("reconcil");
+  const reconDelta = rows.filter(isRecon).reduce((s, r) => s + (Number(r.delta) || 0), 0);
+  const opening = rows.find((r) => (r.kind ?? "") === "opening");
+  if (reconDelta && opening) {
+    opening.delta = (Number(opening.delta) || 0) + reconDelta;
+    return rows.filter((r) => !isRecon(r));
+  }
+  // No opening line in this window → present the reconciliation as part of the opening import, not a
+  // stray adjustment, so it never reads as a mysterious stock change.
+  return rows.map((r) => (isRecon(r) ? { ...r, kind: "opening", source: "Opening stock (import)" } : r));
 }
 
 /** Open estimates that reserve this product (soft holds — not yet billed, so not in the

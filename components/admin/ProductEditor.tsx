@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
 import { updateProductAction } from "@/app/actions/updateProduct";
+import { repriceFromFormulaAction } from "@/app/actions/catalog";
 import { suggestProductTitleAction, suggestProductTitlesAction, alignContentToTitleAction } from "@/app/actions/aiContent";
 import { computePrices, type PricingFormula } from "@/lib/pricing";
 
@@ -212,7 +213,19 @@ export function ProductEditor({
             <span>Retail <b className="text-ink">{inr(effective.retail)}</b></span>
             <span>MRP <b className="text-ink">{inr(effective.mrp)}</b></span>
             <span>Wholesale <b className="text-ink">{inr(effective.wholesale)}</b></span>
-            <span className="w-full text-xs text-muted/80">Set in the Pricing tab — the formula is overridden for this product. Change the base cost above only to update your records.</span>
+            <span className="w-full text-xs text-muted/80">These are fixed custom prices, so changing the base cost above won&apos;t move them. To make every price follow the base + formula again, use the button below.</span>
+            <div className="w-full mt-1.5">
+              <button type="button"
+                onClick={async () => {
+                  if (!confirm("Reset this product to formula pricing?\n\nAll custom Retail / MRP / Wholesale prices — for this product AND every colour — will be cleared and recalculated from the Base wholesale cost using your pricing formula. Any special price set for a single colour will be lost.")) return;
+                  const fd = new FormData(); fd.set("sku", product.sku);
+                  await repriceFromFormulaAction(fd);
+                  router.refresh();
+                }}
+                className="text-xs px-3.5 py-1.5 rounded-full bg-emerald text-white hover:opacity-90 transition-opacity">
+                ↻ Follow pricing formula (clear custom prices)
+              </button>
+            </div>
           </div>
         ) : (
           <div className="mt-4 rounded-xl bg-cream/60 px-4 py-3 text-sm flex flex-wrap gap-x-6 gap-y-1">
