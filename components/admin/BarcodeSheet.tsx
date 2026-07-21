@@ -140,8 +140,8 @@ export function BarcodeSheet({ products }: { products: P[] }) {
                        display: flex; flex-direction: column; align-items: center; justify-content: center;
                        text-align: center; font-family: Arial, Helvetica, sans-serif; color: #000; }
       .bc-name { font-size: 6pt; line-height: 1.1; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .bc-sku { font-size: 6pt; margin-top: 0.4mm; line-height: 1; letter-spacing: 0.02em; }
-      .bc-price { font-size: 7pt; line-height: 1.05; font-weight: 600; }
+      .bc-sku { font-size: 6pt; margin-bottom: 0.4mm; line-height: 1; letter-spacing: 0.02em; }
+      .bc-price { font-size: 7pt; line-height: 1.05; font-weight: 700; }
       .barcode-label svg { height: 9mm; width: ${barW}%; display: block; margin: 0 auto; }
     </style></head><body></body></html>`);
     d.close();
@@ -187,7 +187,7 @@ export function BarcodeSheet({ products }: { products: P[] }) {
     const special = (r.special.trim() || SPECIAL_FIXED);
     // Both segments shown → retail, special connector, cost code — visibly separated for quick
     // reading at the counter while staying one line on the label.
-    if (retail && whole) return retail + GAP_WIDE + special + GAP + whole;
+    if (retail && whole) return retail + GAP_WIDE + special + GAP_WIDE + whole;
     // Only one segment (or the explicit Show-Special toggle) → same separators, graceful.
     const parts = [retail, opts.special ? special : "", whole].filter(Boolean);
     return parts.join(GAP_WIDE);
@@ -322,9 +322,10 @@ export function BarcodeSheet({ products }: { products: P[] }) {
               return (
                 <div key={i} className="barcode-label text-center bg-white break-inside-avoid">
                   {opts.name && <p className="bc-name font-semibold text-ink truncate">{it.name}</p>}
-                  <Barcode value={it.sku} height={28} unit={cols >= 8 ? 0.85 : 1.1} />
+                  {/* SKU sits ABOVE the barcode to match the reference tag layout. */}
                   {opts.sku && <p className="bc-sku tracking-wide text-ink">SKU {it.sku}</p>}
-                  {line && <p className="bc-price font-medium text-ink">{line}</p>}
+                  <Barcode value={it.sku} height={28} unit={cols >= 8 ? 0.85 : 1.1} />
+                  {line && <p className="bc-price font-semibold text-ink">{line}</p>}
                 </div>
               );
             })}
