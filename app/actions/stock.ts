@@ -149,8 +149,12 @@ export async function bulkSetStockAction(
   // Roll each affected product's qty up from its (now-updated) variants.
   const rollups = [...affectedProducts].map((pid) => ({ id: pid, qty: (varsByProduct.get(pid) ?? []).reduce((s, x) => s + (x.qty ?? 0), 0) }));
   for (const grp of chunk(rollups, 80)) await Promise.all(grp.map((u) => sb.from("products").update({ qty: u.qty, last_movement_at: now }).eq("id", u.id)));
-  // Log every movement (chunked bulk insert).
-  for (const grp of chunk(adjustments, 500)) await sb.from("stock_adjustments").insert(grp).then(() => {}, () => {});
+  // Log every movement (chunked bulk insert). Never silently drop a ledger row: retry once on
+  // failure so stock can't move without being recorded. (The DB reconciler self-heals any residue.)
+  for (const grp of chunk(adjustments, 500)) {
+    const { error } = await sb.from("stock_adjustments").insert(grp);
+    if (error) { const r = await sb.from("stock_adjustments").insert(grp); if (r.error) console.error("stock_adjustments insert failed (bulk import):", r.error.message); }
+  }
 
   revalidatePath("/admin/inventory"); revalidatePath("/admin/catalogue"); revalidatePath("/admin/dashboard"); revalidatePath("/shop");
   return { ok: true, updated: variantUpdates.length + productDirect.length, unchanged, notFound: notFoundSkus.length, notFoundSkus: notFoundSkus.slice(0, 50) };

@@ -22,6 +22,9 @@ type ChatArgs = {
   imageBase64?: string;
   /** MIME type of imageBase64, e.g. "image/jpeg". Defaults to image/jpeg. */
   imageMime?: string;
+  /** Vision fidelity. "high" lets the model actually read fine jewellery detail (stone, shape, tone) —
+   *  essential for accurate titles. Defaults to "high" whenever a photo is attached. */
+  imageDetail?: "low" | "high" | "auto";
   /** Sampling spread. Low = repeatable (detection/extraction); high = varied wording (title ideas). */
   temperature?: number;
 };
@@ -33,7 +36,7 @@ async function chat(endpoint: string, key: string, model: string, a: ChatArgs): 
   const userContent = a.imageBase64
     ? [
         { type: "text", text: a.user },
-        { type: "image_url", image_url: { url: `data:${a.imageMime ?? "image/jpeg"};base64,${a.imageBase64}`, detail: "low" } },
+        { type: "image_url", image_url: { url: `data:${a.imageMime ?? "image/jpeg"};base64,${a.imageBase64}`, detail: a.imageDetail ?? "high" } },
       ]
     : a.user;
   try {
@@ -76,7 +79,12 @@ export async function groqChat(a: ChatArgs): Promise<string> {
 export async function openaiChat(a: ChatArgs): Promise<string> {
   if (!openaiEnabled()) throw new Error("OpenAI disabled via OPENAI_DISABLED=1 — remove that env var to re-enable");
   const key = openaiKey(); if (!key) throw new Error("no openai key");
-  const model = env("OPENAI_MODEL") ?? "gpt-4o-mini";
+  // When a PHOTO is attached the model must actually SEE fine jewellery detail, so route vision calls
+  // to a full multimodal model (gpt-4o) — gpt-4o-mini reads photos poorly and yields vague titles.
+  // Text-only calls stay on the cheap model. Both are overridable via env.
+  const model = a.imageBase64
+    ? (env("OPENAI_VISION_MODEL", "OPENAI_MODEL") ?? "gpt-4o")
+    : (env("OPENAI_MODEL") ?? "gpt-4o-mini");
   return chat("https://api.openai.com/v1/chat/completions", key, model, a);
 }
 
@@ -85,9 +93,12 @@ export function geminiTextConfigured() { return !!geminiTextKey(); }
 /** Gemini text reasoning (gemini-2.5-flash) — fast, capable, uses the existing GEMINI_API_KEY. */
 export async function geminiChat(a: ChatArgs): Promise<string> {
   const key = geminiTextKey(); if (!key) throw new Error("no gemini key");
-  const model = env("GEMINI_TEXT_MODEL") ?? "gemini-2.5-flash";
+  // Vision (photo attached) can use a stronger model + needs more time to read fine detail; text stays fast.
+  const model = a.imageBase64
+    ? (env("GEMINI_VISION_MODEL", "GEMINI_TEXT_MODEL") ?? "gemini-2.5-flash")
+    : (env("GEMINI_TEXT_MODEL") ?? "gemini-2.5-flash");
   const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), a.timeoutMs ?? 18_000);
+  const t = setTimeout(() => controller.abort(), a.timeoutMs ?? (a.imageBase64 ? 30_000 : 18_000));
   try {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
       method: "POST",

@@ -193,9 +193,9 @@ export async function generateTitleOptions(p: ProductLike, n = 4): Promise<{ tit
   const polishes = [...new Set(((p as any).polishes ?? []).filter(Boolean))].join(", ");
   const kw = (p.keywords ?? []).filter(Boolean).join(", ");
   const userPrompt = [
-    `You are BlytheDIVA's senior SEO copywriter for premium artificial/imitation jewellery.`,
+    `You are BlytheDIVA's senior SEO copywriter for premium artificial/imitation jewellery. Behave EXACTLY like ChatGPT does when a jeweller uploads a photo and asks "give SEO-optimised website titles for this piece" — read the image like an expert merchandiser and name what you truly see.`,
     wantVision
-      ? `LOOK CAREFULLY at the attached product PHOTO. Identify the jewellery type (earrings/jhumka/drop/stud, necklace, choker, ring, bracelet…), the design/shape (rectangle, floral, halo, chandbali, solitaire, bar, drop, statement…), the material/work (American Diamond/CZ, Kundan, Polki, Pearl, Meenakari, Temple, Moissanite…) and the finish/tone (gold-plated, rose-gold, silver, oxidised).`
+      ? `STEP 1 — ANALYSE THE PHOTO SILENTLY (do not output this step). Identify, as specifically as the picture allows: (a) the jewellery TYPE — teardrop/drop/danglers/jhumka/stud earrings, necklace set, choker, pendant, ring, bracelet…; (b) the STONE / craft — American Diamond (CZ), multicolor gemstone, Kundan, Polki, Pearl, Meenakari, Temple, Moissanite, ruby/emerald-colour stones…; (c) the METAL TONE / finish — gold-tone, rose-gold, silver, oxidised, two-tone; (d) the DESIGN / shape / motif — teardrop, floral, halo, cluster, chandbali, marquise, leaf, geometric, statement, layered; (e) any MATCHING PIECES that are actually visible (e.g. matching drop earrings shown with a necklace); (f) the natural AUDIENCE / occasion — for women, party wear, festive, bridal, daily wear. STEP 2 — turn that analysis into the titles below. Ground every descriptor in what you genuinely saw in STEP 1.`
       : `Infer the piece from the fields below (no photo available).`,
     `Category: ${p.categoryName ?? "Jewellery"}.${sub}${style}`,
     polishes ? `Polish / finish: ${polishes}.` : ``,

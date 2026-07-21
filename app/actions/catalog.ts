@@ -1039,7 +1039,7 @@ export async function createProductFullAction(
   } else if (productQty > 0) {
     opening.push({ product_id: productId, delta: productQty, kind: "opening", source: "create", reason: "Opening stock", created_by: "owner" });
   }
-  if (opening.length) await sb.from("stock_adjustments").insert(opening).then(() => {}, () => {});
+  if (opening.length) { const { error } = await sb.from("stock_adjustments").insert(opening); if (error) { const r = await sb.from("stock_adjustments").insert(opening); if (r.error) console.error("opening stock ledger insert failed:", r.error.message); } }
 
   // ---- independent parent channel settings + PIM details row ----
   await sb.from("product_channel_settings").upsert([
