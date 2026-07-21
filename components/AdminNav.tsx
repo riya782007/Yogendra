@@ -15,7 +15,7 @@ const GROUPS: { title: string; links: L[] }[] = [
   ]},
   { title: "Catalog", links: [
     { href: "/admin/upload", label: "Add Products", icon: "↑", perm: "catalog.create" },
-    { href: "/admin/submissions", label: "Submissions", icon: "📥", perm: "catalog.create" },
+    { href: "/admin/submissions", label: "Submissions", icon: "📥", perm: "catalog.create", hidden: true },
     { href: "/admin/catalogue", label: "Catalogue", icon: "✦", perm: "catalog.view" },
     { href: "/admin/media", label: "Product Photos", icon: "▣", perm: "catalog.ai" },
     { href: "/admin/categories", label: "Categories", icon: "▦", perm: "catalog.edit" },
@@ -75,14 +75,51 @@ function NavInner({ collapsed, onNavigate, perms, badges = {} }: { collapsed: bo
   // open; the group holding the current page is always kept open so you never lose your place.
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   useEffect(() => { try { const s = localStorage.getItem("bd_nav_groups"); if (s) setOpenGroups(JSON.parse(s)); } catch {} }, []);
-  const toggleGroup = (t: string) => setOpenGroups((g) => { const n = { ...g, [t]: !(g[t] ?? true) }; try { localStorage.setItem("bd_nav_groups", JSON.stringify(n)); } catch {} return n; });
+  const toggleGroup = (t: string) => setOpenGroups((g) => { const n = { ...g, [t]: !(g[t] ?? false) }; try { localStorage.setItem("bd_nav_groups", JSON.stringify(n)); } catch {} return n; });
   const activeGroup = groups.find((g) => g.links.some((l) => isActive(l.href)))?.title;
+
+  // Menu search — type to jump straight to any section without hunting through the groups.
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const searchHits = q
+    ? groups.flatMap((g) => g.links.filter((l) => l.label.toLowerCase().includes(q) || g.title.toLowerCase().includes(q)).map((l) => ({ ...l, group: g.title }))).slice(0, 12)
+    : [];
+
   return (
     <>
+      {!collapsed && (
+        <div className="mb-3">
+          <input
+            value={query} onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search menu…"
+            className="w-full rounded-xl bg-white/10 border border-white/10 px-3 py-2 text-sm text-cream placeholder:text-cream/40 outline-none focus:border-gold/50"
+          />
+        </div>
+      )}
+
+      {/* Search results — a flat, fast jump list; the grouped nav hides while searching. */}
+      {!collapsed && q ? (
+        <nav className="space-y-0.5">
+          {searchHits.length === 0 && <p className="px-3 py-4 text-sm text-cream/40">No menu item matches “{query}”.</p>}
+          {searchHits.map((l) => {
+            const badge = badges[l.href] ?? 0;
+            return (
+              <Link key={l.href} href={l.href} onClick={() => { setQuery(""); onNavigate?.(); }}
+                className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-all ${isActive(l.href) ? "bg-white/15 text-ivory" : "text-cream/85 hover:bg-white/10"}`}>
+                <span className="w-5 text-center text-gold-light shrink-0">{l.icon}</span>
+                <span className="truncate">{l.label}</span>
+                <span className="ml-auto text-[9px] uppercase tracking-wide text-cream/30">{(l as any).group}</span>
+                {badge > 0 && <span className="text-[10px] font-semibold rounded-full bg-rose text-white px-1.5 py-0.5">{badge}</span>}
+              </Link>
+            );
+          })}
+        </nav>
+      ) : (
       <nav className="space-y-3">
         {groups.map((g) => {
           // Rail (icon-only) mode always shows links; otherwise honour the toggle, and keep the active group open.
-          const groupOpen = collapsed || (openGroups[g.title] ?? true) || g.title === activeGroup;
+          // Groups act as dropdowns: closed by default (clean, short menu), the section you're in stays open.
+          const groupOpen = collapsed || (openGroups[g.title] ?? false) || g.title === activeGroup;
           const groupBadge = g.links.reduce((s, l) => s + (badges[l.href] ?? 0), 0);
           return (
           <div key={g.title}>
@@ -115,6 +152,7 @@ function NavInner({ collapsed, onNavigate, perms, badges = {} }: { collapsed: bo
           );
         })}
       </nav>
+      )}
       <div className="mt-6">
         {!collapsed && <p className="px-3 mb-1 text-[10px] uppercase tracking-widest text-cream/35">Storefront</p>}
         <div className="space-y-0.5">
