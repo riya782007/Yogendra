@@ -1,5 +1,6 @@
 "use client";
 import { useRef, useState } from "react";
+import { storeUrl } from "@/lib/siteUrl";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
 import { getShotPromptAction, setProductThumbnailAction } from "@/app/actions/studio";
@@ -161,7 +162,7 @@ export function GeminiStudio({ data }: { data: Data }) {
           <h2 className="font-display text-2xl text-ink">{p.name}</h2>
           <p className="text-xs text-muted">{p.category?.name} · {p.sku}</p>
         </div>
-        <a href={`/shop/${p.category?.slug ?? "all"}/${p.sku}`} target="_blank" className="text-sm text-emerald nav-link">View product page ↗</a>
+        <a href={storeUrl(`/shop/${p.category?.slug ?? "all"}/${p.sku}`)} target="_blank" className="text-sm text-emerald nav-link">View product page ↗</a>
       </div>
 
       <div className="space-y-3">

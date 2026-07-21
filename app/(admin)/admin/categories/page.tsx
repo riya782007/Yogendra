@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import { supabaseServer } from "@/lib/supabase/server";
+import { storeUrl } from "@/lib/siteUrl";
 import {
   createCategoryAction,
   createSubcategoryAction, deleteSubcategoryAction, setSubcategoryStyleAction,
@@ -84,7 +85,7 @@ export default async function Categories({ searchParams }: { searchParams: { q?:
                   {/* Pillar 12 — subcategories are navigable: tap to open that subcategory's
                       products on the storefront (the /shop/c/<cat>?sub=<slug> filter). */}
                   <a
-                    href={`/shop/c/${c.slug}?sub=${s.slug}`}
+                    href={storeUrl(`/shop/c/${c.slug}?sub=${s.slug}`)}
                     target="_blank"
                     rel="noreferrer"
                     title={`View ${s.name} products`}

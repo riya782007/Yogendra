@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { storeUrl } from "@/lib/siteUrl";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
@@ -320,7 +321,7 @@ export function ProductEditor({
         <button type="submit" disabled={saving} className="btn-primary px-6 py-2.5 text-sm font-medium disabled:opacity-60">
           {saving ? "Saving…" : "Save changes"}
         </button>
-        <Link href={`/shop/${product.categorySlug}/${product.sku}`} target="_blank" className="text-sm text-emerald nav-link">
+        <Link href={storeUrl(`/shop/${product.categorySlug}/${product.sku}`)} target="_blank" className="text-sm text-emerald nav-link">
           View live page ↗
         </Link>
         <Link href="/admin/catalogue" className="text-sm text-muted hover:text-ink ml-auto">← Back to catalogue</Link>

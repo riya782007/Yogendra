@@ -7,6 +7,7 @@
  * panels stay mounted so unsaved edits survive tab switches.
  */
 import { ProductHistoryLedger } from "./ProductHistoryLedger";
+import { storeUrl } from "@/lib/siteUrl";
 import { useState } from "react";
 import { setDefaultVariantAction } from "@/app/actions/catalog";
 import { deleteProductImageAction } from "@/app/actions/media";
@@ -67,7 +68,7 @@ export function ProductManager({ data, initialTab }: { data: any; initialTab?: s
         <Link href="/admin/inventory" className="text-sm text-muted hover:text-ink">← Inventory</Link>
         <div className="flex items-center gap-2">
           <span className={`text-xs px-2 py-0.5 rounded-full ${p.status === "published" ? "bg-emerald-mist text-emerald-dark" : "bg-gold/15 text-gold-dark"}`}>{p.status === "published" ? "Published" : "Hidden"}</span>
-          <Link href={`/shop/${p.category?.slug}/${p.sku}`} target="_blank" className="text-xs text-emerald nav-link">view ↗</Link>
+          <Link href={storeUrl(`/shop/${p.category?.slug}/${p.sku}`)} target="_blank" className="text-xs text-emerald nav-link">view ↗</Link>
         </div>
       </div>
       <h1 className="font-display text-3xl text-ink">{p.name}</h1>

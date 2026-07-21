@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
+import { storeUrl } from "@/lib/siteUrl";
 import { notFound } from "next/navigation";
 import { getProductBySku, getProductSalesStats, getPricingFormula } from "@/lib/supabase/queries";
 import { liveOffer } from "@/lib/offers";
@@ -55,7 +56,7 @@ export default async function Product360({ params }: { params: { sku: string } }
 
       {/* Quick actions */}
       <div className="flex flex-wrap gap-2 mb-6">
-        <Link href={`/shop/${p.category?.slug}/${p.sku}`} target="_blank" className="px-4 py-2 rounded-full bg-ink/5 text-ink text-sm hover:bg-ink/10">View on store ↗</Link>
+        <Link href={storeUrl(`/shop/${p.category?.slug}/${p.sku}`)} target="_blank" className="px-4 py-2 rounded-full bg-ink/5 text-ink text-sm hover:bg-ink/10">View on store ↗</Link>
         {can(session, "catalog.view") && <Link href={`/admin/products/${(p as any).id}`} className="px-4 py-2 rounded-full bg-ink text-white text-sm hover:bg-ink/90">⚙ Manage product</Link>}
         {can(session, "catalog.edit") && <Link href={`/admin/catalogue/${p.sku}`} className="px-4 py-2 rounded-full bg-ink/5 text-ink text-sm hover:bg-ink/10">✎ Edit</Link>}
         {can(session, "catalog.publish") && (

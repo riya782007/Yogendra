@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
+import { storeUrl } from "@/lib/siteUrl";
 import { getInventoryClassified } from "@/lib/supabase/queries";
 import { Pager } from "@/components/admin/Pager";
 import { StockAdjust } from "@/components/admin/StockAdjust";
@@ -79,7 +80,7 @@ export default async function Inventory({ searchParams }: { searchParams: { dead
                   <div className="flex flex-wrap gap-1.5 justify-end items-center">
                     <Link href={`/admin/products/${r.id}`} className="px-2.5 py-1 rounded-full bg-ink text-white text-xs hover:bg-ink/90">Manage</Link>
                     <Link href={`/admin/product/${r.sku}`} className="px-2.5 py-1 rounded-full bg-ink/5 text-ink text-xs hover:bg-ink/10">360°</Link>
-                    <Link href={`/shop/${r.categorySlug}/${r.sku}`} target="_blank" className="text-xs text-emerald nav-link">view ↗</Link>
+                    <Link href={storeUrl(`/shop/${r.categorySlug}/${r.sku}`)} target="_blank" className="text-xs text-emerald nav-link">view ↗</Link>
                     {can(session, "catalog.publish") && (
                       <form action={setProductVisibilityAction}>
                         <input type="hidden" name="sku" value={r.sku} />
