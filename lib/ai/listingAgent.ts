@@ -7,6 +7,7 @@ import "server-only";
 import { AiGateway, z } from "./gateway";
 import { groqChat, openaiChat, geminiChat, groqConfigured, openaiConfigured, geminiTextConfigured } from "./providers";
 import { templateContent, pickDivaName, DIVA_NAMES, type GeneratedContent, type ProductLike } from "../content";
+import { seoTitleFromName } from "../seoTitle";
 
 /** Force the title to START with the per-SKU assigned girl name. If the model led with a DIFFERENT
  *  girl name (it clusters on a few), swap that first token for the assigned one; otherwise prepend it. */
@@ -242,6 +243,14 @@ export async function generateTitleOptions(p: ProductLike, n = 4): Promise<{ tit
     const t = (templateContent(p) as GeneratedContent).title;
     if (t) titles = [t];
     provider = provider || "deterministic";
+  }
+  // NO PHOTO → the model can only guess from the taxonomy (→ generic "Choker Gold Necklace"), which is
+  // why titles felt inconsistent (43% of products have no photo). The descriptive NAME is a far more
+  // reliable, CONSISTENT source, so LEAD with the deterministic name-based SEO title in that case — it
+  // follows the exact same "{Name} {Materials} {Design} {Type} for Women" pattern as the photo titles.
+  if (!wantVision) {
+    const det = seoTitleFromName(p.name ?? "", (p as any).categoryName);
+    if (det) titles = [det, ...titles.filter((t) => t.toLowerCase() !== det.toLowerCase())];
   }
   // Belt-and-braces: if a model ignores the ban and still writes "Classic/Elegant/Designer", strip it
   // here so the owner never sees the filler again. Keep the original if removing it guts the title.
