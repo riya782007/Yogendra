@@ -1,5 +1,5 @@
 "use server";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { computePrices, isValidPriceSet } from "@/lib/pricing";
 import { getPricingFormula, getColorCodeMap } from "@/lib/supabase/queries";
@@ -18,7 +18,7 @@ export async function createCategoryAction(formData: FormData) {
   await sb.from("categories").insert({ name, slug: slugify(name) });
   await logActivity({ action: "category_created", ref: name, detail: `Added category “${name}”.` });
   revalidatePath("/admin/categories");
-  revalidatePath("/shop");
+  revalidatePath("/shop"); revalidateTag("storefront");
 }
 
 /** Delete a category — only when it has no products (to avoid orphaning the catalogue). */
@@ -31,7 +31,7 @@ export async function setDefaultVariantAction(productId: string, variantId: stri
   const sb = supabaseServer();
   const { error } = await sb.from("products").update({ default_variant_id: variantId }).eq("id", productId);
   if (error) return { ok: false, error: /default_variant_id/.test(error.message) ? "One-time setup: run migration 0047 (default_variant_id column)." : error.message };
-  revalidatePath("/admin/products/" + productId); revalidatePath("/shop"); revalidatePath("/catalog");
+  revalidatePath("/admin/products/" + productId); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/catalog");
   return { ok: true };
 }
 
@@ -82,7 +82,7 @@ export async function deleteCategoryAction(id: string): Promise<{ ok: boolean; m
   const { error: delErr } = await sb.from("categories").delete().eq("id", id);
   if (delErr) return { ok: false, error: delErr.message };
   await logActivity({ action: "category_deleted", ref: id, detail: `Deleted category “${(cat as any).name}”${moved ? ` (${moved} product${moved === 1 ? "" : "s"} moved to Uncategorized)` : ""}.` });
-  revalidatePath("/admin/categories"); revalidatePath("/shop"); revalidatePath("/admin/catalogue");
+  revalidatePath("/admin/categories"); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/admin/catalogue");
   return { ok: true, moved };
 }
 
@@ -260,7 +260,7 @@ export async function createProductAction(p: NewProduct): Promise<RowResult> {
   // #6: every newly created product gets AI-written SEO (title/description/keywords).
   // Best-effort — falls back to a strong heuristic when no AI key is set, and never blocks creation.
   if (res.ok && res.sku) { try { await generateContentAction(res.sku); } catch { /* SEO is non-blocking */ } }
-  revalidatePath("/admin/catalogue"); revalidatePath("/shop");
+  revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidateTag("storefront");
   return res;
 }
 
@@ -276,7 +276,7 @@ export async function bulkUploadAction(categoryId: string, rows: Omit<NewProduct
     results.push({ ...res, row: i + 1 });
     if (res.ok) skuNum++;
   }
-  revalidatePath("/admin/catalogue"); revalidatePath("/shop");
+  revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidateTag("storefront");
   return { created: results.filter((r) => r.ok).length, results };
 }
 
@@ -341,7 +341,7 @@ export async function createProductWithImageAction(formData: FormData): Promise<
       if (prod) await sb.from("product_images").insert({ product_id: prod.id, path: pub.publicUrl, kind: "flatlay", sort: 0 });
     }
   }
-  revalidatePath("/admin/catalogue"); revalidatePath("/shop");
+  revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidateTag("storefront");
   if (res.ok && res.sku) await logActivity({ action: "product_created", ref: res.sku, detail: `Added ${n.name} (${res.sku}) · draft (awaiting owner publish).` });
   return res;
 }
@@ -514,7 +514,7 @@ export async function createOneRowAction(categoryId: string, row: ParsedRow): Pr
   }
 
   const res = await insertOne(sb, formula, { ...row, categoryId: catId, subcategoryId, styleId, type, variants }, skuNum);
-  revalidatePath("/admin/catalogue"); revalidatePath("/shop");
+  revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidateTag("storefront");
   return { ...res, name: row.name };
 }
 
@@ -526,7 +526,7 @@ export async function setProductVisibilityAction(formData: FormData): Promise<vo
   if (!sku) return;
   await supabaseServer().from("products").update({ status }).eq("sku", sku);
   await logActivity({ action: status === "published" ? "product_shown" : "product_hidden", ref: sku, detail: `${sku} ${status === "published" ? "shown on" : "hidden from"} the store.` });
-  revalidatePath("/admin/inventory"); revalidatePath("/admin/catalogue"); revalidatePath("/shop");
+  revalidatePath("/admin/inventory"); revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidateTag("storefront");
 }
 
 /** #1: mark a product as wholesale-only (hidden from the D2C storefront, shown to retailers). */
@@ -537,7 +537,7 @@ export async function setWholesaleOnlyAction(formData: FormData): Promise<void> 
   if (!sku) return;
   await supabaseServer().from("products").update({ wholesale_only: on }).eq("sku", sku);
   await logActivity({ action: "product_wholesale_only", ref: sku, detail: `${sku} set to ${on ? "wholesale-only" : "available to all"}.` });
-  revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidatePath("/trade");
+  revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/trade"); revalidateTag("trade-catalog");
 }
 
 /** Hide every out-of-stock colour/variant from the storefront (buy selector + gallery) for this product. */
@@ -548,7 +548,7 @@ export async function setHideOosVariantsAction(formData: FormData): Promise<void
   if (!sku) return;
   await supabaseServer().from("products").update({ hide_oos_variants: on }).eq("sku", sku);
   await logActivity({ action: "product_hide_oos", ref: sku, detail: `${sku} out-of-stock colours ${on ? "hidden from" : "shown on"} the store.` });
-  revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop");
+  revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidateTag("storefront");
 }
 
 const LABEL_COLORS = ["emerald", "gold", "wine", "rose", "blue", "ink"];
@@ -598,7 +598,7 @@ export async function deleteProductAction(formData: FormData): Promise<{ ok: boo
   await sb.from("product_images").delete().eq("product_id", pid);
   await sb.from("variants").delete().eq("product_id", pid);
   const { error } = await sb.from("products").delete().eq("id", pid);
-  revalidatePath("/admin/inventory"); revalidatePath("/admin/catalogue"); revalidatePath("/shop");
+  revalidatePath("/admin/inventory"); revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidateTag("storefront");
   if (error) {
     await sb.from("products").update({ status: "draft" }).eq("id", pid);
     await logActivity({ action: "product_hidden", ref: sku, detail: `${(p as any).name} (${sku}) has past orders — hidden from the store instead of deleted.` });
@@ -612,7 +612,7 @@ export async function createCategoryJsonAction(name: string): Promise<{ id: stri
   const nm = name.trim(); if (!nm) return null;
   const sb = supabaseServer();
   const { data } = await sb.from("categories").insert({ name: nm, slug: slugify(nm) }).select("id,name").single();
-  revalidatePath("/admin/categories"); revalidatePath("/shop"); revalidatePath("/admin/upload");
+  revalidatePath("/admin/categories"); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/admin/upload");
   return data ? { id: (data as any).id, name: (data as any).name } : null;
 }
 
@@ -635,7 +635,7 @@ export async function createSubcategoryAction(formData: FormData): Promise<void>
   }
   await sb.from("subcategories").insert({ name, slug: slugify(name), category_id: categoryId });
   await logActivity({ action: "subcategory_created", ref: name, detail: `Added subcategory “${name}”.` });
-  revalidatePath("/admin/categories"); revalidatePath("/shop");
+  revalidatePath("/admin/categories"); revalidatePath("/shop"); revalidateTag("storefront");
 }
 
 /** JSON-friendly subcategory create for inline use (Add Inventory). Returns the new row so the
@@ -649,7 +649,7 @@ export async function createSubcategoryJsonAction(name: string, categoryId: stri
   const { data, error } = await sb.from("subcategories").insert({ name: nm, slug: slugify(nm), category_id: cat }).select("id,name,slug,category_id").single();
   if (error || !data) return null;
   await logActivity({ action: "subcategory_created", ref: nm, detail: `Added subcategory “${nm}”.` });
-  revalidatePath("/admin/categories"); revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidatePath("/catalog");
+  revalidatePath("/admin/categories"); revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/catalog");
   return { id: (data as any).id, name: (data as any).name, slug: (data as any).slug, categoryId: (data as any).category_id };
 }
 
@@ -666,7 +666,7 @@ export async function createStyleAction(formData: FormData): Promise<void> {
   if (!name || !categoryId) return;
   await supabaseServer().from("styles").insert({ name, slug: slugify(name), category_id: categoryId });
   await logActivity({ action: "style_created", ref: name, detail: `Added style “${name}”.` });
-  revalidatePath("/admin/categories"); revalidatePath("/shop"); revalidatePath("/catalog");
+  revalidatePath("/admin/categories"); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/catalog");
 }
 
 /** JSON-friendly style create for inline use (Add Inventory). Returns the new row to select it. */
@@ -679,7 +679,7 @@ export async function createStyleJsonAction(name: string, categoryId: string): P
   const { data, error } = await sb.from("styles").insert({ name: nm, slug: slugify(nm), category_id: cat }).select("id,name,slug,category_id").single();
   if (error || !data) return null;
   await logActivity({ action: "style_created", ref: nm, detail: `Added style “${nm}”.` });
-  revalidatePath("/admin/categories"); revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidatePath("/catalog");
+  revalidatePath("/admin/categories"); revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/catalog");
   return { id: (data as any).id, name: (data as any).name, slug: (data as any).slug, categoryId: (data as any).category_id };
 }
 
@@ -689,7 +689,7 @@ export async function deleteStyleAction(formData: FormData): Promise<void> {
   const id = String(formData.get("id") ?? "").trim();
   if (!id) return;
   await supabaseServer().from("styles").delete().eq("id", id);
-  revalidatePath("/admin/categories"); revalidatePath("/shop"); revalidatePath("/catalog");
+  revalidatePath("/admin/categories"); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/catalog");
 }
 
 /** Assign a product's style (or clear it with an empty value). */
@@ -699,7 +699,7 @@ export async function moveProductToStyleAction(formData: FormData): Promise<void
   const styleId = String(formData.get("style_id") ?? "").trim() || null;
   if (!sku) return;
   await supabaseServer().from("products").update({ style_id: styleId }).eq("sku", sku);
-  revalidatePath("/admin/catalogue"); revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidatePath("/catalog");
+  revalidatePath("/admin/catalogue"); revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/catalog");
 }
 
 /** Rename a subcategory. */
@@ -709,7 +709,7 @@ export async function renameSubcategoryAction(formData: FormData): Promise<void>
   const name = String(formData.get("name") ?? "").trim();
   if (!id || !name) return;
   await supabaseServer().from("subcategories").update({ name, slug: slugify(name) }).eq("id", id);
-  revalidatePath("/admin/categories"); revalidatePath("/shop");
+  revalidatePath("/admin/categories"); revalidatePath("/shop"); revalidateTag("storefront");
 }
 
 /** Delete a subcategory (products fall back to their parent category; map rows cascade). */
@@ -721,7 +721,7 @@ export async function deleteSubcategoryAction(formData: FormData): Promise<void>
   const { data: sub } = await sb.from("subcategories").select("name").eq("id", id).maybeSingle();
   await sb.from("subcategories").delete().eq("id", id);
   await logActivity({ action: "subcategory_deleted", ref: id, detail: `Deleted subcategory${(sub as any)?.name ? ` “${(sub as any).name}”` : ""}.` });
-  revalidatePath("/admin/categories"); revalidatePath("/shop");
+  revalidatePath("/admin/categories"); revalidatePath("/shop"); revalidateTag("storefront");
 }
 
 /** Pillar 12: set the AI image style for a subcategory — 'auto' | 'indian' | 'western'.
@@ -740,7 +740,7 @@ export async function reorderSubcategoriesAction(ids: string[]): Promise<void> {
   if (!(await requirePerm("catalog.edit"))) return;
   const sb = supabaseServer();
   await Promise.all(ids.map((id, i) => sb.from("subcategories").update({ sort: i }).eq("id", id)));
-  revalidatePath("/admin/categories"); revalidatePath("/shop");
+  revalidatePath("/admin/categories"); revalidatePath("/shop"); revalidateTag("storefront");
 }
 
 /** Move a product into a subcategory (sets the primary; trigger keeps the M2M map in sync). */
@@ -751,7 +751,7 @@ export async function moveProductToSubcategoryAction(formData: FormData): Promis
   if (!sku) return;
   const sb = supabaseServer();
   await sb.from("products").update({ subcategory_id: subcategoryId }).eq("sku", sku);
-  revalidatePath("/admin/categories"); revalidatePath("/admin/catalogue"); revalidatePath("/shop");
+  revalidatePath("/admin/categories"); revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidateTag("storefront");
 }
 
 // ---------------------------------------------------------------------------
@@ -800,8 +800,8 @@ export async function savePricingAction(formData: FormData): Promise<void> {
   await logActivity({ action: "price_changed", ref: sku, detail: `Prices updated for ${sku}.` });
   revalidatePath(`/admin/catalogue/${sku}`);
   revalidatePath(`/admin/product/${sku}`);
-  revalidatePath("/shop");
-  revalidatePath("/trade");
+  revalidatePath("/shop"); revalidateTag("storefront");
+  revalidatePath("/trade"); revalidateTag("trade-catalog");
 }
 
 /**
@@ -825,8 +825,8 @@ export async function repriceFromFormulaAction(formData: FormData): Promise<void
   await logActivity({ action: "price_changed", ref: sku, detail: `${sku} reset to formula pricing — all overrides cleared, prices now follow the base + formula.` });
   revalidatePath(`/admin/catalogue/${sku}`);
   revalidatePath(`/admin/product/${sku}`);
-  revalidatePath("/shop");
-  revalidatePath("/trade");
+  revalidatePath("/shop"); revalidateTag("storefront");
+  revalidatePath("/trade"); revalidateTag("trade-catalog");
 }
 
 /** Module 4 — save the GLOBAL pricing formula (pricing_settings): the %-build-up
@@ -867,8 +867,8 @@ export async function savePricingFormulaAction(formData: FormData): Promise<void
   if ((row as any)?.id) await sb.from("pricing_settings").update(patch).eq("id", (row as any).id);
   else await sb.from("pricing_settings").insert(patch);
   revalidatePath("/admin/pricing");
-  revalidatePath("/shop");
-  revalidatePath("/trade");
+  revalidatePath("/shop"); revalidateTag("storefront");
+  revalidatePath("/trade"); revalidateTag("trade-catalog");
   revalidatePath("/admin/catalogue");
 }
 
@@ -917,7 +917,7 @@ export async function aiBulkUploadAction(categoryId: string, rawText: string): P
     results.push({ ...res, row: i + 1 });
     if (res.ok) skuNum++;
   }
-  revalidatePath("/admin/catalogue"); revalidatePath("/shop");
+  revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidateTag("storefront");
   return { created: results.filter((r) => r.ok).length, results, usedAi };
 }
 
@@ -1069,6 +1069,6 @@ export async function createProductFullAction(
   if (payload.aiContent) { try { await generateContentAction(sku); } catch { /* best-effort */ } }
 
   await logActivity({ action: "product_created", ref: sku, detail: `${name} (${payload.type}, ${variants.length} variants)` });
-  revalidatePath("/admin/inventory"); revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidatePath("/trade");
+  revalidatePath("/admin/inventory"); revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/trade"); revalidateTag("trade-catalog");
   return { ok: true, productId, sku };
 }

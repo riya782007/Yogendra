@@ -9,7 +9,7 @@
  *                            targeted to the most-suited category.
  * All gated on `marketing.manage`. Best-effort + never throws to the client.
  */
-import { revalidatePath } from "next/cache";
+import {revalidateTag,  revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 import { logActivity } from "@/lib/audit";
@@ -105,7 +105,7 @@ export async function publishPromoAction(input: { id: string; showRetail: boolea
   const { error } = await sb.from("promotions").update(patch).eq("id", input.id);
   if (error) return { ok: false, error: error.message };
   await logActivity({ action: "promo_published", ref: input.id, detail: `retail:${input.showRetail} wholesale:${input.showWholesale}` });
-  revalidatePath("/shop"); revalidatePath("/wholesale"); revalidatePath("/admin/promotions");
+  revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/wholesale"); revalidatePath("/admin/promotions");
   if (slug) revalidatePath(`/shop/c/${slug}`);
   return { ok: true };
 }
@@ -119,7 +119,7 @@ export async function setPromoStatusAction(formData: FormData): Promise<void> {
   const patch: any = { status };
   if (status !== "published") { patch.show_retail = false; patch.show_wholesale = false; }
   await supabaseServer().from("promotions").update(patch).eq("id", id);
-  revalidatePath("/admin/promotions"); revalidatePath("/shop"); revalidatePath("/wholesale");
+  revalidatePath("/admin/promotions"); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/wholesale");
 }
 
 export async function deletePromoAction(formData: FormData): Promise<void> {
@@ -127,7 +127,7 @@ export async function deletePromoAction(formData: FormData): Promise<void> {
   const id = String(formData.get("id") ?? "");
   if (!id) return;
   await supabaseServer().from("promotions").delete().eq("id", id);
-  revalidatePath("/admin/promotions"); revalidatePath("/shop"); revalidatePath("/wholesale");
+  revalidatePath("/admin/promotions"); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/wholesale");
 }
 
 // ---------- Owner-uploaded creatives (image OR video) — like a brand's banner manager ----------
@@ -193,6 +193,6 @@ export async function savePromoUploadAction(input: {
   });
   if (error) return { ok: false, error: error.message };
   await logActivity({ action: "promo_uploaded", ref: input.title.slice(0, 40), detail: placement });
-  revalidatePath("/admin/promotions"); revalidatePath("/shop"); revalidatePath("/wholesale"); revalidatePath("/trade");
+  revalidatePath("/admin/promotions"); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/wholesale"); revalidatePath("/trade"); revalidateTag("trade-catalog");
   return { ok: true };
 }

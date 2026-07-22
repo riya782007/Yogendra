@@ -1,5 +1,5 @@
 "use server";
-import { revalidatePath } from "next/cache";
+import {revalidateTag,  revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 import { inferStockKind } from "@/lib/stockKind";
@@ -156,6 +156,6 @@ export async function bulkSetStockAction(
     if (error) { const r = await sb.from("stock_adjustments").insert(grp); if (r.error) console.error("stock_adjustments insert failed (bulk import):", r.error.message); }
   }
 
-  revalidatePath("/admin/inventory"); revalidatePath("/admin/catalogue"); revalidatePath("/admin/dashboard"); revalidatePath("/shop");
+  revalidatePath("/admin/inventory"); revalidatePath("/admin/catalogue"); revalidatePath("/admin/dashboard"); revalidatePath("/shop"); revalidateTag("storefront");
   return { ok: true, updated: variantUpdates.length + productDirect.length, unchanged, notFound: notFoundSkus.length, notFoundSkus: notFoundSkus.slice(0, 50) };
 }

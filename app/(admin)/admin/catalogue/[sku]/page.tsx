@@ -327,9 +327,12 @@ export default async function ProductPage({ params, searchParams }: { params: { 
                     form is saved, the server keeps the newer number instead of writing this one back. */}
                 <input type="hidden" name="qty_was" value={v.qty ?? 0} />
                 <label className="text-[11px] text-muted">Stock<input name="qty" type="number" min={0} defaultValue={v.qty ?? 0} className={`${vInput} w-14 text-center block mt-0.5`} /></label>
-                <label className="text-[11px] text-muted">Retail ₹<input name="retail" type="number" min={0} step="0.01" defaultValue={v.retail_override != null ? (v.retail_override / 100).toFixed(2) : ""} placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
-                <label className="text-[11px] text-muted">Wholesale ₹<input name="wholesale" type="number" min={0} step="0.01" defaultValue={v.wholesale_override != null ? (v.wholesale_override / 100).toFixed(2) : ""} placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
-                <label className="text-[11px] text-muted">MRP ₹<input name="mrp" type="number" min={0} step="0.01" defaultValue={v.mrp_override != null ? (v.mrp_override / 100).toFixed(2) : ""} placeholder="auto" className={`${vInput} w-20 text-right block mt-0.5`} /></label>
+                {/* Empty = this colour follows the product's base+formula price. The placeholder shows
+                    that live auto price (e.g. "auto 1259"), so when the base changes the owner SEES the
+                    colour prices follow it — instead of a blank field that looks like nothing updated. */}
+                <label className="text-[11px] text-muted">Retail ₹<input name="retail" type="number" min={0} step="0.01" defaultValue={v.retail_override != null ? (v.retail_override / 100).toFixed(2) : ""} placeholder={`auto ${rs(effective.retailPrice)}`} className={`${vInput} w-24 text-right block mt-0.5`} /></label>
+                <label className="text-[11px] text-muted">Wholesale ₹<input name="wholesale" type="number" min={0} step="0.01" defaultValue={v.wholesale_override != null ? (v.wholesale_override / 100).toFixed(2) : ""} placeholder={`auto ${rs(effective.wholesaleRate)}`} className={`${vInput} w-24 text-right block mt-0.5`} /></label>
+                <label className="text-[11px] text-muted">MRP ₹<input name="mrp" type="number" min={0} step="0.01" defaultValue={v.mrp_override != null ? (v.mrp_override / 100).toFixed(2) : ""} placeholder={`auto ${rs(effective.mrp)}`} className={`${vInput} w-24 text-right block mt-0.5`} /></label>
                 <button className="px-4 py-2 rounded-xl bg-emerald text-white text-xs font-medium hover:bg-emerald-dark">Save colour</button>
               </AutosaveForm>
               <form action={deleteVariantAction} className="mt-1">

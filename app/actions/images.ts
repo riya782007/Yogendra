@@ -5,7 +5,7 @@
  * fidelity prompt, and produces an editorial model shot via Gemini (Nano Banana Pro).
  * The design must be reproduced exactly — fidelity is the whole point for a manufacturer.
  */
-import { revalidatePath } from "next/cache";
+import {revalidateTag,  revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { getProductBySku, getPublishedProducts } from "@/lib/supabase/queries";
 import { buildImagePrompt } from "@/lib/ai/imagePrompt";
@@ -91,7 +91,7 @@ export async function generateOneAction(sku: string, keywords?: string): Promise
   revalidatePath(`/shop/${p.category.slug}/${sku}`);
   revalidatePath("/admin/catalogue");
   revalidatePath("/admin/media");
-  revalidatePath("/shop");
+  revalidatePath("/shop"); revalidateTag("storefront");
   return { ok: true, sku, url: pub.publicUrl };
 }
 

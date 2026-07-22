@@ -1,5 +1,5 @@
 "use server";
-import { revalidatePath } from "next/cache";
+import {revalidateTag,  revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 
@@ -30,12 +30,12 @@ export async function createReelAction(formData: FormData) {
     const rows = ((prods as any[]) ?? []).map((p) => ({ reel_id: reel.id, product_id: p.id }));
     if (rows.length) await sb.from("reel_products").insert(rows);
   }
-  revalidatePath("/admin/reels"); revalidatePath("/reels"); revalidatePath("/shop");
+  revalidatePath("/admin/reels"); revalidatePath("/reels"); revalidatePath("/shop"); revalidateTag("storefront");
 }
 
 export async function deleteReelAction(formData: FormData) {
   if (!(await requirePerm("reels.manage"))) return;
   const id = String(formData.get("id"));
   await supabaseServer().from("reels").delete().eq("id", id);
-  revalidatePath("/admin/reels"); revalidatePath("/reels"); revalidatePath("/shop");
+  revalidatePath("/admin/reels"); revalidatePath("/reels"); revalidatePath("/shop"); revalidateTag("storefront");
 }

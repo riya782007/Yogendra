@@ -1,5 +1,5 @@
 "use server";
-import { revalidatePath } from "next/cache";
+import {revalidateTag,  revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 import { seoTitleFromName } from "@/lib/seoTitle";
@@ -43,6 +43,6 @@ export async function seoTitlePassAction(opts?: { dryRun?: boolean }): Promise<{
   const chunk = <T,>(a: T[], n: number) => Array.from({ length: Math.ceil(a.length / n) }, (_, i) => a.slice(i * n, i * n + n));
   for (const grp of chunk(updates, 60)) await Promise.all(grp.map((u) => sb.from("products").update({ generated_content: u.gc }).eq("id", u.id)));
 
-  revalidatePath("/admin/catalogue"); revalidatePath("/shop");
+  revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidateTag("storefront");
   return { ok: true, scanned, rewritten: updates.length, skipped, sample };
 }

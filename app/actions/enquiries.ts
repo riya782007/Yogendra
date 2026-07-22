@@ -7,7 +7,7 @@
  * over a video call. Every tap is recorded here so a serious dealer's interest is never lost inside a
  * WhatsApp thread — the owner works them off a dashboard, exactly like wholesale payment approvals.
  */
-import { revalidatePath } from "next/cache";
+import {revalidateTag,  revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { getWholesaleSession } from "@/lib/wholesale";
 import { requirePerm } from "@/lib/auth";
@@ -75,7 +75,7 @@ export async function setMoreDesignsAction(input: { sku: string; on: boolean; no
     .ilike("sku", String(input.sku ?? "").trim());
   if (error) return { ok: false, error: error.message };
   revalidatePath("/admin/catalogue");
-  revalidatePath("/trade");
+  revalidatePath("/trade"); revalidateTag("trade-catalog");
   return { ok: true };
 }
 
@@ -89,6 +89,6 @@ export async function bulkSetMoreDesignsAction(input: { categoryId: string; on: 
     .select("id");
   if (error) return { ok: false, error: error.message };
   revalidatePath("/admin/catalogue");
-  revalidatePath("/trade");
+  revalidatePath("/trade"); revalidateTag("trade-catalog");
   return { ok: true, count: ((data as any[]) ?? []).length };
 }

@@ -5,7 +5,7 @@
  * generated_content JSON (title, description, tags, SEO meta + keywords, specs).
  * Money stays in integer paise; the pricing formula re-derives retail/MRP/wholesale.
  */
-import { revalidatePath } from "next/cache";
+import {revalidateTag,  revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { computePrices, isValidPriceSet } from "@/lib/pricing";
 import { getPricingFormula } from "@/lib/supabase/queries";
@@ -147,9 +147,9 @@ export async function updateProductAction(formData: FormData): Promise<UpdateRes
   revalidatePath(`/shop/${slug}/${finalSku}`);
   revalidatePath(`/shop/${slug}/${sku}`);
   revalidatePath(`/shop/c/${slug}`);
-  revalidatePath("/shop");
+  revalidatePath("/shop"); revalidateTag("storefront");
   revalidatePath("/catalog");
-  revalidatePath("/trade");
+  revalidatePath("/trade"); revalidateTag("trade-catalog");
   revalidatePath("/admin/catalogue");
   revalidatePath("/admin/media");
   return { ok: true };

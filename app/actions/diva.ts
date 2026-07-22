@@ -22,7 +22,7 @@ import { generateContentAction } from "@/app/actions/aiContent";
 import { generateOneAction } from "@/app/actions/images";
 import { computePrices, isValidPriceSet } from "@/lib/pricing";
 import { createProductAction, createCategoryJsonAction } from "@/app/actions/catalog";
-import { revalidatePath } from "next/cache";
+import {revalidateTag,  revalidatePath } from "next/cache";
 import { logActivity } from "@/lib/audit";
 
 export type DivaStep = { tool: string; args: Record<string, any>; label: string; kind: string; needsConfirm: boolean };
@@ -321,7 +321,7 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         const { error } = await sb.from("products").update({ status }).eq("sku", sku);
         if (error) return { ok: false, message: error.message };
         await logActivity({ action: status === "published" ? "product_shown" : "product_hidden", ref: sku, detail: `${sku} ${status === "published" ? "shown on" : "hidden from"} the store (via DIVA).` });
-        revalidatePath("/admin/catalogue"); revalidatePath("/shop");
+        revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidateTag("storefront");
         return { ok: true, message: `${sku} is now ${status === "published" ? "visible on the store" : "hidden from the store"}.` };
       }
       case "delete_product": {
@@ -334,7 +334,7 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         await sb.from("product_images").delete().eq("product_id", pid);
         await sb.from("variants").delete().eq("product_id", pid);
         const { error } = await sb.from("products").delete().eq("id", pid);
-        revalidatePath("/admin/catalogue"); revalidatePath("/shop");
+        revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidateTag("storefront");
         if (error) {
           // Has past orders → can't hard-delete; hide instead.
           await sb.from("products").update({ status: "draft" }).eq("id", pid);
@@ -431,7 +431,7 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         if (!cat) return { ok: false, message: `Couldn't find or create the "${categoryName}" category.` };
         const res = await createProductAction({ categoryId: (cat as any).id, name, basePriceRupees: price, qty, type: "simple", colors: [] });
         if (!res.ok) return { ok: false, message: res.error ?? "Couldn't create the product." };
-        revalidatePath("/admin/catalogue"); revalidatePath("/shop");
+        revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidateTag("storefront");
         return { ok: true, message: `Created ${name} (${res.sku}) in ${(cat as any).name} — wholesale ₹${price}, ${qty} pcs. It's saved as a draft; add a photo to publish.` };
       }
       case "rename_product": {
@@ -442,7 +442,7 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         const { data: p } = await sb.from("products").select("id,name").eq("sku", sku).maybeSingle();
         if (!p) return { ok: false, message: `No product with SKU ${sku}.` };
         await sb.from("products").update({ name }).eq("id", (p as any).id);
-        revalidatePath("/admin/catalogue"); revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop");
+        revalidatePath("/admin/catalogue"); revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidateTag("storefront");
         return { ok: true, message: `Renamed ${sku} from "${(p as any).name}" to "${name}".` };
       }
       case "set_category": {
@@ -456,7 +456,7 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         if (!cat) cat = await createCategoryJsonAction(categoryName) as any;
         if (!cat) return { ok: false, message: `Couldn't find or create the "${categoryName}" category.` };
         await sb.from("products").update({ category_id: (cat as any).id, subcategory_id: null }).eq("id", (p as any).id);
-        revalidatePath("/admin/catalogue"); revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop");
+        revalidatePath("/admin/catalogue"); revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidateTag("storefront");
         return { ok: true, message: `Moved ${sku} to ${(cat as any).name}.` };
       }
       case "set_stock": {
@@ -497,7 +497,7 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         const vsku = `${sku}-${label.replace(/[^a-z0-9]/gi, "").slice(0, 5).toUpperCase() || "VAR"}`;
         await sb.from("variants").insert({ product_id: (p as any).id, color: color || null, size: size || null, polish: polish || null, sku: vsku, qty });
         if ((p as any).type !== "configurable") await sb.from("products").update({ type: "configurable" }).eq("id", (p as any).id);
-        revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop");
+        revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidateTag("storefront");
         return { ok: true, message: `Added variant ${[color, size, polish].filter(Boolean).join(" · ")} (${vsku}) to ${sku} with ${qty} pcs.` };
       }
       case "list_variants": {
@@ -565,7 +565,7 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
           const col = tier === "retail" ? "retail_override" : tier === "mrp" ? "mrp_override" : "wholesale_override";
           const { error } = await sb.from("products").update({ [col]: paise }).eq("id", (p as any).id);
           if (error) return { ok: false, message: `${error.message} (the price-override columns need migration 0003 applied).` };
-          revalidatePath("/admin/catalogue"); revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidatePath("/trade");
+          revalidatePath("/admin/catalogue"); revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/trade"); revalidateTag("trade-catalog");
           return { ok: true, message: `Set ${(p as any).name} (${sku}) ${tier} price to ${formatPaise(paise)}.` };
         }
         // No tier → set the base wholesale cost and re-derive retail/MRP from the formula.
@@ -573,7 +573,7 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         const prices = computePrices(paise, formula);
         if (!isValidPriceSet(prices)) return { ok: false, message: "That base price produces an invalid price set." };
         await sb.from("products").update({ base_wholesale: paise }).eq("id", (p as any).id);
-        revalidatePath("/admin/catalogue"); revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidatePath("/trade");
+        revalidatePath("/admin/catalogue"); revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/trade"); revalidateTag("trade-catalog");
         return { ok: true, message: `Set ${(p as any).name} (${sku}) base/wholesale to ${formatPaise(paise)}. Retail ${formatPaise(prices.retailPrice)} · MRP ${formatPaise(prices.mrp)}.` };
       }
       case "rename_sku": {
@@ -588,7 +588,7 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         if (!p) return { ok: false, message: `No product with SKU ${sku}.` };
         const { error } = await sb.from("products").update({ sku: newSku }).eq("id", (p as any).id);
         if (error) return { ok: false, message: error.message };
-        revalidatePath("/admin/catalogue"); revalidatePath("/shop");
+        revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidateTag("storefront");
         return { ok: true, message: `Renamed ${sku} → ${newSku} for ${(p as any).name}.` };
       }
       case "create_customer":
@@ -626,7 +626,7 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         const { data: clash } = await sb.from("categories").select("id").ilike("name", to).neq("id", (cat as any).id).maybeSingle();
         if (clash) return { ok: false, message: `A category called "${to}" already exists.` };
         await sb.from("categories").update({ name: to, slug: slugify(to) }).eq("id", (cat as any).id);
-        revalidatePath("/admin/categories"); revalidatePath("/shop"); revalidatePath("/catalog");
+        revalidatePath("/admin/categories"); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/catalog");
         return { ok: true, message: `Renamed category "${(cat as any).name}" → "${to}".` };
       }
       case "create_subcategory": {

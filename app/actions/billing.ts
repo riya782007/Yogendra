@@ -1,5 +1,5 @@
 "use server";
-import { revalidatePath } from "next/cache";
+import {revalidateTag,  revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { orderReceivable, returnCreditsByOrder } from "@/lib/supabase/queries";
 import { supabaseServer } from "@/lib/supabase/server";
@@ -591,7 +591,7 @@ export async function recordReturnAction(input: { orderId: string; reason: strin
   if (error) return { ok: false, error: error.message };
   revalidatePath("/admin/returns"); revalidatePath("/admin/dashboard"); revalidatePath("/admin/sales");
   revalidatePath("/admin/stock-movements"); revalidatePath("/admin/catalogue"); revalidatePath("/admin/inventory");
-  revalidatePath("/admin/creditors"); revalidatePath("/shop"); revalidatePath("/admin/customers");
+  revalidatePath("/admin/creditors"); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/admin/customers");
   return { ok: true, qty: (data as any)?.qty };
 }
 

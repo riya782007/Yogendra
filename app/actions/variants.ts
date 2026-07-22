@@ -1,5 +1,5 @@
 "use server";
-import { revalidatePath } from "next/cache";
+import {revalidateTag,  revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 import { generateImage, geminiConfigured } from "@/lib/ai/gemini";
@@ -64,7 +64,7 @@ async function rememberOptions(sb: ReturnType<typeof supabaseServer>, o: { color
 function reval(productSku: string) {
   revalidatePath(`/admin/catalogue/${productSku}`);
   revalidatePath(`/admin/product/${productSku}`);
-  revalidatePath("/shop");
+  revalidatePath("/shop"); revalidateTag("storefront");
 }
 
 /** Keep products.qty = sum(variants.qty), so the catalogue total, the stock filter and low-stock flags
@@ -337,7 +337,7 @@ export async function generateVariantImageAction(variantId: string): Promise<Var
   await sb.from("variants").update({ image_paths: next }).eq("id", variantId);
 
   if (productSku) reval(productSku);
-  revalidatePath("/trade");
+  revalidatePath("/trade"); revalidateTag("trade-catalog");
   revalidatePath("/admin/inventory");
   return { ok: true, url };
 }

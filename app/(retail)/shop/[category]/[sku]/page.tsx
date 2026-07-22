@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import type { Metadata } from "next";
+import { unstable_cache } from "next/cache";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getProductBySku, getPricingFormula, getProductReviews, getRecommendations, isStorefrontImage } from "@/lib/supabase/queries";
@@ -23,15 +24,28 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   return { title: c.seo.metaTitle, description: c.seo.metaDescription, keywords: c.seo.keywords, openGraph: { title: c.seo.metaTitle, description: c.seo.metaDescription } };
 }
 
+// Cache the product page's data per-SKU (3 min). getRecommendations scans the catalogue, so rendering
+// this uncached re-ran heavy queries on every product view. Edits refresh within the window / "storefront" tag.
+const loadProductPage = unstable_cache(
+  async (sku: string) => {
+    const [p, formula] = await Promise.all([getProductBySku(sku), getPricingFormula()]);
+    if (!p) return null;
+    // Reviews + recommendations are secondary — a failure in either must NEVER take down the
+    // whole product page. Degrade gracefully to empty.
+    const [reviews, related] = await Promise.all([
+      getProductReviews(p.id).catch(() => ({ avg: 4.6, count: 0, list: [] as any[], dist: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 } as Record<number, number> })),
+      getRecommendations(p.sku, 4).catch(() => [] as any[]),
+    ]);
+    return { p, formula, reviews, related };
+  },
+  ["shop-product-page-v1"],
+  { revalidate: 180, tags: ["storefront"] },
+);
+
 export default async function ProductPage({ params }: Params) {
-  const [p, formula] = await Promise.all([getProductBySku(params.sku), getPricingFormula()]);
-  if (!p) notFound();
-  // Reviews + recommendations are secondary — a failure in either must NEVER take down the
-  // whole product page. Degrade gracefully to empty.
-  const [reviews, related] = await Promise.all([
-    getProductReviews(p.id).catch(() => ({ avg: 4.6, count: 0, list: [] as any[], dist: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 } as Record<number, number> })),
-    getRecommendations(p.sku, 4).catch(() => [] as any[]),
-  ]);
+  const data = await loadProductPage(params.sku);
+  if (!data) notFound();
+  const { p, formula, reviews, related } = data;
 
   // Category should always be present (FK), but never let a missing relation 500 the page.
   const catSlug = p.category?.slug ?? "all";

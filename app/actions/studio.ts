@@ -5,7 +5,7 @@
  * nothing is overwritten. Publishing a candidate copies its URL into product_images (the
  * storefront source), so retail + wholesale + category + search update automatically.
  */
-import { revalidatePath } from "next/cache";
+import {revalidateTag,  revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 import { logActivity } from "@/lib/audit";
@@ -304,7 +304,7 @@ export async function setProductThumbnailAction(input: { productId: string; url:
 
   const { data: prod } = await sb.from("products").select("sku, category:categories(slug)").eq("id", productId).maybeSingle();
   const sku = (prod as any)?.sku; const slug = (prod as any)?.category?.slug ?? "all";
-  revalidatePath("/shop"); revalidatePath("/admin/catalogue"); revalidatePath(`/admin/media/${productId}`);
+  revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/admin/catalogue"); revalidatePath(`/admin/media/${productId}`);
   if (sku) revalidatePath(`/shop/${slug}/${sku}`);
   return { ok: true };
 }
@@ -371,7 +371,7 @@ export async function publishGenerationAction(formData: FormData): Promise<void>
   const slug = (prod as any)?.category?.slug ?? "all";
   await logActivity({ action: "photo_published", ref: sku ?? gen.product_id, detail: gen.shot_type });
   revalidatePath(`/admin/media/${gen.product_id}`);
-  revalidatePath("/admin/catalogue"); revalidatePath("/admin/products"); revalidatePath("/shop");
+  revalidatePath("/admin/catalogue"); revalidatePath("/admin/products"); revalidatePath("/shop"); revalidateTag("storefront");
   if (sku) { revalidatePath(`/shop/${slug}/${sku}`); revalidatePath(`/admin/products/${gen.product_id}`); }
 }
 
@@ -413,7 +413,7 @@ export async function uploadBrandedImageAction(input: {
   }
 
   await logActivity({ action: "photo_published", ref: prod.sku, detail: `${shot} (branded)` });
-  revalidatePath(`/admin/media/${productId}`); revalidatePath("/shop"); revalidatePath("/admin/catalogue");
+  revalidatePath(`/admin/media/${productId}`); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/admin/catalogue");
   if (prod.sku) revalidatePath(`/shop/${prod.category?.slug ?? "all"}/${prod.sku}`);
   return { ok: true, id: (row as any)?.id, url };
 }

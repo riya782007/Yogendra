@@ -5,7 +5,7 @@
  * save keeps products.wholesale_only / retail_only / status in sync from the channel settings.
  * Money is integer paise. All writes are permission-gated and audit-logged.
  */
-import { revalidatePath } from "next/cache";
+import {revalidateTag,  revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 import { logActivity } from "@/lib/audit";
@@ -20,7 +20,7 @@ function refresh(id: string) {
   revalidatePath(`/admin/products/${id}`);
   revalidatePath("/admin/inventory");
   revalidatePath("/admin/catalogue");
-  revalidatePath("/shop");
+  revalidatePath("/shop"); revalidateTag("storefront");
 }
 
 /** GENERAL tab — core product + the product_details attribute sheet. */

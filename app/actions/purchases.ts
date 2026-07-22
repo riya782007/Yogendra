@@ -1,5 +1,5 @@
 "use server";
-import { revalidatePath } from "next/cache";
+import {revalidateTag,  revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 
@@ -330,6 +330,6 @@ export async function recordPurchaseReturnAction(input: { purchaseId: string; re
   const p_items = input.items.map((i) => ({ product_id: i.productId, variant_id: i.variantId ?? null, qty: i.qty }));
   const { data, error } = await sb.rpc("record_purchase_return", { p_purchase_id: input.purchaseId, p_reason: input.reason, p_items });
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/admin/purchases"); revalidatePath(`/admin/purchase/${input.purchaseId}`); revalidatePath("/admin/returns"); revalidatePath("/admin/stock-movements"); revalidatePath("/admin/catalogue"); revalidatePath("/admin/inventory"); revalidatePath("/admin/suppliers"); revalidatePath("/shop");
+  revalidatePath("/admin/purchases"); revalidatePath(`/admin/purchase/${input.purchaseId}`); revalidatePath("/admin/returns"); revalidatePath("/admin/stock-movements"); revalidatePath("/admin/catalogue"); revalidatePath("/admin/inventory"); revalidatePath("/admin/suppliers"); revalidatePath("/shop"); revalidateTag("storefront");
   return { ok: true, qty: (data as any)?.qty, amount: (data as any)?.amount };
 }
