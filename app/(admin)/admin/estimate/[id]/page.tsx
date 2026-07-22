@@ -12,7 +12,11 @@ import { updateEstimateCustomerAction, updateEstimateLineAction, updateEstimateL
 
 export const metadata = { title: "Estimate / Quotation" };
 
-export default async function EstimatePrint({ params }: { params: { id: string } }) {
+export default async function EstimateDetailPage({ params, searchParams }: { params: { id: string }; searchParams?: { billerror?: string } }) {
+  // When "Bill · GST/Cash" fails (e.g. a line is out of stock) billEstimateAction redirects back
+  // here with ?billerror=… — surface it loudly instead of silently returning to the estimate, which
+  // made a stock-blocked bill look like "nothing happened / it won't convert".
+  const billError = (searchParams?.billerror ?? "").trim();
   const data = await getEstimate(params.id);
   if (!data) notFound();
   const { estimate, items } = data;
@@ -66,6 +70,12 @@ export default async function EstimatePrint({ params }: { params: { id: string }
             <EstimatePrint />
           </div>
         </div>
+        {billError && (
+          <div className="no-print mb-4 rounded-2xl border border-rose/50 bg-rose/10 p-4 text-sm text-rose">
+            <b>Couldn’t bill this estimate:</b> {billError}
+            <div className="mt-1 text-rose/80">Fix the flagged item (add stock, reduce its quantity, or remove the line), then try “Bill” again. To bill anyway as a backorder, use the “Bill” option with backorder enabled.</div>
+          </div>
+        )}
         {!isOpen && (
           <div className="no-print mb-4 rounded-2xl border border-gold/40 bg-gold/5 p-3 text-sm text-gold-dark">
             This estimate is <b className="capitalize">{String(estimate.status).replace("_", " ")}</b>, so its items and prices are locked.
