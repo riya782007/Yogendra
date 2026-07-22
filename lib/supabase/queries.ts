@@ -1016,7 +1016,9 @@ export async function getLabelItems(): Promise<LabelItem[]> {
       kind: "product", variantCount: vs.length,
     });
     for (const v of vs) {
-      const opt = [v.color, v.size, v.polish].filter(Boolean).join(" / ");
+      // Barcode labels carry the COLOUR only (owner: never the polish, e.g. not "Gold / Gold").
+      // Size is the fallback for size-only variants (bangles) so their tag isn't blank.
+      const opt = (v.color || v.size || "").trim() || null;
       const vp = _resolvePrices(p.base_wholesale, formula, overridesOf(v), overridesOf(p));
       out.push({
         sku: v.sku, name: `${p.name}${opt ? ` — ${opt}` : ""}`,

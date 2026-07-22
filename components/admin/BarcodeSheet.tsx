@@ -374,10 +374,10 @@ export function BarcodeSheet({ products }: { products: P[] }) {
                 <div key={i} className="barcode-label text-center bg-white break-inside-avoid">
                   {opts.name && <p className="bc-name font-semibold text-ink truncate">{it.name}</p>}
                   {/* SKU sits ABOVE the barcode to match the reference tag layout. For a colour variant
-                      the readable text is the short parent code; the barcode below encodes the full
-                      variant SKU so it still scans to the exact colour. */}
-                  {opts.sku && <p className="bc-sku tracking-wide text-ink font-bold">SKU: {it.display ?? it.sku}</p>}
-                  {it.option && <p className="bc-colour text-ink font-bold">{it.option}</p>}
+                      the readable text is the short parent code with the colour appended (e.g. WE729-Gold,
+                      like before); the barcode below still encodes the full variant SKU so it scans to the
+                      exact colour at billing. */}
+                  {opts.sku && <p className="bc-sku tracking-wide text-ink font-bold">SKU: {it.display ?? it.sku}{it.option ? `-${it.option}` : ""}</p>}
                   <Barcode value={it.sku} height={28} unit={cols >= 8 ? 0.85 : 1.1} />
                   {line && <p className="bc-price font-bold text-ink">{line}</p>}
                 </div>

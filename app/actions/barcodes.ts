@@ -48,7 +48,8 @@ export async function barcodeLookupAction(rawCode: string): Promise<LabelHit[]> 
     const pp = resolvePrices(p.base_wholesale, formula, overridesOf(null), overridesOf(p));
     out.push({ sku: p.sku, name: p.name, price: pp.retailPrice, wholesale: pp.wholesaleRate, mrp: pp.mrp, kind: "product", variantCount: vs.length });
     for (const v of vs) {
-      const opt = [v.color, v.size, v.polish].filter(Boolean).join(" / ");
+      // Colour only on labels (never polish); size is the fallback for size-only bangle variants.
+      const opt = (v.color || v.size || "").trim() || null;
       const vp = resolvePrices(p.base_wholesale, formula, overridesOf(v), overridesOf(p));
       out.push({ sku: v.sku, name: `${p.name}${opt ? ` — ${opt}` : ""}`, price: vp.retailPrice, wholesale: vp.wholesaleRate, mrp: vp.mrp, kind: "variant", option: opt || undefined, parentSku: p.sku });
     }
