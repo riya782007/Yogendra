@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+import { unstable_cache } from "next/cache";
 import Link from "next/link";
 import { getStorefront, getFeaturedReviews, getShoppableReels, getActivePromotions, getCategoryTree } from "@/lib/supabase/queries";
 import { ProductCard } from "@/components/site/ProductCard";
@@ -14,8 +15,23 @@ export const metadata = {
   description: "Shop handcrafted artificial jewellery from Blythe Diva. Necklaces, earrings, bracelets, anklets & rings with COD and free shipping over ₹999.",
 };
 
+// The homepage shows the same catalogue to everyone, yet it was re-running 5 heavy queries
+// (all published products via getStorefront, reviews, reels, promos, category tree) on EVERY render —
+// so each soft navigation / prefetch to /shop took ~9s. Cache the whole bundle for 3 minutes so the
+// page renders instantly; editing a product refreshes it within the window (or via the "storefront" tag).
+const loadShopHome = unstable_cache(
+  async () => {
+    const [store, reviews, reels, promos, tree] = await Promise.all([
+      getStorefront(), getFeaturedReviews(), getShoppableReels(), getActivePromotions("retail"), getCategoryTree(),
+    ]);
+    return { products: store.products, formula: store.formula, reviews, reels, promos, tree };
+  },
+  ["shop-home-v1"],
+  { revalidate: 180, tags: ["storefront"] },
+);
+
 export default async function Shop() {
-  const [{ products, formula }, reviews, reels, promos, tree] = await Promise.all([getStorefront(), getFeaturedReviews(), getShoppableReels(), getActivePromotions("retail"), getCategoryTree()]);
+  const { products, formula, reviews, reels, promos, tree } = await loadShopHome();
   // Category tiles are driven by the catalogue tree, so they always show — even before
   // any products are published (the storefront starts with everything in draft).
   // Category tiles get a REAL jewellery photo automatically — the first in-stock product image in that

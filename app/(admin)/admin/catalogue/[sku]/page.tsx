@@ -279,7 +279,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
           <Link href={`/admin/media/${(p as any).id}`} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-ink text-white text-xs hover:bg-ink/90">✦ Open AI Studio</Link>
         )}
       </div>
-      <p className="text-xs text-muted mb-4">Each variant has its own <b>colour, size &amp; polish</b>, SKU, stock and photos. Variant stock total: <b className="text-ink">{variantStock}</b> pcs. Generate a <b>model photo + a branded on-stand photo per colour</b> in the <Link href={`/admin/media/${(p as any).id}`} className="text-emerald nav-link">AI Studio →</Link>. SKUs auto-generate as <code className="bg-cream px-1 rounded">{`${p.sku}-{colourCode}`}</code> — see your <Link href="/admin/colours" className="text-emerald nav-link">Colours master</Link> for the codes.</p>
+      <p className="text-xs text-muted mb-4">Each variant has its own <b>colour, size &amp; polish</b>, SKU, stock and photos. This design has <b className="text-ink">{variants.length}</b> colour{variants.length === 1 ? "" : "s"} · <b className="text-ink">{variantStock}</b> pcs in stock total (this matches the Inventory tab). Generate a <b>model photo + a branded on-stand photo per colour</b> in the <Link href={`/admin/media/${(p as any).id}`} className="text-emerald nav-link">AI Studio →</Link>. SKUs auto-generate as <code className="bg-cream px-1 rounded">{`${p.sku}-{colourCode}`}</code> — see your <Link href="/admin/colours" className="text-emerald nav-link">Colours master</Link> for the codes.</p>
 
       <div className="space-y-4 mb-4">
         {variants.length === 0 && <p className="text-sm text-muted">No variants yet — this is a simple product.</p>}
@@ -510,7 +510,11 @@ export default async function ProductPage({ params, searchParams }: { params: { 
     { key: "pricing", label: "Pricing", icon: "₹", node: pricing },
     { key: "inventory", label: "Inventory", icon: "📦", badge: String(p.qty ?? 0), node: inventory },
     { key: "photos", label: "Photos", icon: "📷", badge: String(photoCount), node: photos },
-    { key: "variants", label: "Variants", icon: "🎨", badge: String(variants.length), node: variantsPanel },
+    // Both the Inventory and Variants tabs show the SAME stock number (they always match, because
+    // product qty is the sum of the colours). Previously Variants showed the COLOUR COUNT, which looked
+    // like a stock mismatch to the owner ("ek jagah 6 ek jagah 7" = 6 colours vs 7 pcs). The colour
+    // count is still shown inside the tab; the badge now stays consistent everywhere.
+    { key: "variants", label: "Variants", icon: "🎨", badge: String(p.qty ?? 0), node: variantsPanel },
     { key: "catalog", label: "Catalog", icon: "🏷️", node: catalog },
     { key: "history", label: "History", icon: "🕑", node: historyPanel },
   ];
