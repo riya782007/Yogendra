@@ -183,14 +183,17 @@ export function BarcodeSheet({ products }: { products: P[] }) {
       .grid { display: grid; grid-template-columns: repeat(${cols}, ${G.lw}mm);
               grid-auto-rows: ${lh}mm; column-gap: ${G.gx}mm; row-gap: ${G.gy}mm;
               justify-content: start; align-content: start; }
-      .barcode-label { width: ${G.lw}mm; height: ${lh}mm; overflow: hidden; padding: 0.4mm;
+      /* Content is sized to sit WELL INSIDE the 21.2mm die-cut cell with ~4mm of vertical breathing
+         room, so a tiny bit of printer drift can never clip the SKU (top) or the price (bottom).
+         Total stack ≈ SKU 2.1mm + 7.5mm barcode + price 2.3mm + gaps ≈ 13mm inside a 21.2mm label. */
+      .barcode-label { width: ${G.lw}mm; height: ${lh}mm; overflow: hidden; padding: 0.3mm 0.4mm;
                        display: flex; flex-direction: column; align-items: center; justify-content: center;
-                       text-align: center; font-family: Arial, Helvetica, sans-serif; color: #000; }
-      .bc-name { font-size: 6pt; line-height: 1.1; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .bc-sku { font-size: 6.5pt; margin-bottom: 0.4mm; line-height: 1; letter-spacing: 0.02em; font-weight: 700; }
-      .bc-colour { font-size: 6.5pt; margin-bottom: 0.4mm; line-height: 1; font-weight: 700; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .bc-price { font-size: 7.5pt; line-height: 1.05; font-weight: 700; -webkit-text-stroke: 0.15pt #000; }
-      .barcode-label svg { height: 9mm; width: ${barW}%; display: block; margin: 0 auto; }
+                       text-align: center; font-family: Arial, Helvetica, sans-serif; color: #000; line-height: 1; }
+      .bc-name { font-size: 5.5pt; line-height: 1; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .bc-sku { font-size: 6pt; margin-bottom: 0.3mm; line-height: 1; letter-spacing: 0.02em; font-weight: 700; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .bc-colour { font-size: 6pt; margin-bottom: 0.3mm; line-height: 1; font-weight: 700; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .bc-price { font-size: 6.5pt; line-height: 1; font-weight: 700; margin-top: 0.3mm; -webkit-text-stroke: 0.12pt #000; }
+      .barcode-label svg { height: 7.5mm; width: ${barW}%; display: block; margin: 0 auto; }
     </style></head><body></body></html>`);
     d.close();
     const labelEls = Array.from(grid.children);
