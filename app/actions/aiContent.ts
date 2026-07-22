@@ -33,11 +33,22 @@ function stripCode(title: string | undefined, sku: string): string {
  */
 async function fetchProductImage(p: any): Promise<{ imageBase64?: string; imageMime?: string }> {
   try {
-    const imgs = (p.images ?? []).filter((i: any) => typeof i?.path === "string" && i.path.startsWith("http"));
+    const prodImgs = (p.images ?? []).filter((i: any) => typeof i?.path === "string" && i.path.startsWith("http"));
+    // ALSO look at VARIANT photos. Most designs are shot per-colour, so a product often has no
+    // product-level image at all — its only real photo lives on a variant (image_paths). Ignoring
+    // those meant the title AI got NO image and fell back to guessing from the taxonomy
+    // ("Choker Gold Necklace") even though the owner HAD added a photo.
+    const varImgs = ((p.variants ?? []) as any[]).flatMap((v: any) =>
+      (((v.image_paths ?? []) as string[]) || [])
+        .filter((u) => typeof u === "string" && u.startsWith("http"))
+        .map((path) => ({ path, kind: "variant" })));
+    const imgs = [...prodImgs, ...varImgs];
     if (!imgs.length) return {};
+    // Prefer the clean product flatlay/source (truest colours for reading the piece), then a model
+    // shot, then whatever exists — including the first variant photo.
     const pick =
-      imgs.find((i: any) => i.kind === "source" || i.kind === "flatlay") ??
-      imgs.find((i: any) => i.kind === "model") ??
+      prodImgs.find((i: any) => i.kind === "source" || i.kind === "flatlay") ??
+      prodImgs.find((i: any) => i.kind === "model") ??
       imgs[0];
     const r = await fetch(pick.path, { signal: AbortSignal.timeout(12_000) });
     if (!r.ok) return {};

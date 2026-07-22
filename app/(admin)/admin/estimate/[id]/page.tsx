@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { getEstimate, getProductsLite } from "@/lib/supabase/queries";
 import { supabaseServer } from "@/lib/supabase/server";
 import { formatPaise } from "@/lib/pricing";
-import { PrintButton } from "@/components/admin/PrintButton";
+import { EstimatePrint } from "@/components/admin/EstimatePrint";
 import { UpiAmountQr } from "@/components/admin/UpiAmountQr";
 import { BUSINESS, HSN_JEWELLERY, GST_RATE, gstSplit, gstSplitExclusive, stateCodeFromGstin, bankHasDetails, amountInWords } from "@/lib/business";
 import { requirePerm } from "@/lib/auth";
@@ -60,7 +60,7 @@ export default async function EstimatePrint({ params }: { params: { id: string }
           <Link href="/admin/estimates" className="text-sm text-emerald nav-link">← Estimates</Link>
           <div className="flex items-center gap-2">
             {canEdit && <a href="#edit-estimate" className="px-4 py-2 rounded-full bg-emerald-mist text-emerald-dark text-sm font-medium hover:bg-emerald/20">✏️ Edit items &amp; prices</a>}
-            <PrintButton />
+            <EstimatePrint />
           </div>
         </div>
         {!isOpen && (
