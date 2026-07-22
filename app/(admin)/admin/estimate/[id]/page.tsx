@@ -24,7 +24,10 @@ export default async function EstimatePrint({ params }: { params: { id: string }
   // --- Tax treatment (mirrors the invoice exactly, so a quote and the bill it becomes agree) ---
   // gst=false → plain estimate, no tax shown. Otherwise EXCLUSIVE by default: the quoted rate is
   // pre-tax and GST is added on top; INCLUSIVE means GST is already inside the quoted rate.
-  const gstOn = (estimate as any).gst !== false;
+  // GST is OPTIONAL and OFF by default — show tax ONLY when it was explicitly turned on (gst === true).
+  // Previously `gst !== false` treated a null/unset estimate as taxed, so estimates made WITHOUT
+  // choosing GST still showed 3% GST. Now no tax appears unless the owner deliberately turned it on.
+  const gstOn = (estimate as any).gst === true;
   const gstMode = (((estimate as any).gst_mode as string) ?? "exclusive") === "inclusive" ? "inclusive" : "exclusive";
   const gstExclusive = gstOn && gstMode === "exclusive";
   const buyerStateCode = (estimate as any).buyer_state || stateCodeFromGstin((estimate as any).buyer_gstin);
