@@ -57,7 +57,10 @@ export function BarcodeSheet({ products }: { products: P[] }) {
   // their labels), and barcode bar width. Defaults are 0 nudge and a slightly narrower 92% bar.
   const [adjTop, setAdjTop] = useState(0);   // mm added to the top margin
   const [adjRow, setAdjRow] = useState(0);   // mm added to EACH row's height
-  const [barW, setBarW] = useState(92);      // printed bar width as % of the label
+  const [adjLeft, setAdjLeft] = useState(0); // mm added to the LEFT margin (shifts every column left/right)
+  const [adjPitch, setAdjPitch] = useState(0); // mm added to EACH label's WIDTH — fixes SIDEWAYS drift where
+                                               // columns creep right until the barcode clips off the label edge
+  const [barW, setBarW] = useState(84);      // printed bar width as % of the label (side-margin so drift can't clip bars)
   const [scanMsg, setScanMsg] = useState(""); // feedback for scan / Enter-to-add
 
   // Products/variants created AFTER this page loaded aren't in `products`. When a search finds nothing
@@ -94,7 +97,7 @@ export function BarcodeSheet({ products }: { products: P[] }) {
   const G = PAPER.find((p) => p.key === paper) ?? PAPER[0];
   // Handover: the owner uses one fixed pre-cut sheet and never changes these, so the paper-size,
   // label-content and printer-alignment controls are hidden (defaults kept). Set true to expose them.
-  const SHOW_ADVANCED = false;
+  const SHOW_ADVANCED = true;
   const cols = G.cols;
   const per = G.per;
   // Special price is a FIXED constant (23) across all products — the owner's coded scheme. The
@@ -165,6 +168,8 @@ export function BarcodeSheet({ products }: { products: P[] }) {
     if (!grid) return;
     const mt = (G.mt + adjTop).toFixed(2);
     const lh = (G.lh + adjRow).toFixed(2);
+    const ml = (G.ml + adjLeft).toFixed(2);   // left margin (nudged)
+    const lw = (G.lw + adjPitch).toFixed(2);  // label width / column pitch (nudged — fixes sideways drift)
     const f = document.createElement("iframe");
     f.setAttribute("aria-hidden", "true");
     f.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;";
@@ -178,15 +183,15 @@ export function BarcodeSheet({ products }: { products: P[] }) {
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body { width: 210mm; background: #fff; }
       .sheet { width: 210mm; height: 297mm; overflow: hidden; page-break-after: always; break-after: page;
-               padding: ${mt}mm 0 0 ${G.ml}mm; }
+               padding: ${mt}mm 0 0 ${ml}mm; }
       .sheet:last-child { page-break-after: auto; break-after: auto; }
-      .grid { display: grid; grid-template-columns: repeat(${cols}, ${G.lw}mm);
+      .grid { display: grid; grid-template-columns: repeat(${cols}, ${lw}mm);
               grid-auto-rows: ${lh}mm; column-gap: ${G.gx}mm; row-gap: ${G.gy}mm;
               justify-content: start; align-content: start; }
       /* Content is sized to sit WELL INSIDE the 21.2mm die-cut cell with ~4mm of vertical breathing
          room, so a tiny bit of printer drift can never clip the SKU (top) or the price (bottom).
          Total stack ≈ SKU 2.1mm + 7.5mm barcode + price 2.3mm + gaps ≈ 13mm inside a 21.2mm label. */
-      .barcode-label { width: ${G.lw}mm; height: ${lh}mm; overflow: hidden; padding: 0.3mm 0.4mm;
+      .barcode-label { width: ${lw}mm; height: ${lh}mm; overflow: hidden; padding: 0.3mm 0.4mm;
                        display: flex; flex-direction: column; align-items: center; justify-content: center;
                        text-align: center; font-family: Arial, Helvetica, sans-serif; color: #000; line-height: 1; }
       .bc-name { font-size: 5.5pt; line-height: 1; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -355,7 +360,18 @@ export function BarcodeSheet({ products }: { products: P[] }) {
               <input type="range" min={70} max={100} step={1} value={barW} onChange={(e) => setBarW(Number(e.target.value))} className="w-full accent-emerald" />
               <span className="text-[10px] text-muted/70">narrower bars per label</span>
             </label>
+            <label className="text-xs text-muted">
+              Left margin <span className="text-ink font-medium">{(G.ml + adjLeft).toFixed(1)}mm</span>
+              <input type="range" min={-6} max={6} step={0.5} value={adjLeft} onChange={(e) => setAdjLeft(Number(e.target.value))} className="w-full accent-emerald" />
+              <span className="text-[10px] text-muted/70">move all columns left / right</span>
+            </label>
+            <label className="text-xs text-muted">
+              Column width <span className="text-ink font-medium">{(G.lw + adjPitch).toFixed(1)}mm</span>
+              <input type="range" min={-3} max={3} step={0.1} value={adjPitch} onChange={(e) => setAdjPitch(Number(e.target.value))} className="w-full accent-emerald" />
+              <span className="text-[10px] text-muted/70">fixes columns drifting sideways</span>
+            </label>
           </div>
+          <p className="text-[10px] text-muted/80 mt-2">Tip: if the barcode is drifting sideways off the labels, nudge <b>Column width</b> down by 0.2–0.4mm until every column lines up, then print. Always print at <b>100% / Actual size</b>, margins <b>None</b>.</p>
         </div>
         </>)}
 

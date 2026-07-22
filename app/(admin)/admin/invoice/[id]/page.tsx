@@ -89,7 +89,7 @@ export default async function Invoice({ params }: { params: { id: string } }) {
           "1 page pe atleast 20-25 items aajaye"). Rows are tightened and never split across a page.
           Scoped to this route via a page-level @page so the barcode sheet is unaffected. */}
       <style dangerouslySetInnerHTML={{ __html: `@media print{
-        @page{size:A4;margin:12mm}
+        @page{size:A4;margin:9mm}
         /* READABILITY FIRST (owner: "elderly ko chhota lagta hai — bada aur saaf karo"). Larger base
            type, roomier rows, and NO tiny 10-11px text anywhere on paper — every line is legible at
            arm's length. A4 still fits ~16-18 items per page; the header repeats and rows never split. */
