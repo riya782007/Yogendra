@@ -14,10 +14,19 @@ type P = {
 };
 
 type Row = {
-  sku: string; name: string;
+  sku: string; name: string;      // sku = the SCANNABLE code (variant SKU for a colour) → barcode value
   qty: number;
   price: string; special: string; wholesale: string; // rupees, editable
+  option?: string;                // the colour/size, printed on the label so staff can read it
+  display?: string;               // the human-friendly SKU shown as text (parent SKU for a variant)
 };
+
+// "Gold / Gold" (colour + polish both Gold) → "Gold". Trims the redundant repeat so the tag reads clean.
+function cleanOption(o?: string): string | undefined {
+  if (!o) return undefined;
+  const parts = [...new Set(o.split("/").map((s) => s.trim()).filter(Boolean))];
+  return parts.join(" / ") || undefined;
+}
 
 // Paper presets with EXACT die-cut geometry in mm, so each barcode lands on its physical label.
 // 65-up = the owner's pre-cut sheet (Avery L7651 layout): 38.1×21.2mm labels, 5 columns × 13 rows,
@@ -91,8 +100,19 @@ export function BarcodeSheet({ products }: { products: P[] }) {
   // Special price is a FIXED constant (23) across all products — the owner's coded scheme. The
   // retail's ".51" tax add-on is applied by codeRetail at print time (product price is untouched).
   const SPECIAL_FIXED = "23";
-  const toRow = (p: P): Row => ({ sku: p.sku, name: p.name, qty: 1, price: rup(p.price), special: SPECIAL_FIXED, wholesale: rup(p.wholesale) });
-  const add = (p: P) => { setRows((prev) => (prev.find((x) => x.sku === p.sku) ? prev : [...prev, toRow(p)])); setQ(""); };
+  const toRow = (p: P): Row => ({
+    sku: p.sku, name: p.name, qty: 1, price: rup(p.price), special: SPECIAL_FIXED, wholesale: rup(p.wholesale),
+    option: cleanOption(p.option),
+    // For a colour variant, show the short PARENT code as text (readable) while the barcode still
+    // encodes the full variant SKU so it scans to the exact colour at billing.
+    display: (p.kind === "variant" && p.parentSku) ? p.parentSku : p.sku,
+  });
+  const add = (p: P) => {
+    // A configurable design (has colours) prints one label PER colour — so the colour is always on the
+    // tag and each colour scans to its own variant. Adding the bare parent (no colour) is never right.
+    if (p.kind === "product" && (p.variantCount ?? 0) > 0) { addAllVariants(p.sku); return; }
+    setRows((prev) => (prev.find((x) => x.sku === p.sku) ? prev : [...prev, toRow(p)])); setQ("");
+  };
   /** Variant SKUs are what the POS scans — a design with colours should print one per variant. */
   const addAllVariants = (parentSku: string) => {
     const vars = pool.filter((x) => x.kind === "variant" && x.parentSku === parentSku);
@@ -115,9 +135,16 @@ export function BarcodeSheet({ products }: { products: P[] }) {
     if (fuzzy.length > 1) { setScanMsg(`“${code}” matches ${fuzzy.length} items — pick one from the list`); return; }
     try {
       const hits = await barcodeLookupAction(code);
+      // Remember the lookup for later searches.
+      setExtra((prev) => { const have = new Set(prev.map((x) => x.sku.toUpperCase())); const add2 = hits.filter((h) => !have.has(h.sku.toUpperCase())) as P[]; return add2.length ? [...prev, ...add2] : prev; });
       const pick = hits.find((h) => h.sku.toLowerCase() === code.toLowerCase()) ?? (hits.length === 1 ? hits[0] : null);
-      if (pick) { add(pick as P); setScanMsg(`✓ Queued ${pick.sku}`); }
-      else setScanMsg(`✕ “${code}” not found`);
+      if (!pick) { setScanMsg(`✕ “${code}” not found`); return; }
+      if (pick.kind === "product" && (pick.variantCount ?? 0) > 0) {
+        // Configurable → queue every colour from THIS lookup (pool may not have them yet).
+        const vs = hits.filter((h) => h.kind === "variant" && h.parentSku === pick.sku) as P[];
+        setRows((prev) => { const have = new Set(prev.map((x) => x.sku)); return [...prev, ...vs.filter((v) => !have.has(v.sku)).map(toRow)]; });
+        setScanMsg(`✓ Queued ${vs.length} colour${vs.length === 1 ? "" : "s"} of ${pick.sku}`);
+      } else { add(pick as P); setScanMsg(`✓ Queued ${pick.sku}`); }
     } catch { setScanMsg(`✕ “${code}” not found`); }
   }
 
@@ -161,6 +188,7 @@ export function BarcodeSheet({ products }: { products: P[] }) {
                        text-align: center; font-family: Arial, Helvetica, sans-serif; color: #000; }
       .bc-name { font-size: 6pt; line-height: 1.1; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .bc-sku { font-size: 6.5pt; margin-bottom: 0.4mm; line-height: 1; letter-spacing: 0.02em; font-weight: 700; }
+      .bc-colour { font-size: 6.5pt; margin-bottom: 0.4mm; line-height: 1; font-weight: 700; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .bc-price { font-size: 7.5pt; line-height: 1.05; font-weight: 700; -webkit-text-stroke: 0.15pt #000; }
       .barcode-label svg { height: 9mm; width: ${barW}%; display: block; margin: 0 auto; }
     </style></head><body></body></html>`);
@@ -345,8 +373,11 @@ export function BarcodeSheet({ products }: { products: P[] }) {
               return (
                 <div key={i} className="barcode-label text-center bg-white break-inside-avoid">
                   {opts.name && <p className="bc-name font-semibold text-ink truncate">{it.name}</p>}
-                  {/* SKU sits ABOVE the barcode to match the reference tag layout. */}
-                  {opts.sku && <p className="bc-sku tracking-wide text-ink font-bold">SKU: {it.sku}</p>}
+                  {/* SKU sits ABOVE the barcode to match the reference tag layout. For a colour variant
+                      the readable text is the short parent code; the barcode below encodes the full
+                      variant SKU so it still scans to the exact colour. */}
+                  {opts.sku && <p className="bc-sku tracking-wide text-ink font-bold">SKU: {it.display ?? it.sku}</p>}
+                  {it.option && <p className="bc-colour text-ink font-bold">{it.option}</p>}
                   <Barcode value={it.sku} height={28} unit={cols >= 8 ? 0.85 : 1.1} />
                   {line && <p className="bc-price font-bold text-ink">{line}</p>}
                 </div>

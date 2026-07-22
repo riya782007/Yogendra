@@ -20,6 +20,7 @@ export async function POST(req: Request) {
     const total = Math.max(0, Math.round(Number(body?.total) || 0));
     const name = (body?.name ?? "").toString().trim().slice(0, 120) || null;
     const phone = (body?.phone ?? "").toString().replace(/[^\d+]/g, "").slice(0, 20) || null;
+    const city = (body?.city ?? "").toString().trim().slice(0, 80) || null;
     const channel = (body?.channel ?? "").toString().trim().toLowerCase() === "wholesale" ? "wholesale" : "retail";
 
     const jar = cookies();
@@ -48,11 +49,12 @@ export async function POST(req: Request) {
     // instead of waiting for the 20-min "abandoned" window.
     const reachedCheckout = String(body?.stage ?? "").toLowerCase() === "checkout" || body?.reachedCheckout === true;
     const row: any = { session_id: sid, items: clean, total, customer_name: name, phone, recovered: false, channel, updated_at: new Date().toISOString() };
+    if (city) row.city = city;
     if (reachedCheckout) row.reached_checkout = true;
     let up = await sb.from("abandoned_carts").upsert(row, { onConflict: "session_id" });
     if (up.error) {
-      // `channel` column may not be deployed yet — retry without it so tracking never breaks.
-      delete row.channel;
+      // `channel`/`city` columns may not be deployed yet — retry without them so tracking never breaks.
+      delete row.channel; delete row.city;
       up = await sb.from("abandoned_carts").upsert(row, { onConflict: "session_id" });
     }
     return NextResponse.json({ ok: true });

@@ -4,6 +4,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { formatPaise } from "@/lib/pricing";
 import { AbandonedCartCard } from "@/components/admin/AbandonedCartCard";
 import { ClearAnonCartsButton } from "@/components/admin/ClearAnonCartsButton";
+import { AbandonedCartsPdfButton } from "@/components/admin/AbandonedCartsPdfButton";
 
 export const metadata = { title: "Owner Console · Abandoned Carts" };
 
@@ -55,7 +56,7 @@ export default async function Abandoned() {
     <main className="p-8 bg-cream/40 min-h-screen max-w-4xl">
       <h1 className="font-display text-4xl text-ink mb-1">Abandoned Carts</h1>
       <p className="text-sm text-muted mb-3">Shoppers who added to bag but didn&apos;t buy. <span className="text-emerald font-medium">{formatPaise(recoverable)}</span> recoverable — nudge them on WhatsApp. Tap a cart to see full product &amp; customer detail. Use <b>✕</b> on any card to remove an irrelevant one.</p>
-      <div className="mb-5"><ClearAnonCartsButton /></div>
+      <div className="mb-5 flex flex-wrap items-center gap-3"><ClearAnonCartsButton />{carts.length > 0 && <AbandonedCartsPdfButton carts={carts as any} />}</div>
 
       <div className="space-y-3">
         {carts.length === 0 && <p className="text-sm text-muted">No abandoned carts.</p>}

@@ -29,6 +29,10 @@ export function TradeLeadPopup({ totalDesigns = 0 }: { totalDesigns?: number }) 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [done, setDone] = useState(false);
+  // Prominent = the dealer is LEAVING (moved to close the tab / navigate away). We surface a centred,
+  // harder-to-ignore version so the owner captures their name + number before they go — but still leave
+  // one clear way out, never a trap.
+  const [prominent, setProminent] = useState(false);
 
   const seconds = useRef(0);
   const lastActive = useRef(Date.now());
@@ -44,7 +48,7 @@ export function TradeLeadPopup({ totalDesigns = 0 }: { totalDesigns?: number }) 
       if (until && Date.now() < until) return;
     } catch { /* private mode — just behave normally */ }
 
-    const trigger = (why: string) => {
+    const trigger = (why: string, prom = false) => {
       if (fired.current) return;
       if (seconds.current < MIN_SECONDS) return;
       // Never interrupt mid-typing (search box, quantity field…).
@@ -52,8 +56,16 @@ export function TradeLeadPopup({ totalDesigns = 0 }: { totalDesigns?: number }) 
       if (el === "input" || el === "textarea" || el === "select") return;
       fired.current = true;
       reason.current = why;
+      setProminent(prom);
       setShow(true);
     };
+
+    // EXIT INTENT (desktop): the cursor leaves through the top of the window — they're heading for the
+    // tab bar / close / address bar. Last chance to catch a leaving dealer, so show the prominent form.
+    const onExit = (e: MouseEvent) => {
+      if (e.clientY <= 0 && !e.relatedTarget) trigger("exit", true);
+    };
+    document.addEventListener("mouseout", onExit);
 
     const onActivity = () => { lastActive.current = Date.now(); };
     const tick = setInterval(() => {
@@ -96,6 +108,7 @@ export function TradeLeadPopup({ totalDesigns = 0 }: { totalDesigns?: number }) 
       window.removeEventListener("keydown", onActivity);
       window.removeEventListener("touchstart", onActivity);
       document.removeEventListener("change", onIntent, true);
+      document.removeEventListener("mouseout", onExit);
     };
   }, [totalDesigns]);
 
@@ -138,41 +151,54 @@ export function TradeLeadPopup({ totalDesigns = 0 }: { totalDesigns?: number }) 
 
   if (!show) return null;
 
+  const inner = done ? (
+    <div className="py-2">
+      <p className="font-medium text-emerald-dark">Thank you 🙏</p>
+      <p className="text-sm text-muted mt-1">Our team will reach out shortly. Carry on browsing — nothing is locked.</p>
+    </div>
+  ) : (
+    <>
+      <p className="font-display text-xl text-ink leading-tight pr-5">{prominent ? "Before you go — save your details?" : "Enjoying the collection?"}</p>
+      <p className="text-xs text-muted mt-1">
+        {prominent
+          ? "Leave your name, WhatsApp number & city — our team will send you the best trade rates and hold your interest. Takes 10 seconds."
+          : "Leave your details and our team will share the latest designs, best trade rates and new arrivals. Keep browsing — this won't interrupt you again."}
+      </p>
+      <div className="mt-3 space-y-2">
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name / firm name"
+          className="w-full rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-gold" />
+        <input value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" placeholder="WhatsApp number"
+          className="w-full rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-gold" />
+        <input value={city} onChange={(e) => setCity(e.target.value)} placeholder={prominent ? "City" : "City (optional)"}
+          className="w-full rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-gold" />
+      </div>
+      {err && <p className="text-xs text-rose mt-1.5">{err}</p>}
+      <div className="mt-3 flex items-center gap-2">
+        <button onClick={submit} disabled={busy} className="flex-1 px-3 py-2 rounded-full bg-ink text-cream text-sm font-medium disabled:opacity-50">
+          {busy ? "Saving…" : "Send my details"}
+        </button>
+        <button onClick={dismiss} className="px-3 py-2 text-xs text-muted hover:text-ink">{prominent ? "No thanks" : "Maybe later"}</button>
+      </div>
+      <p className="text-[10px] text-muted mt-2">We only use this to contact you about wholesale orders.</p>
+    </>
+  );
+
+  // Leaving → centred, prominent (no stray-click / × dismissal; only "No thanks" or Esc closes — clear
+  // but deliberate, never a trap). Browsing → the gentle corner card that keeps the catalogue usable.
+  if (prominent) {
+    return (
+      <div className="fixed inset-0 z-[60] bg-ink/60 backdrop-blur-sm grid place-items-center p-4">
+        <div className="rounded-2xl bg-white shadow-luxe border border-gold/50 p-5 w-full max-w-[380px] relative animate-fadeIn">
+          {inner}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="fixed z-50 inset-x-3 bottom-3 sm:inset-x-auto sm:right-5 sm:bottom-5 sm:w-[360px]">
       <div className="rounded-2xl bg-white shadow-luxe border border-gold/40 p-4 relative">
         <button onClick={dismiss} aria-label="Close" className="absolute top-2.5 right-3 text-muted hover:text-ink text-lg leading-none">×</button>
-
-        {done ? (
-          <div className="py-2">
-            <p className="font-medium text-emerald-dark">Thank you 🙏</p>
-            <p className="text-sm text-muted mt-1">Our team will reach out shortly. Carry on browsing — nothing is locked.</p>
-          </div>
-        ) : (
-          <>
-            <p className="font-display text-xl text-ink leading-tight pr-5">Enjoying the collection?</p>
-            <p className="text-xs text-muted mt-1">
-              Leave your details and our team will share the latest designs, best trade rates and new arrivals.
-              Keep browsing — this won&apos;t interrupt you again.
-            </p>
-            <div className="mt-3 space-y-2">
-              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name"
-                className="w-full rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-gold" />
-              <input value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" placeholder="WhatsApp number"
-                className="w-full rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-gold" />
-              <input value={city} onChange={(e) => setCity(e.target.value)} placeholder="City (optional)"
-                className="w-full rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-gold" />
-            </div>
-            {err && <p className="text-xs text-rose mt-1.5">{err}</p>}
-            <div className="mt-3 flex items-center gap-2">
-              <button onClick={submit} disabled={busy} className="flex-1 px-3 py-2 rounded-full bg-ink text-cream text-sm font-medium disabled:opacity-50">
-                {busy ? "Saving…" : "Send my details"}
-              </button>
-              <button onClick={dismiss} className="px-3 py-2 text-xs text-muted hover:text-ink">Maybe later</button>
-            </div>
-            <p className="text-[10px] text-muted mt-2">We only use this to contact you about wholesale orders.</p>
-          </>
-        )}
+        {inner}
       </div>
     </div>
   );
