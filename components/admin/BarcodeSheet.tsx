@@ -64,8 +64,9 @@ export function BarcodeSheet({ products }: { products: P[] }) {
   const [adjLeft, setAdjLeft] = useState(0); // mm added to the LEFT margin (shifts every column left/right)
   const [adjPitch, setAdjPitch] = useState(0); // mm added to EACH label's WIDTH — fixes SIDEWAYS drift where
                                                // columns creep right until the barcode clips off the label edge
-  const [barW, setBarW] = useState(72);      // printed bar width as % of the label — ~5mm side margin each
-                                             // side so cumulative drift can never push a barcode off its label
+  const [barW, setBarW] = useState(88);      // printed bar width as % of the label — WIDE enough that the long
+                                             // SKUs (e.g. WT1037-SILVER) have big-enough bars to scan fast, while
+                                             // still leaving ~2.3mm clear each side so it stays inside the sticker.
   const [scanMsg, setScanMsg] = useState(""); // feedback for scan / Enter-to-add
 
   // Products/variants created AFTER this page loaded aren't in `products`. When a search finds nothing
@@ -203,7 +204,7 @@ export function BarcodeSheet({ products }: { products: P[] }) {
       .bc-sku { font-size: 6pt; margin-bottom: 0.3mm; line-height: 1; letter-spacing: 0.02em; font-weight: 700; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .bc-colour { font-size: 6pt; margin-bottom: 0.3mm; line-height: 1; font-weight: 700; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .bc-price { font-size: 6.5pt; line-height: 1; font-weight: 700; margin-top: 0.3mm; -webkit-text-stroke: 0.12pt #000; }
-      .barcode-label svg { height: 7.5mm; width: ${barW}%; display: block; margin: 0 auto; }
+      .barcode-label svg { height: 9mm; width: ${barW}%; display: block; margin: 0 auto; }
     </style></head><body></body></html>`);
     d.close();
     const labelEls = Array.from(grid.children);
