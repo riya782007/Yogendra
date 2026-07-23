@@ -64,6 +64,10 @@ export function ProductEditor({
   const [titleOptions, setTitleOptions] = useState<string[]>([]);
   const [suggestingTitles, setSuggestingTitles] = useState(false);
   const [aligning, setAligning] = useState("");
+  // Was the last title suggestion actually built from a PHOTO? null = not run yet. When false we show a
+  // clear "add a photo" banner — because without an image the model can only echo the category (that's
+  // what produced vague "Gold Hand Accessorie" titles; a photo yields ChatGPT-level "…Bracelet Watch…").
+  const [titlesUsedPhoto, setTitlesUsedPhoto] = useState<boolean | null>(null);
 
   async function suggestTitles() {
     setSuggestingTitles(true); setTitleOptions([]);
@@ -73,7 +77,9 @@ export function ProductEditor({
     setSuggestingTitles(false);
     if (res.ok && res.titles?.length) {
       setTitleOptions(res.titles);
-      toast(`${res.titles.length} titles suggested${res.usedImage ? " — from the photo 📸" : ""}. Pick the best one.`);
+      setTitlesUsedPhoto(!!res.usedImage);
+      if (res.usedImage) toast(`${res.titles.length} titles suggested — from the photo 📸. Pick the best one.`);
+      else toast("⚠ No photo on this product — titles are only guessed from the category and will be vague. Add a photo (Photos tab) for accurate, ChatGPT-level titles.", "error");
     } else toast(res.error ?? "Couldn't suggest titles", "error");
   }
 
@@ -264,6 +270,14 @@ export function ProductEditor({
             {/* Image-scanned title options — pick one; name + title + description align to it. */}
             {(titleOptions.length > 0 || aligning) && (
               <div className="mt-3 rounded-xl border border-ink/15 bg-white p-3">
+                {titlesUsedPhoto === false && (
+                  <div className="mb-2 rounded-lg border border-gold/50 bg-gold/10 px-3 py-2 text-xs text-gold-dark">
+                    ⚠ <b>No photo on this product</b>, so these titles are only guessed from the category and will be vague. Add a photo in the <b>Photos</b> tab, then click Suggest again — with a photo the AI reads the piece like ChatGPT (e.g. “…Designer Bracelet Watch for Women”).
+                  </div>
+                )}
+                {titlesUsedPhoto === true && (
+                  <p className="mb-2 text-[11px] text-emerald-dark">📸 Read from the product photo — like ChatGPT.</p>
+                )}
                 <p className="text-xs font-medium text-ink mb-2">Pick the best title <span className="text-muted font-normal">— it becomes the product name &amp; title, and the description is written to match</span></p>
                 <div className="space-y-1.5">
                   {titleOptions.map((t) => (
