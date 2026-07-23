@@ -125,13 +125,17 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
           </div>
           <div className="space-y-1.5">
             {wholesaleCarts.slice(0, 5).map((c) => {
-              const ph = c.phone ? String(c.phone).replace(/\D/g, "") : "";
+              let ph = c.phone ? String(c.phone).replace(/\D/g, "") : "";
+              if (ph.startsWith("0")) ph = ph.slice(1);
+              if (ph.length === 10) ph = "91" + ph; // add country code so WhatsApp opens the right chat
+              const nItems = (c.items ?? []).length;
+              const waMsg = `Hi ${c.customer_name || "there"}! You have ${nItems} item${nItems === 1 ? "" : "s"} in your Blythe Diva wholesale cart (${formatPaise(c.total ?? 0)}) that isn't completed yet. Shall we confirm and place your order?`;
               return (
                 <div key={c.id} className="flex flex-wrap items-center justify-between gap-2 text-sm bg-white/70 rounded-lg px-3 py-1.5">
-                  <span className="text-ink"><b>{c.customer_name || "Dealer"}</b>{c.phone ? ` · ${c.phone}` : ""} · {(c.items ?? []).length} items</span>
+                  <span className="text-ink"><b>{c.customer_name || "Dealer"}</b>{c.phone ? ` · ${c.phone}` : ""} · {nItems} items</span>
                   <span className="flex items-center gap-3">
                     <span className="text-ink font-medium">{formatPaise(c.total ?? 0)}</span>
-                    {ph && <a href={`https://wa.me/${ph}`} target="_blank" rel="noreferrer" className="text-xs text-emerald nav-link">WhatsApp →</a>}
+                    {ph && <a href={`https://wa.me/${ph}?text=${encodeURIComponent(waMsg)}`} target="_blank" rel="noreferrer" className="text-xs text-emerald nav-link">WhatsApp →</a>}
                   </span>
                 </div>
               );

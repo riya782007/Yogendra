@@ -36,7 +36,9 @@ export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMa
     else setPlaceMsg({ text: r.error ?? "Couldn't delete.", ok: false });
   }
   const totalQty = items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
-  const phone = cart.phone ? String(cart.phone).replace(/\D/g, "") : "";
+  let phone = cart.phone ? String(cart.phone).replace(/\D/g, "") : "";
+  if (phone.startsWith("0")) phone = phone.slice(1);
+  if (phone.length === 10) phone = "91" + phone; // country code so WhatsApp opens the right chat
 
   async function placeOrder(markPaid: boolean) {
     if (!cart.session_id) { setPlaceMsg({ text: "Missing cart id.", ok: false }); return; }

@@ -24,7 +24,9 @@ const WHY: Record<string, string> = {
 export function VisitorCard({ v }: { v: V }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
-  const phone = v.phone ? String(v.phone).replace(/\D/g, "") : "";
+  let phone = v.phone ? String(v.phone).replace(/\D/g, "") : "";
+  if (phone.startsWith("0")) phone = phone.slice(1);
+  if (phone.length === 10) phone = "91" + phone; // country code so WhatsApp opens the right chat
 
   async function setStatus(status: string) {
     setBusy(true);

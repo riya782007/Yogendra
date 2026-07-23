@@ -31,8 +31,12 @@ export function WholesalePaymentCard({ order }: { order: Order }) {
   }
 
   const when = new Date(order.created_at).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-  const phone = order.customer_phone ? String(order.customer_phone).replace(/\D/g, "") : "";
-  const wa = phone ? `https://wa.me/${phone}` : null;
+  let phone = order.customer_phone ? String(order.customer_phone).replace(/\D/g, "") : "";
+  if (phone.startsWith("0")) phone = phone.slice(1);
+  if (phone.length === 10) phone = "91" + phone; // country code → WhatsApp opens the right chat
+  const ref = order.invoice_no || order.id.slice(0, 8).toUpperCase();
+  const waMsg = `Hi ${order.customer_name || "there"}! 🙏 Regarding your Blythe Diva order ${ref} (${formatPaise(order.total)}) — we have received your payment details and are confirming it now. Thank you for your order!`;
+  const wa = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(waMsg)}` : null;
 
   return (
     <div className="bg-white rounded-2xl shadow-card p-4 flex flex-col sm:flex-row gap-4">

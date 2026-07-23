@@ -24,7 +24,9 @@ const agoText = (d: string) => {
 export function DesignEnquiryCard({ e }: { e: Enq }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
-  const phone = e.dealer_phone ? String(e.dealer_phone).replace(/\D/g, "") : "";
+  let phone = e.dealer_phone ? String(e.dealer_phone).replace(/\D/g, "") : "";
+  if (phone.startsWith("0")) phone = phone.slice(1);
+  if (phone.length === 10) phone = "91" + phone; // country code so WhatsApp opens the right chat
 
   async function setStatus(status: string) {
     setBusy(true);
