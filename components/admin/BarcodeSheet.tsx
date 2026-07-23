@@ -34,7 +34,11 @@ function cleanOption(o?: string): string | undefined {
 // (measured on the owner's physical sheet), left margin 4.75mm → all 65 land on ONE A4 (210×297).
 // lw/lh = label width/height · gx/gy = gap between columns/rows · mt/ml = top/left sheet margin.
 const PAPER = [
-  { key: "65", label: "65 per sheet (5 × 13)", cols: 5, per: 65, lw: 38.1, lh: 21.2, gx: 2.5, gy: 0, mt: 11.2, ml: 4.75 },
+  // lw 37.8 (not the nominal 38.1): a hair narrower per column so cumulative pitch NEVER pushes the
+  // right-hand columns off the die-cut edge on a full 65-up sheet — the owner's "barcodes going off the
+  // side" was the 5th column drifting right. Combined with a narrower barcode (side margin) this holds
+  // for every sheet in a bulk run, not just the first.
+  { key: "65", label: "65 per sheet (5 × 13)", cols: 5, per: 65, lw: 37.8, lh: 21.2, gx: 2.5, gy: 0, mt: 11.2, ml: 4.5 },
   { key: "48", label: "48 per sheet (4 × 12)", cols: 4, per: 48, lw: 45.7, lh: 22.5, gx: 2.5, gy: 0, mt: 13.5, ml: 8.0 },
   { key: "40", label: "40 per sheet (4 × 10)", cols: 4, per: 40, lw: 45.7, lh: 25.4, gx: 2.5, gy: 0, mt: 21.5, ml: 8.0 },
   { key: "24", label: "24 per sheet (3 × 8)", cols: 3, per: 24, lw: 63.5, lh: 33.9, gx: 2.5, gy: 0, mt: 12.7, ml: 7.2 },
@@ -60,7 +64,8 @@ export function BarcodeSheet({ products }: { products: P[] }) {
   const [adjLeft, setAdjLeft] = useState(0); // mm added to the LEFT margin (shifts every column left/right)
   const [adjPitch, setAdjPitch] = useState(0); // mm added to EACH label's WIDTH — fixes SIDEWAYS drift where
                                                // columns creep right until the barcode clips off the label edge
-  const [barW, setBarW] = useState(84);      // printed bar width as % of the label (side-margin so drift can't clip bars)
+  const [barW, setBarW] = useState(72);      // printed bar width as % of the label — ~5mm side margin each
+                                             // side so cumulative drift can never push a barcode off its label
   const [scanMsg, setScanMsg] = useState(""); // feedback for scan / Enter-to-add
 
   // Products/variants created AFTER this page loaded aren't in `products`. When a search finds nothing
@@ -97,7 +102,7 @@ export function BarcodeSheet({ products }: { products: P[] }) {
   const G = PAPER.find((p) => p.key === paper) ?? PAPER[0];
   // Handover: the owner uses one fixed pre-cut sheet and never changes these, so the paper-size,
   // label-content and printer-alignment controls are hidden (defaults kept). Set true to expose them.
-  const SHOW_ADVANCED = true;
+  const SHOW_ADVANCED = false;
   const cols = G.cols;
   const per = G.per;
   // Special price is a FIXED constant (23) across all products — the owner's coded scheme. The
