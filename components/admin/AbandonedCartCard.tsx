@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { formatPaise } from "@/lib/pricing";
+import { SITE } from "@/lib/siteUrl";
 import { ProductImage } from "@/components/Placeholder";
 import { placeWholesaleOrderFromCartAction } from "@/app/actions/wholesale";
 import { deleteAbandonedCartAction } from "@/app/actions/abandoned";
@@ -47,9 +48,13 @@ export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMa
     router.refresh();
   }
   const isWholesale = String(cart.channel ?? "").toLowerCase() === "wholesale";
+  // One-tap recovery link → restores this exact cart on the storefront and takes the customer straight
+  // to checkout/payment. The owner just hits send; the customer taps and pays.
+  const recoverUrl = `${SITE}/cart/recover/${cart.id}`;
+  const money = formatPaise(cart.total);
   const waMsg = isWholesale
-    ? `Hi ${cart.customer_name || "there"}! You added ${totalQty} piece${totalQty === 1 ? "" : "s"} to your Blythe Diva wholesale cart but didn't place the order. Need help or a better rate? Reply here and we'll sort it out. 🙏`
-    : `Hi ${cart.customer_name || "there"}! You left some beautiful pieces in your Blythe Diva bag. Complete your order and enjoy 20% off ✨`;
+    ? `Hi ${cart.customer_name || "there"}! 🙏 Your Blythe Diva wholesale cart has ${totalQty} piece${totalQty === 1 ? "" : "s"} (${money}). Tap below to review and confirm your order — payment is quick and secure:\n${recoverUrl}`
+    : `Hi ${cart.customer_name || "there"}! ✨ You left ${totalQty} beautiful piece${totalQty === 1 ? "" : "s"} (${money}) in your Blythe Diva bag. Complete your order and pay securely here:\n${recoverUrl}`;
   const wa = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(waMsg)}` : null;
   const when = new Date(cart.created_at).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
@@ -68,7 +73,14 @@ export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMa
         <div className="text-right shrink-0 flex items-start gap-2">
           <div>
             <p className="font-semibold text-ink">{formatPaise(cart.total)}</p>
-            {wa ? <a href={wa} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-xs text-emerald nav-link">WhatsApp nudge →</a> : <span className="text-xs text-muted">no contact</span>}
+            {wa ? (
+              <a href={wa} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}
+                title="Open WhatsApp with a ready message + payment link"
+                className="inline-flex items-center gap-1.5 mt-1 rounded-full bg-[#25D366] text-white px-3 py-1.5 text-xs font-semibold hover:brightness-95">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M17.5 14.4c-.3-.1-1.7-.8-1.9-.9-.3-.1-.5-.1-.7.2-.2.3-.7.8-.9 1-.2.2-.3.2-.6.1-1.5-.8-2.5-1.4-3.5-3.1-.3-.5.3-.4.7-1.3.1-.2 0-.4 0-.5 0-.2-.7-1.6-.9-2.2-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.5s1.1 2.9 1.2 3.1c.1.2 2.1 3.2 5.1 4.5 1.9.8 2.6.9 3.5.8.6-.1 1.7-.7 1.9-1.4.2-.7.2-1.2.2-1.4-.1-.1-.3-.2-.6-.3zM12 2a10 10 0 00-8.6 15.1L2 22l5-1.3A10 10 0 1012 2z"/></svg>
+                Send WhatsApp
+              </a>
+            ) : <span className="text-xs text-muted">no contact</span>}
           </div>
           {/* Delete — for irrelevant carts (anonymous, tiny, junk). Confirm inline so it's never a mis-tap. */}
           {confirmDel ? (
