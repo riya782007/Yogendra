@@ -401,7 +401,11 @@ export function BarcodeSheet({ products }: { products: P[] }) {
                       the readable text is the short parent code with the colour appended (e.g. WE729-Gold,
                       like before); the barcode below still encodes the full variant SKU so it scans to the
                       exact colour at billing. */}
-                  {opts.sku && <p className="bc-sku tracking-wide text-ink font-bold">SKU: {it.display ?? it.sku}{it.option ? `-${it.option}` : ""}</p>}
+                  {/* Print the ACTUAL variant SKU (exactly what the barcode below encodes and what's in
+                      the system). Previously this showed parentSKU + "-" + colour NAME, so a design whose
+                      colour is "Golden" but whose SKU suffix is "GOLD" printed "WE807-Golden" while the real
+                      SKU is "WE807-GOLD" — a mismatch. Showing it.sku keeps text, SKU and scan identical. */}
+                  {opts.sku && <p className="bc-sku tracking-wide text-ink font-bold">SKU: {it.sku}</p>}
                   <Barcode value={it.sku} height={28} unit={cols >= 8 ? 0.85 : 1.1} />
                   {line && <p className="bc-price font-bold text-ink">{line}</p>}
                 </div>
