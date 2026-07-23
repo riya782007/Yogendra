@@ -1,5 +1,6 @@
 "use server";
 import {revalidateTag,  revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 
@@ -55,15 +56,22 @@ export async function mapPurchaseLineAction(formData: FormData): Promise<void> {
 
 /** Low-risk edit of a purchase's bill number / supplier — direct, permissioned. */
 export async function updatePurchaseAction(formData: FormData): Promise<void> {
-  if (!(await requirePerm("purchases.create"))) return;
   const id = String(formData.get("id") ?? "");
+  if (!id) return;
+  // Non-silent: if the account lacks the authoritative permission, tell the user instead of quietly
+  // doing nothing (that was why "supplier save hone ke baad bhi change nahi ho raha" — the save
+  // returned early with no message).
+  if (!(await requirePerm("purchases.create"))) redirect(`/admin/purchase/${id}?saved=err&msg=${encodeURIComponent("You don't have permission to edit purchases.")}`);
   const billNo = String(formData.get("bill_no") ?? "").trim();
   const supplierId = String(formData.get("supplier_id") ?? "").trim();
-  if (!id) return;
   const row: any = { bill_no: billNo || null };
   if (supplierId) row.supplier_id = supplierId;
-  await supabaseServer().from("purchases").update(row).eq("id", id);
+  const { error } = await supabaseServer().from("purchases").update(row).eq("id", id);
+  if (error) redirect(`/admin/purchase/${id}?saved=err&msg=${encodeURIComponent(error.message)}`);
   revalidatePath(`/admin/purchase/${id}`); revalidatePath("/admin/purchases");
+  // Redirect (fresh navigation) so the updated supplier shows immediately and the ✓ banner appears —
+  // never leaves the owner unsure whether the change stuck.
+  redirect(`/admin/purchase/${id}?saved=1`);
 }
 
 /**

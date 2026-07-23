@@ -3,21 +3,26 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getPurchaseById } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
-import { getSession, can } from "@/lib/auth";
+import { requirePerm } from "@/lib/auth";
 import { updatePurchaseAction, requestPurchaseDeletionAction, mapPurchaseLineAction } from "@/app/actions/purchases";
 import { PurchaseReturnButton } from "@/components/admin/PurchaseReturnButton";
 import { supabaseServer } from "@/lib/supabase/server";
 
 export const metadata = { title: "Owner Console · Purchase" };
 
-export default async function PurchaseDetail({ params }: { params: { id: string } }) {
+export default async function PurchaseDetail({ params, searchParams }: { params: { id: string }; searchParams?: { saved?: string; msg?: string } }) {
   const data = await getPurchaseById(params.id);
   if (!data) notFound();
   const { purchase: p, items, deletionPending, suppliers, products } = data;
   // Returns already made to the supplier against this bill (debit notes).
   const { data: pRets } = await supabaseServer().from("returns").select("id,qty,amount,reason,created_at").eq("kind", "purchase").eq("ref_order_id", params.id).order("created_at", { ascending: false });
   const purchaseReturns = ((pRets as any[]) ?? []);
-  const canEdit = can(getSession(), "purchases.create");
+  // AUTHORITATIVE permission — the SAME check the save action enforces. Previously the form was shown
+  // with the cookie-based `can()` while the action enforced DB-based `requirePerm()`; when those two
+  // disagreed the form appeared but Save silently did nothing ("supplier save hone ke baad bhi change
+  // nahi ho raha"). Gating the UI with requirePerm guarantees: if you can see the form, Save works.
+  const canEdit = await requirePerm("purchases.create");
+  const savedFlag = searchParams?.saved;
   const ref = p.bill_no || String(p.id).slice(0, 8).toUpperCase();
   const fld = "rounded-xl border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-emerald";
 
@@ -87,6 +92,8 @@ export default async function PurchaseDetail({ params }: { params: { id: string 
           {/* Edit metadata (low-risk, direct) */}
           <div className="bg-white rounded-2xl p-5 shadow-card">
             <h2 className="font-medium text-ink mb-3">Edit bill details</h2>
+            {savedFlag === "1" && <p className="mb-3 text-sm text-emerald-dark bg-emerald-mist/50 rounded-lg px-3 py-2">✓ Saved — bill &amp; supplier updated.</p>}
+            {savedFlag === "err" && <p className="mb-3 text-sm text-rose bg-rose/10 rounded-lg px-3 py-2">Couldn’t save{searchParams?.msg ? `: ${searchParams.msg}` : "."} Please try again.</p>}
             <form action={updatePurchaseAction} className="space-y-3">
               <input type="hidden" name="id" value={p.id} />
               <input name="bill_no" defaultValue={p.bill_no ?? ""} placeholder="Bill number" className={`${fld} w-full`} />
