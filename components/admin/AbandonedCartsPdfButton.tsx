@@ -58,21 +58,23 @@ export function AbandonedCartsPdfButton({ carts }: { carts: Cart[] }) {
       table.items td { padding: 3px 4px; border-bottom: 1px solid #f3f3f3; }
       .sku { font-family: 'Courier New', monospace; font-weight: 700; }
       .r { text-align: right; } .muted { color: #999; }
-      @media print { body { margin: 12mm; } }
+      .bar { position: sticky; top: 0; background: #fff; padding: 8px 0 12px; margin-bottom: 6px; border-bottom: 1px solid #eee; }
+      .bar button { font: 600 13px Arial; background: #0f766e; color: #fff; border: 0; border-radius: 999px; padding: 9px 18px; cursor: pointer; }
+      @media print { body { margin: 12mm; } .bar { display: none; } }
     </style></head><body>
+      <div class="bar"><button onclick="window.print()">⬇ Save as PDF</button></div>
       <h1>Abandoned Carts — BlytheDIVA</h1>
       <div class="sub">${carts.length} cart${carts.length === 1 ? "" : "s"} · ${formatPaise(recoverable)} recoverable · generated ${esc(dt(new Date().toISOString()))}</div>
       ${blocks || `<p class="muted">No abandoned carts.</p>`}
+      <script>window.addEventListener("load",function(){setTimeout(function(){try{window.print();}catch(e){}},400);});<\/script>
     </body></html>`;
 
-    const f = document.createElement("iframe");
-    f.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;";
-    document.body.appendChild(f);
-    const d = f.contentDocument, w = f.contentWindow;
-    if (!d || !w) { document.body.removeChild(f); return; }
-    d.open(); d.write(html); d.close();
-    w.focus(); setTimeout(() => { w.print(); }, 250);
-    setTimeout(() => { try { document.body.removeChild(f); } catch {} }, 60_000);
+    // Open in a REAL new tab (works reliably in every browser) and auto-open the print dialog so the
+    // owner just picks "Save as PDF". If they close the dialog, the tab still shows every cart with a
+    // "Save as PDF" button at the top. The old hidden-iframe approach printed blank in many browsers.
+    const w = window.open("", "_blank");
+    if (!w) { alert("Please allow pop-ups for this site, then click Download PDF again."); return; }
+    w.document.open(); w.document.write(html); w.document.close();
   };
 
   return (
