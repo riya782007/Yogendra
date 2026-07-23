@@ -103,6 +103,17 @@ function NavInner({ collapsed, onNavigate, perms, badges = {} }: { collapsed: bo
         </div>
       )}
 
+      {/* Ask DIVA — the AI operator. Opens the DIVA panel (replaces the old floating diamond launcher,
+          which the owner found covered on-page controls). Works collapsed (icon only) or expanded. */}
+      <button
+        onClick={() => { window.dispatchEvent(new Event("open-diva")); onNavigate?.(); }}
+        title="Ask DIVA — AI assistant"
+        className={`group mb-3 w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-all bg-gold/15 ring-1 ring-gold/30 text-ivory hover:bg-gold/25 ${collapsed ? "justify-center" : ""}`}>
+        <span className="w-5 text-center text-gold-light shrink-0">◆</span>
+        {!collapsed && <span className="truncate font-medium">Ask DIVA</span>}
+        {!collapsed && <span className="ml-auto text-[9px] font-bold uppercase tracking-wide text-gold-light">AI</span>}
+      </button>
+
       {/* Search results — a flat, fast jump list; the grouped nav hides while searching. */}
       {!collapsed && q ? (
         <nav className="space-y-0.5">

@@ -30,6 +30,14 @@ export function Diva({ roleName = "Owner" }: { roleName?: string }) {
 
   useEffect(() => { logRef.current?.scrollTo({ top: 1e9, behavior: "smooth" }); }, [msgs, steps]);
 
+  // Opened from the sidebar "Ask DIVA" menu item (it dispatches this event). The floating diamond
+  // launcher was removed at the owner's request because it sat on the page and covered controls.
+  useEffect(() => {
+    const openDiva = () => setOpen(true);
+    window.addEventListener("open-diva", openDiva);
+    return () => window.removeEventListener("open-diva", openDiva);
+  }, []);
+
   // Load proactive suggestions when the panel first opens.
   const loadSuggestions = () => { getDivaSuggestions().then(setSuggestions).catch(() => setSuggestions([])); };
   useEffect(() => { if (open && suggestions === null) loadSuggestions(); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -100,18 +108,8 @@ export function Diva({ roleName = "Owner" }: { roleName?: string }) {
 
   return (
     <>
-      {/* Small, STATIC AI launcher pinned to the middle of the right edge — small enough and placed so
-          it never covers action buttons (Save, tabs, etc. sit at the top/bottom, not mid-edge). */}
-      {!open && (
-        <button onClick={() => setOpen(true)} title="Ask DIVA — AI assistant" aria-label="Ask DIVA — AI assistant"
-          className="no-print fixed right-1.5 top-1/2 -translate-y-1/2 z-40 group flex items-center gap-1.5">
-          <span className="hidden sm:block bg-ink text-cream text-[10px] px-2 py-1 rounded-full shadow-luxe opacity-0 group-hover:opacity-100 transition-opacity">Ask DIVA</span>
-          <span className="relative block w-9 h-9 rounded-full bg-white/70 backdrop-blur ring-1 ring-gold/40 shadow-md hover:ring-gold transition">
-            <DivaAvatar className="w-9 h-9" />
-            <span className="absolute -top-0.5 -right-0.5 text-[8px] font-bold text-gold-dark bg-white rounded-full px-1 leading-tight ring-1 ring-gold/40">AI</span>
-          </span>
-        </button>
-      )}
+      {/* The floating diamond launcher was removed — DIVA now opens from the sidebar "Ask DIVA" menu
+          item (which dispatches the "open-diva" event handled above), so nothing sits over the page. */}
 
       {/* Panel */}
       {open && (

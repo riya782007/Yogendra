@@ -11,7 +11,7 @@ export function Barcode({ value, height = 44, unit = 1.5 }: { value: string; hei
     x += width * unit;
   });
   return (
-    <svg width="100%" height={height} viewBox={`0 0 ${w} ${height}`} preserveAspectRatio="xMidYMid meet" shapeRendering="crispEdges">
+    <svg width="100%" height={height} viewBox={`0 0 ${w} ${height}`} preserveAspectRatio="none" shapeRendering="crispEdges">
       {rects}
     </svg>
   );
