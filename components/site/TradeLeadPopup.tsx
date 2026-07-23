@@ -5,7 +5,6 @@ import { captureTradeVisitorAction } from "@/app/actions/leads";
 const K_DONE = "bd_trade_lead_done";
 const K_SNOOZE = "bd_trade_lead_snooze_until";
 const K_VID = "bd_trade_visitor_id";
-const K_DISMISS = "bd_trade_lead_dismissals";
 
 /** Ask only once real interest is shown — whichever of these lands first. */
 const MIN_SECONDS = 20;      // never interrupt someone who just arrived
@@ -107,25 +106,6 @@ export function TradeLeadPopup({ totalDesigns = 0 }: { totalDesigns?: number }) 
     };
   }, [totalDesigns]);
 
-  // Esc closes, like any well-behaved dialog.
-  useEffect(() => {
-    if (!show) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") dismiss(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [show]);
-
-  function dismiss() {
-    setShow(false);
-    try {
-      const n = Number(localStorage.getItem(K_DISMISS) || 0) + 1;
-      localStorage.setItem(K_DISMISS, String(n));
-      // Asked once and waved away → back off a day. Twice → a full week.
-      const wait = n >= 2 ? 7 * 24 * 3600e3 : 24 * 3600e3;
-      localStorage.setItem(K_SNOOZE, String(Date.now() + wait));
-    } catch { /* ignore */ }
-  }
-
   async function submit() {
     // Name + phone are what make a lead usable — without them the owner just gets another "Guest".
     if (!name.trim() || !phone.trim()) { setErr("Please add your name and phone number."); return; }
@@ -173,13 +153,12 @@ export function TradeLeadPopup({ totalDesigns = 0 }: { totalDesigns?: number }) 
     </>
   );
 
-  // ALWAYS a centred popup over a blurred backdrop (owner: "background blur karke pop-up ki tarah do").
-  // Not mandatory — the × (top-right) or Esc closes it and the catalogue stays fully usable underneath.
-  // Only a single Submit button: no "No thanks" / "Maybe later".
+  // MANDATORY centred popup over a blurred backdrop (owner: "mandatory karna hi hota hai, otherwise cart
+  // submit/surf nai hogi"). No × and no Esc — the dealer must enter Name + Phone + City and Submit to
+  // continue browsing. The backdrop covers the page so nothing behind it is clickable until they submit.
   return (
     <div className="fixed inset-0 z-[60] bg-ink/60 backdrop-blur-sm grid place-items-center p-4">
       <div className="rounded-2xl bg-white shadow-luxe border border-gold/50 p-5 w-full max-w-[380px] relative animate-fadeIn">
-        <button onClick={dismiss} aria-label="Close" className="absolute top-2.5 right-3 text-muted hover:text-ink text-xl leading-none">×</button>
         {inner}
       </div>
     </div>
