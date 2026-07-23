@@ -28,6 +28,23 @@ function cleanOption(o?: string): string | undefined {
   return parts.join(" / ") || undefined;
 }
 
+/**
+ * The SKU text printed on a label = PARENT + COLOUR only. A variant SKU can be PARENT-COLOUR-POLISH
+ * (e.g. "WE780-GOLD-GOLD"); the owner wants ONLY the colour on the tag ("WE780-GOLD"), never the polish.
+ * We take the colour straight from the SKU (the segment right after the parent) so the printed code
+ * always matches the colour the barcode scans — and drop everything after it (the polish). Non-variant
+ * SKUs (no parent prefix) print unchanged.
+ */
+function skuLabelText(sku: string, parent?: string): string {
+  const full = String(sku || "");
+  const p = String(parent || "");
+  if (p && p !== full && full.toUpperCase().startsWith(p.toUpperCase() + "-")) {
+    const colour = full.slice(p.length + 1).split("-")[0]; // first segment after parent = colour; rest = polish
+    return colour ? `${p}-${colour}` : full;
+  }
+  return full;
+}
+
 // Paper presets with EXACT die-cut geometry in mm, so each barcode lands on its physical label.
 // 65-up = the owner's pre-cut sheet (Avery L7651 layout): 38.1×21.2mm labels, 5 columns × 13 rows,
 // horizontal pitch 40.6mm (38.1 + 2.5 gap), vertical pitch 21.2mm (no row gap), top margin 11.2mm
@@ -402,11 +419,10 @@ export function BarcodeSheet({ products }: { products: P[] }) {
                       the readable text is the short parent code with the colour appended (e.g. WE729-Gold,
                       like before); the barcode below still encodes the full variant SKU so it scans to the
                       exact colour at billing. */}
-                  {/* Print the ACTUAL variant SKU (exactly what the barcode below encodes and what's in
-                      the system). Previously this showed parentSKU + "-" + colour NAME, so a design whose
-                      colour is "Golden" but whose SKU suffix is "GOLD" printed "WE807-Golden" while the real
-                      SKU is "WE807-GOLD" — a mismatch. Showing it.sku keeps text, SKU and scan identical. */}
-                  {opts.sku && <p className="bc-sku tracking-wide text-ink font-bold">SKU: {it.sku}</p>}
+                  {/* Print PARENT + COLOUR only (colour taken from the SKU itself so it matches the scan),
+                      dropping any polish segment: "WE780-GOLD-GOLD" → "WE780-GOLD", "WE807-GOLD" → "WE807-GOLD".
+                      The barcode below still encodes the FULL variant SKU so it scans to the exact piece. */}
+                  {opts.sku && <p className="bc-sku tracking-wide text-ink font-bold">SKU: {skuLabelText(it.sku, it.display)}</p>}
                   <Barcode value={it.sku} height={28} unit={cols >= 8 ? 0.85 : 1.1} />
                   {line && <p className="bc-price font-bold text-ink">{line}</p>}
                 </div>
