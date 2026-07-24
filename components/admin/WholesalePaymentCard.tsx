@@ -26,7 +26,7 @@ export function WholesalePaymentCard({ order }: { order: Order }) {
     const r = await verifyWholesalePaymentAction({ orderId: order.id, approve });
     setBusy(false); setConfirmReject(false);
     if (!r.ok) { setMsg({ text: r.error ?? "Couldn't update.", ok: false }); return; }
-    setMsg({ text: approve ? "Payment approved ✓ — order can be dispatched." : "Marked rejected — follow up with the dealer.", ok: approve });
+    setMsg({ text: approve ? "Payment approved ✓ — order can be dispatched." : "Rejected ✓ — order cancelled and the held stock released.", ok: approve });
     router.refresh();
   }
 

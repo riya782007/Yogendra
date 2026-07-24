@@ -1,7 +1,7 @@
 "use server";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 import { getWholesaleSession } from "@/lib/wholesale";
@@ -416,8 +416,16 @@ export async function verifyWholesalePaymentAction(input: { orderId: string; app
       }
     } catch { /* cash-book best-effort */ }
   } else {
-    await sb.from("orders").update({ admin_note: "⚠ Payment REJECTED — follow up with the dealer" }).eq("id", id);
+    // Reject = CANCEL the unpaid order. Previously we only wrote a note, so the order stayed in the
+    // awaiting list (owner: "reject nahi ho raha") and its stock stayed deducted ("jabardasti stock less
+    // ho rakha"). cancel_order releases the held stock back to inventory (restocks every line + reverses
+    // any payment) and flips status to 'cancelled', which drops it off the awaiting list for good.
+    const { error: cErr } = await sb.rpc("cancel_order", { p_order_id: id, p_reason: "Wholesale payment rejected — dealer didn't confirm" });
+    if (cErr) return { ok: false, error: `Couldn't release the order: ${cErr.message}` };
+    await sb.from("orders").update({ admin_note: "⚠ Payment REJECTED — order cancelled, stock released" }).eq("id", id);
   }
   revalidatePath("/admin/wholesale-payments"); revalidatePath("/admin/dashboard"); revalidatePath(`/admin/invoice/${id}`);
+  // Reject restocks the items — refresh the catalogue/inventory views so the freed stock shows at once.
+  revalidatePath("/admin/catalogue"); revalidatePath("/admin/inventory"); revalidateTag("storefront");
   return { ok: true };
 }
