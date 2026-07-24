@@ -266,6 +266,25 @@ export async function generateTitleOptions(p: ProductLike, n = 4): Promise<{ tit
     .map((t) => enforceName(deFiller(t), forcedName))
     .filter((t) => { const k = t.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; })
     .slice(0, n);
+  // CONSISTENCY: the owner must always see the SAME number of options — never "kabhi 4 kabhi 1". When a
+  // provider was down / quota-exhausted / photo-blind and we got fewer than n, pad with deterministic
+  // name-based SEO titles so the count is stable and every option is still on-brand and on-name.
+  if (titles.length < n) {
+    const base = (p.name ?? "").trim();
+    const cat = (p as any).categoryName as string | undefined;
+    const variants = [
+      seoTitleFromName(base, cat),
+      base && cat ? `${base} — ${cat}` : "",
+      base ? `${base} for Women` : "",
+      base ? `${base} for Wedding & Festive Wear` : "",
+      base ? `${base} | Artificial Jewellery` : "",
+    ].map((t) => enforceName(deFiller(String(t || "")), forcedName)).filter(Boolean);
+    for (const v of variants) {
+      if (titles.length >= n) break;
+      const k = v.toLowerCase();
+      if (!seen.has(k)) { seen.add(k); titles.push(v); }
+    }
+  }
   return { titles, provider, usedImage: wantVision };
 }
 

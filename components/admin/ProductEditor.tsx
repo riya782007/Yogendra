@@ -68,6 +68,23 @@ export function ProductEditor({
   const [metaTitle, setMetaTitle] = useState(deriveMeta(product.name));
   const [metaAuto, setMetaAuto] = useState(true);
   useEffect(() => { if (metaAuto) setMetaTitle(deriveMeta(name)); }, [name, metaAuto]);
+  // Meta description + keywords follow the product name too (owner: "description aur keywords bhi title
+  // se update ho"). Built from the actual product name + its category, so they describe THIS piece — not
+  // the old generic "gold hand accessory" text. Each keeps following the name until hand-edited here.
+  const catName = categories.find((c) => c.id === product.categoryId)?.name || "artificial jewellery";
+  const catLc = catName.toLowerCase();
+  const deriveDesc = (n: string) =>
+    `Buy ${n.trim()} online at BlytheDIVA — ${catLc} for daily & festive wear at retail & wholesale prices from Sadar Bazar, Delhi. COD available, easy returns.`.slice(0, 180);
+  const deriveKeywords = (n: string) => [
+    n.trim(), `${n.trim()} online`, `${catLc} for women`, `${catLc} for wedding`,
+    "artificial jewellery online India", `BlytheDIVA ${catLc}`,
+  ].join("\n");
+  const [metaDesc, setMetaDesc] = useState(deriveDesc(product.name));
+  const [metaDescAuto, setMetaDescAuto] = useState(true);
+  useEffect(() => { if (metaDescAuto) setMetaDesc(deriveDesc(name)); }, [name, metaDescAuto]);
+  const [keywords, setKeywords] = useState(deriveKeywords(product.name));
+  const [keywordsAuto, setKeywordsAuto] = useState(true);
+  useEffect(() => { if (keywordsAuto) setKeywords(deriveKeywords(name)); }, [name, keywordsAuto]);
   // Owner's spec keywords (e.g. "necklace set, earrings, maang tikka, uncut kundan") → the AI uses
   // these to build a BlytheDIVA-style title + description.
   const [specKeywords, setSpecKeywords] = useState("");
@@ -332,12 +349,12 @@ export function ProductEditor({
             <input name="meta_title" value={metaTitle} onChange={(e) => { setMetaTitle(e.target.value); setMetaAuto(false); }} maxLength={70} className={field} />
           </div>
           <div>
-            <label className={label}>Meta description <span className="text-muted/70">(~155 chars)</span></label>
-            <textarea name="meta_description" defaultValue={product.metaDescription} rows={3} maxLength={180} className={field} />
+            <label className={label}>Meta description <span className="text-muted/70">(~155 chars · follows the product name — edit to customise)</span></label>
+            <textarea name="meta_description" value={metaDesc} onChange={(e) => { setMetaDesc(e.target.value); setMetaDescAuto(false); }} rows={3} maxLength={180} className={field} />
           </div>
           <div>
-            <label className={label}>Keywords <span className="text-muted/70">(one per line or comma-separated)</span></label>
-            <textarea name="keywords" defaultValue={product.keywords} rows={4} className={field} placeholder={"Kundan necklace\nartificial jewellery Delhi\nnecklace for wedding"} />
+            <label className={label}>Keywords <span className="text-muted/70">(one per line · follows the product name — edit to customise)</span></label>
+            <textarea name="keywords" value={keywords} onChange={(e) => { setKeywords(e.target.value); setKeywordsAuto(false); }} rows={4} className={field} placeholder={"Kundan necklace\nartificial jewellery Delhi\nnecklace for wedding"} />
           </div>
         </div>
       </section>
