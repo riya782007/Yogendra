@@ -7,6 +7,7 @@ import { SITE } from "@/lib/siteUrl";
 import { ProductImage } from "@/components/Placeholder";
 import { placeWholesaleOrderFromCartAction } from "@/app/actions/wholesale";
 import { deleteAbandonedCartAction } from "@/app/actions/abandoned";
+import { openAbandonedCartsPdf } from "@/lib/abandonedCartPdf";
 
 type Item = { sku?: string; name: string; qty: number; price: number };
 type Cart = { id: string; session_id?: string | null; customer_name?: string | null; phone?: string | null; total: number; created_at: string; items: Item[]; channel?: string | null; reached_checkout?: boolean | null };
@@ -84,6 +85,10 @@ export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMa
               </a>
             ) : <span className="text-xs text-muted">no contact</span>}
           </div>
+          {/* Per-cart PDF — this one cart with customer info, thumbnails, SKU, price & totals. */}
+          <button onClick={(e) => { e.stopPropagation(); openAbandonedCartsPdf([cart], { imgMap, title: "Abandoned Cart" }); }}
+            title="Download this cart as a PDF"
+            className="text-[11px] px-2 py-0.5 rounded-full border border-emerald text-emerald-dark hover:bg-emerald-mist/40 whitespace-nowrap">⬇ PDF</button>
           {/* Delete — for irrelevant carts (anonymous, tiny, junk). Confirm inline so it's never a mis-tap. */}
           {confirmDel ? (
             <span className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
