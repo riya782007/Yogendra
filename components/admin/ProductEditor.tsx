@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { storeUrl } from "@/lib/siteUrl";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -56,6 +56,14 @@ export function ProductEditor({
   const [title, setTitle] = useState(product.title);
   const [name, setName] = useState(product.name);
   const [description, setDescription] = useState(product.description);
+  // SEO meta title should track the product name (owner: "title change ke baad SEO khud update ho, copy-
+  // paste na karna pade"). It auto-fills as "<name> | BlytheDIVA" and keeps following the name UNTIL the
+  // owner hand-edits it — then we respect their custom text and stop overwriting.
+  const SEO_SUFFIX = " | BlytheDIVA";
+  const deriveMeta = (n: string) => (n.trim() + SEO_SUFFIX).slice(0, 70);
+  const [metaTitle, setMetaTitle] = useState(product.metaTitle || deriveMeta(product.name));
+  const [metaAuto, setMetaAuto] = useState(!product.metaTitle || product.metaTitle === deriveMeta(product.name));
+  useEffect(() => { if (metaAuto) setMetaTitle(deriveMeta(name)); }, [name, metaAuto]);
   // Owner's spec keywords (e.g. "necklace set, earrings, maang tikka, uncut kundan") → the AI uses
   // these to build a BlytheDIVA-style title + description.
   const [specKeywords, setSpecKeywords] = useState("");
@@ -316,8 +324,8 @@ export function ProductEditor({
         <p className="text-xs text-muted mb-4">How this page appears in Google search and gets found.</p>
         <div className="space-y-4">
           <div>
-            <label className={label}>Meta title <span className="text-muted/70">(~60 chars)</span></label>
-            <input name="meta_title" defaultValue={product.metaTitle} maxLength={70} className={field} />
+            <label className={label}>Meta title <span className="text-muted/70">(~60 chars · follows the product name automatically — edit to customise)</span></label>
+            <input name="meta_title" value={metaTitle} onChange={(e) => { setMetaTitle(e.target.value); setMetaAuto(false); }} maxLength={70} className={field} />
           </div>
           <div>
             <label className={label}>Meta description <span className="text-muted/70">(~155 chars)</span></label>

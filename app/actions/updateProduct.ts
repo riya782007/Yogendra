@@ -151,6 +151,11 @@ export async function updateProductAction(formData: FormData): Promise<UpdateRes
   revalidatePath("/catalog");
   revalidatePath("/trade"); revalidateTag("trade-catalog");
   revalidatePath("/admin/catalogue");
+  // Revalidate the EDITOR page itself (both the new and old SKU) so the owner's single "Save changes"
+  // click reflects immediately — the status badge, "Visible/Hidden" and live-page link update without a
+  // manual browser refresh (previously only the catalogue list was revalidated, not this page).
+  revalidatePath(`/admin/catalogue/${finalSku}`);
+  if (finalSku !== sku) revalidatePath(`/admin/catalogue/${sku}`);
   revalidatePath("/admin/media");
   return { ok: true };
 }
