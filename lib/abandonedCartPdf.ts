@@ -59,14 +59,19 @@ export function openAbandonedCartsPdf(carts: PdfCart[], opts?: { imgMap?: Record
     body { font-family: Arial, Helvetica, sans-serif; color: #1a1a1a; margin: 24px; }
     h1 { font-size: 20px; margin: 0 0 2px; }
     .sub { color: #666; font-size: 12px; margin-bottom: 16px; }
-    .cart { border: 1px solid #ddd; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; page-break-inside: avoid; }
-    .head { display: flex; justify-content: space-between; align-items: center; }
+    /* NB: no "break-inside: avoid" on .cart — a big cart (e.g. 25 items) is taller than a page, so
+       forcing it to stay together shoves the whole block to a fresh page and leaves page 1 blank.
+       Instead we let the cart flow, keep the header with its first rows, and never split a single row. */
+    .cart { border: 1px solid #ddd; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+    .head { display: flex; justify-content: space-between; align-items: center; break-after: avoid; page-break-after: avoid; }
     .n { color: #999; font-weight: 700; }
     .total { font-weight: 700; font-size: 15px; }
     .tag { font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 10px; margin-left: 6px; vertical-align: middle; }
     .w { background: #e7f0ff; color: #1447c9; } .r2 { background: #eee; color: #555; } .chk { background: #fde8e8; color: #c0392b; }
     .meta { color: #555; font-size: 12px; margin: 4px 0 6px; }
     table.items { width: 100%; border-collapse: collapse; font-size: 11px; }
+    table.items thead { display: table-header-group; }            /* repeat column headers on each page */
+    table.items tr { break-inside: avoid; page-break-inside: avoid; }  /* never split a single line item */
     table.items th { text-align: left; color: #888; border-bottom: 1px solid #eee; padding: 2px 4px; font-weight: 600; }
     table.items td { padding: 3px 4px; border-bottom: 1px solid #f3f3f3; vertical-align: middle; }
     .tc { width: 40px; }
