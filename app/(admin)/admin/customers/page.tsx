@@ -65,7 +65,7 @@ export default async function Customers({ searchParams }: { searchParams: { q?: 
 
       {/* Add */}
       {canManage && (
-        <form action={upsertCustomerAction} className="bg-white rounded-2xl p-5 shadow-card mb-5 border border-sand">
+        <form key={allRaw.length} action={upsertCustomerAction} className="bg-white rounded-2xl p-5 shadow-card mb-5 border border-sand">
           <h2 className="font-medium text-ink mb-3">Add customer</h2>
           <div className="grid sm:grid-cols-3 gap-3">
             <input name="name" placeholder="Name / firm *" className={fld} required />
