@@ -110,10 +110,21 @@ export function buildGateway(opts?: { visionFirst?: boolean }) {
   const wantVision = !!opts?.visionFirst && (openaiOn || geminiOn);
   const groqPrimary = groqConfigured() && !wantVision;
   const SYSTEM = "You are BlytheDIVA's product copywriter. Return only valid minified JSON.";
-  const visionRun = async (call: any) => JSON.parse(await (openaiOn ? openaiChat : geminiChat)({
-    system: SYSTEM, user: call._prompt, json: true,
-    imageBase64: call._product?.imageBase64, imageMime: call._product?.imageMime,
-  }));
+  const visionRun = async (call: any) => {
+    const args = {
+      system: SYSTEM, user: call._prompt, json: true,
+      imageBase64: call._product?.imageBase64, imageMime: call._product?.imageMime,
+    };
+    // Prefer OpenAI vision, but if its key is dead / quota-exhausted (429), fall straight to GEMINI
+    // vision — both can actually SEE the photo. Previously we jumped from a dead OpenAI to the text-only
+    // secondary (Groq), which can't see the piece, so titles went vague and count flip-flopped. Only if
+    // neither vision model is usable do we let the gateway drop to the text secondary.
+    if (openaiOn) {
+      try { return JSON.parse(await openaiChat(args)); }
+      catch (e) { if (!geminiOn) throw e; }
+    }
+    return JSON.parse(await geminiChat(args));
+  };
   const groqRun = async (call: any) => JSON.parse(await groqChat({ system: SYSTEM, user: call._prompt, json: true }));
   return new AiGateway({
     primary: {
