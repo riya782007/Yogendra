@@ -61,8 +61,12 @@ export function ProductEditor({
   // owner hand-edits it — then we respect their custom text and stop overwriting.
   const SEO_SUFFIX = " | BlytheDIVA";
   const deriveMeta = (n: string) => (n.trim() + SEO_SUFFIX).slice(0, 70);
-  const [metaTitle, setMetaTitle] = useState(product.metaTitle || deriveMeta(product.name));
-  const [metaAuto, setMetaAuto] = useState(!product.metaTitle || product.metaTitle === deriveMeta(product.name));
+  // Always start by following the product name — the owner's expectation is that the SEO title mirrors
+  // the title he sets above. (Earlier this only kicked in when the saved meta was empty/matching, so
+  // products with an older saved meta title "didn't take" the new name.) It keeps following the name
+  // until the owner hand-edits the meta field in this session, at which point his custom text is kept.
+  const [metaTitle, setMetaTitle] = useState(deriveMeta(product.name));
+  const [metaAuto, setMetaAuto] = useState(true);
   useEffect(() => { if (metaAuto) setMetaTitle(deriveMeta(name)); }, [name, metaAuto]);
   // Owner's spec keywords (e.g. "necklace set, earrings, maang tikka, uncut kundan") → the AI uses
   // these to build a BlytheDIVA-style title + description.
