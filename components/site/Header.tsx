@@ -18,9 +18,14 @@ export function Header({ categories, promoMessages = [] }: { categories: Cat[]; 
         <div className="max-w-7xl mx-auto px-5 h-16 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <MobileMenu categories={categories} />
-            <Link href="/shop" className="leading-none">
-              <span className="block font-display text-2xl md:text-3xl text-ink tracking-tight">Blythe Diva</span>
-              <span className="hidden md:block text-[9px] tracking-[0.3em] uppercase text-gold-dark -mt-1">Artificial Jewellery</span>
+            <Link href="/shop" className="flex items-center gap-2.5 leading-none group">
+              <span className="shrink-0 grid place-items-center h-11 w-11 md:h-12 md:w-12 rounded-full bg-gradient-to-br from-white to-cream ring-1 ring-gold/40 shadow-luxe group-hover:shadow-gold group-hover:ring-gold transition-all duration-300 overflow-hidden">
+                <img src="/blythediva-logo.png" alt="Blythe Diva logo" className="h-full w-full object-cover" />
+              </span>
+              <span>
+                <span className="block font-display text-2xl md:text-3xl text-ink tracking-tight">Blythe Diva</span>
+                <span className="hidden md:block text-[9px] tracking-[0.3em] uppercase text-gold-dark -mt-1">Artificial Jewellery</span>
+              </span>
             </Link>
           </div>
 
