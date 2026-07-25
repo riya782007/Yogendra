@@ -95,7 +95,7 @@ export default async function Shop() {
 
           <div className="relative animate-fadeUp" style={{ animationDelay: "0.15s" }}>
             {/* Large framed brand image with a gold gradient ring */}
-            <div className="relative mx-auto max-w-md rounded-[2rem] p-2 bg-gradient-to-br from-gold via-gold-light to-gold-dark shadow-luxe">
+            <div className="relative mx-auto max-w-md lg:max-w-lg rounded-[2rem] p-2 bg-gradient-to-br from-gold via-gold-light to-gold-dark shadow-luxe">
               <div className="relative rounded-[1.7rem] overflow-hidden bg-cream aspect-[4/5]">
                 <img src={heroMain} alt="Blythe Diva signature jewellery" className="h-full w-full object-cover" />
                 <div className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-ink/70 to-transparent" />
@@ -105,18 +105,18 @@ export default async function Shop() {
                 </div>
               </div>
             </div>
-            {/* Floating product photos around the main image (all gently drifting) */}
-            <div className="hidden sm:block absolute -left-6 bottom-2 w-28 h-36 rounded-2xl overflow-hidden shadow-luxe ring-4 ring-white rotate-[-6deg] animate-float">
+            {/* Floating product photos around the main image — variable sizes, spread wide to fill the hero */}
+            <div className="hidden sm:block absolute -left-16 md:-left-24 bottom-0 w-36 h-48 md:w-44 md:h-60 rounded-2xl overflow-hidden shadow-luxe ring-4 ring-white rotate-[-6deg] animate-float z-10">
               <img src={heroSide} alt="Blythe Diva jewellery" className="h-full w-full object-cover" />
             </div>
-            <div className="hidden md:block absolute -left-10 top-8 w-24 h-24 rounded-2xl overflow-hidden shadow-luxe ring-4 ring-white rotate-[5deg] animate-float" style={{ animationDelay: "1.6s" }}>
+            <div className="hidden md:block absolute -left-28 lg:-left-36 top-6 w-32 h-32 lg:w-36 lg:h-36 rounded-2xl overflow-hidden shadow-luxe ring-4 ring-white rotate-[5deg] animate-float z-10" style={{ animationDelay: "1.6s" }}>
               <img src={heroSide2} alt="Blythe Diva jewellery" className="h-full w-full object-cover" />
             </div>
-            <div className="hidden md:block absolute -right-8 -bottom-4 w-24 h-28 rounded-2xl overflow-hidden shadow-luxe ring-4 ring-white rotate-[7deg] animate-float" style={{ animationDelay: "0.8s" }}>
+            <div className="hidden md:block absolute -right-14 lg:-right-20 -bottom-8 w-40 h-32 lg:w-52 lg:h-40 rounded-2xl overflow-hidden shadow-luxe ring-4 ring-white rotate-[7deg] animate-float z-10" style={{ animationDelay: "0.8s" }}>
               <img src={heroSide3} alt="Blythe Diva jewellery" className="h-full w-full object-cover" />
             </div>
             {/* Floating rating chip */}
-            <div className="absolute -right-2 top-6 bg-white rounded-2xl shadow-luxe px-4 py-2.5 text-center animate-float" style={{ animationDelay: "1s" }}>
+            <div className="absolute -right-2 lg:-right-6 top-4 bg-white rounded-2xl shadow-luxe px-4 py-2.5 text-center animate-float z-20" style={{ animationDelay: "1s" }}>
               <p className="text-gold text-sm leading-none">★★★★★</p>
               <p className="text-[11px] text-muted mt-1 font-medium">Loved by 10,000+</p>
             </div>
