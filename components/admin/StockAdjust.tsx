@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { adjustStockAction } from "@/app/actions/stock";
 import { QtyField } from "@/components/admin/QtyField";
+import { SkuFormInput } from "@/components/admin/SkuInput";
 
 const SOURCES = [
   "Returned from cart (in-store)",
@@ -25,7 +26,7 @@ export function StockAdjust() {
       </button>
       {open && (
         <form action={adjustStockAction} className="mt-3 bg-white rounded-2xl p-4 shadow-card border border-sand grid sm:grid-cols-5 gap-3 items-end">
-          <label className="text-xs text-muted sm:col-span-1">SKU<input name="sku" placeholder="BD1000" className={`${fld} w-full mt-1`} required /></label>
+          <label className="text-xs text-muted sm:col-span-1">SKU<div className="mt-1"><SkuFormInput name="sku" placeholder="Type SKU or name…" className={`${fld} w-full font-mono`} /></div></label>
           <div className="text-xs text-muted">
             Direction
             <div className="flex gap-1 mt-1">

@@ -1,14 +1,14 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getEstimate, getProductsLite } from "@/lib/supabase/queries";
+import { getEstimate } from "@/lib/supabase/queries";
 import { supabaseServer } from "@/lib/supabase/server";
 import { formatPaise } from "@/lib/pricing";
 import { EstimatePrint } from "@/components/admin/EstimatePrint";
 import { UpiAmountQr } from "@/components/admin/UpiAmountQr";
 import { BUSINESS, HSN_JEWELLERY, GST_RATE, gstSplit, gstSplitExclusive, stateCodeFromGstin, bankHasDetails, amountInWords } from "@/lib/business";
 import { requirePerm } from "@/lib/auth";
-import { updateEstimateCustomerAction, updateEstimateLineAction, updateEstimateLinePriceAction, removeEstimateLineAction, addEstimateLineAction, setEstimateGstAction, updateEstimateChargesAction } from "@/app/actions/billing";
+import { EstimateEditor } from "@/components/admin/EstimateEditor";
 
 export const metadata = { title: "Estimate / Quotation" };
 
@@ -22,7 +22,6 @@ export default async function EstimateDetailPage({ params, searchParams }: { par
   const { estimate, items } = data;
   const isOpen = estimate.status === "open";
   const canEdit = isOpen && (await requirePerm("estimates.create"));
-  const products = canEdit ? await getProductsLite() : [];
   const total = estimate.total as number;
 
   // --- Tax treatment (mirrors the invoice exactly, so a quote and the bill it becomes agree) ---
@@ -58,7 +57,6 @@ export default async function EstimateDetailPage({ params, searchParams }: { par
   const defUpi = ((pmRows as any[]) ?? []).filter((m) => m.upi_id).sort((a, b) => (b.is_default ? 1 : 0) - (a.is_default ? 1 : 0))[0] ?? null;
   const th = "py-2 px-2 text-xs font-semibold text-ink/70";
   const td = "py-2 px-2 align-top";
-  const inp = "rounded-xl border border-sand px-3 py-2 text-sm bg-white outline-none focus:border-emerald";
 
   return (
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
@@ -258,74 +256,25 @@ export default async function EstimateDetailPage({ params, searchParams }: { par
           </div>
         </div>
 
-        {/* #18: edit panel — only for OPEN estimates (locks once billed) */}
+        {/* Edit panel — one editable screen for the whole estimate (open estimates only; locks once billed). */}
         {canEdit && (
-          <div id="edit-estimate" className="no-print mt-5 bg-white rounded-2xl shadow-card p-5 scroll-mt-4 ring-1 ring-emerald/20">
-            <h2 className="font-medium text-ink mb-1">Edit estimate · items &amp; prices</h2>
-            <p className="text-xs text-muted mb-4">This estimate is open — change items, quantities, the <b>per-line rate</b> (use this to give a discount), or the customer. Tap <b>Save rate</b> after editing a price. It locks once billed.</p>
-            <datalist id="est-skus">{products.map((p: any) => <option key={p.id} value={p.sku}>{p.name}</option>)}</datalist>
-
-            {/* Tax treatment — the option the owner said was missing. Changes the printed document. */}
-            <form action={setEstimateGstAction} className="flex flex-wrap items-end gap-2 mb-4 border border-gold/40 bg-gold/5 rounded-xl p-3">
-              <input type="hidden" name="id" value={estimate.id} />
-              <label className="text-[11px] text-muted">
-                Tax on this estimate
-                <select name="tax" defaultValue={!gstOn ? "none" : gstMode} className={`${inp} w-56 block mt-0.5`}>
-                  <option value="exclusive">GST {GST_RATE}% extra (added on top)</option>
-                  <option value="inclusive">GST {GST_RATE}% included in rates</option>
-                  <option value="none">Without GST (plain estimate)</option>
-                </select>
-              </label>
-              <button className="px-3 py-2 rounded-xl bg-ink text-cream text-xs">Apply tax</button>
-              <span className="text-[11px] text-muted self-center">Currently: <b className="text-ink">{gstOn ? `GST ${gstExclusive ? "extra" : "inclusive"}` : "Without GST"}</b></span>
-            </form>
-
-            <form action={updateEstimateCustomerAction} className="flex flex-wrap items-end gap-2 mb-4">
-              <input type="hidden" name="id" value={estimate.id} />
-              <label className="text-[11px] text-muted">Customer<input name="customer_name" defaultValue={estimate.customer_name ?? ""} className={`${inp} w-44 block mt-0.5`} /></label>
-              <label className="text-[11px] text-muted">Phone<input name="customer_phone" defaultValue={estimate.customer_phone ?? ""} className={`${inp} w-36 block mt-0.5`} /></label>
-              <label className="text-[11px] text-muted">Buyer GSTIN<input name="buyer_gstin" defaultValue={(estimate as any).buyer_gstin ?? ""} placeholder="07AAAAA0000A1Z5" className={`${inp} w-44 block mt-0.5 font-mono uppercase`} /></label>
-              <label className="text-[11px] text-muted">Billing address<input name="buyer_address" defaultValue={(estimate as any).buyer_address ?? ""} placeholder="Street, City, State - PIN" className={`${inp} w-52 block mt-0.5`} /></label>
-              <label className="text-[11px] text-muted">Email<input name="buyer_email" defaultValue={(estimate as any).buyer_email ?? ""} className={`${inp} w-44 block mt-0.5`} /></label>
-              <label className="text-[11px] text-muted">Ship to (name)<input name="ship_to_name" defaultValue={(estimate as any).ship_to_name ?? ""} placeholder="same as billing" className={`${inp} w-40 block mt-0.5`} /></label>
-              <label className="text-[11px] text-muted">Ship to (address)<input name="ship_to_address" defaultValue={(estimate as any).ship_to_address ?? ""} placeholder="same as billing" className={`${inp} w-52 block mt-0.5`} /></label>
-              <button className="px-3 py-2 rounded-xl bg-ink/5 text-ink text-xs hover:bg-ink/10">Save customer</button>
-            </form>
-
-            {/* Discount / charges — these drive the totals block on the printed estimate. */}
-            <form action={updateEstimateChargesAction} className="flex flex-wrap items-end gap-2 mb-4 border-t border-sand/60 pt-3">
-              <input type="hidden" name="id" value={estimate.id} />
-              <label className="text-[11px] text-muted">Discount ₹<input name="discount" type="number" step="0.01" min={0} defaultValue={(xDiscount / 100).toFixed(2)} className={`${inp} w-24 text-right block mt-0.5`} /></label>
-              <label className="text-[11px] text-muted">Packing ₹<input name="packing" type="number" step="0.01" min={0} defaultValue={(xPacking / 100).toFixed(2)} className={`${inp} w-24 text-right block mt-0.5`} /></label>
-              <label className="text-[11px] text-muted">Shipping ₹<input name="courier" type="number" step="0.01" min={0} defaultValue={(xCourier / 100).toFixed(2)} className={`${inp} w-24 text-right block mt-0.5`} /></label>
-              <label className="text-[11px] text-muted">TCS ₹<input name="tcs" type="number" step="0.01" min={0} defaultValue={(xTcs / 100).toFixed(2)} className={`${inp} w-24 text-right block mt-0.5`} /></label>
-              <label className="text-[11px] text-muted">Adjustment ₹<input name="adjustment" type="number" step="0.01" defaultValue={(xAdjust / 100).toFixed(2)} className={`${inp} w-24 text-right block mt-0.5`} /></label>
-              <button className="px-3 py-2 rounded-xl bg-ink/5 text-ink text-xs hover:bg-ink/10">Save charges</button>
-            </form>
-
-            <div className="space-y-2 mb-3">
-              {items.map((it: any) => (
-                <form key={it.id} action={updateEstimateLineAction} className="flex items-end gap-2">
-                  <input type="hidden" name="item_id" value={it.id} />
-                  <input type="hidden" name="estimate_id" value={estimate.id} />
-                  <span className="flex-1 text-sm text-ink truncate self-center">{it.product?.name}{it.variant?.color ? <span className="text-ink"> · {it.variant.color}</span> : ""} <span className="text-muted font-mono text-xs">{it.variant?.sku ?? it.product?.sku}</span></span>
-                  <label className="text-[11px] text-muted">Qty<input name="qty" type="number" min={1} defaultValue={it.qty} className={`${inp} w-16 text-center block mt-0.5`} /></label>
-                  <label className="text-[11px] text-muted">Rate ₹<input name="price" type="number" min={0} step="0.01" defaultValue={(it.unit_price / 100).toFixed(2)} className={`${inp} w-24 text-right block mt-0.5`} /></label>
-                  <button className="px-3 py-2 rounded-xl bg-ink/5 text-ink text-xs hover:bg-ink/10">Save qty</button>
-                  <button formAction={updateEstimateLinePriceAction} className="px-3 py-2 rounded-xl bg-emerald-mist text-emerald-dark text-xs hover:bg-emerald/20">Save rate</button>
-                  <button formAction={removeEstimateLineAction} className="text-muted hover:text-rose text-xs px-1 self-center">Remove</button>
-                </form>
-              ))}
-              {items.length === 0 && <p className="text-sm text-muted">No items — add one below.</p>}
-            </div>
-
-            <form action={addEstimateLineAction} className="flex items-end gap-2 border-t border-sand/60 pt-3">
-              <input type="hidden" name="estimate_id" value={estimate.id} />
-              <label className="text-[11px] text-muted">Add SKU<input name="sku" list="est-skus" placeholder="BD1001" className={`${inp} w-40 block mt-0.5 font-mono`} /></label>
-              <label className="text-[11px] text-muted">Qty<input name="qty" type="number" min={1} defaultValue={1} className={`${inp} w-16 text-center block mt-0.5`} /></label>
-              <button className="btn-primary px-4 py-2 text-sm font-medium">+ Add item</button>
-            </form>
-          </div>
+          <EstimateEditor
+            estimateId={estimate.id}
+            initialLines={items.map((it: any) => ({
+              id: it.id,
+              name: `${it.product?.name ?? ""}${it.variant?.color ? ` · ${it.variant.color}` : ""}`.trim(),
+              sku: it.variant?.sku ?? it.product?.sku ?? "",
+              qty: it.qty,
+              priceRupees: (it.unit_price ?? 0) / 100,
+            }))}
+            initialCharges={{ discount: xDiscount / 100, packing: xPacking / 100, courier: xCourier / 100, tcs: xTcs / 100, adjustment: xAdjust / 100 }}
+            initialTax={!gstOn ? "none" : gstMode}
+            initialCustomer={{
+              name: estimate.customer_name ?? "", phone: estimate.customer_phone ?? "",
+              gstin: (estimate as any).buyer_gstin ?? "", address: (estimate as any).buyer_address ?? "",
+              email: (estimate as any).buyer_email ?? "", shipName: (estimate as any).ship_to_name ?? "", shipAddr: (estimate as any).ship_to_address ?? "",
+            }}
+          />
         )}
       </div>
     </main>

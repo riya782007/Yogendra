@@ -84,3 +84,24 @@ export function SkuInput({
     </div>
   );
 }
+
+/**
+ * Self-contained SKU box for plain server-action <form>s — manages its own state and submits the picked
+ * SKU via a hidden input named `name`. Use where there's no React state to bind (stock adjust, quick add).
+ */
+export function SkuFormInput({
+  name, defaultValue = "", placeholder, className,
+}: {
+  name: string;
+  defaultValue?: string;
+  placeholder?: string;
+  className?: string;
+}) {
+  const [v, setV] = useState(defaultValue);
+  return (
+    <>
+      <input type="hidden" name={name} value={v} />
+      <SkuInput value={v} onChange={setV} placeholder={placeholder} className={className} />
+    </>
+  );
+}
