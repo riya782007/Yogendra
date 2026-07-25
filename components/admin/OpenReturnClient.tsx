@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createOpenReturnAction } from "@/app/actions/openReturns";
+import { SkuInput } from "@/components/admin/SkuInput";
 
 type Line = { sku: string; qty: number };
 
@@ -61,7 +62,7 @@ export function OpenReturnClient({ methods = [] }: { methods?: { id: string; nam
         {lines.map((l, i) => (
           <div key={i} className="flex items-end gap-2">
             <label className="text-[11px] text-muted flex-1">SKU
-              <input value={l.sku} onChange={(e) => setLine(i, { sku: e.target.value })} placeholder="BR1821-Golden"
+              <SkuInput value={l.sku} onChange={(v) => setLine(i, { sku: v })} placeholder="Type SKU or product name…"
                 className={`${inp} w-full block mt-0.5 font-mono`} />
             </label>
             <label className="text-[11px] text-muted">Qty back
