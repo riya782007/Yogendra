@@ -72,28 +72,53 @@ export default async function Shop() {
       <section className="relative overflow-hidden bg-gradient-to-b from-cream via-ivory to-ivory">
         <div className="pointer-events-none absolute -top-24 -right-24 h-80 w-80 rounded-full bg-gold/10 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-24 -left-24 h-80 w-80 rounded-full bg-emerald/10 blur-3xl" />
-        <div className="max-w-7xl mx-auto px-5 py-14 md:py-20 grid md:grid-cols-2 gap-10 md:gap-14 items-center relative">
-          <div className="animate-fadeUp">
-            <span className="inline-flex items-center gap-2 text-[11px] tracking-[0.25em] uppercase text-gold-dark bg-white/70 border border-gold/25 rounded-full px-3.5 py-1.5 mb-5 shadow-sm">✦ Fine Artificial Jewellery</span>
-            <h1 className="font-display text-5xl md:text-7xl leading-[1.02] text-ink">
+        <div className="max-w-7xl mx-auto px-5 py-10 md:py-20 grid md:grid-cols-2 gap-8 md:gap-14 items-center relative">
+          <div className="animate-fadeUp text-center md:text-left">
+            <span className="inline-flex items-center gap-2 text-[10px] sm:text-[11px] tracking-[0.25em] uppercase text-gold-dark bg-white/70 border border-gold/25 rounded-full px-3.5 py-1.5 mb-4 md:mb-5 shadow-sm">✦ Fine Artificial Jewellery</span>
+            <h1 className="font-display text-5xl sm:text-6xl md:text-7xl leading-[1.02] text-ink">
               Blythe <span className="text-gold-gradient">Diva</span>
             </h1>
-            <p className="font-display text-2xl md:text-3xl text-ink/80 mt-2">Adorn your every moment.</p>
-            <p className="text-muted mt-5 max-w-md leading-relaxed">
+            <p className="font-display text-xl sm:text-2xl md:text-3xl text-ink/80 mt-2">Adorn your every moment.</p>
+
+            {/* MOBILE hero image — shown right after the tagline so imagery is above the fold on phones */}
+            <div className="md:hidden relative mt-6 mb-2 max-w-[19rem] mx-auto">
+              <div className="relative rounded-[1.75rem] p-1.5 bg-gradient-to-br from-gold via-gold-light to-gold-dark shadow-luxe">
+                <div className="relative rounded-[1.4rem] overflow-hidden bg-cream aspect-[4/5]">
+                  <img src={heroMain} alt="Blythe Diva signature jewellery" className="h-full w-full object-cover" />
+                  <div className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-ink/70 to-transparent" />
+                  <div className="absolute inset-x-0 bottom-0 p-4 text-left text-cream">
+                    <p className="font-display text-xl tracking-tight">Blythe Diva</p>
+                    <p className="text-[10px] tracking-[0.3em] uppercase text-cream/80">Signature Collection</p>
+                  </div>
+                </div>
+              </div>
+              <div className="absolute -left-3 -bottom-4 w-20 h-24 rounded-xl overflow-hidden shadow-luxe ring-4 ring-white rotate-[-6deg] animate-float">
+                <img src={heroSide} alt="Blythe Diva jewellery" className="h-full w-full object-cover" />
+              </div>
+              <div className="absolute -right-2 top-3 bg-white rounded-xl shadow-luxe px-3 py-2 text-center animate-float" style={{ animationDelay: "1s" }}>
+                <p className="text-gold text-xs leading-none">★★★★★</p>
+                <p className="text-[10px] text-muted mt-0.5 font-medium">Loved by 10,000+</p>
+              </div>
+            </div>
+
+            <p className="text-muted mt-5 max-w-md mx-auto md:mx-0 leading-relaxed">
               Handcrafted Kundan, Meenakari &amp; Temple jewellery — premium anti-tarnish finish and trend-ready designs, straight from Sadar Bazar, Delhi.
             </p>
-            <div className="flex flex-wrap gap-3 mt-7">
+            <div className="flex flex-wrap justify-center md:justify-start gap-3 mt-7">
               <Link href="#bestsellers" className="btn-primary px-7 py-3 text-sm font-medium">Shop the collection</Link>
               <Link href="#new-arrivals" className="px-7 py-3 text-sm font-medium rounded-full border border-ink/15 text-ink hover:border-gold hover:text-gold-dark transition-colors">New arrivals</Link>
             </div>
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mt-8 text-sm text-muted">
+            <div className="flex flex-wrap justify-center md:justify-start items-center gap-x-4 gap-y-1.5 mt-8 text-sm text-muted">
               <span className="flex items-center gap-1.5"><span className="text-gold">★</span> 4.9 · 10,000+ happy divas</span>
-              <span className="hidden sm:inline">·</span>
-              <span>Cash on delivery</span><span>·</span><span>Free shipping over ₹999</span>
+              <span className="text-sand hidden sm:inline">·</span>
+              <span>Cash on delivery</span>
+              <span className="text-sand hidden sm:inline">·</span>
+              <span>Free shipping over ₹999</span>
             </div>
           </div>
 
-          <div className="relative animate-fadeUp" style={{ animationDelay: "0.15s" }}>
+          {/* DESKTOP hero cluster — the wide floating collage (hidden on phones) */}
+          <div className="relative animate-fadeUp hidden md:block" style={{ animationDelay: "0.15s" }}>
             {/* Large framed brand image with a gold gradient ring */}
             <div className="relative mx-auto max-w-md lg:max-w-lg rounded-[2rem] p-2 bg-gradient-to-br from-gold via-gold-light to-gold-dark shadow-luxe">
               <div className="relative rounded-[1.7rem] overflow-hidden bg-cream aspect-[4/5]">
@@ -106,13 +131,13 @@ export default async function Shop() {
               </div>
             </div>
             {/* Floating product photos around the main image — variable sizes, spread wide to fill the hero */}
-            <div className="hidden sm:block absolute -left-16 md:-left-24 bottom-0 w-36 h-48 md:w-44 md:h-60 rounded-2xl overflow-hidden shadow-luxe ring-4 ring-white rotate-[-6deg] animate-float z-10">
+            <div className="absolute -left-16 lg:-left-24 bottom-0 w-36 h-48 lg:w-44 lg:h-60 rounded-2xl overflow-hidden shadow-luxe ring-4 ring-white rotate-[-6deg] animate-float z-10">
               <img src={heroSide} alt="Blythe Diva jewellery" className="h-full w-full object-cover" />
             </div>
-            <div className="hidden md:block absolute -left-28 lg:-left-36 top-6 w-32 h-32 lg:w-36 lg:h-36 rounded-2xl overflow-hidden shadow-luxe ring-4 ring-white rotate-[5deg] animate-float z-10" style={{ animationDelay: "1.6s" }}>
+            <div className="absolute -left-28 lg:-left-36 top-6 w-32 h-32 lg:w-36 lg:h-36 rounded-2xl overflow-hidden shadow-luxe ring-4 ring-white rotate-[5deg] animate-float z-10" style={{ animationDelay: "1.6s" }}>
               <img src={heroSide2} alt="Blythe Diva jewellery" className="h-full w-full object-cover" />
             </div>
-            <div className="hidden md:block absolute -right-14 lg:-right-20 -bottom-8 w-40 h-32 lg:w-52 lg:h-40 rounded-2xl overflow-hidden shadow-luxe ring-4 ring-white rotate-[7deg] animate-float z-10" style={{ animationDelay: "0.8s" }}>
+            <div className="absolute -right-14 lg:-right-20 -bottom-8 w-40 h-32 lg:w-52 lg:h-40 rounded-2xl overflow-hidden shadow-luxe ring-4 ring-white rotate-[7deg] animate-float z-10" style={{ animationDelay: "0.8s" }}>
               <img src={heroSide3} alt="Blythe Diva jewellery" className="h-full w-full object-cover" />
             </div>
             {/* Floating rating chip */}
