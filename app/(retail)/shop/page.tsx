@@ -108,13 +108,15 @@ export default async function Shop() {
         <div className="flex flex-wrap justify-center gap-x-5 gap-y-7 sm:gap-x-9">
           {cats.map((c, i) => (
             <Reveal key={c.slug} delay={i * 60}>
-              <Link href={`/shop/c/${c.slug}`} className="group flex flex-col items-center gap-3 w-24 sm:w-28">
-                <div className="h-24 w-24 sm:h-28 sm:w-28 rounded-full overflow-hidden bg-cream ring-2 ring-gold/30 shadow-card group-hover:ring-gold group-hover:shadow-luxe transition-all duration-300 group-hover:-translate-y-1">
-                  {c.image
-                    ? <img src={c.image} alt={c.name} className="h-full w-full object-cover group-hover:scale-110 transition-transform duration-500" />
-                    : <div className="card-img h-full w-full"><ProductImage name={c.name} /></div>}
+              <Link href={`/shop/c/${c.slug}`} className="group flex flex-col items-center gap-3.5 w-28 sm:w-36">
+                <div className="h-28 w-28 sm:h-36 sm:w-36 rounded-full p-1.5 bg-gradient-to-br from-gold via-gold-light to-gold-dark shadow-luxe group-hover:shadow-xl transition-all duration-300 group-hover:-translate-y-1.5">
+                  <div className="h-full w-full rounded-full overflow-hidden bg-cream ring-4 ring-white">
+                    {c.image
+                      ? <img src={c.image} alt={c.name} className="h-full w-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                      : <div className="card-img h-full w-full"><ProductImage name={c.name} /></div>}
+                  </div>
                 </div>
-                <p className="text-center text-sm font-medium text-ink group-hover:text-emerald transition-colors leading-tight">{c.name}</p>
+                <p className="text-center text-sm sm:text-base font-medium text-ink group-hover:text-emerald transition-colors leading-tight">{c.name}</p>
               </Link>
             </Reveal>
           ))}

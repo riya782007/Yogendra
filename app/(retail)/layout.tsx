@@ -7,6 +7,8 @@ import { getWholesaleSession } from "@/lib/wholesale";
 import { CartProvider } from "@/components/cart/CartContext";
 import { WishlistProvider } from "@/components/wishlist/WishlistContext";
 import { PromoPopup } from "@/components/site/PromoPopup";
+import { RetailLeadPopup } from "@/components/site/RetailLeadPopup";
+import { WhatsAppFab } from "@/components/site/WhatsAppFab";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +30,8 @@ export default async function RetailLayout({ children }: { children: React.React
       <Footer categories={cats} />
       <Assistant />
       <PromoPopup promo={popup as any} />
+      <RetailLeadPopup />
+      <WhatsAppFab />
     </div></WishlistProvider></CartProvider>
   );
 }
