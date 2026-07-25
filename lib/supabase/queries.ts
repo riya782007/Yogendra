@@ -1402,9 +1402,11 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     variantBalance: (r.variantBalance as number | null) ?? null,
     doc: docFor(r),
   }));
-  // Estimate holds → timeline rows. They do NOT change the running balance (soft commitment), so
-  // runningBalance stays null and delta carries the reserved qty for display only.
-  const holdDisplay: LedgerMovement[] = resvRows.map((r) => ({
+  // Estimate holds → timeline rows. ONLY open estimates are soft-holds; a converted/cash-billed estimate
+  // has already become a real 'sale' movement, so showing it again as "Reserved" was wrong and confusing
+  // (owner: "Ruby/Green reserved dikha rha hai jabki estimate convert ho chuka hai"). Show holds for open only.
+  // They do NOT change the running balance (soft commitment), so runningBalance stays null.
+  const holdDisplay: LedgerMovement[] = resvRows.filter((r) => r.estimate.status === "open").map((r) => ({
     id: `est-${r.estimate.id}-${r.qty}-${r.estimate.created_at}`,
     kind: "estimate", delta: -(r.qty ?? 0), runningBalance: null,
     source: null, reason: `Reserved ${r.qty ?? 0} pcs · estimate ${r.estimate.status ?? ""}`.trim(),
