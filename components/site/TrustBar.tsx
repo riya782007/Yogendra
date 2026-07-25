@@ -6,12 +6,17 @@ const ITEMS = [
 ];
 export function TrustBar() {
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-sand/60 rounded-2xl overflow-hidden">
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
       {ITEMS.map((i) => (
-        <div key={i.t} className="bg-ivory px-5 py-5 text-center group transition-colors hover:bg-emerald-mist">
-          <div className="text-gold text-xl mb-1 transition-transform group-hover:scale-110">{i.icon}</div>
-          <p className="text-sm font-medium text-ink">{i.t}</p>
-          <p className="text-xs text-muted">{i.s}</p>
+        <div
+          key={i.t}
+          className="group relative bg-white rounded-2xl border border-sand/70 px-5 py-6 text-center shadow-card hover:shadow-luxe hover:border-gold/50 hover:-translate-y-1 transition-all duration-300"
+        >
+          <div className="mx-auto mb-2.5 grid place-items-center h-11 w-11 rounded-full bg-cream text-gold text-xl ring-1 ring-gold/20 group-hover:bg-gold group-hover:text-white group-hover:ring-gold transition-colors">
+            {i.icon}
+          </div>
+          <p className="text-sm font-semibold text-ink">{i.t}</p>
+          <p className="text-xs text-muted mt-0.5">{i.s}</p>
         </div>
       ))}
     </div>

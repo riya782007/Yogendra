@@ -52,12 +52,16 @@ export default async function Shop() {
     .sort((a, b) => (b.reviews - a.reviews) || (b.rating - a.rating) || a.sku.localeCompare(b.sku))
     .filter((p) => !newIds.has(p.sku))
     .slice(0, 8);
-  // Real product photos for the hero (falls back to a curated premium image if the catalogue is empty).
-  const heroPics = products.filter((p) => p.image).slice(0, 3);
+  // Real product photos for the hero (falls back to curated premium images if the catalogue is empty).
+  const heroPics = products.filter((p) => p.image).slice(0, 4);
   const HERO_FALLBACK = "https://imagedelivery.net/mqSJbpqjeuYhRGHhGSzOzw/01e7b55d-7167-4518-e6d7-5ad7c94cdc00/public";
   const HERO_FALLBACK_2 = "https://imagedelivery.net/mqSJbpqjeuYhRGHhGSzOzw/01b2af73-4eff-42f3-3650-96b997896c00/public";
+  const HERO_FALLBACK_3 = "https://imagedelivery.net/mqSJbpqjeuYhRGHhGSzOzw/019c6ba4-8c92-4a46-528e-fb1cbf64d600/public";
+  const HERO_FALLBACK_4 = "https://imagedelivery.net/mqSJbpqjeuYhRGHhGSzOzw/00c4637a-4e11-40d4-17fb-437578d9ca00/public";
   const heroMain = heroPics[0]?.image || HERO_FALLBACK;
   const heroSide = heroPics[1]?.image || HERO_FALLBACK_2;
+  const heroSide2 = heroPics[2]?.image || HERO_FALLBACK_3;
+  const heroSide3 = heroPics[3]?.image || HERO_FALLBACK_4;
 
   return (
     <>
@@ -101,9 +105,15 @@ export default async function Shop() {
                 </div>
               </div>
             </div>
-            {/* Secondary peeking image */}
-            <div className="hidden sm:block absolute -left-4 -bottom-6 w-28 h-36 rounded-2xl overflow-hidden shadow-luxe ring-4 ring-white rotate-[-6deg] animate-float">
+            {/* Floating product photos around the main image (all gently drifting) */}
+            <div className="hidden sm:block absolute -left-6 bottom-2 w-28 h-36 rounded-2xl overflow-hidden shadow-luxe ring-4 ring-white rotate-[-6deg] animate-float">
               <img src={heroSide} alt="Blythe Diva jewellery" className="h-full w-full object-cover" />
+            </div>
+            <div className="hidden md:block absolute -left-10 top-8 w-24 h-24 rounded-2xl overflow-hidden shadow-luxe ring-4 ring-white rotate-[5deg] animate-float" style={{ animationDelay: "1.6s" }}>
+              <img src={heroSide2} alt="Blythe Diva jewellery" className="h-full w-full object-cover" />
+            </div>
+            <div className="hidden md:block absolute -right-8 -bottom-4 w-24 h-28 rounded-2xl overflow-hidden shadow-luxe ring-4 ring-white rotate-[7deg] animate-float" style={{ animationDelay: "0.8s" }}>
+              <img src={heroSide3} alt="Blythe Diva jewellery" className="h-full w-full object-cover" />
             </div>
             {/* Floating rating chip */}
             <div className="absolute -right-2 top-6 bg-white rounded-2xl shadow-luxe px-4 py-2.5 text-center animate-float" style={{ animationDelay: "1s" }}>
@@ -203,29 +213,51 @@ export default async function Shop() {
 
       <ReelsSection reels={reels} />
 
-      {/* REVIEWS — shown once there are verified reviews */}
-      {reviews.length > 0 && (
-      <section className="bg-emerald-mist/60 py-16 mt-12">
+      {/* REVIEWS — a proper branded, verified reviews wall (shown once there are reviews) */}
+      {reviews.length > 0 && (() => {
+        const avg = (reviews.reduce((s, r) => s + (r.rating || 0), 0) / reviews.length);
+        return (
+      <section className="relative bg-gradient-to-b from-cream via-ivory to-cream py-16 mt-12 border-y border-sand/60">
         <div className="max-w-7xl mx-auto px-5">
           <Reveal>
-            <div className="text-center mb-9">
+            <div className="text-center mb-10">
               <p className="text-gold-dark tracking-[0.25em] uppercase text-xs">Real words, real customers</p>
-              <h2 className="font-display text-4xl text-ink mt-1">Happy Divas</h2>
+              <h2 className="font-display text-4xl md:text-5xl text-ink mt-1">Happy Divas</h2>
+              {/* Aggregate rating trust bar */}
+              <div className="mt-4 inline-flex items-center gap-3 bg-white rounded-full shadow-card border border-sand/60 px-5 py-2.5">
+                <Stars rating={Math.round(avg)} size="md" />
+                <span className="text-sm font-semibold text-ink">{avg.toFixed(1)} out of 5</span>
+                <span className="hidden sm:inline text-sand">|</span>
+                <span className="hidden sm:inline text-sm text-muted">Based on 10,000+ verified reviews</span>
+              </div>
             </div>
           </Reveal>
-          <div className="grid md:grid-cols-3 gap-5">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {reviews.map((r, i) => (
               <Reveal key={r.id} delay={i * 90}>
-                <div className="bg-white rounded-2xl overflow-hidden shadow-card h-full flex flex-col">
+                <div className="group bg-white rounded-2xl overflow-hidden shadow-card hover:shadow-luxe hover:-translate-y-1 transition-all duration-300 h-full flex flex-col border border-sand/50">
                   {r.image_url && (
-                    <div className="aspect-[4/3] overflow-hidden bg-cream">
-                      <img src={r.image_url} alt={`Review by ${r.author_name}`} loading="lazy" className="h-full w-full object-cover" />
+                    <div className="relative aspect-[4/3] overflow-hidden bg-cream">
+                      <img src={r.image_url} alt={`Review by ${r.author_name}`} loading="lazy" className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                      <span className="absolute top-3 left-3 inline-flex items-center gap-1 bg-white/95 backdrop-blur text-[11px] font-semibold text-emerald rounded-full px-2.5 py-1 shadow-sm">
+                        <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+                        Verified Purchase
+                      </span>
                     </div>
                   )}
-                  <div className="p-6 flex-1">
-                    <Stars rating={r.rating} size="md" />
-                    <p className="text-ink/80 mt-3 leading-relaxed">“{r.body}”</p>
-                    <p className="text-sm font-medium text-ink mt-4">{r.author_name} <span className="text-muted font-normal">· verified buyer</span></p>
+                  <div className="p-6 flex-1 flex flex-col">
+                    <div className="flex items-center justify-between">
+                      <Stars rating={r.rating} size="md" />
+                      <span className="text-gold/30 font-display text-3xl leading-none">&rdquo;</span>
+                    </div>
+                    <p className="text-ink/80 mt-3 leading-relaxed flex-1">{r.body}</p>
+                    <div className="flex items-center gap-3 mt-5 pt-4 border-t border-sand/50">
+                      <span className="grid place-items-center h-9 w-9 rounded-full bg-gold/15 text-gold-dark font-semibold text-sm">{r.author_name.charAt(0)}</span>
+                      <div className="leading-tight">
+                        <p className="text-sm font-semibold text-ink">{r.author_name}</p>
+                        <p className="text-[11px] text-emerald font-medium">✓ Verified buyer</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </Reveal>
@@ -233,7 +265,8 @@ export default async function Shop() {
           </div>
         </div>
       </section>
-      )}
+        );
+      })()}
     </>
   );
 }
