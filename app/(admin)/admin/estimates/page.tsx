@@ -1,7 +1,6 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
-import { getEstimates, getStorefront, getCustomersDb } from "@/lib/supabase/queries";
-import { supabaseServer } from "@/lib/supabase/server";
+import { getEstimates, getStorefrontCached, getCustomersDbCached, getBillingVariants } from "@/lib/supabase/queries";
 import { formatPaise, resolvePrices, overridesOf } from "@/lib/pricing";
 import { EstimateClient } from "@/components/admin/EstimateClient";
 import { billEstimateAction, denyEstimateAction, reopenEstimateAction } from "@/app/actions/billing";
@@ -28,23 +27,13 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 export default async function Estimates({ searchParams }: { searchParams: { tab?: string; q?: string; sort?: string } }) {
-  const sb = supabaseServer();
+  // Heavy catalogue reads are result-cached (getStorefrontCached / getBillingVariants) so this page
+  // opens fast instead of re-reading ~25k rows on every visit; changes refresh via revalidateTag.
   const [{ products, formula }, estimates, customers, variants] = await Promise.all([
-    getStorefront({ includeDrafts: true, includeWholesaleOnly: true }),
+    getStorefrontCached({ includeDrafts: true, includeWholesaleOnly: true }),
     getEstimates({ sort: searchParams.sort }),
-    getCustomersDb({}),
-    // PAGE through ALL variants (12k+, past PostgREST's 1000-row cap) so every colour's SKU is billable
-    // and scannable — otherwise designs past the first 1000 variants showed no colours.
-    (async () => {
-      const rows: any[] = [];
-      for (let from = 0; ; from += 1000) {
-        const { data } = await sb.from("variants").select("sku,color,qty,product_id,wholesale_override,retail_override,mrp_override").order("product_id", { ascending: true }).range(from, from + 999);
-        const chunk = (data as any[]) ?? [];
-        rows.push(...chunk);
-        if (chunk.length < 1000) break;
-      }
-      return rows;
-    })(),
+    getCustomersDbCached(),
+    getBillingVariants(),
   ]);
   // Expand each design into its colour VARIANTS (variant SKUs are what get billed), so the estimate
   // search shows the exact colour — e.g. "Rajwada Necklace · Green (KN132-GREEN)" — not just the parent.

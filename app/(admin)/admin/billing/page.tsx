@@ -1,29 +1,18 @@
 export const dynamic = "force-dynamic";
-import { getStorefront, getCustomersDb, getPaymentMethods, getEmployees } from "@/lib/supabase/queries";
-import { supabaseServer } from "@/lib/supabase/server";
+import { getStorefrontCached, getCustomersDbCached, getBillingVariants, getPaymentMethods, getEmployees } from "@/lib/supabase/queries";
 import { POSClient } from "@/components/admin/POSClient";
 import { resolvePrices, overridesOf } from "@/lib/pricing";
 
 export const metadata = { title: "Owner Console · Billing (POS)" };
 
 export default async function Billing() {
-  const sb = supabaseServer();
   // POS can bill anything in the catalogue — including unpublished drafts (#23) and wholesale-only lines.
+  // All heavy reads are result-cached (see getStorefrontCached / getBillingVariants) so the counter opens
+  // fast instead of re-reading ~25k rows every time; a brand-new SKU is still billable via the live lookup.
   const [{ products, formula }, customers, variants, methods, employees] = await Promise.all([
-    getStorefront({ includeDrafts: true, includeWholesaleOnly: true }),
-    getCustomersDb({}),
-    // PAGE through ALL variants — there are 12k+, past PostgREST's 1000-row cap. Without paging most
-    // colours never loaded, so their designs showed no variants AND their barcodes couldn't be scanned.
-    (async () => {
-      const rows: any[] = [];
-      for (let from = 0; ; from += 1000) {
-        const { data } = await sb.from("variants").select("sku,color,qty,product_id,wholesale_override,retail_override,mrp_override").order("product_id", { ascending: true }).range(from, from + 999);
-        const chunk = (data as any[]) ?? [];
-        rows.push(...chunk);
-        if (chunk.length < 1000) break;
-      }
-      return rows;
-    })(),
+    getStorefrontCached({ includeDrafts: true, includeWholesaleOnly: true }),
+    getCustomersDbCached(),
+    getBillingVariants(),
     getPaymentMethods({ activeOnly: true }),
     getEmployees({ activeOnly: true }),
   ]);

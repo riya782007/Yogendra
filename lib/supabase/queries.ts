@@ -1,5 +1,6 @@
 /** Server-only data access. Uses the service-role client (bypasses RLS for admin reads). */
 import "server-only";
+import { unstable_cache } from "next/cache";
 import { supabaseServer } from "./server";
 import type { PricingFormula } from "../pricing";
 import { cleanTiers } from "../pricing";
@@ -1731,6 +1732,39 @@ export async function getPromotionsAdmin() {
   const { data } = await sb.from("promotions").select("*, category:categories(slug,name)").order("created_at", { ascending: false }).limit(60);
   return ((data as any[]) ?? []);
 }
+
+// ============================================================================================
+// RESULT-CACHED heavy loaders — the main fix for a slow admin. Billing / Estimates / Purchases were
+// re-reading the ENTIRE catalogue (~4.5k products + ~12k variants + images + customers, 20+ paginated
+// round-trips) on EVERY open, because supabaseServer() forces `no-store`. These wrap the same reads in
+// unstable_cache: computed once, reused for ~30s, and tagged "storefront"/"customers" so any product /
+// stock / price / customer change (which calls revalidateTag) refreshes them immediately. The POS
+// "live SKU lookup" still hits the DB directly, so a brand-new SKU is always billable at once — a short
+// cache is safe. Result: repeat admin navigation is near-instant instead of multi-second.
+// ============================================================================================
+
+/** Cached storefront (per-opts). Use on admin POS/estimate pages that don't need to-the-second freshness. */
+export const getStorefrontCached = (opts: { includeDrafts?: boolean; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean } = {}) =>
+  unstable_cache(() => getStorefront(opts), ["storefront-cached", JSON.stringify(opts)], { tags: ["storefront"], revalidate: 30 })();
+
+/** ALL variant SKUs (colour + stock + price overrides) for the billing/estimate counters — 12k+ rows. */
+export const getBillingVariants = unstable_cache(async (): Promise<any[]> => {
+  const sb = supabaseServer();
+  const rows: any[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data } = await sb.from("variants").select("sku,color,qty,product_id,wholesale_override,retail_override,mrp_override").order("product_id", { ascending: true }).range(from, from + 999);
+    const batch = (data as any[]) ?? [];
+    rows.push(...batch);
+    if (batch.length < 1000) break;
+  }
+  return rows;
+}, ["billing-variants"], { tags: ["storefront"], revalidate: 30 });
+
+/** Cached full customer directory for the POS/estimate customer picker. */
+export const getCustomersDbCached = unstable_cache(() => getCustomersDb({}), ["customers-all"], { tags: ["customers"], revalidate: 30 });
+
+/** Cached products+variants for the purchase-entry screen. */
+export const getProductsForPurchaseCached = unstable_cache(() => getProductsForPurchase(), ["products-for-purchase"], { tags: ["storefront"], revalidate: 30 });
 
 export async function getStorefront(
   opts: { includeDrafts?: boolean; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean } = {},

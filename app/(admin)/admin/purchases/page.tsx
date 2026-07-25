@@ -1,5 +1,5 @@
 export const dynamic = "force-dynamic";
-import { getSuppliers, getProductsForPurchase, getRecentPurchases, getLastPurchaseCosts, getPaymentMethods } from "@/lib/supabase/queries";
+import { getSuppliers, getProductsForPurchaseCached, getRecentPurchases, getLastPurchaseCosts, getPaymentMethods } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { PurchaseClient } from "@/components/admin/PurchaseClient";
 import { SupplierManager } from "@/components/admin/SupplierManager";
@@ -7,7 +7,7 @@ import { SupplierManager } from "@/components/admin/SupplierManager";
 export const metadata = { title: "Owner Console · Purchases" };
 
 export default async function Purchases() {
-  const [suppliers, products, purchases, lastCosts, methods] = await Promise.all([getSuppliers(), getProductsForPurchase(), getRecentPurchases(), getLastPurchaseCosts(), getPaymentMethods({ activeOnly: true })]);
+  const [suppliers, products, purchases, lastCosts, methods] = await Promise.all([getSuppliers(), getProductsForPurchaseCached(), getRecentPurchases(), getLastPurchaseCosts(), getPaymentMethods({ activeOnly: true })]);
   return (
     <main className="p-8 bg-cream/40 min-h-screen max-w-4xl">
       <h1 className="font-display text-4xl text-ink mb-1">Purchases</h1>
