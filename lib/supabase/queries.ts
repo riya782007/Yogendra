@@ -1766,6 +1766,14 @@ export const getCustomersDbCached = unstable_cache(() => getCustomersDb({}), ["c
 /** Cached products+variants for the purchase-entry screen. */
 export const getProductsForPurchaseCached = unstable_cache(() => getProductsForPurchase(), ["products-for-purchase"], { tags: ["storefront"], revalidate: 30 });
 
+/** Cached category tree + live promos — these run in the retail LAYOUT on every storefront navigation
+ *  (header menu + footer + promo strip). They're identical for every visitor and rarely change, so
+ *  memoising them removes 3 DB round-trips per page load and makes navigation feel instant. Any catalogue
+ *  or promo edit calls revalidateTag("storefront") and refreshes them at once. */
+export const getCategoryTreeCached = unstable_cache(() => getCategoryTree(), ["category-tree"], { tags: ["storefront"], revalidate: 300 });
+export const getLivePromosCached = (scope: "retail" | "wholesale", placement: "hero" | "popup" | "strip") =>
+  unstable_cache(() => getLivePromos(scope, placement), ["live-promos", scope, placement], { tags: ["storefront"], revalidate: 120 })();
+
 export async function getStorefront(
   opts: { includeDrafts?: boolean; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean } = {},
 ): Promise<{ products: StoreProduct[]; formula: PF }> {
