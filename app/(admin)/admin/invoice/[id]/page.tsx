@@ -75,8 +75,10 @@ export default async function Invoice({ params }: { params: { id: string } }) {
   const date = new Date(order.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
   const qtyTotal = items.reduce((s: number, it: any) => s + it.qty, 0);
   // Default UPI for the scan-to-pay QR (exact bill amount).
-  const { data: pmRows } = await supabaseServer().from("payment_methods").select("upi_id,name,is_default").eq("active", true);
+  const { data: pmRows } = await supabaseServer().from("payment_methods").select("id,upi_id,name,kind,is_default,sort").eq("active", true).order("sort").order("name");
   const defUpi = ((pmRows as any[]) ?? []).filter((m) => m.upi_id).sort((a, b) => (b.is_default ? 1 : 0) - (a.is_default ? 1 : 0))[0] ?? null;
+  const payMethods = ((pmRows as any[]) ?? []);
+  const defMethodId = (payMethods.find((m) => m.is_default) ?? payMethods[0])?.id ?? "";
   const session = getSession();
   const PAY_STYLE: Record<string, string> = { Paid: "bg-emerald-mist text-emerald-dark", Partial: "bg-gold/15 text-gold-dark", Unpaid: "bg-rose/10 text-rose" };
 
@@ -372,10 +374,10 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                   <input type="hidden" name="order_id" value={order.id} />
                   <span className="text-muted">₹</span>
                   <input name="amount" type="number" min={1} placeholder={String(Math.round(balanceDue / 100))} className="rounded-xl border border-sand px-3 py-2 text-sm w-28 outline-none focus:border-emerald" />
-                  <select name="mode" className="rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald" title="How was it paid?">
-                    <option value="cash">Cash</option>
-                    <option value="bank">Bank</option>
-                    <option value="upi">UPI</option>
+                  <select name="method_id" defaultValue={defMethodId} className="rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald" title="Which account received it?">
+                    {payMethods.length === 0
+                      ? <option value="">Cash</option>
+                      : payMethods.map((m: any) => <option key={m.id} value={m.id}>{m.name}</option>)}
                   </select>
                   <button className="btn-primary px-4 py-2 text-sm font-medium">Record</button>
                 </form>

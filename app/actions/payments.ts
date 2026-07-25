@@ -8,10 +8,39 @@ export async function recordPaymentAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("billing.sell"))) return;
   const orderId = String(formData.get("order_id") ?? "");
   const amount = Math.round((Number(formData.get("amount") ?? 0) || 0) * 100);
-  const mode = ["cash", "bank", "upi"].includes(String(formData.get("mode"))) ? String(formData.get("mode")) : "cash";
   if (!orderId || !amount) return;
-  await supabaseServer().rpc("record_payment", { p_order: orderId, p_amount: amount, p_mode: mode });
-  revalidatePath(`/admin/invoice/${orderId}`); revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard"); revalidatePath("/admin/cashbook");
+  const sb = supabaseServer();
+
+  // The payment is attributed to a SPECIFIC account (Cash / UPI / Kotak / SBI / HDFC …) chosen on the
+  // bill, so each bank's balance updates separately and the record shows exactly which bank received it.
+  const methodId = String(formData.get("method_id") ?? "").trim();
+  let method: { id: string; name: string; kind: string } | null = null;
+  if (methodId) {
+    const { data } = await sb.from("payment_methods").select("id,name,kind").eq("id", methodId).maybeSingle();
+    method = (data as any) ?? null;
+  }
+  // Cash keeps 'cash' (updates cash-in-hand); any bank/UPI account passes its NAME so the ledger and
+  // bill show which bank got the money instead of a generic "bank".
+  const legacyMode = ["cash", "bank", "upi"].includes(String(formData.get("mode"))) ? String(formData.get("mode")) : "cash";
+  const pMode = method ? (method.kind === "cash" ? "cash" : method.name) : legacyMode;
+
+  const { data: before } = await sb.from("orders").select("amount_paid").eq("id", orderId).maybeSingle();
+  const paidBefore = ((before as any)?.amount_paid) ?? 0;
+  await sb.rpc("record_payment", { p_order: orderId, p_amount: amount, p_mode: pMode });
+
+  // Post to the chosen account's ledger (per-bank balances) with the exact amount actually applied
+  // (record_payment caps at the grand total, so a duplicate/overpay attempt posts nothing).
+  if (method) {
+    const { data: after } = await sb.from("orders").select("amount_paid").eq("id", orderId).maybeSingle();
+    const applied = (((after as any)?.amount_paid) ?? paidBefore) - paidBefore;
+    if (applied > 0) {
+      await sb.from("payment_method_transactions").insert({
+        method_id: method.id, txn_type: "sale", direction: "in", amount: applied,
+        ref_type: "order", ref_id: orderId, note: `Bill payment (${method.name})`, created_by: "owner",
+      }).then(() => {}, () => {});
+    }
+  }
+  revalidatePath(`/admin/invoice/${orderId}`); revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard"); revalidatePath("/admin/cashbook"); revalidatePath("/admin/payment-methods");
 }
 
 /** Pillar 9: set the opening cash-in-hand and bank balances for the cash book (₹ → paise). */
