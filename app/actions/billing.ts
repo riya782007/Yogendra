@@ -309,7 +309,20 @@ export async function saveEstimateAction(input: {
     const unit = (ni.priceRupees != null && Number.isFinite(ni.priceRupees) && ni.priceRupees >= 0)
       ? Math.round(ni.priceRupees * 100)
       : resolvePrices(base, formula, ov).retailPrice;
-    await sb.from("estimate_items").insert({ estimate_id: id, product_id: productId, variant_id: variantId, qty, unit_price: unit, line_total: unit * qty });
+    // Merge into an existing line for the SAME product+colour instead of adding a duplicate row, so one
+    // SKU is always a single consolidated line with the summed quantity (owner: same SKU was appearing
+    // twice on the bill). If the line already exists we bump its qty and keep its (possibly negotiated) rate.
+    let findQ = sb.from("estimate_items").select("id,qty,unit_price").eq("estimate_id", id).eq("product_id", productId).limit(1);
+    findQ = variantId ? findQ.eq("variant_id", variantId) : findQ.is("variant_id", null);
+    const { data: existRows } = await findQ;
+    const exist = (existRows as any[])?.[0];
+    if (exist) {
+      const mergedQty = (exist.qty ?? 0) + qty;
+      const keepUnit = (exist.unit_price ?? unit);
+      await sb.from("estimate_items").update({ qty: mergedQty, unit_price: keepUnit, line_total: keepUnit * mergedQty }).eq("id", exist.id);
+    } else {
+      await sb.from("estimate_items").insert({ estimate_id: id, product_id: productId, variant_id: variantId, qty, unit_price: unit, line_total: unit * qty });
+    }
   }
 
   // 4) Customer particulars.
