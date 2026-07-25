@@ -52,43 +52,64 @@ export default async function Shop() {
     .sort((a, b) => (b.reviews - a.reviews) || (b.rating - a.rating) || a.sku.localeCompare(b.sku))
     .filter((p) => !newIds.has(p.sku))
     .slice(0, 8);
-  // Real product photos for the hero collage (falls back to a tasteful placeholder if none yet).
+  // Real product photos for the hero (falls back to a curated premium image if the catalogue is empty).
   const heroPics = products.filter((p) => p.image).slice(0, 3);
+  const HERO_FALLBACK = "https://imagedelivery.net/mqSJbpqjeuYhRGHhGSzOzw/01e7b55d-7167-4518-e6d7-5ad7c94cdc00/public";
+  const HERO_FALLBACK_2 = "https://imagedelivery.net/mqSJbpqjeuYhRGHhGSzOzw/01b2af73-4eff-42f3-3650-96b997896c00/public";
+  const heroMain = heroPics[0]?.image || HERO_FALLBACK;
+  const heroSide = heroPics[1]?.image || HERO_FALLBACK_2;
 
   return (
     <>
       {/* AI promotional poster (festive offers) — auto-placed when the owner publishes a campaign. */}
       <PromoHero promos={promos} />
 
-      {/* HERO */}
-      <section className="relative overflow-hidden bg-gradient-to-b from-cream to-ivory">
-        <div className="max-w-7xl mx-auto px-5 py-14 md:py-20 grid md:grid-cols-2 gap-10 items-center">
+      {/* HERO — premium brand banner: big real product image + Blythe Diva branding + tagline */}
+      <section className="relative overflow-hidden bg-gradient-to-b from-cream via-ivory to-ivory">
+        <div className="pointer-events-none absolute -top-24 -right-24 h-80 w-80 rounded-full bg-gold/10 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-24 -left-24 h-80 w-80 rounded-full bg-emerald/10 blur-3xl" />
+        <div className="max-w-7xl mx-auto px-5 py-14 md:py-20 grid md:grid-cols-2 gap-10 md:gap-14 items-center relative">
           <div className="animate-fadeUp">
-            <p className="text-gold-dark tracking-[0.3em] uppercase text-xs mb-4">Blythe Diva · Fine Artificial Jewellery</p>
-            <h1 className="font-display text-5xl md:text-6xl leading-[1.05] text-ink">
-              Adorn your <span className="text-gold-gradient">every</span> moment.
+            <span className="inline-flex items-center gap-2 text-[11px] tracking-[0.25em] uppercase text-gold-dark bg-white/70 border border-gold/25 rounded-full px-3.5 py-1.5 mb-5 shadow-sm">✦ Fine Artificial Jewellery</span>
+            <h1 className="font-display text-5xl md:text-7xl leading-[1.02] text-ink">
+              Blythe <span className="text-gold-gradient">Diva</span>
             </h1>
+            <p className="font-display text-2xl md:text-3xl text-ink/80 mt-2">Adorn your every moment.</p>
             <p className="text-muted mt-5 max-w-md leading-relaxed">
-              Handcrafted Kundan, Meenakari & Temple jewellery — premium anti-tarnish finish and trend-ready designs.
+              Handcrafted Kundan, Meenakari &amp; Temple jewellery — premium anti-tarnish finish and trend-ready designs, straight from Sadar Bazar, Delhi.
             </p>
-            <div className="flex gap-3 mt-7">
+            <div className="flex flex-wrap gap-3 mt-7">
               <Link href="#bestsellers" className="btn-primary px-7 py-3 text-sm font-medium">Shop the collection</Link>
+              <Link href="#new-arrivals" className="px-7 py-3 text-sm font-medium rounded-full border border-ink/15 text-ink hover:border-gold hover:text-gold-dark transition-colors">New arrivals</Link>
             </div>
-            <div className="flex items-center gap-6 mt-8 text-sm text-muted">
-              <span>✦ Anti-tarnish finish</span><span>·</span><span>Cash on delivery</span><span>·</span><span>Free shipping over ₹999</span>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mt-8 text-sm text-muted">
+              <span className="flex items-center gap-1.5"><span className="text-gold">★</span> 4.9 · 10,000+ happy divas</span>
+              <span className="hidden sm:inline">·</span>
+              <span>Cash on delivery</span><span>·</span><span>Free shipping over ₹999</span>
             </div>
           </div>
-          <div className="relative h-[360px] md:h-[440px]">
-            {[{ c: "absolute right-0 top-0 w-52 h-64 rounded-3xl overflow-hidden shadow-luxe rotate-3 animate-float", d: "0s", n: "Kundan Set" },
-              { c: "absolute left-2 top-16 w-44 h-56 rounded-3xl overflow-hidden shadow-luxe -rotate-6 animate-float", d: "1s", n: "Meena Haar" },
-              { c: "absolute left-28 bottom-0 w-40 h-48 rounded-3xl overflow-hidden shadow-gold rotate-2 animate-float", d: "2s", n: "Jhumka" }].map((s, i) => (
-              <div key={i} className={s.c} style={{ animationDelay: s.d }}>
-                {heroPics[i]?.image
-                  ? <img src={heroPics[i].image!} alt={heroPics[i].name} className="w-full h-full object-cover" />
-                  : <ProductImage name={s.n} />}
+
+          <div className="relative animate-fadeUp" style={{ animationDelay: "0.15s" }}>
+            {/* Large framed brand image with a gold gradient ring */}
+            <div className="relative mx-auto max-w-md rounded-[2rem] p-2 bg-gradient-to-br from-gold via-gold-light to-gold-dark shadow-luxe">
+              <div className="relative rounded-[1.7rem] overflow-hidden bg-cream aspect-[4/5]">
+                <img src={heroMain} alt="Blythe Diva signature jewellery" className="h-full w-full object-cover" />
+                <div className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-ink/70 to-transparent" />
+                <div className="absolute inset-x-0 bottom-0 p-5 text-cream">
+                  <p className="font-display text-2xl tracking-tight">Blythe Diva</p>
+                  <p className="text-[11px] tracking-[0.3em] uppercase text-cream/80">Signature Collection</p>
+                </div>
               </div>
-            ))}
-            <div className="absolute right-10 bottom-6 h-20 w-20 rounded-full border border-gold/40 animate-spinSlow" />
+            </div>
+            {/* Secondary peeking image */}
+            <div className="hidden sm:block absolute -left-4 -bottom-6 w-28 h-36 rounded-2xl overflow-hidden shadow-luxe ring-4 ring-white rotate-[-6deg] animate-float">
+              <img src={heroSide} alt="Blythe Diva jewellery" className="h-full w-full object-cover" />
+            </div>
+            {/* Floating rating chip */}
+            <div className="absolute -right-2 top-6 bg-white rounded-2xl shadow-luxe px-4 py-2.5 text-center animate-float" style={{ animationDelay: "1s" }}>
+              <p className="text-gold text-sm leading-none">★★★★★</p>
+              <p className="text-[11px] text-muted mt-1 font-medium">Loved by 10,000+</p>
+            </div>
           </div>
         </div>
       </section>
