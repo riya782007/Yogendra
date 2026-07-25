@@ -133,19 +133,43 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
   const belowMin = orderTotal > 0 && orderTotal < minOrder;
   const shortBy = Math.max(0, minOrder - orderTotal);
 
+  // A guest's Name + Phone are captured up-front by the now-mandatory TradeLeadPopup, which stashes them
+  // in localStorage. Read them back so the dealer's cart is tracked (and checkout is pre-filled) WITH a
+  // real contact — the fix for the owner's "cart without contact" complaint.
+  function guestContact(): { name: string; phone: string; city: string } {
+    let c = { name: gName.trim(), phone: gPhone.trim(), city: gCity.trim() };
+    if (!c.name || !c.phone) {
+      try {
+        const s = JSON.parse(localStorage.getItem("bd_trade_contact") || "null");
+        if (s) c = { name: c.name || (s.name || ""), phone: c.phone || (s.phone || ""), city: c.city || (s.city || "") };
+      } catch { /* ignore */ }
+    }
+    return c;
+  }
+  // Pre-fill the checkout form from what the dealer already gave the popup.
+  useEffect(() => {
+    if (!guest) return;
+    const c = guestContact();
+    if (c.name) setGName((v) => v || c.name);
+    if (c.phone) setGPhone((v) => v || c.phone);
+    if (c.city) setGCity((v) => v || c.city);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guest]);
+
   // ---- Abandoned-cart pipeline (wholesale) ----------------------------------------------------
   // The dealer's live cart is saved (debounced) so a cart left un-ordered surfaces on the owner's
   // Abandoned Carts page WITH the dealer's name + phone — the owner can then nudge them on WhatsApp.
   // Placing the order empties the cart, which clears the saved row (no longer "abandoned").
   useEffect(() => {
-    // A guest has no name or number yet — tracking them here would fill Abandoned Carts with
-    // anonymous rows the owner can't act on. Their details are captured by TradeLeadPopup instead.
-    if (guest) return;
+    const contact = guest ? guestContact() : { name: customerName, phone: customerPhone, city: "" };
+    // Never save a cart the owner can't act on: a guest with no captured phone is skipped. The mandatory
+    // lead popup captures it before the catalogue is usable, so in practice a guest always has one here.
+    if (guest && !contact.phone) return;
     const items = lines.map(([sku, n]) => { const p = bySku.get(sku.toUpperCase()); return { sku, name: p?.name ?? sku, qty: n, price: p?.price ?? 0 }; });
     const t = setTimeout(() => {
       fetch("/api/cart/track", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ items, total: orderTotal, name: customerName, phone: customerPhone, channel: "wholesale" }),
+        body: JSON.stringify({ items, total: orderTotal, name: contact.name, phone: contact.phone, city: contact.city, channel: "wholesale" }),
         keepalive: true,
       }).catch(() => {});
     }, 1200);
@@ -168,9 +192,12 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
     // Tell the owner IMMEDIATELY that this dealer reached checkout (finalised) — so he can call/close
     // the deal (esp. international dealers who settle over a video call), not wait for it to "abandon".
     const items = lines.map(([sku, n]) => { const p = bySku.get(sku.toUpperCase()); return { sku, name: p?.name ?? sku, qty: n, price: p?.price ?? 0 }; });
-    fetch("/api/cart/track", {
+    const contact = guest ? guestContact() : { name: customerName, phone: customerPhone, city: "" };
+    // A guest reaching checkout has already passed the mandatory popup, so we have their contact — record
+    // it. Guard against the edge case of no phone so we never write another anonymous "Guest" row.
+    if (!(guest && !contact.phone)) fetch("/api/cart/track", {
       method: "POST", headers: { "content-type": "application/json" }, keepalive: true,
-      body: JSON.stringify({ items, total: orderTotal, name: customerName, phone: customerPhone, channel: "wholesale", stage: "checkout" }),
+      body: JSON.stringify({ items, total: orderTotal, name: contact.name, phone: contact.phone, city: contact.city, channel: "wholesale", stage: "checkout" }),
     }).catch(() => {});
   }
   /** Finalise: record the order with the UPI reference; the owner is WhatsApp'd to verify & dispatch. */
