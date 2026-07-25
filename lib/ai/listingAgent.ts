@@ -246,7 +246,11 @@ export async function generateTitleOptions(p: ProductLike, n = 4): Promise<{ tit
       const raw = JSON.parse(await fn(call));
       const arr = Array.isArray(raw?.titles) ? raw.titles : Array.isArray(raw) ? raw : [];
       const cleaned = arr.map((t: any) => String(t ?? "").trim()).filter(Boolean);
-      if (cleaned.length) { titles = cleaned; provider = nm; break; }
+      // Keep the FULLEST set. Order is [OpenAI → Gemini → Groq]; if OpenAI under-delivers (e.g. 1–2, or
+      // it's quota-blocked) we let the next vision model try for a complete 4 instead of settling for a
+      // short/blind list. Stop as soon as any provider returns a full set of n image-based titles.
+      if (cleaned.length > titles.length) { titles = cleaned; provider = nm; }
+      if (titles.length >= n) break;
     } catch { /* try next provider */ }
   }
   if (!titles.length) {
