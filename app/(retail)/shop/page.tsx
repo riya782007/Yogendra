@@ -103,16 +103,18 @@ export default async function Shop() {
             <h2 className="font-display text-4xl text-ink mt-1">Shop by Category</h2>
           </div>
         </Reveal>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+        {/* Circular category browse — round photo icons in a centred, wrapping row (the look the owner
+            liked on theshoppingtree). Each links to its category; images come from the category tree. */}
+        <div className="flex flex-wrap justify-center gap-x-5 gap-y-7 sm:gap-x-9">
           {cats.map((c, i) => (
-            <Reveal key={c.slug} delay={i * 70}>
-              <Link href={`/shop/c/${c.slug}`} className="group block rounded-2xl overflow-hidden bg-white shadow-card hover:shadow-luxe transition-all hover:-translate-y-1">
-                <div className="aspect-[4/3] overflow-hidden">
+            <Reveal key={c.slug} delay={i * 60}>
+              <Link href={`/shop/c/${c.slug}`} className="group flex flex-col items-center gap-3 w-24 sm:w-28">
+                <div className="h-24 w-24 sm:h-28 sm:w-28 rounded-full overflow-hidden bg-cream ring-2 ring-gold/30 shadow-card group-hover:ring-gold group-hover:shadow-luxe transition-all duration-300 group-hover:-translate-y-1">
                   {c.image
-                    ? <img src={c.image} alt={c.name} className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                    ? <img src={c.image} alt={c.name} className="h-full w-full object-cover group-hover:scale-110 transition-transform duration-500" />
                     : <div className="card-img h-full w-full"><ProductImage name={c.name} /></div>}
                 </div>
-                <p className="text-center py-4 text-base font-medium text-ink group-hover:text-emerald transition-colors">{c.name}</p>
+                <p className="text-center text-sm font-medium text-ink group-hover:text-emerald transition-colors leading-tight">{c.name}</p>
               </Link>
             </Reveal>
           ))}
@@ -191,10 +193,17 @@ export default async function Shop() {
           <div className="grid md:grid-cols-3 gap-5">
             {reviews.map((r, i) => (
               <Reveal key={r.id} delay={i * 90}>
-                <div className="bg-white rounded-2xl p-6 shadow-card h-full">
-                  <Stars rating={r.rating} size="md" />
-                  <p className="text-ink/80 mt-3 leading-relaxed">“{r.body}”</p>
-                  <p className="text-sm font-medium text-ink mt-4">{r.author_name} <span className="text-muted font-normal">· verified buyer</span></p>
+                <div className="bg-white rounded-2xl overflow-hidden shadow-card h-full flex flex-col">
+                  {r.image_url && (
+                    <div className="aspect-[4/3] overflow-hidden bg-cream">
+                      <img src={r.image_url} alt={`Review by ${r.author_name}`} loading="lazy" className="h-full w-full object-cover" />
+                    </div>
+                  )}
+                  <div className="p-6 flex-1">
+                    <Stars rating={r.rating} size="md" />
+                    <p className="text-ink/80 mt-3 leading-relaxed">“{r.body}”</p>
+                    <p className="text-sm font-medium text-ink mt-4">{r.author_name} <span className="text-muted font-normal">· verified buyer</span></p>
+                  </div>
                 </div>
               </Reveal>
             ))}

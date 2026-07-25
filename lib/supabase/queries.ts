@@ -1843,11 +1843,14 @@ export async function getStorefront(
   return { products, formula };
 }
 
-export type FeaturedReview = { id: string; author_name: string; rating: number; body: string };
+export type FeaturedReview = { id: string; author_name: string; rating: number; body: string; image_url: string | null };
 export async function getFeaturedReviews(): Promise<FeaturedReview[]> {
   const sb = supabaseServer();
-  const { data } = await sb.from("reviews").select("id,author_name,rating,body").gte("rating", 4).order("created_at", { ascending: false }).limit(3);
-  return ((data as any[]) ?? []).map((r) => ({ id: r.id, author_name: r.author_name, rating: r.rating, body: r.body }));
+  const { data } = await sb.from("reviews").select("id,author_name,rating,body,image_url").gte("rating", 4).order("created_at", { ascending: false }).limit(30);
+  const rows = ((data as any[]) ?? []).map((r) => ({ id: r.id, author_name: r.author_name, rating: r.rating, body: r.body, image_url: (r.image_url as string) ?? null }));
+  // Photo reviews look best on the homepage — surface those first, then the rest, capped at 6.
+  rows.sort((a, b) => (b.image_url ? 1 : 0) - (a.image_url ? 1 : 0));
+  return rows.slice(0, 6);
 }
 
 export type ProductReview = { id: string; author_name: string; rating: number; body: string | null; created_at: string };
