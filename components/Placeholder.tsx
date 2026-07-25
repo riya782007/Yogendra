@@ -4,10 +4,21 @@ export function isRealImage(path?: string | null): boolean {
   return path.startsWith("http") || path.startsWith("/generated/");
 }
 
-export function ProductImage({ src, name, className = "" }: { src?: string | null; name: string; className?: string }) {
+export function ProductImage({ src, name, className = "", priority = false }: { src?: string | null; name: string; className?: string; priority?: boolean }) {
   if (isRealImage(src)) {
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img src={src!} alt={name} className={`object-cover w-full h-full ${className}`} />;
+    // Lazy-load + async decode so a grid of products doesn't download every full image at once
+    // (this was the main cause of the storefront feeling slow on mobile). `priority` opts a few
+    // above-the-fold images into eager loading.
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={src!}
+        alt={name}
+        loading={priority ? "eager" : "lazy"}
+        decoding="async"
+        className={`object-cover w-full h-full ${className}`}
+      />
+    );
   }
   const initials = name.split(" ").slice(0, 2).map((w) => w[0]).join("").toUpperCase();
   return (

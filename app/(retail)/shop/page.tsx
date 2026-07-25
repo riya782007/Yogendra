@@ -84,7 +84,8 @@ export default async function Shop() {
             <div className="md:hidden relative mt-6 mb-2 max-w-[19rem] mx-auto">
               <div className="relative rounded-[1.75rem] p-1.5 bg-gradient-to-br from-gold via-gold-light to-gold-dark shadow-luxe">
                 <div className="relative rounded-[1.4rem] overflow-hidden bg-cream aspect-[4/5]">
-                  <img src={heroMain} alt="Blythe Diva signature jewellery" className="h-full w-full object-cover" />
+  {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={heroMain} alt="Blythe Diva signature jewellery" loading="eager" decoding="async" className="h-full w-full object-cover" />
                   <div className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-ink/70 to-transparent" />
                   <div className="absolute inset-x-0 bottom-0 p-4 text-left text-cream">
                     <p className="font-display text-xl tracking-tight">Blythe Diva</p>
@@ -122,7 +123,8 @@ export default async function Shop() {
             {/* Large framed brand image with a gold gradient ring */}
             <div className="relative mx-auto max-w-md lg:max-w-lg rounded-[2rem] p-2 bg-gradient-to-br from-gold via-gold-light to-gold-dark shadow-luxe">
               <div className="relative rounded-[1.7rem] overflow-hidden bg-cream aspect-[4/5]">
-                <img src={heroMain} alt="Blythe Diva signature jewellery" className="h-full w-full object-cover" />
+{/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={heroMain} alt="Blythe Diva signature jewellery" loading="eager" decoding="async" className="h-full w-full object-cover" />
                 <div className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-ink/70 to-transparent" />
                 <div className="absolute inset-x-0 bottom-0 p-5 text-cream">
                   <p className="font-display text-2xl tracking-tight">Blythe Diva</p>
@@ -168,7 +170,7 @@ export default async function Shop() {
                 <div className="h-28 w-28 sm:h-36 sm:w-36 rounded-full p-1.5 bg-gradient-to-br from-gold via-gold-light to-gold-dark shadow-luxe group-hover:shadow-xl transition-all duration-300 group-hover:-translate-y-1.5">
                   <div className="h-full w-full rounded-full overflow-hidden bg-cream ring-4 ring-white">
                     {c.image
-                      ? <img src={c.image} alt={c.name} className="h-full w-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                      ? <img src={c.image} alt={c.name} loading="lazy" decoding="async" className="h-full w-full object-cover group-hover:scale-110 transition-transform duration-500" />
                       : <div className="card-img h-full w-full"><ProductImage name={c.name} /></div>}
                   </div>
                 </div>
