@@ -15,7 +15,7 @@ const loadCatalogueBase = unstable_cache(
     return { products: store.products, formula: store.formula, allCats, allPromos };
   },
   ["shop-category-base-v1"],
-  { revalidate: 180, tags: ["storefront"] },
+  { revalidate: 900, tags: ["storefront"] },
 );
 import { supabaseServer } from "@/lib/supabase/server";
 import { ProductCard } from "@/components/site/ProductCard";

@@ -27,7 +27,7 @@ const loadShopHome = unstable_cache(
     return { products: store.products, formula: store.formula, reviews, reels, promos, tree };
   },
   ["shop-home-v1"],
-  { revalidate: 180, tags: ["storefront"] },
+  { revalidate: 900, tags: ["storefront"] },
 );
 
 export default async function Shop() {

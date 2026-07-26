@@ -37,16 +37,16 @@ export function Header({ categories, promoMessages = [] }: { categories: Cat[]; 
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-5">
                     {categories.map((c) => (
                       <div key={c.slug} className="min-w-0">
-                        <Link href={`/shop/c/${c.slug}`} className="block text-sm font-semibold text-ink hover:text-emerald transition-colors truncate">{c.name}</Link>
+                        <Link prefetch={false} href={`/shop/c/${c.slug}`} className="block text-sm font-semibold text-ink hover:text-emerald transition-colors truncate">{c.name}</Link>
                         {c.subcategories && c.subcategories.length > 0 && (
                           <ul className="mt-1.5 space-y-1">
                             {c.subcategories.slice(0, 6).map((s) => (
                               <li key={s.slug}>
-                                <Link href={`/shop/c/${c.slug}?sub=${s.slug}`} className="block text-xs text-muted hover:text-emerald transition-colors truncate">{s.name}</Link>
+                                <Link prefetch={false} href={`/shop/c/${c.slug}?sub=${s.slug}`} className="block text-xs text-muted hover:text-emerald transition-colors truncate">{s.name}</Link>
                               </li>
                             ))}
                             {c.subcategories.length > 6 && (
-                              <li><Link href={`/shop/c/${c.slug}`} className="block text-xs text-gold-dark hover:underline">+{c.subcategories.length - 6} more →</Link></li>
+                              <li><Link prefetch={false} href={`/shop/c/${c.slug}`} className="block text-xs text-gold-dark hover:underline">+{c.subcategories.length - 6} more →</Link></li>
                             )}
                           </ul>
                         )}
