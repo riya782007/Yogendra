@@ -16,30 +16,31 @@ export const metadata = { title: "Packing Slip" };
 export default async function PackingSlip({ params }: { params: { id: string } }) {
   const sb = supabaseServer();
   const { data: order } = await sb.from("orders")
-    .select("id,invoice_no,channel,customer_name,customer_phone,buyer_address,payment_mode,amount_paid,total,courier_name,tracking_no,created_at, order_items(qty, product:products(name,sku), variant:variants(sku,color))")
+    .select("id,invoice_no,channel,customer_name,customer_phone,buyer_address,payment_mode,amount_paid,total,courier_name,tracking_no,created_at, order_items(qty, product:products(id,name,sku,thumbnail_path), variant:variants(id,product_id,sku,color,image_paths))")
     .eq("id", params.id).maybeSingle();
   if (!order) notFound();
   const o = order as any;
   const items = (o.order_items as any[]) ?? [];
 
-  // Thumbnails per line — colour's own photo, else the parent product's first image.
-  const imgByUpper = new Map<string, string>();
-  const skus = Array.from(new Set(items.flatMap((it: any) => [it.variant?.sku, it.product?.sku].filter(Boolean))));
-  if (skus.length) {
-    const firstHttp = (arr: any[]) => (arr ?? []).filter((i: any) => typeof i?.path === "string" && i.path.startsWith("http")).sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0))[0]?.path as string | undefined;
-    const or = (skus as string[]).map((s) => `sku.ilike.${String(s).replace(/[,()]/g, "")}`).join(",");
-    const [{ data: vs }, { data: ps }] = await Promise.all([
-      sb.from("variants").select("sku,image_paths, product:products(images:product_images(path,sort))").or(or),
-      sb.from("products").select("sku, images:product_images(path,sort)").or(or),
-    ]);
-    for (const p of ((ps as any[]) ?? [])) { const img = firstHttp(p.images); if (img) imgByUpper.set(String(p.sku).toUpperCase(), img); }
-    for (const v of ((vs as any[]) ?? [])) {
-      const vimg = ((v.image_paths as string[]) ?? []).find((u: string) => typeof u === "string" && u.startsWith("http"));
-      const img = vimg ?? firstHttp(v.product?.images);
-      if (img && !imgByUpper.has(String(v.sku).toUpperCase())) imgByUpper.set(String(v.sku).toUpperCase(), img);
+  // A photo for EVERY line. Product photos live on the VARIANT (image_paths) and on the product's
+  // thumbnail_path — the old code only checked the (unused, empty) product_images table + the variant,
+  // so any colour/line without its OWN photo printed blank. Resolve: the line's own colour photo →
+  // the product's thumbnail → ANY sibling colour's photo of the same product.
+  const httpFirst = (arr?: any[]): string | undefined => (Array.isArray(arr) ? arr.find((u: any) => typeof u === "string" && u.startsWith("http")) : undefined);
+  const isHttp = (s: any): s is string => typeof s === "string" && s.startsWith("http");
+  const productIds = Array.from(new Set(items.map((it: any) => it.product?.id).filter(Boolean)));
+  const siblingByProduct = new Map<string, string>();
+  if (productIds.length) {
+    const { data: sib } = await sb.from("variants").select("product_id,image_paths").in("product_id", productIds as string[]);
+    for (const v of ((sib as any[]) ?? [])) {
+      const img = httpFirst(v.image_paths as any[]);
+      if (img && !siblingByProduct.has(v.product_id)) siblingByProduct.set(v.product_id, img);
     }
   }
-  const imgFor = (it: any) => imgByUpper.get(String(it.variant?.sku ?? "").toUpperCase()) ?? imgByUpper.get(String(it.product?.sku ?? "").toUpperCase());
+  const imgFor = (it: any): string | undefined =>
+    httpFirst(it.variant?.image_paths)
+    ?? (isHttp(it.product?.thumbnail_path) ? it.product.thumbnail_path : undefined)
+    ?? (it.product?.id ? siblingByProduct.get(it.product.id) : undefined);
 
   const ref = o.invoice_no || String(o.id).slice(0, 8).toUpperCase();
   const totalPcs = items.reduce((s: number, it: any) => s + (it.qty ?? 0), 0);
