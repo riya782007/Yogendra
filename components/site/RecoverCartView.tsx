@@ -1,0 +1,66 @@
+"use client";
+import { useState } from "react";
+import { ProductImage } from "@/components/Placeholder";
+
+const KEY = "bd_cart_v1"; // must match CartProvider (components/cart/CartContext.tsx)
+type RItem = { sku: string; name: string; price: number; category?: string; color?: string; qty: number; image?: string | null };
+
+const inr = (paise: number) => "₹" + (paise / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+
+/**
+ * Visual recovery view for an abandoned cart. Opening the WhatsApp link now SHOWS the exact pieces —
+ * photo, name, colour, qty and price — so the customer (and the owner) can see the order at a glance,
+ * then taps to restore the cart and pay. (Previously it auto-redirected, so the link showed nothing.)
+ */
+export function RecoverCartView({ items }: { items: RItem[] }) {
+  const [going, setGoing] = useState(false);
+  const total = items.reduce((s, i) => s + i.price * i.qty, 0);
+
+  function proceed() {
+    setGoing(true);
+    try {
+      localStorage.setItem(KEY, JSON.stringify(items.map((i) => ({ sku: i.sku, name: i.name, price: i.price, category: i.category ?? "", color: i.color, qty: i.qty }))));
+      window.location.assign("/checkout");
+    } catch {
+      window.location.assign("/checkout");
+    }
+  }
+
+  return (
+    <main className="min-h-screen bg-cream/40 py-8 px-4">
+      <div className="max-w-lg mx-auto">
+        <div className="text-center mb-6">
+          <p className="text-gold-dark tracking-[0.2em] uppercase text-[11px]">Blythe Diva</p>
+          <h1 className="font-display text-3xl text-ink mt-1">Your bag is waiting ✨</h1>
+          <p className="text-sm text-muted mt-1">{items.reduce((n, i) => n + i.qty, 0)} piece(s) — review and complete your order below.</p>
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-card overflow-hidden divide-y divide-sand/60">
+          {items.map((i, idx) => (
+            <div key={i.sku + idx} className="flex items-center gap-3 p-3">
+              <div className="h-16 w-16 shrink-0 rounded-xl overflow-hidden bg-cream">
+                <ProductImage src={i.image ?? null} name={i.name} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-ink leading-tight line-clamp-2">{i.name}</p>
+                <p className="text-xs text-muted mt-0.5">{i.color ? `${i.color} · ` : ""}Qty {i.qty}</p>
+              </div>
+              <p className="text-sm font-semibold text-ink shrink-0">{inr(i.price * i.qty)}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-card mt-4 p-4 flex items-center justify-between">
+          <span className="text-sm text-muted">Total</span>
+          <span className="text-xl font-semibold text-ink">{inr(total)}</span>
+        </div>
+
+        <button onClick={proceed} disabled={going}
+          className="btn-primary w-full mt-5 py-3.5 text-sm font-semibold disabled:opacity-60">
+          {going ? "Taking you to checkout…" : "Complete your order & pay →"}
+        </button>
+        <p className="text-[11px] text-muted text-center mt-3">Free shipping over ₹999 · Cash on Delivery available · Anti-tarnish premium finish</p>
+      </div>
+    </main>
+  );
+}
