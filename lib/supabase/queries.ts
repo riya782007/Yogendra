@@ -1659,6 +1659,25 @@ export async function getOrderAlerts(limit = 8): Promise<{ orders: OrderAlertRow
   return { orders: ((listRes.data as any[]) ?? []) as OrderAlertRow[], last24h: cntRes.count ?? 0 };
 }
 
+export type StorefrontOrderRow = { id: string; invoice_no: string | null; channel: string; status: string | null; total: number; amount_paid: number; payment_mode: string | null; customer_name: string | null; customer_phone: string | null; created_at: string };
+/** Orders placed BY CUSTOMERS on the storefront (retail / wholesale online) in the last 3 days — the ones
+ *  the owner must actually see and fulfil. Kept separate from his own counter (POS) bills, which flood the
+ *  general feed ~9×/day and bury the rare online order. */
+export async function getStorefrontOrderAlerts(limit = 12): Promise<StorefrontOrderRow[]> {
+  const sb = supabaseServer();
+  const since = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  const { data } = await sb
+    .from("orders")
+    .select("id,invoice_no,channel,status,total,amount_paid,payment_mode,customer_name,customer_phone,created_at")
+    .in("channel", ["retail", "wholesale"])
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(30);
+  return ((data as any[]) ?? [])
+    .filter((o) => !["cancelled", "refunded"].includes(String(o.status ?? "").toLowerCase()))
+    .slice(0, limit) as StorefrontOrderRow[];
+}
+
 export async function getInventoryClassified(rule: InventoryRule = DEFAULT_RULE): Promise<ClassifiedRow[]> {
   const sb = supabaseServer();
   const data = await fetchAll((f, t) => sb.from("products").select("id,sku,name,qty,status,last_movement_at,category:categories(name,slug)").order("sku").range(f, t));

@@ -33,7 +33,10 @@ export function OrderNotifications({ initial }: { initial: { orders: O[]; last24
         const fresh = list.filter((o) => !seen.current.has(o.id));
         if (fresh.length) {
           fresh.forEach((o) => seen.current.add(o.id));
-          toast(`🔔 ${fresh.length} new order${fresh.length > 1 ? "s" : ""} — ${fresh[0].customer_name || "Guest"} · ${formatPaise(fresh[0].total)}`, "success");
+          // Only alert for STOREFRONT orders (customer-placed online) — the owner's own counter (POS)
+          // bills were toasting ~9×/day and drowning out the real online orders he needs to act on.
+          const store = fresh.filter((o) => String(o.channel || "").toLowerCase() !== "pos");
+          if (store.length) toast(`🛍️ ${store.length} new storefront order${store.length > 1 ? "s" : ""} — ${store[0].customer_name || "Customer"} · ${formatPaise(store[0].total)}`, "success");
         }
         setOrders(list); setLast24h(d.last24h ?? 0);
       } catch { /* ignore transient poll errors */ }

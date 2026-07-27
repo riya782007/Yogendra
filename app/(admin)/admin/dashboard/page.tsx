@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
-import { getDashboardData, getDashboardAnalytics, getChannelReport, getOrderAlerts, getPendingDealerApplications, getPendingWholesalePayments, getAbandonedCarts } from "@/lib/supabase/queries";
+import { getDashboardData, getDashboardAnalytics, getChannelReport, getOrderAlerts, getStorefrontOrderAlerts, getPendingDealerApplications, getPendingWholesalePayments, getAbandonedCarts } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { OrderNotifications } from "@/components/admin/OrderNotifications";
 import { AnimatedNumber } from "@/components/admin/AnimatedNumber";
@@ -48,7 +48,8 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
   // owner can see exactly which dates the figures cover — the earlier blank-box confusion.
   const fromDate = searchParams.from ?? from.slice(0, 10);
   const toDate = searchParams.to ?? to.slice(0, 10);
-  const [d, a, report, recent, dealerApps, wholesalePays, allCarts] = await Promise.all([getDashboardData(from, to), getDashboardAnalytics(from, to), getChannelReport(from, to), getOrderAlerts(8), getPendingDealerApplications(10), getPendingWholesalePayments().catch(() => []), getAbandonedCarts().catch(() => [])]);
+  const [d, a, report, recent, storefrontOrders, dealerApps, wholesalePays, allCarts] = await Promise.all([getDashboardData(from, to), getDashboardAnalytics(from, to), getChannelReport(from, to), getOrderAlerts(8), getStorefrontOrderAlerts(12).catch(() => []), getPendingDealerApplications(10), getPendingWholesalePayments().catch(() => []), getAbandonedCarts().catch(() => [])]);
+  const orderAgo = (iso: string) => { const h = Math.round((Date.now() - new Date(iso).getTime()) / 3600000); return h < 1 ? "just now" : h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`; };
   // Dealers who reached checkout but didn't complete "I've paid — place order" — their cart is captured
   // here (name, phone, items) so no order is ever silently lost; the owner can call and confirm.
   const wholesaleCarts = (allCarts as any[]).filter((c) => String(c.channel ?? "").toLowerCase() === "wholesale" && !c.recovered);
@@ -91,6 +92,31 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
           </div>
         </div>
       </div>
+
+      {/* 🛍️ STOREFRONT ORDERS — customer-placed online orders (retail/wholesale), kept SEPARATE from the
+          owner's own counter (POS) bills so a real online order is never buried. These need packing & shipping. */}
+      {storefrontOrders.length > 0 && (
+        <div className="mb-6 rounded-2xl border-2 border-emerald bg-emerald-mist/50 p-4 shadow-luxe">
+          <div className="flex items-center justify-between mb-2">
+            <p className="font-medium text-ink">🛍️ New storefront orders — pack &amp; ship <span className="ml-1 text-xs bg-emerald text-white rounded-full px-2 py-0.5">{storefrontOrders.length}</span></p>
+            <Link href="/admin/orders" className="text-xs text-emerald nav-link">View all orders →</Link>
+          </div>
+          <div className="space-y-1.5">
+            {storefrontOrders.slice(0, 6).map((o) => {
+              const paid = (o.amount_paid ?? 0) >= (o.total ?? 0) && (o.total ?? 0) > 0;
+              return (
+                <Link key={o.id} href={`/admin/invoice/${o.id}`} className="flex flex-wrap items-center justify-between gap-2 text-sm bg-white/80 rounded-lg px-3 py-1.5 hover:bg-white transition-colors">
+                  <span className="text-ink"><b>{o.customer_name || "Customer"}</b> · {CH_LABEL[o.channel] ?? o.channel}{o.customer_phone ? ` · ${o.customer_phone}` : ""} · <span className="text-muted">{orderAgo(o.created_at)}</span></span>
+                  <span className="flex items-center gap-2">
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${paid ? "bg-emerald text-white" : "bg-gold-dark text-white"}`}>{paid ? "PAID" : o.payment_mode === "cod" ? "COD" : "UNPAID"}</span>
+                    <span className="text-ink font-medium">{formatPaise(o.total)}</span>
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* New reseller/dealer applications from the trade signup form — approve + issue an access code. */}
       {dealerApps.length > 0 && (
