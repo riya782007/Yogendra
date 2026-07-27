@@ -47,6 +47,8 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
   const [gName, setGName] = useState("");
   const [gPhone, setGPhone] = useState(customerPhone || "");
   const [gCity, setGCity] = useState("");
+  const [gAddress, setGAddress] = useState("");
+  const [gPincode, setGPincode] = useState("");
   const [done, setDone] = useState<{ id: string; total: number } | null>(null);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState<"order" | "history">("order");
@@ -206,6 +208,8 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
     if (!guest) return null;
     if (gName.trim().length < 2) return "Please enter your name / firm name.";
     if (gPhone.replace(/\D/g, "").length < 7) return "Please enter your WhatsApp number.";
+    if (gAddress.trim().length < 5) return "Please enter your full delivery address.";
+    if (gPincode.replace(/\D/g, "").length !== 6) return "Please enter a valid 6-digit pincode.";
     return null;
   }
 
@@ -213,7 +217,7 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
   async function placeOrder(opts: { cod?: boolean; proofPath?: string; paymentRef?: string }) {
     const items = lines.map(([sku, n]) => ({ sku, qty: n }));
     if (guest) {
-      return placeGuestWholesaleOrderAction({ name: gName.trim(), phone: gPhone.trim(), city: gCity.trim() }, items, opts);
+      return placeGuestWholesaleOrderAction({ name: gName.trim(), phone: gPhone.trim(), city: gCity.trim(), address: gAddress.trim(), pincode: gPincode.replace(/\D/g, "") }, items, opts);
     }
     return placeWholesaleOrderAction(items, opts);
   }
@@ -661,8 +665,15 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
                   className="rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald" />
                 <input value={gPhone} onChange={(e) => setGPhone(e.target.value)} inputMode="tel" placeholder="WhatsApp number"
                   className="rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald" />
-                <input value={gCity} onChange={(e) => setGCity(e.target.value)} placeholder="City (for delivery)"
+                <textarea value={gAddress} onChange={(e) => setGAddress(e.target.value)} placeholder="Full delivery address (shop / house, street, area)" rows={2}
                   className="rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald" />
+                <div className="grid grid-cols-2 gap-2">
+                  <input value={gCity} onChange={(e) => setGCity(e.target.value)} placeholder="City"
+                    className="rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald" />
+                  <input value={gPincode} onChange={(e) => setGPincode(e.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" placeholder="Pincode (6 digits)"
+                    className="rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald" />
+                </div>
+                <p className="text-[10px] text-muted">Delivery address &amp; pincode are needed to courier your order.</p>
               </div>
             )}
 

@@ -190,15 +190,21 @@ export async function placeWholesaleOrderAction(
  * rates. The ₹3,000 minimum and the pay-first-then-dispatch flow remain the only guards.
  */
 export async function placeGuestWholesaleOrderAction(
-  buyer: { name: string; phone: string; city?: string },
+  buyer: { name: string; phone: string; city?: string; address?: string; pincode?: string },
   items: { sku: string; qty: number }[],
   opts?: { paymentRef?: string; cod?: boolean; proofPath?: string },
 ): Promise<{ ok: boolean; orderId?: string; total?: number; error?: string }> {
   const name = String(buyer?.name ?? "").trim();
   const phone = String(buyer?.phone ?? "").replace(/\D/g, "");
   const city = String(buyer?.city ?? "").trim() || null;
+  const address = String(buyer?.address ?? "").trim();
+  const pincode = String(buyer?.pincode ?? "").replace(/\D/g, "");
   if (name.length < 2) return { ok: false, error: "Please enter your name or firm name." };
   if (phone.length < 7 || phone.length > 15) return { ok: false, error: "Please enter a valid WhatsApp number." };
+  // A courier order can't ship without these — require them before the dealer pays.
+  if (address.length < 5) return { ok: false, error: "Please enter your full delivery address." };
+  if (pincode.length !== 6) return { ok: false, error: "Please enter a valid 6-digit pincode." };
+  const fullAddress = [address, city, pincode].filter(Boolean).join(", ");
 
   const sb = supabaseServer();
   // Reuse an existing record for this number (so repeat buyers don't duplicate); else create one.
@@ -216,8 +222,15 @@ export async function placeGuestWholesaleOrderAction(
   }
   // Sign them into the trade session so history / reorder work without a separate login.
   cookies().set("bd_wholesale", customerId, COOKIE);
+  // Save the delivery address on the dealer's account too (best-effort — column set may vary).
+  await (sb.from("customers") as any).update({ address: fullAddress, pincode }).eq("id", customerId).then(() => {}, () => {});
 
-  return placeWholesaleCore({ id: customerId, name }, items, opts);
+  const res = await placeWholesaleCore({ id: customerId, name }, items, opts);
+  // The courier needs the address ON the order — record it so the packing slip / bill can ship it.
+  if (res.ok && res.orderId) {
+    await sb.from("orders").update({ buyer_address: fullAddress, customer_phone: phone }).eq("id", res.orderId).then(() => {}, () => {});
+  }
+  return res;
 }
 
 /** Shared order-placement core used by both the logged-in dealer and the guest self-checkout. */
