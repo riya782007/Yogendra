@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { updateTradeVisitorAction } from "@/app/actions/leads";
+import { SITE } from "@/lib/siteUrl";
 
 type V = {
   id: string; created_at: string; name: string | null; phone: string | null; city: string | null;
@@ -35,9 +36,8 @@ export function VisitorCard({ v }: { v: V }) {
     router.refresh();
   }
 
-  const wa = phone
-    ? `https://wa.me/${phone}?text=${encodeURIComponent(`Hi ${v.name || "there"}! Thanks for visiting the Blythe Diva trade catalogue. I'm from Blythe Diva — happy to share our best wholesale rates and the latest designs. May I know what categories you deal in?`)}`
-    : null;
+  const waMsg = `Hi ${v.name || "there"}! 🙏 This is Blythe Diva. We noticed you browsed our wholesale catalogue but didn't finalise your order. We'd love to have you as a trade partner — just revisit the catalogue and place your order here:\n${SITE}/trade\n\nAnd if something held you back — pricing, minimum order, designs or colours — please do tell us, we'll make it work for you. What made you not order this time? Your feedback really helps. 🌸`;
+  const wa = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(waMsg)}` : null;
 
   const isNew = v.status === "new";
   const chip = isNew ? "bg-gold/15 text-gold-dark"
