@@ -56,6 +56,7 @@ export function ProductCard({ p, formula, index = 0 }: { p: CardProduct; formula
         {p.category.name && p.category.name.toLowerCase() !== "uncategorized" && <p className="text-[10px] uppercase tracking-[0.15em] text-gold-dark">{p.category.name}</p>}
         <h3 className="text-sm font-medium text-ink leading-snug mt-0.5 line-clamp-1 group-hover:text-emerald transition-colors">{p.name}</h3>
         <div className="mt-1"><Stars rating={p.rating} count={p.reviews} /></div>
+        {p.qty > 0 && p.qty <= 5 && <p className="mt-1 text-[11px] font-semibold text-rose">🔥 Only {p.qty} left — order soon</p>}
         {(p.colors?.length ?? 0) > 1 && (
           <div className="mt-1.5 flex items-center gap-1" title={p.colors!.join(", ")}>
             {p.colors!.slice(0, 5).map((c) => (

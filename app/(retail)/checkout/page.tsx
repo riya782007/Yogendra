@@ -17,6 +17,7 @@ export default function Checkout() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [f, setF] = useState({ name: "", phone: "", address: "", pincode: "", city: "" });
+  const [codConfirmed, setCodConfirmed] = useState(false); // must tick to place a COD order — cuts accidental/joke COD
   // Coupon / voucher — validated server-side; the discount is re-checked again at order time.
   const [coupon, setCoupon] = useState("");
   const [applied, setApplied] = useState<{ code: string; discount: number } | null>(null);
@@ -149,8 +150,22 @@ export default function Checkout() {
               );
             })}
           </div>
+
+          {/* COD confirmation — a real commitment tick cuts accidental/joke COD orders (owner: customers
+              place COD then say "galti se kar diya" and don't pick up the delivery call). */}
+          {payment === "cod" && codAllowed && (
+            <label className="flex items-start gap-2.5 rounded-xl border border-gold/40 bg-gold/5 px-3 py-2.5 text-xs text-ink cursor-pointer">
+              <input type="checkbox" checked={codConfirmed} onChange={(e) => setCodConfirmed(e.target.checked)} className="mt-0.5 accent-emerald" />
+              <span>I confirm this Cash-on-Delivery order and will be available to <b>receive the parcel and pay ₹{Math.round(grandTotal / 100)}</b> on delivery.</span>
+            </label>
+          )}
+          {/* Confidence line — reassurance right where shoppers hesitate. */}
+          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted pt-0.5">
+            <span>🔒 100% secure checkout</span><span>· 10,000+ happy customers</span><span>· Easy 7-day returns</span>
+          </p>
+
           {err && <p className="text-sm text-rose">{err}</p>}
-          <button disabled={busy} className="btn-primary w-full py-3.5 text-sm font-medium disabled:opacity-60">
+          <button disabled={busy || (payment === "cod" && codAllowed && !codConfirmed)} className="btn-primary w-full py-3.5 text-sm font-medium disabled:opacity-60">
             {busy ? "Placing order…" : `Place order · ${formatPaise(grandTotal)}`}
           </button>
         </form>
