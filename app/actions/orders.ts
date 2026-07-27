@@ -46,25 +46,26 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
   }
   const discountedSubtotal = Math.max(0, itemsSubtotal - discount);
 
-  // SHIPPING belongs IN the order (free ≥ ₹999, else ₹50 — mirrors the checkout UI): the old code
-  // showed it at checkout but never recorded it, so every COD order's total was ₹50 short.
-  const ship = discountedSubtotal >= 99900 || discountedSubtotal === 0 ? 0 : 5000;
-  total = discountedSubtotal + ship;
+  // COD CEILING — Cash on Delivery is risky on high-value orders, so anything above ₹5,000 (goods value,
+  // before fees) must be prepaid. Roll the order back so no stock is held and the shopper pays online.
+  if (input.payment === "cod" && discountedSubtotal > COD_MAX_PAISE) {
+    await sb.rpc("cancel_order", { p_order_id: orderId, p_reason: "COD not available above ₹5,000" }).then(() => {}, () => {});
+    return { ok: false, error: "Cash on Delivery isn't available for orders above ₹5,000. Please choose online (prepaid) payment." };
+  }
+
+  // SHIPPING (free ≥ ₹999, else ₹100) + a flat ₹120 COD handling fee — both recorded IN the order total
+  // (mirrors the checkout UI) so the bill total is never short.
+  const ship = discountedSubtotal >= 99900 || discountedSubtotal === 0 ? 0 : 10000;
+  const codFee = input.payment === "cod" ? 12000 : 0;
+  total = discountedSubtotal + ship + codFee;
   // DELIVERY ADDRESS was collected but never saved — the owner had bills with no address to ship to.
   const addr = [input.customer.address, input.customer.city, input.customer.pincode].filter(Boolean).join(", ");
   const patch: Record<string, unknown> = { total };
-  if (ship > 0) patch.extra_courier = ship;
+  if (ship + codFee > 0) patch.extra_courier = ship + codFee;
   if (addr) patch.buyer_address = addr;
   if (discount > 0 && appliedCode) { patch.voucher_code = appliedCode; patch.discount_paise = discount; }
   await sb.from("orders").update(patch).eq("id", orderId).then(() => {}, () => {});
   if (discount > 0 && appliedCode) await bumpVoucherUsage(appliedCode);
-
-  // COD CEILING — Cash on Delivery is risky on high-value orders, so anything above ₹5,000 must be
-  // prepaid. Roll the order back so no stock is held and the shopper is asked to pay online.
-  if (input.payment === "cod" && total > COD_MAX_PAISE) {
-    await sb.rpc("cancel_order", { p_order_id: orderId, p_reason: "COD not available above ₹5,000" }).then(() => {}, () => {});
-    return { ok: false, error: "Cash on Delivery isn't available for orders above ₹5,000. Please choose online (prepaid) payment." };
-  }
 
   await sendPurchase({ orderId, valuePaise: total, channel: "retail", items: input.items.map((i) => ({ sku: i.sku, qty: i.qty })) });
   await notifyOrderPlaced({

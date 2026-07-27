@@ -24,7 +24,23 @@ export default function Checkout() {
   const [couponBusy, setCouponBusy] = useState(false);
   const discount = applied ? Math.min(applied.discount, total) : 0;
   const discountedSubtotal = Math.max(0, total - discount);
-  const shipping = discountedSubtotal >= 99900 || discountedSubtotal === 0 ? 0 : 5000;
+  const shipping = discountedSubtotal >= 99900 || discountedSubtotal === 0 ? 0 : 10000;
+  // COD rules (owner): a flat ₹120 handling fee per COD order, and NO COD on orders above ₹5,000.
+  const COD_FEE = 12000;
+  const codAllowed = discountedSubtotal > 0 && discountedSubtotal <= 500000;
+  const codFee = payment === "cod" && codAllowed ? COD_FEE : 0;
+  const grandTotal = discountedSubtotal + shipping + codFee;
+
+  // Persist the typed contact so even an ABANDONED checkout surfaces WITH a name + phone on the owner's
+  // Abandoned Carts page (CartContext reads this and attaches it to the tracked cart).
+  useEffect(() => {
+    const name = f.name.trim(); const phone = f.phone.trim();
+    if (name.length < 2 || phone.replace(/\D/g, "").length < 7) return;
+    const t = setTimeout(() => {
+      try { localStorage.setItem("bd_retail_contact", JSON.stringify({ name, phone, city: f.city.trim() })); } catch { /* ignore */ }
+    }, 800);
+    return () => clearTimeout(t);
+  }, [f.name, f.phone, f.city]);
 
   async function applyCoupon() {
     const code = coupon.trim();
@@ -43,6 +59,9 @@ export default function Checkout() {
     const p = new URLSearchParams(window.location.search).get("pay");
     if (p === "online" || p === "cod") setPayment(p);
   }, []);
+
+  // Orders above ₹5,000 can't be COD — flip such a cart to online automatically.
+  useEffect(() => { if (!codAllowed && payment === "cod") setPayment("online"); }, [codAllowed, payment]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault(); setErr(""); setBusy(true);
@@ -119,17 +138,20 @@ export default function Checkout() {
           </div>
           <h2 className="font-medium text-ink pt-2">Payment</h2>
           <div className="grid grid-cols-2 gap-3">
-            {(["cod", "online"] as const).map((p) => (
-              <button type="button" key={p} onClick={() => setPayment(p)}
-                className={`rounded-xl border px-4 py-3 text-sm text-left transition-all ${payment === p ? "border-emerald bg-emerald-mist" : "border-sand hover:border-gold"}`}>
-                <span className="font-medium block text-ink">{p === "cod" ? "Cash on Delivery" : "Pay Online"}</span>
-                <span className="text-xs text-muted">{p === "cod" ? "Pay when it arrives" : "UPI / Card / Netbanking"}</span>
-              </button>
-            ))}
+            {(["cod", "online"] as const).map((p) => {
+              const disabled = p === "cod" && !codAllowed;
+              return (
+                <button type="button" key={p} disabled={disabled} onClick={() => !disabled && setPayment(p)}
+                  className={`rounded-xl border px-4 py-3 text-sm text-left transition-all ${payment === p ? "border-emerald bg-emerald-mist" : "border-sand hover:border-gold"} ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}>
+                  <span className="font-medium block text-ink">{p === "cod" ? "Cash on Delivery" : "Pay Online"}</span>
+                  <span className="text-xs text-muted">{p === "cod" ? (disabled ? "Not available above ₹5,000" : "Pay when it arrives · +₹120 fee") : "UPI / Card / Netbanking"}</span>
+                </button>
+              );
+            })}
           </div>
           {err && <p className="text-sm text-rose">{err}</p>}
           <button disabled={busy} className="btn-primary w-full py-3.5 text-sm font-medium disabled:opacity-60">
-            {busy ? "Placing order…" : `Place order · ${formatPaise(discountedSubtotal + shipping)}`}
+            {busy ? "Placing order…" : `Place order · ${formatPaise(grandTotal)}`}
           </button>
         </form>
 
@@ -164,7 +186,8 @@ export default function Checkout() {
             <div className="flex justify-between text-muted"><span>Subtotal</span><span>{formatPaise(total)}</span></div>
             {discount > 0 && <div className="flex justify-between text-emerald-dark"><span>Discount{applied ? ` (${applied.code})` : ""}</span><span>−{formatPaise(discount)}</span></div>}
             <div className="flex justify-between text-muted"><span>Shipping</span><span>{shipping === 0 ? "Free" : formatPaise(shipping)}</span></div>
-            <div className="flex justify-between font-semibold text-ink pt-1"><span>Total</span><span>{formatPaise(discountedSubtotal + shipping)}</span></div>
+            {codFee > 0 && <div className="flex justify-between text-muted"><span>COD handling fee</span><span>{formatPaise(codFee)}</span></div>}
+            <div className="flex justify-between font-semibold text-ink pt-1"><span>Total</span><span>{formatPaise(grandTotal)}</span></div>
           </div>
         </div>
       </div>
