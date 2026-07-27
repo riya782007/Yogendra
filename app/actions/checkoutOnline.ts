@@ -171,10 +171,12 @@ async function finalizeOnlineOrder(args: {
   const addr = [ (customer as any).address, (customer as any).city, (customer as any).pincode ].filter(Boolean).join(", ");
 
   // Mark fully paid + record the Razorpay payment id. Razorpay/UPI settles to bank → bank book.
+  // Flag it so the packer remembers the promised free mystery gift on every prepaid order.
   await sb.from("orders").update({
     total, ...(ship > 0 ? { extra_courier: ship } : {}), ...(addr ? { buyer_address: addr } : {}),
     ...(appliedDiscount > 0 && voucherCode ? { voucher_code: voucherCode, discount_paise: appliedDiscount } : {}),
     amount_paid: total, payment_mode: "online", payment_ref: args.paymentId, pay_bank: total,
+    admin_note: "🎁 PREPAID — add the free mystery gift to this parcel.",
   }).eq("id", orderId);
   if (appliedDiscount > 0 && voucherCode) await bumpVoucherUsage(voucherCode);
 

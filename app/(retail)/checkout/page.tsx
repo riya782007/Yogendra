@@ -138,6 +138,14 @@ export default function Checkout() {
             <input className={input} placeholder="City" value={f.city} onChange={(e) => setF({ ...f, city: e.target.value })} />
           </div>
           <h2 className="font-medium text-ink pt-2">Payment</h2>
+          {/* Prepaid incentive (owner: no price discounts — reward instead). A free mystery gift nudges
+              shoppers off flaky COD onto committed online payment. */}
+          <div className={`rounded-xl border px-3 py-2.5 text-sm flex items-center gap-2 transition-colors ${payment === "online" ? "border-emerald bg-emerald-mist text-emerald-dark" : "border-gold/40 bg-gold/5 text-ink"}`}>
+            <span className="text-lg">🎁</span>
+            <span>{payment === "online"
+              ? <>Yay! A <b>free mystery gift</b> will be added to your parcel for paying online.</>
+              : <><b>Pay online</b> and get a <b>free mystery gift</b> in your parcel — switch to Pay Online below.</>}</span>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             {(["cod", "online"] as const).map((p) => {
               const disabled = p === "cod" && !codAllowed;
@@ -204,6 +212,17 @@ export default function Checkout() {
             {codFee > 0 && <div className="flex justify-between text-muted"><span>COD handling fee</span><span>{formatPaise(codFee)}</span></div>}
             <div className="flex justify-between font-semibold text-ink pt-1"><span>Total</span><span>{formatPaise(grandTotal)}</span></div>
           </div>
+
+          {/* Prominent WhatsApp help — a hesitant shopper can reach out in one tap instead of leaving. */}
+          <a
+            href={`https://wa.me/919873151767?text=${encodeURIComponent("Hi Blythe Diva! I'm at checkout and have a question about my order 🙂")}`}
+            target="_blank" rel="noreferrer"
+            className="mt-4 w-full flex items-center justify-center gap-2 rounded-full bg-[#25D366] text-white py-3 text-sm font-semibold shadow-luxe hover:brightness-105 active:scale-[0.99] transition"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M17.5 14.4c-.3-.1-1.7-.8-1.9-.9-.3-.1-.5-.1-.7.2-.2.3-.7.8-.9 1-.2.2-.3.2-.6.1-1.5-.8-2.5-1.4-3.5-3.1-.3-.5.3-.4.7-1.3.1-.2 0-.4 0-.5 0-.2-.7-1.6-.9-2.2-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.5s1.1 2.9 1.2 3.1c.1.2 2.1 3.2 5.1 4.5 1.9.8 2.6.9 3.5.8.6-.1 1.7-.7 1.9-1.4.2-.7.2-1.2.2-1.4-.1-.1-.3-.2-.6-.3zM12 2a10 10 0 00-8.6 15.1L2 22l5-1.3A10 10 0 1012 2z" /></svg>
+            Questions? Chat with us on WhatsApp
+          </a>
+          <p className="text-[11px] text-muted text-center mt-1.5">Not sure? Message us — we reply in minutes and can even take your order on WhatsApp.</p>
         </div>
       </div>
     </div>

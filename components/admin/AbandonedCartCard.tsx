@@ -57,7 +57,7 @@ export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMa
   const money = formatPaise(cart.total);
   const waMsg = isWholesale
     ? `Hi ${cart.customer_name || "there"}! 🙏 Your Blythe Diva wholesale cart has ${totalQty} piece${totalQty === 1 ? "" : "s"} (${money}). Tap below to review and confirm your order — payment is quick and secure:\n${recoverUrl}`
-    : `Hi ${cart.customer_name || "there"}! ✨ You left ${totalQty} beautiful piece${totalQty === 1 ? "" : "s"} (${money}) in your Blythe Diva bag. Complete your order and pay securely here:\n${recoverUrl}`;
+    : `Hi ${cart.customer_name || "there"}! ✨ You left ${totalQty} beautiful piece${totalQty === 1 ? "" : "s"} (${money}) in your Blythe Diva bag. Complete your order and pay securely here:\n${recoverUrl}\n\n🎁 Pay online and get a FREE mystery gift with your order!`;
   const wa = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(waMsg)}` : null;
   const when = new Date(cart.created_at).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 

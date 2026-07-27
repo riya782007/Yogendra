@@ -36,7 +36,7 @@ export function VisitorCard({ v }: { v: V }) {
     router.refresh();
   }
 
-  const waMsg = `Hi ${v.name || "there"}! 🙏 This is Blythe Diva. We noticed you browsed our wholesale catalogue but didn't finalise your order. We'd love to have you as a trade partner — just revisit the catalogue and place your order here:\n${SITE}/trade\n\nAnd if something held you back — pricing, minimum order, designs or colours — please do tell us, we'll make it work for you. What made you not order this time? Your feedback really helps. 🌸`;
+  const waMsg = `Namaste ${v.name || "ji"}! 🙏 This is Blythe Diva (Sadar Bazar, Delhi) — thank you for viewing our wholesale catalogue!\n\n✨ 2000+ latest designs · best trade rates · new arrivals every week.\n\nMain aapko first order me help karna chahungi — bas 2 minute lagenge:\n👉 ${SITE}/trade\n\nAgar koi dikkat aayi ho — rate, minimum order, ya koi design nahi mili — bas reply kar dijiye, main khud aapke liye sort kar dungi. 🌸`;
   const wa = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(waMsg)}` : null;
 
   const isNew = v.status === "new";

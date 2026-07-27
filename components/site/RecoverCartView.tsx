@@ -59,7 +59,8 @@ export function RecoverCartView({ items }: { items: RItem[] }) {
           className="btn-primary w-full mt-5 py-3.5 text-sm font-semibold disabled:opacity-60">
           {going ? "Taking you to checkout…" : "Complete your order & pay →"}
         </button>
-        <p className="text-[11px] text-muted text-center mt-3">₹100 flat shipping · Cash on Delivery available · Anti-tarnish premium finish</p>
+        <p className="text-center text-sm text-emerald-dark font-medium mt-3">🎁 Pay online &amp; get a FREE mystery gift with your order!</p>
+        <p className="text-[11px] text-muted text-center mt-2">₹100 flat shipping · Cash on Delivery available · Anti-tarnish premium finish</p>
       </div>
     </main>
   );
