@@ -46,12 +46,13 @@ export default async function Invoice({ params }: { params: { id: string } }) {
   const total = order.total as number;
   const paid = order.amount_paid ?? 0;
   const buyerStateCode = order.buyer_state || stateCodeFromGstin(order.buyer_gstin);
-  // GST TAX INVOICE is EXCLUSIVE by default: the rate is pre-tax and CGST/SGST is added on top,
-  // so Grand Total = taxable + GST. The POS collects this tax-inclusive Grand Total (it adds the
-  // GST at billing time), so amount paid matches and there is no phantom balance. The owner can
-  // still pin a specific bill to inclusive via gst_mode = 'inclusive'.
+  // GST mode: an ONLINE cart (retail / wholesale) already shows GST-INCLUSIVE prices — the customer
+  // paid exactly what the cart showed, so the invoice must NOT add 3% again (owner: "cart me already
+  // GST laga hua hai"). So online orders default to INCLUSIVE (GST is extracted from within the total).
+  // The owner's manual POS counter bills stay EXCLUSIVE by default (he enters pre-tax rates and GST is
+  // added on top). Either can be pinned per-bill via gst_mode.
   const gstMode = (order.gst_mode as "inclusive" | "exclusive" | null | undefined) ?? null;
-  const gstExclusive = !isCash && (gstMode ? gstMode === "exclusive" : true);
+  const gstExclusive = !isCash && (gstMode ? gstMode === "exclusive" : order.channel === "pos");
   const g = gstExclusive ? gstSplitExclusive(total, buyerStateCode) : gstSplit(total, buyerStateCode);
   // Extra charges (Packing/Courier/Adjustment) are folded into the total so GST applies to them;
   // here we split them back out so the bill itemises them. Products portion = total − charges.
