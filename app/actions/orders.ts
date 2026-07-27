@@ -53,9 +53,9 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
     return { ok: false, error: "Cash on Delivery isn't available for orders above ₹5,000. Please choose online (prepaid) payment." };
   }
 
-  // SHIPPING (free ≥ ₹999, else ₹100) + a flat ₹120 COD handling fee — both recorded IN the order total
-  // (mirrors the checkout UI) so the bill total is never short.
-  const ship = discountedSubtotal >= 99900 || discountedSubtotal === 0 ? 0 : 10000;
+  // SHIPPING — a flat ₹100 on every order + a flat ₹120 COD handling fee, both recorded IN the order
+  // total (mirrors the checkout UI) so the bill total is never short.
+  const ship = discountedSubtotal === 0 ? 0 : 10000;
   const codFee = input.payment === "cod" ? 12000 : 0;
   total = discountedSubtotal + ship + codFee;
   // DELIVERY ADDRESS was collected but never saved — the owner had bills with no address to ship to.

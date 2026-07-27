@@ -25,7 +25,7 @@ export const PAGES: Record<string, Page> = {
     title: "Shipping Policy",
     intro: "Fast, tracked delivery across India.",
     sections: [
-      { h: "Charges", p: "Free shipping on all orders above ₹999. A flat ₹50 applies below that. Cash on Delivery is available across serviceable pincodes." },
+      { h: "Charges", p: "A flat ₹100 shipping charge applies to every order, anywhere in India. Cash on Delivery is available across serviceable pincodes (a small COD handling fee applies)." },
       { h: "Dispatch & delivery", p: "Orders are dispatched within 1–2 business days. Delivery typically takes 3–7 business days depending on your location. You'll receive tracking details on WhatsApp once your order ships." },
       { h: "Serviceability", p: "We ship pan-India through our logistics partners. If a pincode is not serviceable, our team will contact you with alternatives." },
     ],

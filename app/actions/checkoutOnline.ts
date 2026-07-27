@@ -24,9 +24,9 @@ import { validateVoucher, bumpVoucherUsage } from "@/app/actions/vouchers";
 type CartItem = { sku: string; qty: number; color?: string };
 type Customer = { name: string; phone: string; address: string; pincode?: string; city?: string };
 
-/** Free shipping over ₹999, else ₹50. Mirrors the checkout UI. */
+/** Flat ₹100 shipping on every order. Mirrors the checkout UI. */
 function shippingPaise(itemsTotal: number): number {
-  return itemsTotal >= 99900 || itemsTotal === 0 ? 0 : 5000;
+  return itemsTotal === 0 ? 0 : 10000;
 }
 
 /** Authoritative server-side cart total in paise (items only), mirroring billing's bd_price. */

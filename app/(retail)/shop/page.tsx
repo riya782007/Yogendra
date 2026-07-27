@@ -12,7 +12,7 @@ import { ReelsSection } from "@/components/site/ReelsSection";
 
 export const metadata = {
   title: "Premium Artificial Jewellery — Kundan, Meena, Temple",
-  description: "Shop handcrafted artificial jewellery from Blythe Diva. Necklaces, earrings, bracelets, anklets & rings with COD and free shipping over ₹999.",
+  description: "Shop handcrafted artificial jewellery from Blythe Diva. Necklaces, earrings, bracelets, anklets & rings with COD and ₹100 flat shipping across India.",
 };
 
 // The homepage shows the same catalogue to everyone, yet it was re-running 5 heavy queries
@@ -114,7 +114,7 @@ export default async function Shop() {
               <span className="text-sand hidden sm:inline">·</span>
               <span>Cash on delivery</span>
               <span className="text-sand hidden sm:inline">·</span>
-              <span>Free shipping over ₹999</span>
+              <span>₹100 flat shipping</span>
             </div>
           </div>
 
@@ -220,7 +220,7 @@ export default async function Shop() {
             <div className="absolute inset-0 opacity-20" style={{ background: "radial-gradient(circle at 20% 20%, #C8A24C, transparent 40%), radial-gradient(circle at 80% 80%, #0F5C4D, transparent 40%)" }} />
             <p className="relative text-gold-light tracking-[0.3em] uppercase text-xs">The Blythe Diva Promise</p>
             <h2 className="relative font-display text-4xl md:text-5xl mt-2">Handcrafted. Anti-tarnish. Made to shine.</h2>
-            <p className="relative text-cream/70 mt-3">Free shipping over ₹999 · Cash on delivery · Easy 7-day returns.</p>
+            <p className="relative text-cream/70 mt-3">₹100 flat shipping · Cash on delivery · Easy 7-day returns.</p>
             <Link href="/shop" className="relative btn-gold inline-block mt-6 px-8 py-3 text-sm font-medium">Explore the collection</Link>
           </div>
         </Reveal>

@@ -29,7 +29,7 @@ export async function generateMetadata({ params }: { params: { slug: string } })
   const name = params.slug.charAt(0).toUpperCase() + params.slug.slice(1);
   return {
     title: `${name} — Artificial Jewellery`,
-    description: `Shop ${name.toLowerCase()} from Blythe Diva. Premium artificial ${name.toLowerCase()} with COD and free shipping over ₹999.`,
+    description: `Shop ${name.toLowerCase()} from Blythe Diva. Premium artificial ${name.toLowerCase()} with COD and ₹100 flat shipping across India.`,
     keywords: [name, "artificial jewellery", "imitation jewellery", "online"],
   };
 }

@@ -24,7 +24,7 @@ export default function Checkout() {
   const [couponBusy, setCouponBusy] = useState(false);
   const discount = applied ? Math.min(applied.discount, total) : 0;
   const discountedSubtotal = Math.max(0, total - discount);
-  const shipping = discountedSubtotal >= 99900 || discountedSubtotal === 0 ? 0 : 10000;
+  const shipping = discountedSubtotal === 0 ? 0 : 10000; // flat ₹100 shipping on every order
   // COD rules (owner): a flat ₹120 handling fee per COD order, and NO COD on orders above ₹5,000.
   const COD_FEE = 12000;
   const codAllowed = discountedSubtotal > 0 && discountedSubtotal <= 500000;
