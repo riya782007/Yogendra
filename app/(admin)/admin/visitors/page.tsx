@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import { supabaseServer } from "@/lib/supabase/server";
 import { VisitorCard } from "@/components/admin/VisitorCard";
+import { BulkVisitorWhatsAppButton } from "@/components/admin/BulkVisitorWhatsAppButton";
 
 export const metadata = { title: "Owner Console · Trade Visitors" };
 
@@ -28,7 +29,10 @@ export default async function TradeVisitors() {
 
       {fresh.length > 0 && (
         <>
-          <h2 className="text-xs uppercase tracking-wide text-muted mb-2">New — worth a call ({fresh.length})</h2>
+          <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+            <h2 className="text-xs uppercase tracking-wide text-muted">New — worth a call ({fresh.length})</h2>
+            <BulkVisitorWhatsAppButton visitors={fresh} />
+          </div>
           <div className="space-y-3 mb-8">{fresh.map((v) => <VisitorCard key={v.id} v={v} />)}</div>
         </>
       )}
