@@ -45,7 +45,6 @@ export default async function EstimateDetailPage({ params, searchParams }: { par
   const xTcs = ((estimate as any).extra_tcs as number) || 0;
   const xCharges = xPacking + xCourier + xAdjust + xTcs - xDiscount;
   const itemsTotal = total - xCharges;
-  const itemsTaxable = (!gstOn || gstExclusive) ? itemsTotal : Math.round(itemsTotal / (1 + GST_RATE / 100));
   const payable = !gstOn ? total : gstExclusive ? total + (g?.tax ?? 0) : total;
   const roundedTotal = Math.round(payable / 100) * 100;
   const roundOff = roundedTotal - payable;
@@ -136,14 +135,16 @@ export default async function EstimateDetailPage({ params, searchParams }: { par
                 <th className={th}>#</th><th className={th}>Item</th><th className={th}>SKU</th>
                 {gstOn && <th className={`${th} text-center`}>HSN</th>}
                 <th className={`${th} text-right`}>Qty</th><th className={`${th} text-right`}>Price</th>
-                <th className={`${th} text-right`}>{gstOn ? "Taxable Value" : "Total Amount"}</th>
+                <th className={`${th} text-right`}>{gstOn && gstExclusive ? "Taxable Value" : "Amount"}</th>
               </tr>
             </thead>
             <tbody>
               {items.map((it: any, i: number) => {
-                // When rates are quoted GST-inclusive, strip the tax back out so the taxable column is honest.
-                const unit = (!gstOn || gstExclusive) ? it.unit_price : Math.round(it.unit_price / (1 + GST_RATE / 100));
-                const lineTaxable = (!gstOn || gstExclusive) ? it.line_total : Math.round(it.line_total / (1 + GST_RATE / 100));
+                // Show the owner's regular rate exactly as stored (owner wants the real rate on the line,
+                // not the divided-down ex-GST figure). For inclusive quotes the GST sits inside and is
+                // broken out below; for exclusive it is added below.
+                const unit = it.unit_price;
+                const lineTaxable = it.line_total;
                 return (
                   <tr key={i} className="border-b border-sand/60">
                     <td className={`${td} text-muted`}>{i + 1}</td>
@@ -159,7 +160,7 @@ export default async function EstimateDetailPage({ params, searchParams }: { par
               <tr className="bg-cream/50 font-medium">
                 <td className={td}></td><td className={`${td} text-ink`}>Total</td><td className={td}></td>{gstOn && <td className={td}></td>}
                 <td className={`${td} text-right`}>{qtyTotal}</td><td className={td}></td>
-                <td className={`${td} text-right`}>{formatPaise(itemsTaxable)}</td>
+                <td className={`${td} text-right`}>{formatPaise(itemsTotal)}</td>
               </tr>
             </tbody>
           </table>
@@ -185,7 +186,7 @@ export default async function EstimateDetailPage({ params, searchParams }: { par
             <div className="text-sm space-y-1">
               <div className="flex justify-between text-muted"><span>Total Quantity</span><span>{qtyTotal}</span></div>
               {gstOn && g && <div className="flex justify-between text-muted"><span>Total Tax ({gstExclusive ? "EXCL" : "INCL"})</span><span>{formatPaise(g.tax)}</span></div>}
-              <div className="flex justify-between text-muted border-t border-sand/40 pt-1"><span>{gstOn ? "Taxable value (goods)" : "Subtotal"}</span><span>{formatPaise(itemsTaxable)}</span></div>
+              <div className="flex justify-between text-muted border-t border-sand/40 pt-1"><span>{!gstOn ? "Subtotal" : gstExclusive ? "Taxable value (goods)" : "Sub-total (incl. GST)"}</span><span>{formatPaise(itemsTotal)}</span></div>
               {xDiscount > 0 && <div className="flex justify-between text-emerald-dark"><span>Discount</span><span>− {formatPaise(xDiscount)}</span></div>}
               {xPacking > 0 && <div className="flex justify-between text-muted"><span>Packing</span><span>{formatPaise(xPacking)}</span></div>}
               {xCourier > 0 && <div className="flex justify-between text-muted"><span>Shipping / Courier</span><span>{formatPaise(xCourier)}</span></div>}

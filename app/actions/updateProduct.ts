@@ -42,7 +42,7 @@ export async function updateProductAction(formData: FormData): Promise<UpdateRes
   const sb = supabaseServer();
   const { data: existing } = await sb
     .from("products")
-    .select("id, generated_content")
+    .select("id, generated_content, base_wholesale")
     .eq("sku", sku)
     .maybeSingle();
   if (!existing) return { ok: false, error: "Product not found" };
@@ -67,8 +67,17 @@ export async function updateProductAction(formData: FormData): Promise<UpdateRes
 
   // Re-validate the resulting price set against the formula.
   const formula = await getPricingFormula();
-  const prices = computePrices(Math.round(basePriceRupees * 100), formula);
+  const newBase = Math.round(basePriceRupees * 100);
+  const prices = computePrices(newBase, formula);
   if (!isValidPriceSet(prices)) return { ok: false, error: "That base price produces an invalid price set — adjust it." };
+
+  // WHOLESALE → RETAIL + MRP CASCADE (owner: "wholesale price change kiya to retail aur MRP apne aap
+  // change nhi ho raha"). Retail/MRP are DERIVED from the base wholesale by the formula, but any pinned
+  // custom override freezes a tier so it stops following the base. So the moment the base wholesale price
+  // actually changes, we clear the stale custom Retail/MRP/Wholesale overrides — on the product AND every
+  // colour variant — so all three tiers recompute from the new wholesale automatically. (If the owner
+  // wants a special price he can re-pin it afterwards; it then holds until the next wholesale change.)
+  const baseChanged = Number((existing as any).base_wholesale ?? 0) !== newBase;
 
   // Merge content (keep anything we don't expose in the form).
   const prev = (existing.generated_content as any) ?? {};
@@ -97,12 +106,23 @@ export async function updateProductAction(formData: FormData): Promise<UpdateRes
       // wholesale portal); "all" clears both. Form sends visibility=all|wholesale|retail.
       wholesale_only: String(formData.get("visibility") ?? "all") === "wholesale",
       retail_only: String(formData.get("visibility") ?? "all") === "retail",
-      base_wholesale: Math.round(basePriceRupees * 100),
+      base_wholesale: newBase,
+      // On a wholesale-price change, drop the product-level custom overrides so retail/MRP re-derive.
+      ...(baseChanged ? { wholesale_override: null, retail_override: null, mrp_override: null } : {}),
       generated_content,
       last_movement_at: new Date().toISOString(),
     })
     .eq("id", existing.id);
   if (error) return { ok: false, error: error.message };
+
+  // …and clear every colour variant's pinned prices too, so each colour's retail/MRP follows the new
+  // wholesale as well (otherwise a per-colour custom price would keep showing the old numbers).
+  if (baseChanged) {
+    await sb.from("variants")
+      .update({ wholesale_override: null, retail_override: null, mrp_override: null })
+      .eq("product_id", existing.id)
+      .then(() => {}, () => {});
+  }
 
   // Labels are stored in a separate `labels` table joined via `product_labels`. The form
   // submits a comma/newline list of names; we (a) upsert each name into labels so unknown

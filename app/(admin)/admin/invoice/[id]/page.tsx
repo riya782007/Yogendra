@@ -67,7 +67,6 @@ export default async function Invoice({ params }: { params: { id: string } }) {
   const xAdjust = (order.extra_adjustment as number) || 0;
   const xCharges = xPacking + xCourier + xAdjust;
   const itemsTotal = total - xCharges;
-  const itemsTaxable = (isCash || gstExclusive) ? itemsTotal : Math.round(itemsTotal / (1 + GST_RATE / 100));
   // What the customer actually owes: inclusive total (or pre-tax + GST when exclusive).
   const payable = isCash ? total : gstExclusive ? total + g.tax : total;
   const roundedTotal = Math.round(payable / 100) * 100;
@@ -190,16 +189,22 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                 <th className={`${th} text-right`}>Qty</th>
                 <th className={`${th} text-right`}>Rate</th>
                 <th className={`${th} text-right`}>Disc</th>
-                <th className={`${th} text-right`}>{isCash ? "Amount" : "Taxable Value"}</th>
+                <th className={`${th} text-right`}>{gstExclusive ? "Taxable Value" : "Amount"}</th>
               </tr>
             </thead>
             <tbody>
               {items.map((it: any, i: number) => {
-                const lineTaxable = (isCash || gstExclusive) ? it.line_total : Math.round(it.line_total / (1 + GST_RATE / 100));
-                const unit = (isCash || gstExclusive) ? it.unit_price : Math.round(it.unit_price / (1 + GST_RATE / 100));
+                // Item lines ALWAYS show the owner's REGULAR rate exactly as stored (owner: "jo apna regular
+                // rate hai wohi likha aaye, neeche GST jude jaise bill me hota hai"). We no longer divide the
+                // rate down in inclusive mode — that was printing a ₹150 rate as ₹145.63. For an inclusive
+                // bill the 3% GST lives INSIDE this rate and is broken out in the tax summary below; for an
+                // exclusive bill the rate is pre-tax and GST is added below. Either way the line shows the
+                // real rate the owner and customer recognise.
+                const lineTaxable = it.line_total;
+                const unit = it.unit_price;
                 // Original (pre-discount) rate for the Rate column; Amount stays the discounted net.
                 const origRaw = it.unit_mrp && it.unit_mrp > it.unit_price ? it.unit_mrp : it.unit_price;
-                const origUnit = (isCash || gstExclusive) ? origRaw : Math.round(origRaw / (1 + GST_RATE / 100));
+                const origUnit = origRaw;
                 const discPct = origUnit > unit ? Math.round((1 - unit / origUnit) * 100) : 0;
                 return (
                   <tr key={i} className="border-b border-sand/60">
@@ -221,7 +226,7 @@ export default async function Invoice({ params }: { params: { id: string } }) {
               <tr className="bg-cream/50 font-medium">
                 <td className={td}></td><td className={td}></td><td className={`${td} text-ink`}>Total</td>{!isCash && <td className={td}></td>}
                 <td className={`${td} text-right`}>{qtyTotal}</td><td className={td}></td><td className={td}></td>
-                <td className={`${td} text-right`}>{formatPaise(itemsTaxable)}</td>
+                <td className={`${td} text-right`}>{formatPaise(itemsTotal)}</td>
               </tr>
             </tbody>
           </table>
@@ -246,16 +251,26 @@ export default async function Invoice({ params }: { params: { id: string } }) {
               )}
             </div>
             <div className="text-sm space-y-1">
-              <div className="flex justify-between text-muted"><span>{isCash ? "Sub-total" : "Taxable value (goods)"}</span><span>{formatPaise(itemsTaxable)}</span></div>
-              {xPacking > 0 && <div className="flex justify-between text-muted"><span>Packing</span><span>{formatPaise(xPacking)}</span></div>}
-              {xCourier > 0 && <div className="flex justify-between text-muted"><span>Courier</span><span>{formatPaise(xCourier)}</span></div>}
+              <div className="flex justify-between text-muted"><span>{isCash ? "Sub-total" : gstExclusive ? "Taxable value (goods)" : "Sub-total (incl. GST)"}</span><span>{formatPaise(itemsTotal)}</span></div>
+              {xPacking > 0 && <div className="flex justify-between text-muted"><span>Packing{!isCash && !gstExclusive ? " (incl. GST)" : ""}</span><span>{formatPaise(xPacking)}</span></div>}
+              {xCourier > 0 && <div className="flex justify-between text-muted"><span>Courier{!isCash && !gstExclusive ? " (incl. GST)" : ""}</span><span>{formatPaise(xCourier)}</span></div>}
               {xAdjust !== 0 && <div className="flex justify-between text-muted"><span>Adjustment</span><span>{formatPaise(xAdjust)}</span></div>}
-              {!isCash && xCharges !== 0 && <div className="flex justify-between text-muted font-medium border-t border-sand/40 pt-1"><span>Taxable value</span><span>{formatPaise(g.taxable)}</span></div>}
-              {!isCash && !g.interState && <>
-                <div className="flex justify-between text-muted"><span>CGST @{GST_RATE / 2}%</span><span>{formatPaise(g.cgst)}</span></div>
-                <div className="flex justify-between text-muted"><span>SGST @{GST_RATE / 2}%</span><span>{formatPaise(g.sgst)}</span></div>
-              </>}
-              {!isCash && g.interState && <div className="flex justify-between text-muted"><span>IGST @{GST_RATE}%</span><span>{formatPaise(g.igst)}</span></div>}
+              {/* GST breakdown. INCLUSIVE (default): the 3% already sits INSIDE the amounts above, so it is
+                  shown here as an "included" component and is NOT added again — the grand total stays equal to
+                  the inclusive sub-total. EXCLUSIVE: the taxable value is pre-tax and CGST/SGST are genuinely
+                  added on top to reach the grand total. */}
+              {!isCash && (
+                <div className="border-t border-sand/40 pt-1 mt-1">
+                  {!gstExclusive && <p className="text-[11px] text-muted italic mb-0.5">GST included in the above —</p>}
+                  <div className="flex justify-between text-muted"><span>Taxable value</span><span>{formatPaise(g.taxable)}</span></div>
+                  {!g.interState ? (<>
+                    <div className="flex justify-between text-muted"><span>CGST @{GST_RATE / 2}%</span><span>{formatPaise(g.cgst)}</span></div>
+                    <div className="flex justify-between text-muted"><span>SGST @{GST_RATE / 2}%</span><span>{formatPaise(g.sgst)}</span></div>
+                  </>) : (
+                    <div className="flex justify-between text-muted"><span>IGST @{GST_RATE}%</span><span>{formatPaise(g.igst)}</span></div>
+                  )}
+                </div>
+              )}
               {roundOff !== 0 && <div className="flex justify-between text-muted"><span>Round off</span><span>{formatPaise(roundOff)}</span></div>}
               <div className="grand-total flex justify-between font-semibold text-ink border-t border-sand pt-2 text-base"><span>Grand Total</span><span>{formatPaise(roundedTotal)}</span></div>
               <div className="flex justify-between text-emerald-dark"><span>Amount paid</span><span>{formatPaise(paid)}</span></div>
@@ -369,6 +384,10 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                   <h2 className="font-medium text-emerald-dark text-lg">Payment received? Record it here</h2>
                 </div>
                 <p className="text-xs text-emerald-dark/80 mb-3">Invoice generated &amp; printed — now log what {order.customer_name || "the customer"} paid and into which account. Balance due <b>{formatPaise(balanceDue)}</b>.</p>
+                {/* CREDIT / UDHAAR (owner: "credit ho to?") — a credit sale is simply a bill left unpaid or
+                    part-paid: record only what was actually received (or nothing), and the rest stays on the
+                    books as Balance due with the bill marked Unpaid/Partial. Nothing is forced. */}
+                <p className="text-[11px] text-emerald-dark/70 mb-3 bg-white/60 rounded-lg px-2.5 py-1.5 border border-emerald/20">💳 <b>Udhaar / credit?</b> Jitna paisa aaya utna hi daalein (ya kuch nahi) — baaki apne aap <b>Balance due</b> me chala jayega aur bill <b>Unpaid/Partial</b> rahega. Baad me jab baaki paisa aaye tab dobara yahin record kar dein.</p>
                 <form action={recordPaymentAction} className="flex flex-wrap items-end gap-3">
                   <input type="hidden" name="order_id" value={order.id} />
                   <label className="flex flex-col text-xs text-emerald-dark/80">Amount received (₹)
