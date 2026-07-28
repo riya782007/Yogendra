@@ -2059,7 +2059,12 @@ export async function getEstimate(id: string) {
   const { data: estimate } = await sb.from("estimates").select("*").eq("id", id).maybeSingle();
   if (!estimate) return null;
   const { data: items } = await sb.from("estimate_items").select("id,qty,unit_price,line_total,product:products(name,sku),variant:variants(sku,color)").eq("estimate_id", id);
-  return { estimate, items: (items as any[]) ?? [] };
+  // A–Z by SKU at the source, so EVERY consumer — the estimate view, the editor, the print/PDF, and the
+  // bill it converts into — lists lines in the same predictable order regardless of scan sequence
+  // (owner: "estimate me save karne pe A-Z chahiye"). Numeric-aware so KPKN2 sorts before KPKN10.
+  const sortedItems = ((items as any[]) ?? []).sort((a, b) =>
+    String(a.variant?.sku ?? a.product?.sku ?? "").localeCompare(String(b.variant?.sku ?? b.product?.sku ?? ""), undefined, { numeric: true }));
+  return { estimate, items: sortedItems };
 }
 export async function getRecentOrders(limit = 12) {
   const sb = supabaseServer();

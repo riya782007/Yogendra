@@ -19,7 +19,12 @@ export default async function EstimateDetailPage({ params, searchParams }: { par
   const billError = (searchParams?.billerror ?? "").trim();
   const data = await getEstimate(params.id);
   if (!data) notFound();
-  const { estimate, items } = data;
+  const { estimate, items: rawItems } = data;
+  // A–Z by SKU (owner: "estimate me save karne pe A-Z chahiye"). Sorting here means the saved estimate,
+  // its print/PDF, and the bill it becomes all list items in the same predictable order regardless of the
+  // sequence they were scanned/added in — mirrors how the invoice already sorts its lines.
+  const items = [...(rawItems ?? [])].sort((a: any, b: any) =>
+    String(a.variant?.sku ?? a.product?.sku ?? "").localeCompare(String(b.variant?.sku ?? b.product?.sku ?? ""), undefined, { numeric: true }));
   const isOpen = estimate.status === "open";
   const canEdit = isOpen && (await requirePerm("estimates.create"));
   const total = estimate.total as number;
