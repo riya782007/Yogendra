@@ -6,6 +6,7 @@ import { QtyField } from "@/components/admin/QtyField";
 import { placeWholesaleOrderAction, placeGuestWholesaleOrderAction, wholesaleLogoutAction, requestQuoteAction, uploadPaymentProofAction, uploadGuestPaymentProofAction } from "@/app/actions/wholesale";
 import { UpiAmountQr } from "@/components/admin/UpiAmountQr";
 import { MoreDesignsButton } from "@/components/site/MoreDesignsButton";
+import { wholesaleShippingPaise, WHOLESALE_COD_FEE_PAISE } from "@/lib/wholesaleShipping";
 
 type P = { pid: string; sku: string; name: string; category: string; sub?: string | null; style?: string | null; qty: number; price: number; mrp: number; image: string | null; images?: string[]; colour?: string | null;
   /** Owner-flagged: this design has many more colourways than the catalogue can list. */
@@ -16,15 +17,12 @@ type HistItem = { sku: string; name: string; qty: number };
 type Hist = { id: string; total: number; amountPaid?: number; status?: string; paymentRef?: string | null; created_at: string; invoice_no: string | null; items: HistItem[] };
 type PayInfo = { payeeName: string; upiId: string | null; qrUrl: string | null };
 
-// Mirrors the server's owner-fixed shipping slabs so the dealer sees the exact payable before paying.
-function shipSlab(totalPaise: number): number {
-  if (totalPaise > 3000000) return 0;
-  if (totalPaise > 2000000) return 90000;
-  if (totalPaise > 1200000) return 60000;
-  if (totalPaise > 700000) return 40000;
-  return 30000;
-}
-const COD_FEE = 12000; // ₹120 per COD order
+// SINGLE SOURCE OF TRUTH for wholesale shipping + COD fee — imported from lib/wholesaleShipping so the
+// dealer's on-screen total, the shared cart-recovery link, and the server order action can NEVER drift
+// apart. (These used to be three hand-copied slab tables; a wholesale cart recovered via WhatsApp then
+// showed ₹100 retail shipping. One definition now feeds every surface.)
+const shipSlab = wholesaleShippingPaise;
+const COD_FEE = WHOLESALE_COD_FEE_PAISE; // ₹120 per COD order
 
 export function WholesaleCatalog({ products, customerName, customerPhone = "", minOrder = 300000, history = [], payInfo = null, outstanding = 0, tiers = [], guest = false }: {
   products: P[]; customerName: string; customerPhone?: string; minOrder?: number; history?: Hist[]; payInfo?: PayInfo | null; outstanding?: number; tiers?: WholesaleTier[];
@@ -70,6 +68,27 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
   }
 
   const bySku = useMemo(() => new Map(products.map((p) => [p.sku.toUpperCase(), p])), [products]);
+
+  // RECOVERY: a dealer who tapped a shared wholesale cart-recovery link arrives here with their items
+  // stashed in localStorage by RecoverCartView. Restore them into the cart and open the review step so
+  // they immediately see the SLAB shipping and can pay. Runs once — the key is consumed so a refresh
+  // won't duplicate the cart.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("bd_trade_recover");
+      if (!raw) return;
+      localStorage.removeItem("bd_trade_recover");
+      const arr = JSON.parse(raw) as { sku?: string; qty?: number }[];
+      if (!Array.isArray(arr) || !arr.length) return;
+      const next: Record<string, number> = {};
+      for (const it of arr) {
+        const p = bySku.get(String(it?.sku ?? "").toUpperCase());
+        const q = Math.max(0, Math.round(Number(it?.qty) || 0));
+        if (p && q > 0) next[p.sku] = q;
+      }
+      if (Object.keys(next).length) { setQty(next); setReviewing(true); }
+    } catch { /* ignore — recovery is best-effort */ }
+  }, [bySku]);
   const categories = useMemo(() => Array.from(new Set(products.map((p) => p.category).filter(Boolean))).sort(), [products]);
   const [sub, setSub] = useState("all");
   const [styleF, setStyleF] = useState("all");

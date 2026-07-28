@@ -41,12 +41,16 @@ export async function generateMetadata({ params }: { params: { id: string } }) {
 export default async function RecoverCartPage({ params }: { params: { id: string } }) {
   const { data } = await supabaseServer()
     .from("abandoned_carts")
-    .select("items")
+    .select("*")
     .eq("id", params.id)
     .maybeSingle();
 
   const raw = ((data as any)?.items ?? []) as any[];
   if (!raw.length) notFound();
+  // A WHOLESALE cart must recover into the WHOLESALE flow (slab shipping), never the retail ₹100-flat
+  // checkout — otherwise a dealer's ₹3,400 order showed ₹100 courier and the owner takes a loss. The
+  // channel is stored on the cart when it's tracked; default to retail if the (older) row has none.
+  const channel = String((data as any)?.channel ?? "retail").toLowerCase() === "wholesale" ? "wholesale" : "retail";
 
   const items = raw.map((i) => ({
     sku: String(i?.sku ?? ""),
@@ -80,5 +84,5 @@ export default async function RecoverCartPage({ params }: { params: { id: string
   }
   for (const i of items) i.image = imgByUpper.get(i.sku.toUpperCase()) ?? null;
 
-  return <RecoverCartView items={items} />;
+  return <RecoverCartView items={items} channel={channel} />;
 }
