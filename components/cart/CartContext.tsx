@@ -28,10 +28,22 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     const total = items.reduce((s, i) => s + i.price * i.qty, 0);
     const t = setTimeout(() => {
       try {
+        // If the shopper has given a name + phone (exit-intent popup or checkout form), attach it so the
+        // cart surfaces on the owner's Abandoned Carts page WITH a contact he can follow up on.
+        let contact: { name?: string; phone?: string; city?: string } = {};
+        try { contact = JSON.parse(localStorage.getItem("bd_retail_contact") || "{}") || {}; } catch {}
+        // Only record a cart we can actually ACT on. A cart with no captured phone would just show as an
+        // un-contactable "Anonymous visitor" and clutter the owner's list (owner: "Anonymous kyun aa raha
+        // hai"). The cart gets recorded the moment the shopper gives a phone (popup or checkout form).
+        const phone = String(contact.phone || "").replace(/\D/g, "");
+        if (phone.length < 7) return;
         fetch("/api/cart/track", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ items: items.map((i) => ({ sku: i.sku, name: i.name, qty: i.qty, price: i.price })), total }),
+          body: JSON.stringify({
+            items: items.map((i) => ({ sku: i.sku, name: i.name, qty: i.qty, price: i.price })), total,
+            name: contact.name || undefined, phone: contact.phone || undefined, city: contact.city || undefined,
+          }),
           keepalive: true,
         }).catch(() => {});
       } catch {}
