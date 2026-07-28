@@ -2332,7 +2332,10 @@ export async function getAbandonedCarts() {
     res = await sb.from("abandoned_carts").select("*").eq("recovered", false).lt("updated_at", idleSince).order("updated_at", { ascending: false });
   }
   const { data } = res;
-  return (data as any[]) ?? [];
+  // Only surface carts the owner can actually ACT on — a cart with no phone is un-contactable and just
+  // clutters the list (owner: "no cart without contact — warna iska koi sense nahi"). This is the final
+  // guard; the trackers also avoid saving phone-less carts, but this ensures the admin list is always clean.
+  return ((data as any[]) ?? []).filter((c) => String(c?.phone ?? "").replace(/\D/g, "").length >= 7);
 }
 export async function getSitemapData() {
   const sb = supabaseServer();
