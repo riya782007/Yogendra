@@ -31,7 +31,9 @@ export default async function EstimateDetailPage({ params, searchParams }: { par
   // Previously `gst !== false` treated a null/unset estimate as taxed, so estimates made WITHOUT
   // choosing GST still showed 3% GST. Now no tax appears unless the owner deliberately turned it on.
   const gstOn = (estimate as any).gst === true;
-  const gstMode = (((estimate as any).gst_mode as string) ?? "exclusive") === "inclusive" ? "inclusive" : "exclusive";
+  // Prices already include GST → estimates default to INCLUSIVE too (match the invoice/sales default so a
+  // quote never adds 3% on top of a GST-inclusive rate). Exclusive only when explicitly pinned.
+  const gstMode = (((estimate as any).gst_mode as string) ?? "inclusive") === "exclusive" ? "exclusive" : "inclusive";
   const gstExclusive = gstOn && gstMode === "exclusive";
   const buyerStateCode = (estimate as any).buyer_state || stateCodeFromGstin((estimate as any).buyer_gstin);
   const g = gstOn ? (gstExclusive ? gstSplitExclusive(total, buyerStateCode) : gstSplit(total, buyerStateCode)) : null;

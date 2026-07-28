@@ -40,8 +40,11 @@ export default async function SalesRecords({ searchParams }: { searchParams: { p
   const withTax = (r: any) => {
     const t = r.total ?? 0;
     if (r.bill_type === "cash") return t;
-    if (r.gst_mode === "inclusive") return Math.round(t / 100) * 100;
-    return Math.round((t + Math.round(t * 0.03)) / 100) * 100;
+    // Prices in the system ALREADY include GST, so the grand total = the price itself — never add 3% on
+    // top (that was the "₹960 dikha ke ₹989" double-GST bug). GST is only added on top when the owner
+    // has explicitly pinned this bill to EXCLUSIVE (pre-tax rates keyed by hand).
+    if (r.gst_mode === "exclusive") return Math.round((t + Math.round(t * 0.03)) / 100) * 100;
+    return Math.round(t / 100) * 100;
   };
   const pageSumNoTax = rows.reduce((s: number, r: any) => s + withoutTax(r), 0);
   const pageSumWithTax = rows.reduce((s: number, r: any) => s + withTax(r), 0);

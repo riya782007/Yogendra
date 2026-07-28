@@ -52,7 +52,13 @@ export default async function Invoice({ params }: { params: { id: string } }) {
   // The owner's manual POS counter bills stay EXCLUSIVE by default (he enters pre-tax rates and GST is
   // added on top). Either can be pinned per-bill via gst_mode.
   const gstMode = (order.gst_mode as "inclusive" | "exclusive" | null | undefined) ?? null;
-  const gstExclusive = !isCash && (gstMode ? gstMode === "exclusive" : order.channel === "pos");
+  // Prices stored in this system ALREADY include GST — the rate the owner keys at the counter and the
+  // price the cart shows both carry the 3% inside them (owner: "jisme GST added hai wo firse GST add kr
+  // raha hai, do baar laga raha hai"). So EVERY channel defaults to INCLUSIVE: the invoice EXTRACTS the
+  // CGST/SGST share from within the price instead of adding 3% on top (which was double-charging on POS
+  // bills, e.g. ₹960 printing as ₹989). Exclusive is applied ONLY when the owner explicitly pins it for
+  // a one-off bill where he keyed pre-tax rates.
+  const gstExclusive = !isCash && gstMode === "exclusive";
   const g = gstExclusive ? gstSplitExclusive(total, buyerStateCode) : gstSplit(total, buyerStateCode);
   // Extra charges (Packing/Courier/Adjustment) are folded into the total so GST applies to them;
   // here we split them back out so the bill itemises them. Products portion = total − charges.
@@ -350,6 +356,39 @@ export default async function Invoice({ params }: { params: { id: string } }) {
         {/* Admin controls (never printed) */}
         {(can(session, "billing.sell") || can(session, "billing.gst")) && (
           <div className="no-print grid sm:grid-cols-2 gap-4 mt-5">
+            {/* RECORD PAYMENT — the primary next step after a bill is generated & printed. The owner's
+                workflow (his words): "generate invoice, print it, THEN record where & what payment was
+                received and move forward." So this sits FIRST, full-width and highlighted, with the full
+                balance pre-filled for one-click settle and a bank/UPI/cash account picker. It shows on any
+                live bill that still has a balance (a freshly generated bill = full amount due); once fully
+                recorded, the balance hits zero, the card disappears and the bill flips to Paid. */}
+            {can(session, "billing.sell") && order.status !== "cancelled" && balanceDue > 0 && (
+              <div className="sm:col-span-2 bg-emerald-mist/60 border-2 border-emerald/40 rounded-2xl p-5 shadow-card">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-lg">💰</span>
+                  <h2 className="font-medium text-emerald-dark text-lg">Payment received? Record it here</h2>
+                </div>
+                <p className="text-xs text-emerald-dark/80 mb-3">Invoice generated &amp; printed — now log what {order.customer_name || "the customer"} paid and into which account. Balance due <b>{formatPaise(balanceDue)}</b>.</p>
+                <form action={recordPaymentAction} className="flex flex-wrap items-end gap-3">
+                  <input type="hidden" name="order_id" value={order.id} />
+                  <label className="flex flex-col text-xs text-emerald-dark/80">Amount received (₹)
+                    <div className="mt-1 flex items-center gap-1">
+                      <span className="text-muted">₹</span>
+                      <input name="amount" type="number" min={1} defaultValue={Math.round(balanceDue / 100)} className="rounded-xl border border-emerald/30 bg-white px-3 py-2 text-sm w-32 outline-none focus:border-emerald" />
+                    </div>
+                  </label>
+                  <label className="flex flex-col text-xs text-emerald-dark/80">Received in (account)
+                    <select name="method_id" defaultValue={defMethodId} className="mt-1 rounded-xl border border-emerald/30 bg-white px-3 py-2 text-sm outline-none focus:border-emerald" title="Which account received it? Kotak / SBI / HDFC / UPI / Cash">
+                      {payMethods.length === 0
+                        ? <option value="">Cash</option>
+                        : payMethods.map((m: any) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    </select>
+                  </label>
+                  <button className="btn-primary px-6 py-2.5 text-sm font-medium">✓ Record payment</button>
+                </form>
+                <p className="text-[11px] text-emerald-dark/70 mt-2">Full amount is pre-filled — for a part-payment just change the number. It posts against the chosen bank/UPI/cash account so your day-book stays split by account.</p>
+              </div>
+            )}
             {/* OTP-gated bill editing — fix a wrong qty / mis-scanned line without cancelling. Only on a
                 live (non-cancelled) bill. */}
             {can(session, "billing.sell") && order.status !== "cancelled" && (
@@ -364,23 +403,6 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                   <input type="hidden" name="order_id" value={order.id} />
                   <textarea name="admin_note" rows={2} defaultValue={order.admin_note ?? ""} placeholder="e.g. balance to be collected on delivery; discount given verbally; replacement piece pending…" className="flex-1 rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald" />
                   <button className="btn-primary px-4 py-2 text-sm font-medium self-start">Save note</button>
-                </form>
-              </div>
-            )}
-            {can(session, "billing.sell") && balanceDue > 0 && (
-              <div className="bg-white rounded-2xl p-5 shadow-card">
-                <h2 className="font-medium text-ink mb-1">Record a payment</h2>
-                <p className="text-xs text-muted mb-3">Balance due {formatPaise(balanceDue)}. Log an advance or part-payment.</p>
-                <form action={recordPaymentAction} className="flex items-center gap-2 flex-wrap">
-                  <input type="hidden" name="order_id" value={order.id} />
-                  <span className="text-muted">₹</span>
-                  <input name="amount" type="number" min={1} placeholder={String(Math.round(balanceDue / 100))} className="rounded-xl border border-sand px-3 py-2 text-sm w-28 outline-none focus:border-emerald" />
-                  <select name="method_id" defaultValue={defMethodId} className="rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald" title="Which account received it?">
-                    {payMethods.length === 0
-                      ? <option value="">Cash</option>
-                      : payMethods.map((m: any) => <option key={m.id} value={m.id}>{m.name}</option>)}
-                  </select>
-                  <button className="btn-primary px-4 py-2 text-sm font-medium">Record</button>
                 </form>
               </div>
             )}
@@ -401,7 +423,7 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                 <h2 className="font-medium text-ink mb-1">GST on this invoice</h2>
                 <p className="text-xs text-muted mb-3">
                   Showing GST <b>{gstExclusive ? "added on top (exclusive)" : "included in the rate (inclusive)"}</b>
-                  {gstMode ? " · pinned" : " · auto by channel"}. A tax invoice is usually GST-exclusive — the rate is pre-tax and CGST/SGST is added on top.
+                  {gstMode ? " · pinned" : " · default"}. Your prices already include GST, so by default the invoice shows the tax <b>extracted from within the price</b> — it is never added a second time. Switch to exclusive only if this one bill&apos;s rates were keyed pre-tax.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <form action={setGstModeAction}>
