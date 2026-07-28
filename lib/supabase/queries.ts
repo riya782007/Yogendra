@@ -1674,7 +1674,10 @@ export async function getStorefrontOrderAlerts(limit = 12): Promise<StorefrontOr
     .order("created_at", { ascending: false })
     .limit(30);
   return ((data as any[]) ?? [])
-    .filter((o) => !["cancelled", "refunded"].includes(String(o.status ?? "").toLowerCase()))
+    .filter((o) => !["cancelled", "refunded"].includes(String(o.status ?? "").toLowerCase())
+      // Wholesale PREPAID orders live in their own "Wholesale payments to verify" box (with Accept/Reject),
+      // so don't repeat them here. This box is for orders with no other home: all retail, plus wholesale-COD.
+      && (o.channel === "retail" || String(o.payment_mode ?? "").toLowerCase() === "cod"))
     .slice(0, limit) as StorefrontOrderRow[];
 }
 
