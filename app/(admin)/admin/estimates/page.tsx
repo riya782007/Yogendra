@@ -7,12 +7,13 @@ import { billEstimateAction, denyEstimateAction, reopenEstimateAction } from "@/
 
 export const metadata = { title: "Owner Console · Estimates" };
 
+// Default view = "To bill" (only estimates still needing action) so the list never clogs up. Everything
+// already billed (GST or cash) is tucked into ONE "Handled" tab; denied/expired sit in their own tab.
 const TABS: { key: string; label: string; match: (s: string) => boolean }[] = [
-  { key: "all", label: "All", match: () => true },
-  { key: "open", label: "Held", match: (s) => s === "open" },
-  { key: "converted", label: "GST billed", match: (s) => s === "converted" },
-  { key: "cash_billed", label: "Cash billed", match: (s) => s === "cash_billed" },
+  { key: "open", label: "To bill", match: (s) => s === "open" },
+  { key: "handled", label: "Handled (billed)", match: (s) => s === "converted" || s === "cash_billed" },
   { key: "denied", label: "Denied", match: (s) => s === "denied" || s === "expired" },
+  { key: "all", label: "All", match: () => true },
 ];
 
 const STATUS_STYLE: Record<string, string> = {
@@ -54,7 +55,7 @@ export default async function Estimates({ searchParams }: { searchParams: { tab?
   }
   const custList = customers.map((c: any) => ({ id: c.id, name: c.name, phone: c.phone ?? "", type: c.type ?? "retail", gstin: c.gstin ?? "" }));
 
-  const tab = TABS.find((t) => t.key === (searchParams.tab ?? "all")) ?? TABS[0];
+  const tab = TABS.find((t) => t.key === (searchParams.tab ?? "open")) ?? TABS[0];
   const q = (searchParams.q ?? "").toLowerCase().trim();
   const rows = estimates.filter((e: any) => tab.match(e.status) && (!q || (e.customer_name ?? "").toLowerCase().includes(q) || String(e.id).toLowerCase().includes(q)));
   const counts = Object.fromEntries(TABS.map((t) => [t.key, estimates.filter((e: any) => t.match(e.status)).length]));
