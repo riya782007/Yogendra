@@ -50,6 +50,13 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
   const toDate = searchParams.to ?? to.slice(0, 10);
   const [d, a, report, recent, storefrontOrders, dealerApps, wholesalePays, allCarts] = await Promise.all([getDashboardData(from, to), getDashboardAnalytics(from, to), getChannelReport(from, to), getOrderAlerts(8), getStorefrontOrderAlerts(12).catch(() => []), getPendingDealerApplications(10), getPendingWholesalePayments().catch(() => []), getAbandonedCarts().catch(() => [])]);
   const orderAgo = (iso: string) => { const h = Math.round((Date.now() - new Date(iso).getTime()) / 3600000); return h < 1 ? "just now" : h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`; };
+  // Don't show an order in BOTH boxes: a wholesale order still awaiting payment verification already has
+  // its own "Wholesale payments to verify" box (with the Accept/Reject buttons). Showing it in the
+  // storefront-orders box too made the owner fear a double-accept. So exclude it here until it's verified —
+  // NOTE: accepting a payment never deducts stock (stock is deducted once, when the order is placed), so
+  // there is no double deduction either way; this is purely to remove the confusing duplicate.
+  const pendingWpIds = new Set((wholesalePays as any[]).map((w) => w.id));
+  const storefrontOrdersView = (storefrontOrders as any[]).filter((o) => !pendingWpIds.has(o.id));
   // Dealers who reached checkout but didn't complete "I've paid — place order" — their cart is captured
   // here (name, phone, items) so no order is ever silently lost; the owner can call and confirm.
   const wholesaleCarts = (allCarts as any[]).filter((c) => String(c.channel ?? "").toLowerCase() === "wholesale" && !c.recovered);
@@ -95,14 +102,14 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
 
       {/* 🛍️ STOREFRONT ORDERS — customer-placed online orders (retail/wholesale), kept SEPARATE from the
           owner's own counter (POS) bills so a real online order is never buried. These need packing & shipping. */}
-      {storefrontOrders.length > 0 && (
+      {storefrontOrdersView.length > 0 && (
         <div className="mb-6 rounded-2xl border-2 border-emerald bg-emerald-mist/50 p-4 shadow-luxe">
           <div className="flex items-center justify-between mb-2">
-            <p className="font-medium text-ink">🛍️ New storefront orders — pack &amp; ship <span className="ml-1 text-xs bg-emerald text-white rounded-full px-2 py-0.5">{storefrontOrders.length}</span></p>
+            <p className="font-medium text-ink">🛍️ New storefront orders — pack &amp; ship <span className="ml-1 text-xs bg-emerald text-white rounded-full px-2 py-0.5">{storefrontOrdersView.length}</span></p>
             <Link href="/admin/orders" className="text-xs text-emerald nav-link">View all orders →</Link>
           </div>
           <div className="space-y-1.5">
-            {storefrontOrders.slice(0, 6).map((o) => {
+            {storefrontOrdersView.slice(0, 6).map((o) => {
               const paid = (o.amount_paid ?? 0) >= (o.total ?? 0) && (o.total ?? 0) > 0;
               return (
                 <Link key={o.id} href={`/admin/invoice/${o.id}`} className="flex flex-wrap items-center justify-between gap-2 text-sm bg-white/80 rounded-lg px-3 py-1.5 hover:bg-white transition-colors">
