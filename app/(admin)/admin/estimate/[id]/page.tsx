@@ -61,6 +61,22 @@ export default async function EstimateDetailPage({ params, searchParams }: { par
 
   return (
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
+      {/* EXPLICIT A4 PRINT GEOMETRY. Without this the estimate had NO @page rule, so printing straight to
+          a physical printer fell back to the printer's own paper size + margins AND kept the on-screen card
+          padding/shadow — bloating a 3-page quote to ~8 sheets. "Save as PDF" happened to use tighter
+          defaults, so the two disagreed. Pinning A4 + 9mm margins, zeroing the card padding/shadow, and
+          keeping rows unsplit makes direct-print and Save-as-PDF paginate IDENTICALLY. (A5 is handled by the
+          Print button, whose style is appended last so its @page A5 overrides this one.) */}
+      <style dangerouslySetInnerHTML={{ __html: `@media print{
+        @page{size:A4;margin:9mm}
+        html,body{background:#fff !important;margin:0 !important}
+        .print-area{font-size:13px !important;line-height:1.5 !important;padding:0 !important;margin:0 !important;box-shadow:none !important;border-radius:0 !important}
+        .print-area .font-display{font-size:1.9rem !important}
+        .print-area table{font-size:12.5px !important}
+        .print-area table td,.print-area table th{padding-top:6px !important;padding-bottom:6px !important}
+        .print-area tr{page-break-inside:avoid}
+        .print-area thead{display:table-header-group}
+      }` }} />
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center justify-between mb-4 no-print">
           <Link href="/admin/estimates" className="text-sm text-emerald nav-link">← Estimates</Link>

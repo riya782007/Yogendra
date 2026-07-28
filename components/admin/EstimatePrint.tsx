@@ -29,7 +29,10 @@ export function EstimatePrint() {
         `zoom:${A5_OVER_A4};` +
         `margin:0 !important; border-radius:0 !important; box-shadow:none !important;` +
         `}}`;
-      document.head.appendChild(el);
+      // Append to <body> (not <head>) so this @page A5 rule comes AFTER the estimate page's static
+      // @page A4 block in document order and therefore wins the cascade when A5 is chosen. In <head>
+      // it lost to the body-level A4 style and A5 silently printed as A4.
+      document.body.appendChild(el);
     }
     window.print();
     setTimeout(() => { el?.remove(); }, 800);
