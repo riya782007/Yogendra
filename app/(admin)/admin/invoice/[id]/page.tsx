@@ -408,6 +408,21 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                 <p className="text-[11px] text-emerald-dark/70 mt-2">Full amount is pre-filled — for a part-payment just change the number. It posts against the chosen bank/UPI/cash account so your day-book stays split by account.</p>
               </div>
             )}
+            {/* PAID CONFIRMATION — when the bill is fully settled there's nothing to record, so instead of a
+                blank space we show a clear "payment recorded" confirmation. This makes the payment step
+                VISIBLE on every generated bill (owner thought nothing changed because a fully-paid bill
+                showed no payment box). Shows the split by account when both cash + bank were taken. */}
+            {can(session, "billing.sell") && order.status !== "cancelled" && balanceDue <= 0 && paid > 0 && (
+              <div className="sm:col-span-2 bg-emerald-mist/40 border border-emerald/30 rounded-2xl p-4 shadow-card flex items-center gap-3">
+                <span className="text-lg">✓</span>
+                <div>
+                  <p className="font-medium text-emerald-dark text-sm">Payment recorded — bill settled</p>
+                  <p className="text-[11px] text-emerald-dark/80">
+                    {formatPaise(paid)} received{order.pay_cash > 0 && order.pay_bank > 0 ? ` — Cash ${formatPaise(order.pay_cash)} · UPI/Bank ${formatPaise(order.pay_bank)}` : order.payment_mode ? ` via ${String(order.payment_mode).toUpperCase()}` : ""}. Bill is marked <b>Paid</b>.
+                  </p>
+                </div>
+              </div>
+            )}
             {/* OTP-gated bill editing — fix a wrong qty / mis-scanned line without cancelling. Only on a
                 live (non-cancelled) bill. */}
             {can(session, "billing.sell") && order.status !== "cancelled" && (
