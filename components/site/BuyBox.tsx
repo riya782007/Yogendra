@@ -127,7 +127,7 @@ export function BuyBox({ variants = [], waHref, item }: {
           )}
         </div>
       )}
-      <p className="text-xs text-muted mt-3 flex flex-wrap items-center gap-x-4 gap-y-1"><span>✓ COD available</span><span>✓ ₹100 flat shipping</span><span>✓ 7-day returns</span></p>
+      <p className="text-xs text-muted mt-3 flex flex-wrap items-center gap-x-4 gap-y-1"><span>✓ COD available</span><span>✓ ₹80 flat shipping</span><span>✓ 7-day returns</span></p>
     </div>
   );
 }

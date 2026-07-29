@@ -55,7 +55,7 @@ export function CartWidget() {
         {items.length > 0 && (
           <div className="p-5 border-t border-sand shrink-0">
             <div className="flex justify-between text-sm mb-1"><span className="text-muted">Subtotal</span><span className="font-semibold text-ink">{formatPaise(total)}</span></div>
-            <p className="text-xs text-muted mb-3">₹100 flat shipping · COD calculated at checkout</p>
+            <p className="text-xs text-muted mb-3">₹80 flat shipping · COD calculated at checkout</p>
             <Link href="/checkout" onClick={() => setOpen(false)} className="btn-primary block text-center py-3 text-sm font-medium">Checkout</Link>
           </div>
         )}

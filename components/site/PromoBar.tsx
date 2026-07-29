@@ -1,7 +1,7 @@
 const MESSAGES = [
   "✦ Flat 20% OFF on everything",
   "✦ Pay online & get a FREE mystery gift 🎁",
-  "✦ Flat ₹100 shipping across India",
+  "✦ Flat ₹80 shipping across India",
   "✦ Cash on Delivery available",
   "✦ Anti-tarnish premium finish",
   "✦ New designs added daily",

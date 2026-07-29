@@ -46,15 +46,22 @@ export function RetailLeadPopup() {
     const onExit = (e: MouseEvent) => { if (e.clientY <= 0 && !e.relatedTarget) trigger(); };
     document.addEventListener("mouseout", onExit);
 
-    // Touch fallback: a full cart left idle for 90s (they likely switched away) — catch them once.
+    // Touch fallback: a full cart left idle for 45s (they likely switched away) — catch them once.
+    // Mobile has no cursor exit-intent, so this + the visibility trigger below are what catch phone users.
     let idle: ReturnType<typeof setTimeout>;
-    const resetIdle = () => { clearTimeout(idle); idle = setTimeout(trigger, 90000); };
+    const resetIdle = () => { clearTimeout(idle); idle = setTimeout(trigger, 45000); };
     window.addEventListener("touchstart", resetIdle, { passive: true });
     window.addEventListener("scroll", resetIdle, { passive: true });
     resetIdle();
 
+    // Mobile "leaving" signal: the shopper backgrounds the tab (switches app / locks phone) and then
+    // returns — ask the moment they come back, while the cart is still on their mind.
+    const onVisible = () => { if (document.visibilityState === "visible") trigger(); };
+    document.addEventListener("visibilitychange", onVisible);
+
     return () => {
       document.removeEventListener("mouseout", onExit);
+      document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("touchstart", resetIdle);
       window.removeEventListener("scroll", resetIdle);
       clearTimeout(idle);

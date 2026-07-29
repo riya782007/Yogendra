@@ -1,11 +1,10 @@
 "use client";
 import { useState } from "react";
 import { ProductImage } from "@/components/Placeholder";
-import { wholesaleShippingPaise } from "@/lib/wholesaleShipping";
+import { wholesaleShippingPaise, retailShippingPaise } from "@/lib/wholesaleShipping";
 
 const KEY = "bd_cart_v1"; // must match CartProvider (components/cart/CartContext.tsx)
 const TRADE_RECOVER_KEY = "bd_trade_recover"; // read by WholesaleCatalog on mount to restore a dealer cart
-const RETAIL_FLAT_SHIP = 10000; // ₹100 flat — retail only
 type RItem = { sku: string; name: string; price: number; category?: string; color?: string; qty: number; image?: string | null };
 
 const inr = (paise: number) => "₹" + (paise / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 });
@@ -13,8 +12,8 @@ const inr = (paise: number) => "₹" + (paise / 100).toLocaleString("en-IN", { m
 /**
  * Visual recovery view for an abandoned cart. Opening the WhatsApp link SHOWS the exact pieces — photo,
  * name, colour, qty and price — then restores the cart in the RIGHT flow: a retail cart goes to the
- * retail checkout (₹100 flat shipping); a WHOLESALE cart goes to the /trade portal where the owner's
- * fixed shipping SLABS apply (never the ₹100 retail rate — that was charging a dealer's ₹3,400 order
+ * retail checkout (₹80 flat shipping); a WHOLESALE cart goes to the /trade portal where the owner's
+ * fixed shipping SLABS apply (never the retail flat rate — that was charging a dealer's ₹3,400 order
  * only ₹100 courier). Shipping shown here matches exactly what the next screen will charge.
  */
 export function RecoverCartView({ items, channel = "retail" }: { items: RItem[]; channel?: "retail" | "wholesale" }) {
@@ -23,7 +22,7 @@ export function RecoverCartView({ items, channel = "retail" }: { items: RItem[];
   const isWholesale = channel === "wholesale";
   // Shipping mirrors the destination checkout exactly. Wholesale uses the slab helper (single source of
   // truth shared with the /trade portal and the server order action); >₹30,000 is quoted separately.
-  const ship = subtotal <= 0 ? 0 : isWholesale ? wholesaleShippingPaise(subtotal) : RETAIL_FLAT_SHIP;
+  const ship = isWholesale ? wholesaleShippingPaise(subtotal) : retailShippingPaise(subtotal);
   const shipQuotedSeparately = isWholesale && subtotal > 3000000;
   const total = subtotal + ship;
 
@@ -90,7 +89,7 @@ export function RecoverCartView({ items, channel = "retail" }: { items: RItem[];
         <p className="text-[11px] text-muted text-center mt-2">
           {isWholesale
             ? "Wholesale shipping as per slab · Cash on Delivery available · Anti-tarnish premium finish"
-            : "₹100 flat shipping · Cash on Delivery available · Anti-tarnish premium finish"}
+            : "₹80 flat shipping · Cash on Delivery available · Anti-tarnish premium finish"}
         </p>
       </div>
     </main>

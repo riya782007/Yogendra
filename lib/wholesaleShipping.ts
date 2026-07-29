@@ -14,3 +14,14 @@ export function wholesaleShippingPaise(totalPaise: number): number {
 }
 /** Flat ₹120 per COD order. */
 export const WHOLESALE_COD_FEE_PAISE = 12000;
+
+/**
+ * RETAIL flat shipping — ₹80 on every retail order (owner: "80 hi rehne do, market standard hai").
+ * SINGLE SOURCE OF TRUTH: every retail surface (checkout UI, online order action, POS retail order,
+ * cart-recovery view) imports this so the figure can never drift between screens and the bill.
+ */
+export const RETAIL_FLAT_SHIP_PAISE = 8000;
+/** Retail shipping for a given items subtotal (₹0 cart ships free; everything else is the flat rate). */
+export function retailShippingPaise(itemsTotalPaise: number): number {
+  return itemsTotalPaise <= 0 ? 0 : RETAIL_FLAT_SHIP_PAISE;
+}

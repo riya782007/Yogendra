@@ -20,14 +20,13 @@ import { createRazorpayOrder, verifyRazorpaySignature, isRazorpayConfigured, raz
 import { notifyOrderPlaced } from "@/lib/whatsapp";
 import { sendPurchase } from "@/lib/ga4";
 import { validateVoucher, bumpVoucherUsage } from "@/app/actions/vouchers";
+import { retailShippingPaise } from "@/lib/wholesaleShipping";
 
 type CartItem = { sku: string; qty: number; color?: string };
 type Customer = { name: string; phone: string; address: string; pincode?: string; city?: string };
 
-/** Flat ₹100 shipping on every order. Mirrors the checkout UI. */
-function shippingPaise(itemsTotal: number): number {
-  return itemsTotal === 0 ? 0 : 10000;
-}
+/** Flat retail shipping — single source of truth (lib/wholesaleShipping), mirrors the checkout UI. */
+const shippingPaise = retailShippingPaise;
 
 /** Authoritative server-side cart total in paise (items only), mirroring billing's bd_price. */
 async function quoteItemsPaise(items: CartItem[]): Promise<number> {

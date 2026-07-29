@@ -6,6 +6,7 @@ import { requirePerm } from "@/lib/auth";
 import { sendPurchase } from "@/lib/ga4";
 import { notifyOrderPlaced, sendWhatsAppText } from "@/lib/whatsapp";
 import { validateVoucher, bumpVoucherUsage } from "@/app/actions/vouchers";
+import { retailShippingPaise } from "@/lib/wholesaleShipping";
 
 /** Cash-on-Delivery is capped at ₹5,000 (high-value COD is risky) — above this, only prepaid.
  *  (Not exported: a "use server" file may only export async functions.) */
@@ -53,9 +54,9 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
     return { ok: false, error: "Cash on Delivery isn't available for orders above ₹5,000. Please choose online (prepaid) payment." };
   }
 
-  // SHIPPING — a flat ₹100 on every order + a flat ₹120 COD handling fee, both recorded IN the order
-  // total (mirrors the checkout UI) so the bill total is never short.
-  const ship = discountedSubtotal === 0 ? 0 : 10000;
+  // SHIPPING — the flat retail rate (single source of truth) on every order + a flat ₹120 COD handling
+  // fee, both recorded IN the order total (mirrors the checkout UI) so the bill total is never short.
+  const ship = retailShippingPaise(discountedSubtotal);
   const codFee = input.payment === "cod" ? 12000 : 0;
   total = discountedSubtotal + ship + codFee;
   // DELIVERY ADDRESS was collected but never saved — the owner had bills with no address to ship to.
