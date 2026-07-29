@@ -1,5 +1,5 @@
 "use server";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
@@ -44,7 +44,13 @@ export async function upsertCustomerAction(formData: FormData): Promise<void> {
 
   if (targetId) await sb.from("customers").update(row).eq("id", targetId);
   else await sb.from("customers").insert(row);
+  // Bust the cached customer list so a NEW customer shows up IMMEDIATELY in the estimate builder and POS
+  // (both read getCustomersDbCached, tagged "customers"). Without this the new customer stayed invisible
+  // for up to 30s — owner: "customer banaya, estimate me nahi aa raha."
+  revalidateTag("customers");
   revalidatePath("/admin/customers");
+  revalidatePath("/admin/estimates");
+  revalidatePath("/admin/billing");
   if (targetId) revalidatePath(`/admin/customer/${targetId}`);
 }
 
@@ -52,6 +58,7 @@ export async function deleteCustomerAction(formData: FormData) {
   if (!(await requirePerm("customers.manage"))) return;
   const id = String(formData.get("id"));
   await supabaseServer().from("customers").delete().eq("id", id);
+  revalidateTag("customers");
   revalidatePath("/admin/customers");
   redirect("/admin/customers");
 }
