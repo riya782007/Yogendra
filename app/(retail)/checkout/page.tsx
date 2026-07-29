@@ -9,6 +9,7 @@ import { Back } from "@/components/site/Back";
 import { placeOrderAction } from "@/app/actions/orders";
 import { createRazorpayOrderAction, confirmRazorpayAction } from "@/app/actions/checkoutOnline";
 import { validateVoucherAction } from "@/app/actions/vouchers";
+import { retailShippingPaise } from "@/lib/wholesaleShipping";
 
 export default function Checkout() {
   const { items, total, clear } = useCart();
@@ -25,7 +26,7 @@ export default function Checkout() {
   const [couponBusy, setCouponBusy] = useState(false);
   const discount = applied ? Math.min(applied.discount, total) : 0;
   const discountedSubtotal = Math.max(0, total - discount);
-  const shipping = discountedSubtotal === 0 ? 0 : 10000; // flat ₹100 shipping on every order
+  const shipping = retailShippingPaise(discountedSubtotal); // flat retail shipping — single source of truth
   // COD rules (owner): a flat ₹120 handling fee per COD order, and NO COD on orders above ₹5,000.
   const COD_FEE = 12000;
   const codAllowed = discountedSubtotal > 0 && discountedSubtotal <= 500000;
@@ -215,7 +216,7 @@ export default function Checkout() {
 
           {/* Prominent WhatsApp help — a hesitant shopper can reach out in one tap instead of leaving. */}
           <a
-            href={`https://wa.me/919873151767?text=${encodeURIComponent("Hi Blythe Diva! I'm at checkout and have a question about my order 🙂")}`}
+            href={`https://wa.me/918700091298?text=${encodeURIComponent("Hi Blythe Diva! I'm at checkout and have a question about my order 🙂")}`}
             target="_blank" rel="noreferrer"
             className="mt-4 w-full flex items-center justify-center gap-2 rounded-full bg-[#25D366] text-white py-3 text-sm font-semibold shadow-luxe hover:brightness-105 active:scale-[0.99] transition"
           >

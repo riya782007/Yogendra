@@ -93,7 +93,7 @@ export default async function ProductPage({ params }: Params) {
     // the cover still shows"). It simply falls back to the first real image.
   }
   const waText = `Please place an order for ${p.name} (SKU:${p.sku})`;
-  const waHref = `https://wa.me/919873151767?text=${encodeURIComponent(waText)}`;
+  const waHref = `https://wa.me/918700091298?text=${encodeURIComponent(waText)}`;
   
 
   const jsonLd = {

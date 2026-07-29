@@ -15,8 +15,8 @@ export const PAGES: Record<string, Page> = {
     title: "Contact Us",
     intro: "We're here to help — reach out any time.",
     sections: [
-      { h: "WhatsApp & Orders", p: "Message us on WhatsApp at +91 98731 51767 for orders, stock checks, and wholesale enquiries — it's the fastest way to reach us." },
-      { h: "Call", p: "Phone: +91 95820 02623, Monday to Saturday, 10:00 AM – 8:00 PM IST." },
+      { h: "WhatsApp & Orders", p: "Message us on WhatsApp at +91 87000 91298 for orders, stock checks, and wholesale enquiries — it's the fastest way to reach us." },
+      { h: "Call", p: "Phone: +91 87000 91298, Monday to Saturday, 10:00 AM – 8:00 PM IST." },
       { h: "Visit", p: "Blythe Diva · Yogendra Industries, Sadar Bazar, Rui Mandi, Delhi 110006, India." },
       { h: "Wholesale", p: "Retailers can apply for a trade account from the Wholesale page; the owner approves each account before trade pricing is unlocked." },
     ],
@@ -25,7 +25,7 @@ export const PAGES: Record<string, Page> = {
     title: "Shipping Policy",
     intro: "Fast, tracked delivery across India.",
     sections: [
-      { h: "Charges", p: "A flat ₹100 shipping charge applies to every order, anywhere in India. Cash on Delivery is available across serviceable pincodes (a small COD handling fee applies)." },
+      { h: "Charges", p: "A flat ₹80 shipping charge applies to every order, anywhere in India. Cash on Delivery is available across serviceable pincodes (a small COD handling fee applies)." },
       { h: "Dispatch & delivery", p: "Orders are dispatched within 1–2 business days. Delivery typically takes 3–7 business days depending on your location. You'll receive tracking details on WhatsApp once your order ships." },
       { h: "Serviceability", p: "We ship pan-India through our logistics partners. If a pincode is not serviceable, our team will contact you with alternatives." },
     ],

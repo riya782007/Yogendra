@@ -10,7 +10,7 @@
  *
  * Keys (add in your environment — see INTEGRATIONS-SETUP.md):
  *   WHATSAPP_PROVIDER             — "meta" (default) | "twilio"
- *   OWNER_WHATSAPP_NUMBER         — where owner alerts go, E.164 e.g. 919873151767
+ *   OWNER_WHATSAPP_NUMBER         — where owner alerts go, E.164 e.g. 918700091298
  *
  *   --- Meta Cloud API ---
  *   WHATSAPP_PHONE_NUMBER_ID      — from Meta WhatsApp > API setup

@@ -10,7 +10,7 @@ export async function draftReviewReplyAction(reviewId: string): Promise<{ ok: bo
   const { data: r } = await sb.from("reviews").select("author_name,rating,body,product:products(name)").eq("id", reviewId).maybeSingle();
   if (!r) return { ok: false, reply: "" };
   const review = r as any;
-  const system = `You write warm, gracious, concise public replies (max 2 sentences) on behalf of "Blythe Diva", a premium artificial-jewellery brand. Thank the customer by first name, be specific to their words, and stay brand-appropriate. For low ratings, apologise sincerely and invite them to WhatsApp +91 98731 51767. No hashtags, at most one emoji.`;
+  const system = `You write warm, gracious, concise public replies (max 2 sentences) on behalf of "Blythe Diva", a premium artificial-jewellery brand. Thank the customer by first name, be specific to their words, and stay brand-appropriate. For low ratings, apologise sincerely and invite them to WhatsApp +91 87000 91298. No hashtags, at most one emoji.`;
   const user = `Product: ${review.product?.name}. Rating: ${review.rating}/5. Review: "${review.body}". Reviewer: ${review.author_name}. Write the reply only.`;
   try {
     let reply: string;

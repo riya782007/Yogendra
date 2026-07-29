@@ -3,7 +3,7 @@ import { useState } from "react";
 import { createDesignEnquiryAction } from "@/app/actions/enquiries";
 
 /** The shop's WhatsApp. Env-overridable so the owner can change it without a code change. */
-const SHOP_WA = (process.env.NEXT_PUBLIC_SHOP_WHATSAPP ?? "919582002623").replace(/\D/g, "");
+const SHOP_WA = (process.env.NEXT_PUBLIC_SHOP_WHATSAPP ?? "918700091298").replace(/\D/g, "");
 
 type Mode = "video_call" | "store_visit" | "whatsapp";
 const MODES: { key: Mode; label: string; hint: string }[] = [
@@ -56,7 +56,7 @@ export function MoreDesignsButton({ sku, productName, note, dealerName = "" }: {
       {done ? (
         <div className="text-[11px]">
           <p className="text-emerald-dark font-medium">Request sent ✓</p>
-          <p className="text-muted mt-0.5">Our team has it and will get back to you. WhatsApp should have opened too — if it didn&apos;t, message us on +91 95820 02623.</p>
+          <p className="text-muted mt-0.5">Our team has it and will get back to you. WhatsApp should have opened too — if it didn&apos;t, message us on +91 87000 91298.</p>
           <button onClick={() => { setOpen(false); setDone(false); setMsg(""); }} className="mt-1.5 text-muted underline">Close</button>
         </div>
       ) : (

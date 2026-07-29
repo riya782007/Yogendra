@@ -20,7 +20,7 @@ export const BUSINESS = {
   gstin: "07AAIPJ3244P1ZD",
   pan: "AAIPJ3244P",
   tin: "07200035767",
-  phone: "+91 98731 51767",
+  phone: "+91 87000 91298",
   email: "hello@blythediva.in",
   bank: {
     // Yogendra Industries (India) current account — confirmed by the owner. These print on

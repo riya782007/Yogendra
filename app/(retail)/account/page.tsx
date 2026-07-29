@@ -31,7 +31,7 @@ export default async function Account({ searchParams }: { searchParams: { order?
         {!data ? (
           <div className="bg-white rounded-2xl shadow-card p-6 mt-4">
             <p className="text-ink">We couldn&apos;t find that order.</p>
-            <p className="text-sm text-muted mt-1">Check the order ID and the phone number used on the order, or <a href="https://wa.me/919873151767" className="text-emerald nav-link">WhatsApp us</a> and we&apos;ll help.</p>
+            <p className="text-sm text-muted mt-1">Check the order ID and the phone number used on the order, or <a href="https://wa.me/918700091298" className="text-emerald nav-link">WhatsApp us</a> and we&apos;ll help.</p>
             <div className="mt-4"><TrackForm /></div>
           </div>
         ) : (

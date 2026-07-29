@@ -21,7 +21,7 @@ export default async function TradeAccount() {
           <div className="flex justify-between"><dt className="text-muted">Dealer</dt><dd className="text-ink font-medium">{session.name}</dd></div>
           <div className="flex justify-between"><dt className="text-muted">Account type</dt><dd className="text-ink">Approved trade partner</dd></div>
         </dl>
-        <p className="text-xs text-muted mt-5">Need to update your shop details or access code? Message us on WhatsApp: <a href="https://wa.me/919873151767" target="_blank" rel="noopener" className="text-emerald">+91 98731 51767</a></p>
+        <p className="text-xs text-muted mt-5">Need to update your shop details or access code? Message us on WhatsApp: <a href="https://wa.me/918700091298" target="_blank" rel="noopener" className="text-emerald">+91 87000 91298</a></p>
       </div>
       <form action={wholesaleLogoutAction} className="mt-6">
         <button className="px-6 py-2.5 rounded-full bg-ink text-cream text-sm hover:bg-ink/90">Logout</button>
