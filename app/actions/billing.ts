@@ -487,6 +487,32 @@ export async function fulfillBackorderAction(formData: FormData): Promise<void> 
   redirect("/admin/backorders?ok=1");
 }
 
+/** Confirm a held COD order once it's dispatched AND the customer has received/paid — re-checks stock
+ *  (all-or-nothing), moves inventory, posts the sale to the ledger, marks it paid, and releases it from
+ *  the COD hold so it joins the sales record. Until this, the COD order holds no stock or revenue. */
+export async function confirmCodAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("billing.sell"))) return;
+  const id = String(formData.get("id") ?? "").trim();
+  if (!id) return;
+  const { error } = await supabaseServer().rpc("confirm_cod_order", { p_order_id: id });
+  revalidatePath("/admin/cod"); revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard");
+  if (error) redirect(`/admin/cod?err=${encodeURIComponent(error.message)}`);
+  redirect("/admin/cod?ok=1");
+}
+
+/** Cancel a held COD order (customer refused / didn't confirm). It held NO stock and NO revenue, so we
+ *  simply delete it — there is nothing to restock or reverse. */
+export async function cancelCodAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("billing.sell"))) return;
+  const id = String(formData.get("id") ?? "").trim();
+  if (!id) return;
+  const sb = supabaseServer();
+  await sb.from("order_items").delete().eq("order_id", id).then(() => {}, () => {});
+  await sb.from("orders").delete().eq("id", id).then(() => {}, () => {});
+  revalidatePath("/admin/cod"); revalidatePath("/admin/dashboard");
+  redirect("/admin/cod?cancelled=1");
+}
+
 /**
  * EDIT a line on an OPEN (pending) backorder — change its quantity or remove it. This is safe and
  * needs NO stock/ledger reconciliation: a pending backorder is held like an estimate (it hasn't moved

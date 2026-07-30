@@ -30,6 +30,10 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
     p_payment: input.payment,
     p_allow_oversell: false, // online retail never oversells
     p_tier: "retail",
+    // COD orders are HELD: stock is checked but NOT deducted and no revenue posts until the owner
+    // confirms dispatch + receipt on the COD Orders page (owner: unshipped COD must not reduce stock or
+    // hit the sales record). Prepaid/online orders deduct immediately as before.
+    p_cod_hold: input.payment === "cod",
   });
   if (error) return { ok: false, error: error.message };
   const orderId = (data as any)?.order_id;
@@ -50,7 +54,10 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
   // COD CEILING — Cash on Delivery is risky on high-value orders, so anything above ₹5,000 (goods value,
   // before fees) must be prepaid. Roll the order back so no stock is held and the shopper pays online.
   if (input.payment === "cod" && discountedSubtotal > COD_MAX_PAISE) {
-    await sb.rpc("cancel_order", { p_order_id: orderId, p_reason: "COD not available above ₹5,000" }).then(() => {}, () => {});
+    // A held COD order holds NO stock and posted NO revenue, so there's nothing to unwind — just delete
+    // it (cancel_order would wrongly RE-STOCK goods that were never deducted).
+    await sb.from("order_items").delete().eq("order_id", orderId).then(() => {}, () => {});
+    await sb.from("orders").delete().eq("id", orderId).then(() => {}, () => {});
     return { ok: false, error: "Cash on Delivery isn't available for orders above ₹5,000. Please choose online (prepaid) payment." };
   }
 

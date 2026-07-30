@@ -398,7 +398,7 @@ export async function getEmployeePerformance(range?: { from?: string; to?: strin
   const emps = await getEmployees({});
   // Exclude pending backorders (not sold yet — held like an estimate) and cancelled/refunded bills,
   // so a salesperson isn't credited for a sale that never actually happened.
-  let q = sb.from("orders").select("sales_employee_id,total,amount_paid,created_at,status,is_backorder").not("sales_employee_id", "is", null).or("is_backorder.is.null,is_backorder.eq.false");
+  let q = sb.from("orders").select("sales_employee_id,total,amount_paid,created_at,status,is_backorder").not("sales_employee_id", "is", null).or("is_backorder.is.null,is_backorder.eq.false").eq("cod_hold", false);
   if (range?.from) q = q.gte("created_at", range.from);
   if (range?.to) q = q.lte("created_at", range.to);
   const { data } = await q;
@@ -423,7 +423,7 @@ export async function getEmployeeSalesLedger(range?: { from?: string; to?: strin
   let q = sb.from("orders")
     .select("id,invoice_no,sales_employee_id,customer_name,total,amount_paid,bill_type,channel,created_at,status")
     .not("sales_employee_id", "is", null)
-    .or("is_backorder.is.null,is_backorder.eq.false")
+    .or("is_backorder.is.null,is_backorder.eq.false").eq("cod_hold", false)
     .order("created_at", { ascending: false }).limit(limit);
   if (range?.from) q = q.gte("created_at", range.from);
   if (range?.to) q = q.lte("created_at", range.to);
@@ -448,7 +448,7 @@ export async function getCustomerSpend(range?: { from?: string; to?: string }): 
   // Count EVERY bill the customer took — cash memos AND GST invoices — at the amount they actually
   // spent (the GST-inclusive grand total, matching the ledger and the printed bill). GST bills store
   // `total` pre-tax, so add the 3% GST rounded to ₹1; cash memos have no tax.
-  let q = sb.from("orders").select("customer_id,total,bill_type,gst_mode,created_at,status,is_backorder").not("customer_id", "is", null).or("is_backorder.is.null,is_backorder.eq.false");
+  let q = sb.from("orders").select("customer_id,total,bill_type,gst_mode,created_at,status,is_backorder").not("customer_id", "is", null).or("is_backorder.is.null,is_backorder.eq.false").eq("cod_hold", false);
   if (range?.from) q = q.gte("created_at", range.from);
   if (range?.to) q = q.lte("created_at", range.to);
   const { data } = await q;
@@ -731,6 +731,8 @@ export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?
   // exist pre-migration-0020; PostgREST treats .not on a missing column as an error, so this is
   // written as .or to stay resilient.)
   query = query.or("is_backorder.is.null,is_backorder.eq.false");
+  // Held COD orders aren't sales yet either — they live on /admin/cod until dispatch is confirmed.
+  query = query.eq("cod_hold", false);
   if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.or(`customer_name.ilike.%${s}%,customer_phone.ilike.%${s}%`); }
   if (opts.channel && opts.channel !== "all") query = query.eq("channel", opts.channel);
   if (opts.billType) query = query.eq("bill_type", opts.billType);
@@ -1597,7 +1599,7 @@ export async function getDashboardData(fromISO: string, toISO: string, rule: Inv
   const sb = supabaseServer();
   const now = new Date();
   const [ordersRes, prods, catRes, retRes, apprRes] = await Promise.all([
-    sb.from("orders").select("total,channel,payment_mode,pay_cash,pay_bank,created_at,status,is_backorder").gte("created_at", fromISO).lte("created_at", toISO).or("is_backorder.is.null,is_backorder.eq.false"),
+    sb.from("orders").select("total,channel,payment_mode,pay_cash,pay_bank,created_at,status,is_backorder").gte("created_at", fromISO).lte("created_at", toISO).or("is_backorder.is.null,is_backorder.eq.false").eq("cod_hold", false),
     fetchAll((f, t) => sb.from("products").select("sku,name,qty,last_movement_at,created_at,category:categories(name)").range(f, t)),
     sb.from("categories").select("id"),
     sb.from("retailers").select("id,approved"),
@@ -1951,12 +1953,12 @@ export async function getProductSalesStats(sku: string) {
   // estimate — no stock moved, no revenue posted). Otherwise a cancelled bill wrongly shows units &
   // revenue on the product even though its "history" has no stock movement (owner's confusion).
   const { data } = await sb.from("order_items")
-    .select("qty,line_total, orders(status,is_backorder)")
+    .select("qty,line_total, orders(status,is_backorder,cod_hold)")
     .eq("product_id", (p as any).id);
   const rows = ((data as any[]) ?? []).filter((r) => {
     const o = Array.isArray(r.orders) ? r.orders[0] : r.orders;
     if (!o) return false;
-    return o.status !== "cancelled" && o.status !== "refunded" && !o.is_backorder;
+    return o.status !== "cancelled" && o.status !== "refunded" && !o.is_backorder && !o.cod_hold;
   });
   return {
     name: (p as any).name, status: (p as any).status, stock: (p as any).qty,
@@ -2249,14 +2251,14 @@ export async function getActivityLog(limit = 60) {
 // ---------- CRM + abandoned carts + SEO ----------
 export async function getCustomers() {
   const sb = supabaseServer();
-  const { data } = await sb.from("orders").select("customer_name,customer_phone,total,bill_type,gst_mode,status,is_backorder,created_at");
+  const { data } = await sb.from("orders").select("customer_name,customer_phone,total,bill_type,gst_mode,status,is_backorder,cod_hold,created_at");
   const map = new Map<string, { name: string; phone: string | null; orders: number; spent: number; last: string }>();
   for (const o of (data as any[]) ?? []) {
     const name = (o.customer_name ?? "").trim(); if (!name) continue;
     if (isWalkInPlaceholder(name, o.customer_phone)) continue; // walk-in cash placeholders aren't directory customers
     // Not a real sale: a cancelled/refunded bill, or a pending backorder (held, no revenue) — skip so
     // "top customers" doesn't count a cancelled backorder's revenue (owner's report).
-    if (o.status === "cancelled" || o.status === "refunded" || o.is_backorder === true) continue;
+    if (o.status === "cancelled" || o.status === "refunded" || o.is_backorder === true || o.cod_hold === true) continue;
     const t = o.total ?? 0;
     // Inclusive-GST bills already contain the tax in `total`; only exclusive bills add 3% on top.
     const grand = o.bill_type === "cash" || o.gst_mode === "inclusive" ? Math.round(t / 100) * 100 : Math.round((t + Math.round(t * 0.03)) / 100) * 100;
