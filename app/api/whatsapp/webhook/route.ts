@@ -73,6 +73,30 @@ export async function POST(req: Request) {
   return NextResponse.json({ ok: true });
 }
 
+/**
+ * Deterministic, INSTANT replies for the essentials the owner asked for — a warm welcome + the shop
+ * links + wholesale link. These need NO AI/LLM key, so they work the moment the number is connected and
+ * always answer in under a second. Returns null to hand anything more specific to the "Diva" AI agent.
+ */
+function quickReply(text: string, firstContact: boolean, site: string): string | null {
+  const t = text.toLowerCase().trim();
+  const trade = `${site}/trade`;
+  const greeting = t.length <= 3 || /\b(hi+|hey+|hell?o+|namaste|namaskar|hola|salaam|ram ram|good (morning|afternoon|evening))\b/.test(t);
+  const wholesale = /(wholesale|bulk|dealer|reseller|thok|distributor)/.test(t);
+  const catalog = /(catalog|catalogue|collection|design|product|item|dikha|dekh|latest|new arrival|showroom|link)/.test(t);
+  const price = /(price|rate|cost|kitne|kitna|daam|k[ei]mat|₹)/.test(t);
+  if (wholesale) {
+    return `🏬 For wholesale / bulk (dealer rates), please browse and order here:\n${trade}\n\nShare the designs + quantity you need and we'll confirm right away. 💛`;
+  }
+  if (firstContact || greeting) {
+    return `Hi! 🙏 Welcome to *Blythe Diva* 💎\nPremium anti-tarnish artificial jewellery, direct from our Sadar Bazar (Delhi) factory.\n\n🛍️ Browse & order: ${site}\n🏬 Wholesale / dealers: ${trade}\n\nTell us what you're looking for — necklace, earrings, bracelet, anklet, ring or watch — and we'll help right away! ✨`;
+  }
+  if (catalog || price) {
+    return `Here's our full collection with live prices 👇\n🛍️ ${site}\n\nSend me the design (or a photo) you like and I'll share the details. 💎`;
+  }
+  return null;
+}
+
 async function handleMessage(m: any, profileName: string | null) {
   const from = String(m?.from || "").replace(/[^\d]/g, "");
   if (!from) return;
@@ -109,6 +133,17 @@ async function handleMessage(m: any, profileName: string | null) {
     .reverse()
     .map((r) => ({ role: (r.direction === "in" ? "user" : "assistant") as "user" | "assistant", text: r.body || "" }));
   const siteBase = (process.env.NEXT_PUBLIC_SITE_URL || "https://blythediva.com").replace(/\/$/, "");
+
+  // INSTANT ESSENTIALS FIRST: a welcome + shop links (and wholesale link) fire immediately — no AI key
+  // needed and no latency — for greetings, first contact, and catalogue/price/wholesale asks. This is the
+  // minimal "always share the site + welcome" behaviour the owner wanted; the AI only handles the rest.
+  const priorInbound = history.filter((h) => h.role === "user").length; // includes the current message
+  const quick = quickReply(text, priorInbound <= 1, siteBase);
+  if (quick) {
+    await sendWhatsAppText(from, quick);
+    await sb.from("whatsapp_messages").insert({ phone: from, direction: "out", body: quick });
+    return;
+  }
 
   const res = await runSupportAgent({
     message: text,

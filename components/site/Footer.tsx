@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BUSINESS } from "@/lib/business";
 
 export function Footer({ categories }: { categories: { name: string; slug: string }[] }) {
   return (
@@ -21,6 +22,18 @@ export function Footer({ categories }: { categories: { name: string; slug: strin
               <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor"><path d="M14 9h2.5l.5-3H14V4.5c0-.9.3-1.5 1.6-1.5H17V.3C16.7.2 15.8.1 14.8.1 12.5.1 11 1.5 11 4.1V6H8.5v3H11v8h3V9z"/></svg>
             </a>
           </div>
+          {/* Business identity — legal name, registered address, GSTIN & contact. Shown clearly so the
+              storefront passes Meta / WhatsApp Business verification and builds shopper trust. */}
+          <div className="mt-5 text-xs text-cream/50 space-y-1 leading-relaxed">
+            <p className="text-cream/70 font-medium">{BUSINESS.legalName}</p>
+            <p>{BUSINESS.address}</p>
+            <p>GSTIN: {BUSINESS.gstin}</p>
+            <p>
+              <a href={`mailto:${BUSINESS.email}`} className="hover:text-gold transition-colors">{BUSINESS.email}</a>
+              {" · "}
+              <a href={`tel:${BUSINESS.phone.replace(/\s/g, "")}`} className="hover:text-gold transition-colors">{BUSINESS.phone}</a>
+            </p>
+          </div>
         </div>
         <div>
           <p className="text-gold-light text-xs uppercase tracking-widest mb-4">Shop</p>
@@ -41,6 +54,8 @@ export function Footer({ categories }: { categories: { name: string; slug: strin
             <li><Link href="/account?track=1" className="hover:text-gold transition-colors">Track Order</Link></li>
             <li><Link href="/faq" className="hover:text-gold transition-colors">FAQ</Link></li>
             <li><Link href="/size-guide" className="hover:text-gold transition-colors">Size &amp; Length Guide</Link></li>
+            <li><Link href="/privacy" className="hover:text-gold transition-colors">Privacy Policy</Link></li>
+            <li><Link href="/terms" className="hover:text-gold transition-colors">Terms &amp; Conditions</Link></li>
           </ul>
         </div>
         <div>

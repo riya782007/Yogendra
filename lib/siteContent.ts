@@ -60,4 +60,29 @@ export const PAGES: Record<string, Page> = {
       { h: "Anklets (Payal)", p: "Standard: 25–27 cm with an adjustable chain. For a snug fit, measure your ankle and add 2 cm of comfort room." },
     ],
   },
+  privacy: {
+    title: "Privacy Policy",
+    intro: "How Blythe Diva (Yogendra Industries (India)) collects, uses and protects your information.",
+    sections: [
+      { h: "Who we are", p: "This website blythediva.com is owned and operated by Yogendra Industries (India), trading as Blythe Diva, GSTIN 07AAIPJ3244P1ZD, 5150-B, Rui Mandi, Sadar Bazar, Delhi-110006, India. Contact: hello@blythediva.in · +91 87000 91298." },
+      { h: "Information we collect", p: "When you place an order or contact us, we collect your name, phone number, email address, delivery address, and order details. We collect this only to process and deliver your orders and to provide customer support." },
+      { h: "How we use your information", p: "We use your information to confirm and fulfil orders, arrange delivery, provide support, and — where you have contacted us or opted in — to send you order updates and occasional offers. We do not sell your personal data to anyone." },
+      { h: "WhatsApp, SMS & email communication", p: "We may contact you on WhatsApp, SMS or email to send order confirmations, delivery updates, and replies to your enquiries. These messages are sent only in response to your order or message. You can opt out at any time by replying STOP or messaging us on +91 87000 91298." },
+      { h: "Sharing with partners", p: "We share the minimum information necessary with our logistics/courier and payment partners solely to deliver your order and process payments. These partners are required to protect your data and use it only for that purpose." },
+      { h: "Data security & retention", p: "We take reasonable technical and organisational measures to protect your information and retain it only as long as needed to fulfil orders and meet legal/accounting obligations." },
+      { h: "Your rights", p: "You can ask us to access, correct, or delete your personal information at any time by emailing hello@blythediva.in or messaging +91 87000 91298. We will respond promptly." },
+    ],
+  },
+  terms: {
+    title: "Terms & Conditions",
+    intro: "The terms on which Blythe Diva (Yogendra Industries (India)) sells products through blythediva.com.",
+    sections: [
+      { h: "About us", p: "blythediva.com is operated by Yogendra Industries (India), trading as Blythe Diva, GSTIN 07AAIPJ3244P1ZD, 5150-B, Rui Mandi, Sadar Bazar, Delhi-110006, India. Contact: hello@blythediva.in · +91 87000 91298." },
+      { h: "Products & pricing", p: "We sell premium artificial (imitation) jewellery. Prices are shown on each product page in Indian Rupees and include applicable GST. We may update prices and product availability at any time; the price applicable to your order is the one shown at checkout." },
+      { h: "Orders & payment", p: "By placing an order you confirm the details are correct. We accept online payment (UPI, cards, netbanking, wallets) and Cash on Delivery on serviceable pincodes. We reserve the right to cancel an order in case of pricing errors, stock issues, or suspected fraud." },
+      { h: "Shipping, returns & cancellation", p: "Delivery, returns and cancellation are governed by our Shipping Policy and Returns & Cancellation policy, available on this site." },
+      { h: "Wholesale", p: "Wholesale/trade pricing is available to approved retailers only, subject to minimum order quantities and the terms shown in the trade portal." },
+      { h: "Governing law", p: "These terms are governed by the laws of India and subject to the jurisdiction of the courts of Delhi." },
+    ],
+  },
 };
