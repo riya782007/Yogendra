@@ -214,13 +214,24 @@ export function POSClient({ products: propProducts, customers = [], methods = []
    *  1) the EXACT SKU, else 2) the single result when exactly one matches.
    *  It never grabs "the first of many" — a scanner misread (e.g. KN10…) must NOT silently
    *  bill some other design that merely contains the same letters (the CCKN9582 bug). */
+  /** Short error beep for a scan that added nothing, so the owner NOTICES it even mid-billing. */
+  function scanBeep() {
+    try {
+      const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
+      if (!AC) return;
+      const ctx = new AC(); const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = "square"; o.frequency.value = 300; g.gain.value = 0.16;
+      o.connect(g); g.connect(ctx.destination); o.start(); o.stop(ctx.currentTime + 0.3);
+      setTimeout(() => { try { ctx.close(); } catch { /* noop */ } }, 450);
+    } catch { /* audio blocked — the banner still alerts */ }
+  }
   async function submitSearch() {
     const code = q.trim();
     if (!code) return;
     const exact = products.find((x) => x.sku.toLowerCase() === code.toLowerCase());
     const p = exact ?? (matches.length === 1 ? matches[0] : undefined);
     if (p) { addLine(p); setScanMsg({ text: `✓ ${p.name} · ${p.qty} in stock${p.qty <= 0 ? " (OUT)" : ""}`, ok: p.qty > 0 }); setQ(""); searchRef.current?.focus(); return; }
-    if (matches.length > 1) { setScanMsg({ text: `✕ “${code}” is not an exact SKU — ${matches.length} similar items, pick one from the list`, ok: false }); searchRef.current?.focus(); return; }
+    if (matches.length > 1) { setScanMsg({ text: `“${code}” is not an exact SKU — ${matches.length} similar items, NOT added — pick one from the list`, ok: false }); scanBeep(); searchRef.current?.focus(); return; }
     // Nothing in memory — the SKU may be a product created after this page loaded. Look it up LIVE
     // from the database so a brand-new SKU always bills without a reload (client's request).
     setLooking(true); setScanMsg({ text: `Looking up “${code}”…`, ok: true });
@@ -231,12 +242,12 @@ export function POSClient({ products: propProducts, customers = [], methods = []
         setProducts((prev) => { const have = new Set(prev.map((x) => x.sku.toUpperCase())); return [...prev, ...found.filter((f) => !have.has(f.sku.toUpperCase()))]; });
         const hit = found.find((f) => f.sku.toLowerCase() === code.toLowerCase()) ?? (found.length === 1 ? found[0] : undefined);
         if (hit) { addLine(hit); setScanMsg({ text: `✓ ${hit.name} · ${hit.qty} in stock${hit.qty <= 0 ? " (OUT)" : ""}`, ok: hit.qty > 0 }); setQ(""); }
-        else { setScanMsg({ text: `${found.length} matches for “${code}” — pick one from the list`, ok: true }); }
+        else { setScanMsg({ text: `${found.length} matches for “${code}” — NOT added, pick one from the list`, ok: false }); scanBeep(); }
       } else {
-        setScanMsg({ text: `✕ No product “${code}” — check the label/SKU`, ok: false }); setQ("");
+        setScanMsg({ text: `No product “${code}” — NOTHING added, check the label/SKU`, ok: false }); setQ(""); scanBeep();
       }
     } catch {
-      setScanMsg({ text: `✕ Couldn't look up “${code}” — try again`, ok: false });
+      setScanMsg({ text: `Couldn't look up “${code}” — NOTHING added, try again`, ok: false }); scanBeep();
     } finally { setLooking(false); searchRef.current?.focus(); }
   }
 
@@ -427,7 +438,9 @@ export function POSClient({ products: propProducts, customers = [], methods = []
               ))}
             </div>
           )}
-          {scanMsg && <p className={`text-[11px] mt-0.5 absolute ${scanMsg.ok ? "text-emerald-dark" : "text-rose"}`}>{scanMsg.text}</p>}
+          {scanMsg && (scanMsg.ok
+            ? <p className="text-[11px] mt-0.5 absolute text-emerald-dark">{scanMsg.text}</p>
+            : <p className="mt-1 rounded-lg bg-rose/10 border border-rose/50 text-rose px-3 py-2 text-xs font-semibold flex items-center gap-1">⚠️ {scanMsg.text}</p>)}
         </div>
       </div>
 

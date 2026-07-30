@@ -12,6 +12,20 @@ type Line = { sku: string; name: string; price: number; wholesale: number; qty: 
 // R = retail, W = wholesale — tier follows the selected customer (same as POS).
 const TIER_LABEL: Record<string, string> = { retail: "R", wholesale: "W" };
 
+/** Short error beep for a failed scan (something scanned but nothing added) so the owner NOTICES it. */
+function scanBeep() {
+  try {
+    const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (!AC) return;
+    const ctx = new AC();
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = "square"; o.frequency.value = 300; g.gain.value = 0.16;
+    o.connect(g); g.connect(ctx.destination);
+    o.start(); o.stop(ctx.currentTime + 0.3);
+    setTimeout(() => { try { ctx.close(); } catch { /* noop */ } }, 450);
+  } catch { /* audio blocked — the on-screen banner still alerts */ }
+}
+
 export function EstimateClient({ products, customers = [] }: { products: P[]; customers?: Cust[] }) {
   const [q, setQ] = useState("");
   const [lines, setLines] = useState<Line[]>([]);
@@ -89,12 +103,21 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
   const gstAmt = gst === "exclusive" ? Math.round((total * GST_RATE) / 100) : 0;
   const grand = total + gstAmt;
 
-  const add = (p: P) => { setLines((prev) => (prev.find((l) => l.sku === p.sku) ? prev.map((l) => (l.sku === p.sku ? { ...l, qty: l.qty + 1 } : l)) : [...prev, { sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, qty: 1, override: "" }])); setQ(""); };
+  // Newest line goes to the TOP so the just-added/scanned item is always visible without scrolling
+  // (owner: "jo add ho wo sabse upar aaye"). An existing SKU bumps its qty and jumps to the top too.
+  const add = (p: P) => {
+    setLines((prev) => {
+      const ex = prev.find((l) => l.sku === p.sku);
+      if (ex) return [{ ...ex, qty: ex.qty + 1 }, ...prev.filter((l) => l.sku !== p.sku)];
+      return [{ sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, qty: 1, override: "" }, ...prev];
+    });
+    setQ("");
+  };
   const addAllVariants = (parentSku: string) => {
     const vars = pool.filter((p) => p.parentSku === parentSku);
     setLines((prev) => {
       const have = new Set(prev.map((l) => l.sku));
-      return [...prev, ...vars.filter((v) => !have.has(v.sku)).map((v) => ({ sku: v.sku, name: v.name, price: v.price, wholesale: v.wholesale, qty: 1, override: "" }))];
+      return [...vars.filter((v) => !have.has(v.sku)).map((v) => ({ sku: v.sku, name: v.name, price: v.price, wholesale: v.wholesale, qty: 1, override: "" })), ...prev];
     });
     setQ("");
   };
@@ -112,14 +135,17 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
     if (exact) { add(exact); setScanMsg(`✓ Added ${exact.sku}`); return; }
     const fuzzy = pool.filter((p) => (p.name + p.sku).toLowerCase().includes(code.toLowerCase()));
     if (fuzzy.length === 1) { add(fuzzy[0]); setScanMsg(`✓ Added ${fuzzy[0].sku}`); return; }
-    if (fuzzy.length > 1) { setScanMsg(`“${code}” matches ${fuzzy.length} items — pick one from the list`); return; }
+    // Something WAS scanned but NOT added — alert loudly (banner + beep) so nothing is silently missed.
+    if (fuzzy.length > 1) { scanFail(`“${code}” matches ${fuzzy.length} items — NOT added, pick one from the list`); return; }
     try {
       const hits = await posLookupAction(code);
       const pick = (hits as any[]).find((h) => String(h.sku).toLowerCase() === code.toLowerCase()) ?? (hits.length === 1 ? (hits as any[])[0] : null);
       if (pick) { add({ sku: pick.sku, name: pick.name, price: pick.price, wholesale: pick.wholesale, parentSku: pick.parentSku, parentName: pick.parentName } as P); setScanMsg(`✓ Added ${pick.sku}`); }
-      else setScanMsg(`✕ “${code}” not found`);
-    } catch { setScanMsg(`✕ “${code}” not found`); }
+      else scanFail(`“${code}” NOT found — nothing was added`);
+    } catch { scanFail(`“${code}” NOT found — nothing was added`); }
   }
+  /** A scan that added nothing: red banner + beep + clear the box so the owner immediately sees it. */
+  function scanFail(msg: string) { setScanMsg("✕ " + msg); setQ(""); scanBeep(); }
 
   const input = "w-full rounded-xl border border-sand px-4 py-2.5 text-sm bg-white outline-none focus:border-emerald";
 
@@ -194,7 +220,9 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
           </div>
         )}
       </div>
-      {scanMsg && <p className={`text-xs mb-2 ${scanMsg.startsWith("✓") ? "text-emerald-dark" : "text-rose"}`}>{scanMsg}</p>}
+      {scanMsg && (scanMsg.startsWith("✓")
+        ? <p className="text-xs mb-2 text-emerald-dark">{scanMsg}</p>
+        : <p className="mb-2 rounded-lg bg-rose/10 border border-rose/50 text-rose px-3 py-2 text-sm font-semibold flex items-center gap-2">⚠️ {scanMsg}</p>)}
       {lines.map((l) => (
         <div key={l.sku} className="flex items-center gap-2 border-b border-sand/60 py-2 text-sm">
           <span className="flex-1 min-w-0 truncate">{l.name} <span className="text-muted">· {l.sku}</span></span>

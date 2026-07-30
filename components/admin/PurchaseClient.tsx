@@ -145,7 +145,8 @@ export function PurchaseClient({ suppliers, products, lastCosts, methods = [] }:
     // Replace the blank starter line; otherwise append to whatever's already there.
     setLines((prev) => {
       const keep = prev.filter((l) => l.supplierSku.trim() || l.mappedProductId || l.qty.trim() || l.cost.trim());
-      return [...keep, ...newLines];
+      // Newest rows on TOP so they're visible without scrolling (owner: "jo add ho wo sabse upar aaye").
+      return [...newLines, ...keep];
     });
     setBulkText(""); setShowBulk(false);
     setBulkMsg(`✓ Added ${newLines.length} line${newLines.length === 1 ? "" : "s"} · ${matched} matched to products${unmapped ? ` · ${unmapped} unmapped (map them below or leave to skip stock)` : ""}.`);
@@ -275,7 +276,7 @@ export function PurchaseClient({ suppliers, products, lastCosts, methods = [] }:
           </div>
         ))}
       </div>
-      <button onClick={() => setLines((p) => [...p, { supplierSku: "", mappedProductId: "", mappedName: "", variantId: "", qty: "", cost: "" }])} className="text-sm text-emerald nav-link mt-3">+ Add line</button>
+      <button onClick={() => setLines((p) => [{ supplierSku: "", mappedProductId: "", mappedName: "", variantId: "", qty: "", cost: "" }, ...p])} className="text-sm text-emerald nav-link mt-3">+ Add line</button>
 
       {/* Extra charges + optional GST on the supplier bill. */}
       <div className="mt-5 border-t border-sand pt-4">
