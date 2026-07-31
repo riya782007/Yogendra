@@ -1,49 +1,26 @@
 export const dynamic = "force-dynamic";
-import { getStorefrontCached, getCustomersDbCached, getBillingVariants, getPaymentMethods, getEmployees } from "@/lib/supabase/queries";
+import { getCustomersDbCached, getPaymentMethods, getEmployees } from "@/lib/supabase/queries";
 import { POSClient } from "@/components/admin/POSClient";
-import { resolvePrices, overridesOf } from "@/lib/pricing";
 
 export const metadata = { title: "Owner Console · Billing (POS)" };
 
 export default async function Billing() {
-  // POS can bill anything in the catalogue — including unpublished drafts (#23) and wholesale-only lines.
-  // All heavy reads are result-cached (see getStorefrontCached / getBillingVariants) so the counter opens
-  // fast instead of re-reading ~25k rows every time; a brand-new SKU is still billable via the live lookup.
-  const [{ products, formula }, customers, variants, methods, employees] = await Promise.all([
-    getStorefrontCached({ includeDrafts: true, includeWholesaleOnly: true }),
+  // ROOT PERFORMANCE FIX: the catalogue is ~4.5k products / ~13k SKUs. We used to build every SKU row
+  // here and ship them ALL to the browser, which made the counter take many seconds to open. We no
+  // longer preload the catalogue at all — POSClient searches/scans live against the server
+  // (posLookupAction handles exact SKU AND name search), so the page opens instantly and can still bill
+  // ANY SKU, including drafts, out-of-stock (backorder) and wholesale-only lines.
+  const [customers, methods, employees] = await Promise.all([
     getCustomersDbCached(),
-    getBillingVariants(),
     getPaymentMethods({ activeOnly: true }),
     getEmployees({ activeOnly: true }),
   ]);
-  // Variant SKUs (e.g. KPC64-MEH) are what's printed on the physical labels — so the counter
-  // must scan/search them too. For products that HAVE variants we list each colour; products
-  // without variants list the parent SKU. Either way price is override-aware (retail + wholesale).
-  const varsByProduct = new Map<string, any[]>();
-  for (const v of (variants ?? []) as any[]) {
-    const a = varsByProduct.get(v.product_id) ?? [];
-    a.push(v); varsByProduct.set(v.product_id, a);
-  }
-  const list: { sku: string; name: string; price: number; wholesale: number; mrp: number; category: string; qty: number; parentSku?: string; parentName?: string }[] = [];
-  for (const p of products as any[]) {
-    const vs = varsByProduct.get(p.id) ?? [];
-    if (vs.length) {
-      for (const v of vs) {
-        const ps = resolvePrices(p.base_wholesale, formula, overridesOf(v), overridesOf(p));
-        list.push({ sku: v.sku, name: `${p.name}${v.color ? " · " + v.color : ""}`, price: ps.retailPrice, wholesale: ps.wholesaleRate, mrp: ps.mrp, category: p.category.name, qty: v.qty ?? 0, parentSku: p.sku, parentName: p.name });
-      }
-    } else {
-      const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));
-      list.push({ sku: p.sku, name: p.name, price: ps.retailPrice, wholesale: ps.wholesaleRate, mrp: ps.mrp, category: p.category.name, qty: p.qty });
-    }
-  }
-  // Existing customers for the counter to pick from (#3).
   const custList = customers.map((c: any) => ({ id: c.id, name: c.name, phone: c.phone ?? "", type: c.type ?? "retail", gstin: c.gstin ?? "" }));
   return (
     <main className="p-8 bg-cream/40 min-h-screen">
       <h1 className="font-display text-4xl text-ink mb-1">Billing · Point of Sale</h1>
       <p className="text-sm text-muted mb-6">Ring up a counter sale. Stock and books update the instant you complete it.</p>
-      <POSClient products={list} customers={custList} methods={methods.map((m) => ({ id: m.id, name: m.name, kind: m.kind }))} employees={employees.map((e) => ({ id: e.id, name: e.name }))} />
+      <POSClient products={[]} customers={custList} methods={methods.map((m) => ({ id: m.id, name: m.name, kind: m.kind }))} employees={employees.map((e) => ({ id: e.id, name: e.name }))} />
     </main>
   );
 }

@@ -22,6 +22,10 @@ export function POSClient({ products: propProducts, customers = [], methods = []
   const [products, setProducts] = useState<P[]>(propProducts);
   const [looking, setLooking] = useState(false);
   const [q, setQ] = useState("");
+  // SERVER-SIDE SEARCH: the catalogue is ~13k SKUs, so we do NOT ship it to the browser. As the owner
+  // types, we fetch matching products live (debounced) and merge them in — the page opens instantly and
+  // search still finds everything.
+  const [remote, setRemote] = useState<P[]>([]);
   const [scanMsg, setScanMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const listTopRef = useRef<HTMLDivElement>(null);
@@ -144,8 +148,29 @@ export function POSClient({ products: propProducts, customers = [], methods = []
   const matches = useMemo(() => {
     if (!q.trim()) return [];
     const s = q.toLowerCase();
-    return products.filter((p) => p.name.toLowerCase().includes(s) || p.sku.toLowerCase().includes(s) || p.category.toLowerCase().includes(s)).slice(0, 8);
-  }, [q, products]);
+    const local = products.filter((p) => p.name.toLowerCase().includes(s) || p.sku.toLowerCase().includes(s) || p.category.toLowerCase().includes(s));
+    const seen = new Set(local.map((p) => p.sku.toUpperCase()));
+    // Merge already-loaded local hits with the live server results (deduped) — local first so items the
+    // owner just used still appear instantly.
+    return [...local, ...remote.filter((r) => !seen.has(r.sku.toUpperCase()))].slice(0, 8);
+  }, [q, products, remote]);
+
+  // Debounced live search against the server (name OR sku), so we never preload the whole catalogue.
+  // Results are also merged into the working set so scans + the "all colours" grouping see them instantly.
+  useEffect(() => {
+    const code = q.trim();
+    if (code.length < 2) { setRemote([]); return; }
+    let cancel = false;
+    const t = setTimeout(async () => {
+      try {
+        const res = (await posLookupAction(code)) as unknown as P[];
+        if (cancel) return;
+        setRemote(res);
+        setProducts((prev) => { const have = new Set(prev.map((x) => x.sku.toUpperCase())); return [...prev, ...res.filter((f) => !have.has(f.sku.toUpperCase()))]; });
+      } catch { if (!cancel) setRemote([]); }
+    }, 250);
+    return () => { cancel = true; clearTimeout(t); };
+  }, [q]);
 
   // Parents represented in the current matches that have 2+ variant colours — offered as ONE
   // "add all colours" row so a 10-colour design never needs 10 separate picks.
