@@ -156,9 +156,13 @@ export default async function TradeDashboard() {
 
   // Dealer's saved delivery address — prefills the ship-to fields at checkout so a COD order always
   // carries a shippable address (owner: "a COD order must be accepted with complete address record").
-  const dealer = session
-    ? await supabaseServer().from("customers").select("address,pincode").eq("id", session.id).maybeSingle().then((r) => r.data as any).catch(() => null)
-    : null;
+  let dealer: any = null;
+  if (session) {
+    try {
+      const { data } = await supabaseServer().from("customers").select("address,pincode").eq("id", session.id).maybeSingle();
+      dealer = data;
+    } catch { dealer = null; }
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-5 py-8">
