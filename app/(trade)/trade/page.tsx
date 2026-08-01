@@ -154,12 +154,18 @@ export default async function TradeDashboard() {
   const promos = await getActivePromotions("wholesale").catch(() => []);
   const categories = session ? (await getCategories()).map((c) => ({ id: c.id, name: c.name })) : [];
 
+  // Dealer's saved delivery address — prefills the ship-to fields at checkout so a COD order always
+  // carries a shippable address (owner: "a COD order must be accepted with complete address record").
+  const dealer = session
+    ? await supabaseServer().from("customers").select("address,pincode").eq("id", session.id).maybeSingle().then((r) => r.data as any).catch(() => null)
+    : null;
+
   return (
     <div className="max-w-7xl mx-auto px-5 py-8">
       {promos.length > 0 && <div className="rounded-2xl overflow-hidden mb-6 shadow-card"><PromoHero promos={promos} /></div>}
       <h1 className="font-display text-4xl text-ink mb-1">Wholesale Catalogue</h1>
       <p className="text-sm text-muted mb-6">Factory-direct trade rates — browse freely and check out directly. ₹{minRupees} minimum order. Your margin vs MRP is shown on every line.</p>
-      <WholesaleCatalog products={list} customerName={session?.name ?? "Guest"} customerPhone={session?.phone ?? ""} minOrder={minOrder} history={history} payInfo={payInfo} outstanding={outstanding} tiers={wholesaleTiers} guest={guest} />
+      <WholesaleCatalog products={list} customerName={session?.name ?? "Guest"} customerPhone={session?.phone ?? ""} savedAddress={dealer?.address ?? ""} savedPincode={dealer?.pincode ?? ""} minOrder={minOrder} history={history} payInfo={payInfo} outstanding={outstanding} tiers={wholesaleTiers} guest={guest} />
 
       {/* Guests are asked for their details only after they've actually browsed — see TradeLeadPopup. */}
       {guest && <TradeLeadPopup totalDesigns={list.length} />}

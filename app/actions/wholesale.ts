@@ -172,11 +172,38 @@ export async function uploadGuestPaymentProofAction(formData: FormData): Promise
  */
 export async function placeWholesaleOrderAction(
   items: { sku: string; qty: number }[],
-  opts?: { paymentRef?: string; cod?: boolean; proofPath?: string },
+  opts?: { paymentRef?: string; cod?: boolean; proofPath?: string; address?: string; pincode?: string },
 ): Promise<{ ok: boolean; orderId?: string; total?: number; error?: string }> {
   const sess = await getWholesaleSession();
   if (!sess) return { ok: false, error: "Please log in as an approved wholesale customer." };
-  return placeWholesaleCore({ id: sess.id, name: (sess as any).name ?? null }, items, opts);
+  const sb = supabaseServer();
+
+  // DELIVERY ADDRESS (owner's rule: "a COD order must be accepted with complete address record").
+  // Prefer what the dealer typed at checkout; otherwise fall back to the address saved on their account.
+  let address = String(opts?.address ?? "").trim();
+  let pincode = String(opts?.pincode ?? "").replace(/\D/g, "");
+  if (address.length < 5 || pincode.length !== 6) {
+    const { data: c } = await sb.from("customers").select("address,pincode,phone").eq("id", sess.id).maybeSingle();
+    const savedAddr = String((c as any)?.address ?? "").trim();
+    const savedPin = String((c as any)?.pincode ?? "").replace(/\D/g, "");
+    if (address.length < 5 && savedAddr.length >= 5) address = savedAddr;
+    if (pincode.length !== 6 && savedPin.length === 6) pincode = savedPin;
+  }
+  const hasFullAddress = address.length >= 5 && pincode.length === 6;
+  // HARD BLOCK: never accept a COD order we can't ship. Prepaid can proceed (owner may already know the
+  // dealer / hand-deliver), but COD without a shippable address is refused outright.
+  if (opts?.cod && !hasFullAddress) {
+    return { ok: false, error: "A delivery address is required for Cash on Delivery. Please enter your full address and 6-digit pincode, then place the COD order again." };
+  }
+  const fullAddress = hasFullAddress ? (address.includes(pincode) ? address : `${address}, ${pincode}`) : "";
+  // Remember it on the dealer's account so they don't retype next time.
+  if (hasFullAddress) await (sb.from("customers") as any).update({ address: fullAddress, pincode }).eq("id", sess.id).then(() => {}, () => {});
+
+  return placeWholesaleCore({ id: sess.id, name: (sess as any).name ?? null }, items, {
+    ...opts,
+    shipAddress: fullAddress || undefined,
+    shipPhone: (sess as any).phone ?? undefined,
+  });
 }
 
 /**
@@ -225,19 +252,16 @@ export async function placeGuestWholesaleOrderAction(
   // Save the delivery address on the dealer's account too (best-effort — column set may vary).
   await (sb.from("customers") as any).update({ address: fullAddress, pincode }).eq("id", customerId).then(() => {}, () => {});
 
-  const res = await placeWholesaleCore({ id: customerId, name }, items, opts);
-  // The courier needs the address ON the order — record it so the packing slip / bill can ship it.
-  if (res.ok && res.orderId) {
-    await sb.from("orders").update({ buyer_address: fullAddress, customer_phone: phone }).eq("id", res.orderId).then(() => {}, () => {});
-  }
-  return res;
+  // The courier needs the address ON the order — pass it into the core so the packing slip / bill can
+  // ship it (guests already gave a validated address + pincode above, so COD is always shippable).
+  return placeWholesaleCore({ id: customerId, name }, items, { ...opts, shipAddress: fullAddress, shipPhone: phone });
 }
 
 /** Shared order-placement core used by both the logged-in dealer and the guest self-checkout. */
 async function placeWholesaleCore(
   customer: { id: string; name: string | null },
   items: { sku: string; qty: number }[],
-  opts?: { paymentRef?: string; cod?: boolean; proofPath?: string },
+  opts?: { paymentRef?: string; cod?: boolean; proofPath?: string; shipAddress?: string; shipPhone?: string },
 ): Promise<{ ok: boolean; orderId?: string; total?: number; error?: string }> {
   const sess = { id: customer.id, name: customer.name } as any;
   const clean = (items ?? []).filter((i) => i.sku && i.qty > 0).map((i) => ({ sku: i.sku, qty: Math.floor(i.qty) }));
@@ -247,7 +271,10 @@ async function placeWholesaleCore(
   // and hand them to the RPC, which applies the per-line discount as it records the order.
   const formula = await getPricingFormula().catch(() => null);
   const pTiers = (formula?.wholesaleTiers ?? []).map((t) => ({ min_qty: t.minQty, pct_off: t.pctOff }));
-  const { data, error } = await sb.rpc("place_wholesale_order", { p_customer: sess.id, p_items: clean, p_allow_oversell: false, p_tiers: pTiers });
+  // COD-HOLD: a wholesale COD order must NOT touch stock or post revenue until the owner confirms
+  // dispatch + receipt on /admin/cod. Passing p_cod_hold routes it through the held path so it lands
+  // in COD Orders, not straight into Sales (owner: "cod orders are directly going in sales").
+  const { data, error } = await sb.rpc("place_wholesale_order", { p_customer: sess.id, p_items: clean, p_allow_oversell: false, p_tiers: pTiers, p_cod_hold: opts?.cod === true });
   if (error) return { ok: false, error: error.message };
   const orderId = (data as any)?.order_id as string | undefined;
   let total = (data as any)?.total as number | undefined;
@@ -256,6 +283,12 @@ async function placeWholesaleCore(
 
   if (orderId) {
     await sb.rpc("assign_invoice_no", { p_order: orderId });
+
+    // SHIP-TO on the order — the courier/packing slip needs it ON the order, not just on the account.
+    // Both the guest and logged-in-dealer paths resolve a delivery address up front and pass it here.
+    const shipAddr = (opts?.shipAddress ?? "").trim();
+    const shipPhone = (opts?.shipPhone ?? "").replace(/\D/g, "");
+    if (shipAddr) await sb.from("orders").update({ buyer_address: shipAddr, ...(shipPhone ? { customer_phone: shipPhone } : {}) }).eq("id", orderId).then(() => {}, () => {});
 
     // SHIPPING (owner's fixed slabs) + COD fee belong IN the bill. Above ₹30k shipping is quoted
     // separately, so nothing is auto-added there.
@@ -266,7 +299,10 @@ async function placeWholesaleCore(
     const itemsGst = Math.round(itemsOnly * (1 + GST_RATE / 100));
     // COD CEILING — high-value COD is risky, so wholesale orders above ₹5,000 must be prepaid.
     if (opts?.cod && itemsGst > 500000) {
-      await sb.rpc("cancel_order", { p_order_id: orderId, p_reason: "COD not available above ₹5,000" }).then(() => {}, () => {});
+      // The order is held (no stock deducted, no revenue), so cancel_order would OVER-RESTOCK. Just
+      // delete the empty held shell instead.
+      await sb.from("order_items").delete().eq("order_id", orderId).then(() => {}, () => {});
+      await sb.from("orders").delete().eq("id", orderId).then(() => {}, () => {});
       return { ok: false, error: "Cash on Delivery isn't available for orders above ₹5,000 — please pay online (prepaid)." };
     }
     const ship = wholesaleShippingPaise(itemsGst);

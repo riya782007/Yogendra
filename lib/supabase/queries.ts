@@ -1229,6 +1229,38 @@ export async function getOpenEstimateReservations(limit = 50) {
   })).filter((e) => e.lines.length > 0);
 }
 
+/**
+ * PENDING HELD ORDERS — backorders and COD-hold orders are committed to a customer but their stock has
+ * NOT been deducted yet (it only moves when the owner fulfils/dispatches). So they never appear as a
+ * stock_adjustments row, which confused the owner ("backorder is not visible in stock movement"). This
+ * surfaces them as pending stock-OUT holds on the Stock Movement page, exactly like open-estimate
+ * reservations — so every future outflow is visible in one place.
+ */
+export async function getPendingHeldOrders(limit = 60) {
+  const sb = supabaseServer();
+  const { data } = await sb
+    .from("orders")
+    .select("id, invoice_no, customer_name, channel, is_backorder, cod_hold, created_at, order_items(qty, unit_price, variant:variants(color), product:products(sku,name))")
+    .or("is_backorder.eq.true,cod_hold.eq.true")
+    .neq("status", "cancelled")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  return ((data as any[]) ?? []).map((o) => ({
+    id: o.id as string,
+    invoice_no: (o.invoice_no as string | null) ?? null,
+    customer_name: o.customer_name as string | null,
+    channel: (o.channel as string | null) ?? null,
+    // A row can only be one hold type; backorder takes precedence if somehow both are set.
+    kind: (o.is_backorder ? "backorder" : "cod") as "backorder" | "cod",
+    created_at: o.created_at as string,
+    lines: ((o.order_items as any[]) ?? []).map((li) => ({
+      qty: li.qty as number, sku: li.product?.sku as string | undefined, name: li.product?.name as string | undefined,
+      color: (li.variant?.color as string | null) ?? null, unitPrice: (li.unit_price as number | null) ?? null,
+    })),
+    qty: ((o.order_items as any[]) ?? []).reduce((s, li) => s + (li.qty ?? 0), 0),
+  })).filter((o) => o.lines.length > 0);
+}
+
 // ---------- Product Stock Ledger (SAP/Zoho-style per-SKU inventory history) ----------
 // DERIVED from the existing stock_adjustments rows (no duplicate inventory table). Computes a
 // running balance, pulls open-estimate reservations, resolves related documents, and rolls up

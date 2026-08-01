@@ -24,8 +24,8 @@ type PayInfo = { payeeName: string; upiId: string | null; qrUrl: string | null }
 const shipSlab = wholesaleShippingPaise;
 const COD_FEE = WHOLESALE_COD_FEE_PAISE; // ₹120 per COD order
 
-export function WholesaleCatalog({ products, customerName, customerPhone = "", minOrder = 300000, history = [], payInfo = null, outstanding = 0, tiers = [], guest = false }: {
-  products: P[]; customerName: string; customerPhone?: string; minOrder?: number; history?: Hist[]; payInfo?: PayInfo | null; outstanding?: number; tiers?: WholesaleTier[];
+export function WholesaleCatalog({ products, customerName, customerPhone = "", savedAddress = "", savedPincode = "", minOrder = 300000, history = [], payInfo = null, outstanding = 0, tiers = [], guest = false }: {
+  products: P[]; customerName: string; customerPhone?: string; savedAddress?: string; savedPincode?: string; minOrder?: number; history?: Hist[]; payInfo?: PayInfo | null; outstanding?: number; tiers?: WholesaleTier[];
   /** Browsing without a dealer account: designs + rates are visible, ordering is not. */
   guest?: boolean;
 }) {
@@ -45,8 +45,10 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
   const [gName, setGName] = useState("");
   const [gPhone, setGPhone] = useState(customerPhone || "");
   const [gCity, setGCity] = useState("");
-  const [gAddress, setGAddress] = useState("");
-  const [gPincode, setGPincode] = useState("");
+  // Delivery address — prefilled from the dealer's saved account address (guests start blank). Editable
+  // here so a COD order always carries a shippable address (owner's rule).
+  const [gAddress, setGAddress] = useState(savedAddress || "");
+  const [gPincode, setGPincode] = useState(savedPincode || "");
   const [done, setDone] = useState<{ id: string; total: number } | null>(null);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState<"order" | "history">("order");
@@ -238,12 +240,18 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
     if (guest) {
       return placeGuestWholesaleOrderAction({ name: gName.trim(), phone: gPhone.trim(), city: gCity.trim(), address: gAddress.trim(), pincode: gPincode.replace(/\D/g, "") }, items, opts);
     }
-    return placeWholesaleOrderAction(items, opts);
+    // Logged-in dealer: send the delivery address typed/prefilled at checkout so the order is shippable
+    // (the server also blocks a COD order that has no complete address).
+    return placeWholesaleOrderAction(items, { ...opts, address: gAddress.trim(), pincode: gPincode.replace(/\D/g, "") });
   }
 
   async function confirmOrderCOD() {
     if (lines.length === 0 || busy) return;
     const miss = guestDetailsMissing(); if (miss) { setErr(miss); return; }
+    // COD MUST ship — a complete delivery address is mandatory (owner's rule). Applies to dealers too.
+    if (gAddress.trim().length < 5 || gPincode.replace(/\D/g, "").length !== 6) {
+      setErr("Cash on Delivery needs a full delivery address and 6-digit pincode. Please fill them above."); return;
+    }
     setBusy(true); setErr("");
     const res = await placeOrder({ cod: true });
     setBusy(false);
@@ -693,6 +701,19 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", m
                     className="rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald" />
                 </div>
                 <p className="text-[10px] text-muted">Delivery address &amp; pincode are needed to courier your order.</p>
+              </div>
+            )}
+
+            {/* Logged-in dealer: confirm/enter the ship-to address (prefilled from their account). A COD
+                order can't be placed without a complete address, so it's shown right in the pay step. */}
+            {!guest && (
+              <div className="mt-3 grid gap-2">
+                <p className="text-xs font-medium text-ink">Deliver to</p>
+                <textarea value={gAddress} onChange={(e) => setGAddress(e.target.value)} placeholder="Full delivery address (shop / house, street, area)" rows={2}
+                  className="rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald" />
+                <input value={gPincode} onChange={(e) => setGPincode(e.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" placeholder="Pincode (6 digits)"
+                  className="rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald" />
+                <p className="text-[10px] text-muted">Required for Cash on Delivery — we ship to this address.</p>
               </div>
             )}
 

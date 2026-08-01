@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
-import { getStockMovements, getOpenEstimateReservations } from "@/lib/supabase/queries";
+import { getStockMovements, getOpenEstimateReservations, getPendingHeldOrders } from "@/lib/supabase/queries";
 import { Pager } from "@/components/admin/Pager";
 import { StockMovementsTable } from "@/components/admin/StockMovementsTable";
 
@@ -26,14 +26,18 @@ export default async function StockMovements({ searchParams }: { searchParams: {
   const q = searchParams.q ?? "";
   const from = searchParams.from ?? "";
   const to = searchParams.to ?? "";
-  const [{ rows, total }, reservations] = await Promise.all([
+  const [{ rows, total }, reservations, held] = await Promise.all([
     getStockMovements({ page, pageSize: PAGE_SIZE, kind, q, from: from || undefined, to: to ? to + "T23:59:59" : undefined }),
     // #6: soft holds are a separate concept from the stock_adjustments ledger — show them on
     // every page (not only page 1) whenever the user is on the All or Estimate tab, so the
     // open-estimate reservations don't disappear as soon as you scroll.
     (kind === "all" || kind === "estimate") ? getOpenEstimateReservations() : Promise.resolve([] as any[]),
+    // Backorders + COD-hold orders are committed stock-OUT that hasn't been deducted yet. Show them
+    // on the All and Sales tabs so a pending outflow is never invisible (owner's request).
+    (kind === "all" || kind === "sale") ? getPendingHeldOrders() : Promise.resolve([] as any[]),
   ]);
   const reservedTotal = (reservations as any[]).reduce((s, e) => s + e.qty, 0);
+  const heldTotal = (held as any[]).reduce((s, e) => s + e.qty, 0);
   const sel = "rounded-xl border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-emerald";
 
   return (
@@ -67,6 +71,33 @@ export default async function StockMovements({ searchParams }: { searchParams: {
                 <span className="text-gold-dark font-semibold whitespace-nowrap">{e.qty} pcs</span>
               </li>
             ))}
+          </ul>
+        </div>
+      )}
+
+      {held.length > 0 && (
+        <div className="mb-5 rounded-2xl border border-rose/40 bg-rose/5 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <h2 className="text-sm font-semibold text-rose">📦 Pending stock-out (held orders) — {heldTotal} pcs across {held.length} order{held.length > 1 ? "s" : ""}</h2>
+            <span className="text-[11px] text-muted">Backorders &amp; COD holds — stock only moves when you dispatch / fulfil.</span>
+          </div>
+          <ul className="divide-y divide-rose/20">
+            {(held as any[]).map((o) => {
+              const href = o.kind === "backorder" ? "/admin/backorders" : "/admin/cod";
+              const tag = o.kind === "backorder" ? "BACKORDER" : "COD HOLD";
+              const label = o.invoice_no || String(o.id).slice(0, 8).toUpperCase();
+              return (
+                <li key={o.id} className="py-2 flex items-start justify-between gap-3 text-sm">
+                  <div className="flex-1 min-w-0">
+                    <Link href={href} className="text-emerald nav-link font-medium">{label} →</Link>
+                    <span className="ml-1 text-[10px] font-semibold uppercase tracking-wide text-rose">{tag}</span>
+                    <span className="text-muted"> · {o.customer_name || "Customer"}{o.channel ? ` · ${o.channel}` : ""} · {new Date(o.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}</span>
+                    <div className="text-xs text-muted mt-0.5 truncate">{o.lines.map((l: any) => `${l.name ?? l.sku}${l.color ? ` (${l.color})` : ""} ×${l.qty}`).join(", ")}</div>
+                  </div>
+                  <span className="text-rose font-semibold whitespace-nowrap">{o.qty} pcs</span>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
