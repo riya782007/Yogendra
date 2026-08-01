@@ -34,7 +34,12 @@ export async function generateMetadata({ params }: { params: { slug: string } })
   };
 }
 
-type SP = { sort?: string; min?: string; max?: string; stock?: string; sub?: string; style?: string; color?: string; disc?: string; rating?: string; label?: string };
+type SP = { sort?: string; min?: string; max?: string; stock?: string; sub?: string; style?: string; color?: string; disc?: string; rating?: string; label?: string; page?: string };
+
+// PERFORMANCE: render products a page at a time. Rendering an entire category at once (could be hundreds
+// or thousands of designs, each an image + two interactive islands) built a huge DOM that hydrated slowly
+// and made scrolling stutter. 48 per page keeps the DOM small and scrolling smooth.
+const PAGE_SIZE = 48;
 
 export default async function CategoryPage({ params, searchParams }: { params: { slug: string }; searchParams: SP }) {
   const sb = supabaseServer();
@@ -121,13 +126,26 @@ export default async function CategoryPage({ params, searchParams }: { params: {
   else if (searchParams.sort === "price-desc") items = [...items].sort((a, b) => b.base_wholesale - a.base_wholesale);
   else if (searchParams.sort === "rating") items = [...items].sort((a, b) => b.rating - a.rating);
 
+  // ---- paginate the (filtered, sorted) list so we only render one page of cards ----
+  const totalItems = items.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
+  const page = Math.min(Math.max(1, Number(searchParams.page) || 1), totalPages);
+  const pageItems = items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
   const qs = (extra: Partial<SP>) => {
     const m = { ...searchParams, ...extra } as Record<string, string | undefined>;
+    // Any filter/sort change returns to page 1 (only explicit page links carry a page number).
+    if (!("page" in extra)) delete m.page;
     const p = new URLSearchParams();
     Object.entries(m).forEach(([k, v]) => { if (v) p.set(k, String(v)); });
     const s = p.toString();
     return `/shop/c/${params.slug}${s ? `?${s}` : ""}`;
   };
+  // Windowed page numbers: first, last, and a couple either side of the current page.
+  const pageNums = (() => {
+    const set = new Set<number>([1, totalPages, page, page - 1, page + 1, page - 2, page + 2]);
+    return [...set].filter((n) => n >= 1 && n <= totalPages).sort((a, b) => a - b);
+  })();
   const inp = "rounded-lg border border-sand px-3 py-1.5 text-sm bg-white outline-none focus:border-emerald w-24";
   const chip = (active: boolean, tone: "type" | "style" | "color" | "quick" = "type") => {
     const on = { type: "border-emerald bg-emerald-mist text-emerald", style: "border-gold bg-gold/15 text-gold-dark", color: "border-ink bg-ink text-white", quick: "border-wine bg-wine/10 text-wine" }[tone];
@@ -239,9 +257,29 @@ export default async function CategoryPage({ params, searchParams }: { params: {
           <p className="text-center text-muted py-12">No designs match these filters. <Link href={`/shop/c/${params.slug}`} className="text-emerald nav-link">Clear filters</Link></p>
         )
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
-          {items.map((p, i) => (<Reveal key={p.sku} delay={(i % 4) * 70}><ProductCard p={{ ...(p as any), colors: [...(colourByProduct.get((p as any).id) ?? [])] }} formula={formula} /></Reveal>))}
-        </div>
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
+            {pageItems.map((p, i) => (<Reveal key={p.sku} delay={(i % 4) * 70}><ProductCard p={{ ...(p as any), colors: [...(colourByProduct.get((p as any).id) ?? [])] }} formula={formula} /></Reveal>))}
+          </div>
+
+          {totalPages > 1 && (
+            <nav className="mt-10 flex flex-wrap items-center justify-center gap-2" aria-label="Pagination">
+              {page > 1 && <Link href={qs({ page: String(page - 1) })} className="px-3.5 py-2 rounded-full border border-sand text-sm text-ink hover:border-emerald transition-colors">← Prev</Link>}
+              {pageNums.map((n, idx) => {
+                const gap = idx > 0 && n - pageNums[idx - 1] > 1;
+                return (
+                  <span key={n} className="flex items-center gap-2">
+                    {gap && <span className="text-muted px-1">…</span>}
+                    <Link href={qs({ page: n === 1 ? undefined : String(n) })} aria-current={n === page ? "page" : undefined}
+                      className={`min-w-[2.4rem] text-center px-3 py-2 rounded-full text-sm border transition-colors ${n === page ? "border-emerald bg-emerald-mist text-emerald font-semibold" : "border-sand text-muted hover:border-emerald"}`}>{n}</Link>
+                  </span>
+                );
+              })}
+              {page < totalPages && <Link href={qs({ page: String(page + 1) })} className="px-3.5 py-2 rounded-full border border-sand text-sm text-ink hover:border-emerald transition-colors">Next →</Link>}
+            </nav>
+          )}
+          <p className="mt-3 text-center text-xs text-muted">Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, totalItems)} of {totalItems} designs</p>
+        </>
       )}
     </div>
   );
