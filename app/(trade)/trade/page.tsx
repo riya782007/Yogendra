@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import type { Metadata } from "next";
 import { unstable_cache } from "next/cache";
 import { TradeLeadPopup } from "@/components/site/TradeLeadPopup";
-import { getStorefront, getWholesaleOrderHistory, getCategories, getActivePromotions } from "@/lib/supabase/queries";
+import { getPricingFormula, getWholesaleOrderHistory, getCategories, getActivePromotions } from "@/lib/supabase/queries";
 import { supabaseServer } from "@/lib/supabase/server";
 import { PromoHero } from "@/components/site/PromoHero";
 import { resolvePrices, overridesOf } from "@/lib/pricing";
@@ -29,21 +29,33 @@ const WHOLESALE_MIN = 300000; // ₹3,000 in paise (#27)
  */
 const loadTradeCatalog = unstable_cache(
   async () => {
-    const { products, formula } = await getStorefront({ includeWholesaleOnly: true, excludeRetailOnly: true });
+    const sb = supabaseServer();
+    const formula = await getPricingFormula();
     const minOrder = formula.wholesaleMinOrder ?? WHOLESALE_MIN; // configurable in /admin/pricing
     const minRupees = Math.round(minOrder / 100).toLocaleString("en-IN");
+
+    // LEAN CATALOGUE READ (ROOT FIX): fetch ONLY the small columns the dealer panel needs — never the big
+    // generated_content JSON. Selecting "*" over ~4.5k products pulled megabytes of description/SEO JSON
+    // per page and started TIMING OUT; the pager swallows a failed page as empty, so getStorefront
+    // returned nothing and the whole catalogue showed "No designs match". This light select is fast and
+    // safe. Published only; hide retail-only lines (wholesale-only designs stay visible for dealers).
+    const products: any[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data } = await sb.from("products")
+        .select("id,sku,name,qty,base_wholesale,wholesale_override,retail_override,mrp_override,thumbnail_path,default_variant_id,subcategory_id,style_id,updated_at,created_at,more_designs,more_designs_note,retail_only, category:categories(name)")
+        .eq("status", "published").order("sku").range(from, from + 999);
+      const raw = (data as any[]) ?? [];
+      products.push(...raw.filter((p) => !p.retail_only));
+      if (raw.length < 1000) break;
+    }
 
     // ROTATION: the most recently added / published / edited design shows at the TOP, so the panel
     // always looks freshly stocked. Driven by products.updated_at; created_at is the fallback.
     const touchedAt = (p: any) => new Date(p.updated_at ?? p.created_at ?? 0).getTime();
-    const rotated = [...(products as any[])].sort((a, b) => touchedAt(b) - touchedAt(a));
+    const rotated = [...products].sort((a, b) => touchedAt(b) - touchedAt(a));
 
-    const sb = supabaseServer();
-
-    // Designs whose full colour range is too large to list — dealer is invited to see the rest in
-    // store or on a video call. Fetched separately (tiny set).
-    const { data: moreRows } = await (sb.from("products") as any).select("id,more_designs_note").eq("more_designs", true);
-    const moreBy = new Map<string, string | null>(((moreRows as any[]) ?? []).map((r) => [r.id as string, (r.more_designs_note as string) ?? null]));
+    // "More designs" note now comes straight off the lean select (no extra query).
+    const moreBy = new Map<string, string | null>(products.filter((p) => p.more_designs).map((p) => [p.id as string, (p.more_designs_note as string) ?? null]));
 
     // Cover images — page through ALL of them (past PostgREST's 1000-row cap) so no design is dropped
     // just because its image sat beyond the first 1000 rows.
@@ -81,7 +93,8 @@ const loadTradeCatalog = unstable_cache(
     const list = rotated.flatMap((p) => {
       const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));
       const price = gstInc(ps.wholesaleRate);
-      const parentImg = ((p as any).image as string | null) ?? imgBy.get((p as any).id) ?? null;
+      const tp = (p as any).thumbnail_path;
+      const parentImg = (typeof tp === "string" && tp.startsWith("http")) ? tp : (imgBy.get((p as any).id) ?? null);
       const pid = (p as any).id as string;
       const allVs = varsBy.get(pid) ?? [];
       const sub = subName.get((p as any).subcategory_id) ?? null;
