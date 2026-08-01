@@ -49,6 +49,13 @@ const loadTradeCatalog = unstable_cache(
       if (raw.length < 1000) break;
     }
 
+    // NEVER CACHE AN EMPTY CATALOGUE. There are always published designs, so zero rows means the read
+    // failed (DB restricted / transient error) — throwing here stops unstable_cache from storing the empty
+    // result. Otherwise a one-off failure poisons the cache and the panel stays blank until it's busted by
+    // hand (exactly what happened during the egress outage). On a throw the page just retries next request,
+    // so it self-heals the moment the database is reachable again.
+    if (products.length === 0) throw new Error("trade catalogue: product read returned no rows — not caching");
+
     // ROTATION: the most recently added / published / edited design shows at the TOP, so the panel
     // always looks freshly stocked. Driven by products.updated_at; created_at is the fallback.
     const touchedAt = (p: any) => new Date(p.updated_at ?? p.created_at ?? 0).getTime();
@@ -128,7 +135,7 @@ const loadTradeCatalog = unstable_cache(
     const wholesaleTiers = formula.wholesaleTiers ?? [];
     return { list, minOrder, minRupees, payInfo, wholesaleTiers };
   },
-  ["trade-catalog-v1"],
+  ["trade-catalog-v2"],
   { revalidate: 180, tags: ["trade-catalog"] },
 );
 

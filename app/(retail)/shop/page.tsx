@@ -24,9 +24,13 @@ const loadShopHome = unstable_cache(
     const [store, reviews, reels, promos, tree] = await Promise.all([
       getStorefront(), getFeaturedReviews(), getShoppableReels(), getActivePromotions("retail"), getCategoryTree(),
     ]);
+    // Never cache an empty storefront: zero products means the read failed (DB restricted / transient),
+    // so throwing keeps the empty result OUT of the cache and the page self-heals on the next request
+    // once the database is reachable — instead of a one-off failure freezing the shop blank for 15 min.
+    if (!store.products || store.products.length === 0) throw new Error("shop home: storefront read returned no products — not caching");
     return { products: store.products, formula: store.formula, reviews, reels, promos, tree };
   },
-  ["shop-home-v1"],
+  ["shop-home-v2"],
   { revalidate: 900, tags: ["storefront"] },
 );
 
