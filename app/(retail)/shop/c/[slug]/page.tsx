@@ -11,10 +11,10 @@ import { getStorefront, getCategories, getActivePromotions } from "@/lib/supabas
 // "storefront" tag. Category-specific filter queries below stay live (they're light + scoped).
 const loadCatalogueBase = unstable_cache(
   async () => {
-    const [store, allCats, allPromos] = await Promise.all([getStorefront(), getCategories(), getActivePromotions("retail")]);
+    const [store, allCats, allPromos] = await Promise.all([getStorefront({ onlyInStock: true }), getCategories(), getActivePromotions("retail")]);
     return { products: store.products, formula: store.formula, allCats, allPromos };
   },
-  ["shop-category-base-v1"],
+  ["shop-category-base-v2-instock"],
   { revalidate: 900, tags: ["storefront"] },
 );
 import { supabaseServer } from "@/lib/supabase/server";

@@ -22,7 +22,7 @@ export const metadata = {
 const loadShopHome = unstable_cache(
   async () => {
     const [store, reviews, reels, promos, tree] = await Promise.all([
-      getStorefront(), getFeaturedReviews(), getShoppableReels(), getActivePromotions("retail"), getCategoryTree(),
+      getStorefront({ onlyInStock: true }), getFeaturedReviews(), getShoppableReels(), getActivePromotions("retail"), getCategoryTree(),
     ]);
     // Never cache an empty storefront: zero products means the read failed (DB restricted / transient),
     // so throwing keeps the empty result OUT of the cache and the page self-heals on the next request
@@ -30,7 +30,7 @@ const loadShopHome = unstable_cache(
     if (!store.products || store.products.length === 0) throw new Error("shop home: storefront read returned no products — not caching");
     return { products: store.products, formula: store.formula, reviews, reels, promos, tree };
   },
-  ["shop-home-v2"],
+  ["shop-home-v3-instock"],
   { revalidate: 900, tags: ["storefront"] },
 );
 

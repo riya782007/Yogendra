@@ -1833,7 +1833,7 @@ export const getLivePromosCached = (scope: "retail" | "wholesale", placement: "h
   unstable_cache(() => getLivePromos(scope, placement), ["live-promos", scope, placement], { tags: ["storefront"], revalidate: 120 })();
 
 export async function getStorefront(
-  opts: { includeDrafts?: boolean; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean } = {},
+  opts: { includeDrafts?: boolean; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean; onlyInStock?: boolean } = {},
 ): Promise<{ products: StoreProduct[]; formula: PF }> {
   const sb = supabaseServer();
   // D2C-safe defaults: only published, and never wholesale-only items (#1, #23).
@@ -1906,6 +1906,16 @@ export async function getStorefront(
   if (!opts.includeWholesaleOnly) products = products.filter((p: any) => !p.wholesale_only);
   // Wholesale storefront hides retail-only items (admin/POS pass excludeRetailOnly=false → see all).
   if (opts.excludeRetailOnly) products = products.filter((p: any) => !p.retail_only);
+  // HIDE SOLD-OUT DESIGNS from the storefront (owner: "bhot sare out of stock products visible"). A design
+  // is in stock when it has at least one piece: for a design with colours that means the colour quantities
+  // add up to > 0; for a plain design it's its own qty. Total stock is read from the VARIANTS (the
+  // authoritative per-colour count) so a stale product.qty can't keep a sold-out design on the shelf.
+  if (opts.onlyInStock) {
+    const varSum = new Map<string, number>();
+    const hasVar = new Set<string>();
+    for (const v of vlist) { hasVar.add(v.product_id); varSum.set(v.product_id, (varSum.get(v.product_id) ?? 0) + (v.qty ?? 0)); }
+    products = products.filter((p: any) => (hasVar.has(p.id) ? (varSum.get(p.id) ?? 0) : (p.qty ?? 0)) > 0);
+  }
   return { products, formula };
 }
 
@@ -2230,7 +2240,7 @@ export async function getPurchaseById(id: string) {
 }
 
 export async function searchProducts(q: string) {
-  const { products, formula } = await getStorefront();
+  const { products, formula } = await getStorefront({ onlyInStock: true });
   const s = q.trim().toLowerCase();
   const results = s ? products.filter((p) => (p.name + " " + p.category.name + " " + p.sku).toLowerCase().includes(s)) : [];
   return { formula, results };
