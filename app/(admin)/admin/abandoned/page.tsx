@@ -27,11 +27,17 @@ export default async function Abandoned() {
     const slugByUpper = new Map<string, string>();
     const firstHttp = (arr: any[]) => (arr ?? []).filter((i) => typeof i?.path === "string" && i.path.startsWith("http")).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))[0]?.path as string | undefined;
     const chunk = <T,>(a: T[], n: number) => a.reduce<T[][]>((acc, x, i) => { (acc[Math.floor(i / n)] ??= []).push(x); return acc; }, []);
-    // Products (match by SKU, case-insensitive).
+    // Products (match by SKU, case-insensitive). Retail carts store the PRODUCT sku (e.g. WT1043), but a
+    // design's photo often lives ONLY on its colour variant (WT1043-GOLD) or on thumbnail_path — not in
+    // product_images. So resolve the cover the SAME way the storefront does: thumbnail → product image →
+    // any variant photo. Without the variant fallback these cards showed no image at all.
+    const firstVarHttp = (vs: any[]) => (vs ?? []).flatMap((v) => (v?.image_paths as string[]) ?? []).find((u) => typeof u === "string" && u.startsWith("http")) as string | undefined;
     for (const grp of chunk(allSkus, 60)) {
-      const { data } = await sbA.from("products").select("sku, category:categories(slug), images:product_images(path,sort)").or(grp.map((s) => `sku.ilike.${String(s).replace(/[,()]/g, "")}`).join(","));
+      const { data } = await sbA.from("products").select("sku, thumbnail_path, category:categories(slug), images:product_images(path,sort), variants:variants(image_paths)").or(grp.map((s) => `sku.ilike.${String(s).replace(/[,()]/g, "")}`).join(","));
       for (const p of (data as any[]) ?? []) {
-        const img = firstHttp(p.images); const k = String(p.sku).toUpperCase();
+        const tp = (typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http")) ? p.thumbnail_path as string : undefined;
+        const img = tp ?? firstHttp(p.images) ?? firstVarHttp(p.variants);
+        const k = String(p.sku).toUpperCase();
         if (img) imgByUpper.set(k, img);
         if (p.category?.slug) slugByUpper.set(k, p.category.slug);
       }
