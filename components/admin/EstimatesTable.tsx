@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { formatPaise } from "@/lib/pricing";
-import { billEstimateAction, denyEstimateAction, reopenEstimateAction } from "@/app/actions/billing";
+import { billEstimateAction, denyEstimateAction, reopenEstimateAction, holdEstimateAction } from "@/app/actions/billing";
 
 type E = { id: string; customer_name: string | null; customer_phone: string | null; total: number; status: string; created_at: string; order_id: string | null };
 
@@ -11,16 +11,17 @@ type E = { id: string; customer_name: string | null; customer_phone: string | nu
 // switching tabs is instant — no server round-trip (the old links reloaded ~25k rows each click).
 const TABS: { key: string; label: string; match: (s: string) => boolean }[] = [
   { key: "open", label: "To bill", match: (s) => s === "open" },
+  { key: "held", label: "On hold", match: (s) => s === "held" },
   { key: "handled", label: "Handled (billed)", match: (s) => s === "converted" || s === "cash_billed" },
   { key: "denied", label: "Denied", match: (s) => s === "denied" || s === "expired" },
   { key: "all", label: "All", match: () => true },
 ];
 const STATUS_STYLE: Record<string, string> = {
-  open: "bg-gold/15 text-gold-dark", converted: "bg-emerald-mist text-emerald-dark",
+  open: "bg-gold/15 text-gold-dark", held: "bg-violet-100 text-violet-700", converted: "bg-emerald-mist text-emerald-dark",
   cash_billed: "bg-blue-100 text-blue-700", denied: "bg-rose/15 text-rose", expired: "bg-cream text-muted",
 };
 const STATUS_LABEL: Record<string, string> = {
-  open: "Held", converted: "GST billed", cash_billed: "Cash billed", denied: "Denied", expired: "Expired",
+  open: "Open", held: "On hold", converted: "GST billed", cash_billed: "Cash billed", denied: "Denied", expired: "Expired",
 };
 
 export function EstimatesTable({ estimates }: { estimates: E[] }) {
@@ -92,9 +93,12 @@ export function EstimatesTable({ estimates }: { estimates: E[] }) {
                 <td className="p-3">
                   <div className="flex flex-wrap gap-1.5 justify-end items-center">
                     <Link href={`/admin/estimate/${e.id}`} className="px-2.5 py-1 rounded-full bg-ink/5 text-ink text-xs hover:bg-ink/10">🖶 Print</Link>
-                    {e.status === "open" && <>
+                    {(e.status === "open" || e.status === "held") && <>
                       <form action={billEstimateAction}><input type="hidden" name="id" value={e.id} /><input type="hidden" name="bill_type" value="gst" /><button className="px-2.5 py-1 rounded-full bg-emerald/10 text-emerald text-xs font-medium hover:bg-emerald/20">Bill · GST →</button></form>
                       <form action={billEstimateAction}><input type="hidden" name="id" value={e.id} /><input type="hidden" name="bill_type" value="cash" /><button className="px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-medium hover:bg-blue-100">Bill · Cash →</button></form>
+                      {e.status === "open"
+                        ? <form action={holdEstimateAction}><input type="hidden" name="id" value={e.id} /><button className="px-2.5 py-1 rounded-full bg-violet-100 text-violet-700 text-xs hover:bg-violet-200">⏸ Hold</button></form>
+                        : <form action={reopenEstimateAction}><input type="hidden" name="id" value={e.id} /><button className="px-2.5 py-1 rounded-full bg-gold/15 text-gold-dark text-xs hover:bg-gold/25">▶ Resume</button></form>}
                       <form action={denyEstimateAction}><input type="hidden" name="id" value={e.id} /><button className="px-2.5 py-1 rounded-full bg-rose/10 text-rose text-xs hover:bg-rose/20">Deny</button></form>
                     </>}
                     {(e.status === "converted" || e.status === "cash_billed") && e.order_id &&

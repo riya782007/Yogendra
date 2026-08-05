@@ -420,6 +420,12 @@ export async function billEstimateAction(formData: FormData) {
   const billType = String(formData.get("bill_type") ?? "gst") === "cash" ? "cash" : "gst";
   const allowOversell = String(formData.get("allow_oversell") ?? "") === "1";
   const sb = supabaseServer();
+  // If the estimate is ON HOLD its stock is reserved out. Release the FULL hold first, so the conversion
+  // below deducts ONLY the quantity actually being billed — the untaken remainder returns to stock (the
+  // "committed 50, took 20, 30 comes back" case). If the owner didn't edit it down, the same pieces just
+  // convert from reserved → sold with no net change.
+  const { data: estRow } = await sb.from("estimates").select("status").eq("id", id).maybeSingle();
+  if ((estRow as any)?.status === "held") await sb.rpc("release_estimate_hold", { p_estimate_id: id });
   const { data, error } = await sb.rpc("convert_estimate_v2", { p_estimate_id: id, p_bill_type: billType, p_allow_oversell: allowOversell });
   // Insufficient-stock (or any) error: bounce back to the estimate with a clear message
   // instead of throwing a server error page.
@@ -456,20 +462,38 @@ export async function billEstimateAction(formData: FormData) {
   redirect("/admin/estimates");
 }
 
-/** Mark an estimate as denied (customer did not want the products). */
+/** Mark an estimate as denied (customer did not want the products). If it was on hold, its reserved
+ *  stock is released back to sellable first. */
 export async function denyEstimateAction(formData: FormData) {
   if (!(await requirePerm("estimates.deny"))) return;
   const id = String(formData.get("id"));
-  await supabaseServer().from("estimates").update({ status: "denied" }).eq("id", id);
-  revalidatePath("/admin/estimates");
+  const sb = supabaseServer();
+  await sb.rpc("release_estimate_hold", { p_estimate_id: id }); // safe no-op if it wasn't holding stock
+  await sb.from("estimates").update({ status: "denied" }).eq("id", id);
+  revalidatePath("/admin/estimates"); revalidatePath("/admin/stock-movements");
 }
 
-/** Re-open a held/denied estimate. */
+/** Re-open a held/denied estimate. Releasing any reserved stock back to sellable (no-op if none held). */
 export async function reopenEstimateAction(formData: FormData) {
   if (!(await requirePerm("estimates.create"))) return;
   const id = String(formData.get("id"));
-  await supabaseServer().from("estimates").update({ status: "open" }).eq("id", id);
-  revalidatePath("/admin/estimates");
+  const sb = supabaseServer();
+  await sb.rpc("release_estimate_hold", { p_estimate_id: id });
+  await sb.from("estimates").update({ status: "open" }).eq("id", id);
+  revalidatePath("/admin/estimates"); revalidatePath("/admin/stock-movements");
+}
+
+/** Park an estimate ON HOLD and RESERVE its stock — the committed pieces are set aside for a regular
+ *  customer to collect within ~15 days (owner's real workflow). hold_estimate deducts them from sellable
+ *  stock (so they can't be sold to anyone else and don't show as available) but posts NO revenue — it's
+ *  not a sale yet. Billing later releases the hold and charges only the quantity actually taken; the rest
+ *  returns to stock. Resume/Deny release it. Blocks (with a clear message) if stock is short. */
+export async function holdEstimateAction(formData: FormData) {
+  if (!(await requirePerm("estimates.create"))) return;
+  const id = String(formData.get("id"));
+  const { error } = await supabaseServer().rpc("hold_estimate", { p_estimate_id: id });
+  if (error) redirect(`/admin/estimates?holderror=${encodeURIComponent(error.message)}`);
+  revalidatePath("/admin/estimates"); revalidatePath("/admin/stock-movements");
 }
 
 /** Convert a backorder into a fulfilled sale once stock has arrived — clears the backorder flag so

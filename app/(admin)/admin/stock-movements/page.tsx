@@ -15,6 +15,8 @@ const KINDS = [
   { key: "adjustment", label: "Adjustments" },
   { key: "damage", label: "Damage / loss" },
   { key: "estimate", label: "Estimate reservations" },
+  { key: "reserve", label: "On hold — reserved (out)" },
+  { key: "release", label: "Hold released (in)" },
   { key: "return", label: "Sales returns (in)" },
   { key: "purchase_return", label: "Purchase returns (out)" },
 ];

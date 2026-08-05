@@ -25,7 +25,9 @@ export default async function EstimateDetailPage({ params, searchParams }: { par
   // sequence they were scanned/added in — mirrors how the invoice already sorts its lines.
   const items = [...(rawItems ?? [])].sort((a: any, b: any) =>
     String(a.variant?.sku ?? a.product?.sku ?? "").localeCompare(String(b.variant?.sku ?? b.product?.sku ?? ""), undefined, { numeric: true }));
-  const isOpen = estimate.status === "open";
+  // A held (parked) estimate is still fully actionable — bill / edit / deny — just moved out of the
+  // active list. So treat it like open in the detail view.
+  const isOpen = estimate.status === "open" || estimate.status === "held";
   const canEdit = isOpen && (await requirePerm("estimates.create"));
   const total = estimate.total as number;
 

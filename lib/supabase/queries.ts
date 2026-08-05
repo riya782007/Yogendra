@@ -1214,6 +1214,9 @@ export async function getOpenEstimateReservations(limit = 50) {
   const { data } = await sb
     .from("estimates")
     .select("id, customer_name, created_at, estimate_items(qty, unit_price, variant:variants(color), product:products(sku,name))")
+    // OPEN estimates only: these are quotes that haven't reserved stock (informational soft-hold). A HELD
+    // estimate hard-reserves its pieces via real 'reserve' stock movements, so it's already reflected in
+    // live stock and the ledger — including it here too would double-count it.
     .eq("status", "open")
     .order("created_at", { ascending: false })
     .limit(limit);
