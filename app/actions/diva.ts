@@ -10,7 +10,7 @@
 import { groqChat, openaiChat, geminiChat, groqConfigured, openaiConfigured, geminiTextConfigured, openaiTranscribe } from "@/lib/ai/providers";
 import { supabaseServer } from "@/lib/supabase/server";
 import {
-  getChannelReport, getInventoryClassified, getProductsPage, getDashboardData, getStorefront,
+  getChannelReport, getInventoryClassified, getProductsPage, getDashboardData,
   getProductBySku, getProductSalesStats, getCustomersDb, getPricingFormula,
 } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
@@ -104,7 +104,9 @@ export async function divaPlan(command: string, contextJson?: string): Promise<D
   if (!planned) return nluPlan; // model unavailable/errored → deterministic fallback
 
   const newHistory = [...history, { role: "owner", text: cmd }, { role: "diva", text: planned.reply }].slice(-8);
-  const context = JSON.stringify({ ...nlu.context, history: newHistory, lastSku: nlu.context.lastSku });
+  // Carry only the clean conversation memory — NOT the regex engine's transient slot-fill (`pending`),
+  // which is irrelevant once the model is driving and could misfire on a later fallback turn.
+  const context = JSON.stringify({ history: newHistory, lastSku: nlu.context.lastSku, lastCustomer: nlu.context.lastCustomer });
   // No steps → DIVA is either asking for a missing detail or nothing matched; treat the reply as a
   // clarifying prompt so the widget keeps listening for the answer (which flows back with this history).
   const ask = planned.steps.length === 0 ? { slot: "freeform", prompt: planned.reply } : undefined;
@@ -267,7 +269,7 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
       }
       case "find_product": {
         const { rows } = await getProductsPage({ q: String(args.query ?? ""), pageSize: 8 });
-        const { formula } = await getStorefront();
+        const formula = await getPricingFormula();
         if (rows.length === 0) return { ok: true, message: `No products matched "${args.query}".` };
         const list = rows.map((p: any) => `${p.name} (${p.sku}) — ${formatPaise(liveOffer(p.base_wholesale, formula).price)}, ${p.qty} in stock`).join("; ");
         return { ok: true, data: rows, message: list };
@@ -306,7 +308,7 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         const sku = String(args.sku ?? "").trim().toUpperCase();
         const p = await getProductBySku(sku);
         if (!p) return { ok: false, message: `No product with SKU ${sku}.` };
-        const { formula } = await getStorefront();
+        const formula = await getPricingFormula();
         const o = liveOffer(p.base_wholesale, formula);
         const gc = (p.generated_content as any) ?? {};
         const tags = (gc.tags ?? []).slice(0, 6).join(", ");
@@ -381,7 +383,7 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         const sku = String(args.sku ?? "").trim().toUpperCase();
         const p = sku ? await getProductBySku(sku) : await resolveProductByName(String(args.query ?? ""));
         if (!p) return { ok: false, message: `I couldn't find ${sku || `"${args.query}"`}.` };
-        const { formula } = await getStorefront();
+        const formula = await getPricingFormula();
         const o = liveOffer(p.base_wholesale, formula);
         const tier = String(args.tier ?? "all");
         const wholesale = formatPaise(p.base_wholesale);

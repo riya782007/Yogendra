@@ -234,10 +234,14 @@ export function interpret(commandRaw: string, ctx: DivaContext = {}): NluPlan {
   }
 
   const sku = extractSku(command) || (/(\bye\b|\byeh\b|\bis\b|\bthis\b)\s*(product|item)?/.test(lower) ? ctx.lastSku : undefined);
+  // Strip the SKU before reading quantity / price / colour, so the DIGITS inside a code like BD1010 or
+  // BD1004 can never be mistaken for the quantity (20) or the price (1500). This was a real bug:
+  // "BD1010 me 20 add kar do" read quantity 1010, and "BD1004 ka price 1500" read price 1004.
+  const textNoSku = command.replace(SKU_RE, " ");
   const subject = extractSubject(command);
-  const qty = extractQuantity(command);
-  const price = extractPriceRupees(command);
-  const color = extractColor(command);
+  const qty = extractQuantity(textNoSku);
+  const price = extractPriceRupees(textNoSku);
+  const color = extractColor(textNoSku);
 
   const remember = (over: Partial<DivaContext>): DivaContext => ({ ...ctx, pending: undefined, ...over });
 
@@ -335,12 +339,31 @@ export function interpret(commandRaw: string, ctx: DivaContext = {}): NluPlan {
       ack(lang, `Logging ${qty} damaged for "${subject}".`, `"${subject}" ke ${qty} damaged mark kar rahi hun.`), 0.6, remember({ lastSubject: subject }));
   }
 
-  // ---- 8) Stock add / remove --------------------------------------------------
+  // ---- 8) Stock: hide-vs-remove, set-exact, add/remove ------------------------
+  // "store se hata do" / "take off the store" = HIDE the product, NOT a stock removal.
+  if (sku && hasAny(lower, ["hata", "hatao", "remove", "off", "take off", "unpublish", "chhupao", "chupa"]) && /\b(store|storefront|site|website|online)\b/.test(lower)) {
+    return mk(base, [step("hide_product", { sku }, `Hide ${sku}`)],
+      ack(lang, `Hiding ${sku} from the store.`, `${sku} ko store se hata rahi hun.`), 0.82, remember({ lastSku: sku }));
+  }
+  // "stock 25 kar do" / "set stock to 25" = set the EXACT total (never add/remove).
+  if (sku && qty != null && /stock/.test(lower) && hasAny(lower, ["set", "kar do", "kardo", "karo", "rakho", "rakh", "kar"]) && !hasAny(lower, ADD_WORDS) && !hasAny(lower, REMOVE_WORDS)) {
+    return mk(base, [step("set_stock", { sku, qty, color }, `Set ${sku} stock to ${qty}`)],
+      ack(lang, `Setting ${sku} stock to ${qty}.`, `${sku} ka stock ${qty} kar rahi hun.`), 0.82, remember({ lastSku: sku }));
+  }
+  // Only a REAL colour is passed as the colour hint — never the leftover subject words (that used to
+  // capture the verb, e.g. colour "kam"/"store", and break variant matching).
   if (hasAny(lower, ADD_WORDS) && (/(stock|inventory|maal|qty|quantity|pieces|piece|pcs|units?)/.test(lower) || qty)) {
-    return stockPlan(base, ctx, lang, "add_stock", sku, subject, qty, color ?? (sku ? subject : undefined));
+    return stockPlan(base, ctx, lang, "add_stock", sku, subject, qty, color);
   }
   if (hasAny(lower, REMOVE_WORDS) && (/(stock|inventory|maal|qty|quantity|pieces|piece|pcs|units?)/.test(lower) || qty)) {
-    return stockPlan(base, ctx, lang, "remove_stock", sku, subject, qty, color ?? (sku ? subject : undefined));
+    return stockPlan(base, ctx, lang, "remove_stock", sku, subject, qty, color);
+  }
+
+  // ---- 8b) "dead stock" / "low stock" / "out of stock" → the health list (not a single lookup).
+  if (/(dead\s*stock|low\s*stock|out\s*of\s*stock|kam\s*stock|khatam ho|slow\s*mov)/.test(lower)) {
+    const t = /(low|out|kam|khatam)/.test(lower) ? "low_stock" : "inventory_status";
+    return mk(base, [step(t, {}, t === "low_stock" ? "Low / out of stock" : "Inventory health")],
+      ack(lang, "Here's the stock that needs attention.", "Ye raha wo stock jispe dhyan chahiye."), 0.78, remember({}));
   }
 
   // ---- 9) Inventory / stock query: "blue kundan necklace ka inventory kitna hai" -
@@ -428,7 +451,7 @@ export function interpret(commandRaw: string, ctx: DivaContext = {}): NluPlan {
   }
 
   // ---- 15) Sales / revenue / business summary ---------------------------------
-  if (/(sales|revenue|sold|kamaai|bikri|earn|turnover)/.test(lower)) {
+  if (/(sales?|revenue|sold|sell|kamaai|kamai|bikri|bikree|earn|turnover)/.test(lower)) {
     const days = /week|hafta|hafte/.test(lower) ? 7 : /today|aaj/.test(lower) ? 1 : 30;
     return mk(base, [step("analyze_sales", { days }, "Analyse sales")],
       ack(lang, `Pulling sales for the last ${days} day${days > 1 ? "s" : ""}.`, `Pichle ${days} din ki sale nikaal rahi hun.`), 0.7, remember({}));

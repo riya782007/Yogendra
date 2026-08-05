@@ -61,12 +61,16 @@ export function Diva({ roleName = "Owner" }: { roleName?: string }) {
       mr.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
         setListening(false);
-        const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
+        const mime = mr.mimeType || "audio/webm";
+        const blob = new Blob(chunksRef.current, { type: mime });
         if (blob.size < 900) { toast("Too short — hold the mic and speak.", "error"); return; }
         setTranscribing(true);
         try {
+          // Whisper picks the decoder from the file extension, so it MUST match what the browser recorded
+          // (Chrome → webm/opus, Safari → mp4). A wrong extension makes Whisper reject the clip.
+          const ext = mime.includes("mp4") ? "mp4" : mime.includes("ogg") ? "ogg" : mime.includes("wav") ? "wav" : mime.includes("mpeg") ? "mp3" : "webm";
           const fd = new FormData();
-          fd.append("audio", blob, "voice.webm");
+          fd.append("audio", blob, `voice.${ext}`);
           const r = await divaTranscribe(fd);
           if (r.ok && r.text) { setInput(r.text); submit(r.text); }
           else toast(r.error ?? "Couldn't catch that — try again.", "error");
