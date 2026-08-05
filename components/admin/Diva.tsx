@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
-import { divaPlan, divaRun, getDivaSuggestions, type DivaSuggestion } from "@/app/actions/diva";
+import { divaPlan, divaRun, divaTranscribe, getDivaSuggestions, type DivaSuggestion } from "@/app/actions/diva";
 
 type Msg = { who: "owner" | "diva"; text: string };
 type Step = { tool: string; args: Record<string, any>; label: string; kind: string; needsConfirm: boolean; status: "pending" | "running" | "done" | "error" | "skipped"; message?: string; confirmed?: boolean };
@@ -17,11 +17,13 @@ export function Diva({ roleName = "Owner" }: { roleName?: string }) {
   const [busy, setBusy] = useState(false);
   const [planning, setPlanning] = useState(false);
   const [listening, setListening] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const mrRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
   const [msgs, setMsgs] = useState<Msg[]>([{ who: "diva", text: "Hi Yogendra, I'm DIVA. Talk to me in English, Hindi or Hinglish — e.g. “BD1010 me 20 add kar do”, “Blue kundan necklace ka stock kitna hai?”, “BD1004 ka wholesale price?”, “oxidised necklace ka catalog whatsapp pe bhejo”, “new product create karo”, “customer Ravi ko wholesale bana do”, “pending orders dikhao”. Speak or type — you can Stop me anytime." }]);
   const [steps, setSteps] = useState<Step[]>([]);
   const [awaiting, setAwaiting] = useState<number | null>(null);
   const [suggestions, setSuggestions] = useState<DivaSuggestion[] | null>(null);
-  const recRef = useRef<any>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const stepsRef = useRef<Step[]>([]);
   const runIdRef = useRef(0);
@@ -42,17 +44,40 @@ export function Diva({ roleName = "Owner" }: { roleName?: string }) {
   const loadSuggestions = () => { getDivaSuggestions().then(setSuggestions).catch(() => setSuggestions([])); };
   useEffect(() => { if (open && suggestions === null) loadSuggestions(); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const hasVoice = typeof window !== "undefined" && ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+  // VOICE via OpenAI Whisper (not the browser's speech engine, which mangles Hinglish). Record the clip,
+  // then transcribe server-side and feed the text straight into DIVA. Tap once to start, tap again to stop.
+  const hasVoice = typeof window !== "undefined" && typeof navigator !== "undefined"
+    && !!navigator.mediaDevices?.getUserMedia && typeof (window as any).MediaRecorder !== "undefined";
 
-  function toggleMic() {
-    if (!hasVoice) { toast("Voice isn't supported in this browser — try Chrome.", "error"); return; }
-    if (listening) { recRef.current?.stop(); return; }
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    const rec = new SR(); rec.lang = "en-IN"; rec.interimResults = false; rec.maxAlternatives = 1;
-    rec.onresult = (e: any) => { const t = e.results[0][0].transcript; setInput(t); submit(t); };
-    rec.onend = () => setListening(false);
-    rec.onerror = () => setListening(false);
-    recRef.current = rec; setListening(true); rec.start();
+  async function toggleMic() {
+    if (!hasVoice) { toast("Voice recording isn't supported here — try Chrome.", "error"); return; }
+    if (transcribing) return;
+    if (listening) { mrRef.current?.stop(); return; } // stop → onstop transcribes
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream);
+      chunksRef.current = [];
+      mr.ondataavailable = (e) => { if (e.data && e.data.size) chunksRef.current.push(e.data); };
+      mr.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setListening(false);
+        const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
+        if (blob.size < 900) { toast("Too short — hold the mic and speak.", "error"); return; }
+        setTranscribing(true);
+        try {
+          const fd = new FormData();
+          fd.append("audio", blob, "voice.webm");
+          const r = await divaTranscribe(fd);
+          if (r.ok && r.text) { setInput(r.text); submit(r.text); }
+          else toast(r.error ?? "Couldn't catch that — try again.", "error");
+        } catch { toast("Voice failed — try again.", "error"); }
+        finally { setTranscribing(false); }
+      };
+      mrRef.current = mr; setListening(true); mr.start();
+    } catch {
+      setListening(false);
+      toast("Allow the microphone so DIVA can hear you.", "error");
+    }
   }
 
   async function submit(text?: string) {
@@ -172,10 +197,11 @@ export function Diva({ roleName = "Owner" }: { roleName?: string }) {
               </div>
             )}
             <div className="flex items-center gap-2">
-              <button onClick={toggleMic} title="Speak" className={`w-10 h-10 shrink-0 rounded-full flex items-center justify-center transition-colors ${listening ? "bg-rose text-white animate-pulse" : "bg-cream text-ink hover:bg-emerald-mist"}`}>🎤</button>
+              <button onClick={toggleMic} title={listening ? "Tap to stop" : "Tap to speak"} disabled={transcribing}
+                className={`w-10 h-10 shrink-0 rounded-full flex items-center justify-center transition-colors ${listening ? "bg-rose text-white animate-pulse" : transcribing ? "bg-cream text-ink opacity-60" : "bg-cream text-ink hover:bg-emerald-mist"}`}>{transcribing ? "⏳" : listening ? "■" : "🎤"}</button>
               <input
                 value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()}
-                placeholder={busy ? "Type to redirect DIVA…" : listening ? "Listening…" : "Tell DIVA what to do…"}
+                placeholder={transcribing ? "Sun rahi hun…" : busy ? "Type to redirect DIVA…" : listening ? "🔴 Recording — tap ■ to send" : "Tell DIVA what to do…"}
                 className="flex-1 rounded-full border border-sand px-4 py-2.5 text-sm outline-none focus:border-emerald" />
               <button onClick={() => submit()} disabled={!input.trim()} className="btn-primary w-10 h-10 shrink-0 rounded-full flex items-center justify-center disabled:opacity-50">➤</button>
             </div>

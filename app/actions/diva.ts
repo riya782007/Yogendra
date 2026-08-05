@@ -7,7 +7,7 @@
  * Owner is logged in via the console passcode → DIVA gets ALL permissions. The granular
  * gate is wired so per-staff roles can scope DIVA later.
  */
-import { groqChat, openaiChat, geminiChat, groqConfigured, openaiConfigured, geminiTextConfigured } from "@/lib/ai/providers";
+import { groqChat, openaiChat, geminiChat, groqConfigured, openaiConfigured, geminiTextConfigured, openaiTranscribe } from "@/lib/ai/providers";
 import { supabaseServer } from "@/lib/supabase/server";
 import {
   getChannelReport, getInventoryClassified, getProductsPage, getDashboardData, getStorefront,
@@ -75,73 +75,83 @@ export async function divaPlan(command: string, contextJson?: string): Promise<D
   const cmd = (command ?? "").trim().slice(0, 600);
   if (!cmd) return { ok: false, reply: "Tell me what you'd like done — e.g. “show me this week's sales” or “add 20 pieces to BD1004”.", steps: [] };
 
-  let prevCtx: DivaContext = {};
+  let prevCtx: any = {};
   if (contextJson) { try { prevCtx = JSON.parse(contextJson); } catch { /* ignore bad context */ } }
+  const history: { role: string; text: string }[] = Array.isArray(prevCtx.history) ? prevCtx.history.slice(-8) : [];
 
-  // 1) Deterministic multilingual engine.
+  // Deterministic engine — the instant, offline FALLBACK (also gives us the language + slot-fill memory
+  // when no AI key is set or the model errors).
   const nlu = interpret(cmd, prevCtx);
-  const nluPlan: DivaPlan = {
-    ok: true, reply: nlu.reply, steps: toDivaSteps(nlu.steps),
-    ask: nlu.ask, context: JSON.stringify(nlu.context),
-  };
+  const nluPlan: DivaPlan = { ok: true, reply: nlu.reply, steps: toDivaSteps(nlu.steps), ask: nlu.ask, context: JSON.stringify({ ...nlu.context, history }) };
 
-  // 2) Trust the fast deterministic engine ONLY when it's safe:
-  //    - it asked a clarifying question, or
-  //    - no LLM is configured (best effort), or
-  //    - it produced steps that are read/navigate only (harmless), or
-  //    - it produced steps and is highly confident.
-  //    A low/medium-confidence MUTATION is escalated to the LLM so a mis-parse like
-  //    "billvan WH17 gold" never silently runs the wrong change (Yogendra's complaint).
-  const llmAvailable = geminiTextConfigured() || groqConfigured() || openaiConfigured();
-  if (nlu.ask || !llmAvailable) return nluPlan;
-  const mutating = nluPlan.steps.some((s) => s.kind === "mutate");
-  // Reads need a minimum confidence too — a low-confidence guess (e.g. a vague find_product
-  // fallback) is escalated to the LLM rather than silently shown as a confident answer.
-  const minConf = mutating ? 0.72 : 0.55;
-  if (nluPlan.steps.length > 0 && nlu.confidence >= minConf) return nluPlan;
+  // OpenAI is the PRIMARY brain (owner's key) — it understands natural Hinglish far better than regex and
+  // sees the whole conversation, so multi-turn clarification ("which colour?" → "green") just works. Only
+  // if no model is configured — or the call errors — do we fall back to the deterministic engine.
+  if (!(openaiConfigured() || geminiTextConfigured() || groqConfigured())) return nluPlan;
 
-  // 3) Low confidence + LLM available → ask the model, keep NLU context as memory.
+  const planned = await llmPlan(cmd, history);
+  if (!planned) return nluPlan; // model unavailable/errored → deterministic fallback
+
+  const newHistory = [...history, { role: "owner", text: cmd }, { role: "diva", text: planned.reply }].slice(-8);
+  const context = JSON.stringify({ ...nlu.context, history: newHistory, lastSku: nlu.context.lastSku });
+  // No steps → DIVA is either asking for a missing detail or nothing matched; treat the reply as a
+  // clarifying prompt so the widget keeps listening for the answer (which flows back with this history).
+  const ask = planned.steps.length === 0 ? { slot: "freeform", prompt: planned.reply } : undefined;
+  return { ok: true, reply: planned.reply, steps: planned.steps, ask, context };
+}
+
+/** OpenAI-first planner (falls back to Gemini/Groq). Returns steps, or a clarifying reply with 0 steps. */
+async function llmPlan(cmd: string, history: { role: string; text: string }[]): Promise<{ reply: string; steps: DivaStep[] } | null> {
   const catalog = DIVA_TOOLS.map((t) => `- ${t.name}(${t.params.map((p) => p.name + (p.required ? "*" : "")).join(", ")}) [${t.kind}] — ${t.desc}`).join("\n");
   const system =
     `You are DIVA, the operations agent inside the Blythe Diva artificial-jewellery admin console (Yogendra Industries, Sadar Bazar, Delhi). ` +
-    `The console manages a catalogue of products (each has a SKU like BD1000, a price, stock, status published/draft, AI page, photos), ` +
-    `online + wholesale + counter(POS) sales, estimates, purchases, suppliers, inventory health, staff roles, and analytics. ` +
-    `Turn the owner's command into an ordered plan using ONLY these tools:\n${catalog}\n\n` +
-    `Rules: break the request into the minimum number of concrete steps; each step is one tool with its args. ` +
-    `Use open_page to navigate when they say go to / open / show a section. Use read tools to answer questions. ` +
-    `Use mutate tools only when they clearly ask to change something. SKUs look like BD1234 — pass them uppercased. ` +
-    `"hide"/"take off the store"=hide_product; "show"/"put back"=show_product; "delete/remove a product"=delete_product. ` +
-    `Match a product by SKU (BD####) OR by any detail hint (name, colour, category, keywords) — when no SKU is given, pass the hint as "query" to the *_by_name / *_of / set_stock / product_photos / last_purchase tools. ` +
-    `Tool hints: "stock N kar do"/"set stock to N"=set_stock (exact total); "N add/kam"=add_stock/remove_stock; variants=add_variant/list_variants; product photos=product_photos (or generate_photo to create one); recent bills/invoices=recent_sales; convert a cash memo to GST=convert_invoice; last purchase cost=last_purchase; categories=list_categories; create page/product=create_product. ` +
-    `CLARITY: if you are unsure which product they mean, or multiple could match, or a required value (quantity, price, name, category) is missing, DO NOT guess — return EMPTY steps and ask ONE short clarifying question in "reply". Once it is clear, act. ` +
-    `Examples:\n` +
-    `"how's BD1004 doing?" -> [{"tool":"product_analytics","args":{"sku":"BD1004"},"label":"Analyse BD1004"}]\n` +
-    `"hide the polki choker BD1003 and tell me sales this week" -> [{"tool":"hide_product","args":{"sku":"BD1003"}},{"tool":"analyze_sales","args":{"days":7}}]\n` +
-    `"add 30 to BD1010 then open inventory" -> [{"tool":"add_stock","args":{"sku":"BD1010","qty":30}},{"tool":"open_page","args":{"page":"inventory"}}]\n\n` +
-    `Respond ONLY as compact JSON: {"reply": "<one friendly sentence>", "steps": [{"tool":"<name>","args":{...},"label":"<short label>"}]}. ` +
-    `If nothing matches, return empty steps and explain in reply.`;
+    `The owner speaks Hinglish (Hindi in Roman/Devanagari mixed with English) — understand it naturally and REPLY in the SAME language he used, warm and short. ` +
+    `The console manages products (each has a SKU like BD1004 / WT1035, price, stock, status published/draft, photos), online + wholesale + counter(POS) sales, estimates, purchases, suppliers, inventory, staff roles, and analytics. ` +
+    `Turn the owner's request into an ordered plan using ONLY these tools:\n${catalog}\n\n` +
+    `Rules: break it into the fewest concrete steps; each step is exactly one tool with its args. ` +
+    `open_page navigates when he says go to / open / kholo / dikhao a section. Read tools answer questions. Mutate tools change things — only when he clearly asks. ` +
+    `SKUs are uppercased (BD1004, WT1035). Match a product by SKU OR by a detail hint (name/colour/category) passed as "query" to the *_by_name / *_of / set_stock / product_photos tools. ` +
+    `Hints: "stock N kar do"=set_stock (exact total); "N add/kam karo"=add_stock/remove_stock; colours=add_variant/list_variants; recent bills=recent_sales; cash memo→GST=convert_invoice; last cost=last_purchase; new product=create_product. ` +
+    `CLARIFY, DON'T GUESS: if which product is unclear, several could match, or a required value (quantity, price, name, category, colour) is missing, return EMPTY steps and ask ONE short question in "reply" (in his language). As soon as the conversation gives you enough, act. ` +
+    `Respond ONLY as compact JSON: {"reply":"<one short friendly sentence in the owner's language>","steps":[{"tool":"<name>","args":{...},"label":"<short label>"}]}.`;
+  const convo = history.length ? `Conversation so far:\n${history.map((h) => `${h.role}: ${h.text}`).join("\n")}\n\n` : "";
+  const user = `${convo}Owner now says: ${cmd}`;
 
-  let parsed: any = null;
+  let raw: string;
   try {
-    let raw: string;
-    // Prefer Gemini (you already use it for images), then Groq, then OpenAI.
-    if (geminiTextConfigured()) raw = await geminiChat({ system, user: cmd, json: true });
-    else if (groqConfigured()) raw = await groqChat({ system, user: cmd, json: true });
-    else if (openaiConfigured()) raw = await openaiChat({ system, user: cmd, json: true });
-    else return nluPlan;
-    parsed = JSON.parse(raw);
-  } catch {
-    return nluPlan;
-  }
+    if (openaiConfigured()) raw = await openaiChat({ system, user, json: true, temperature: 0.2 });
+    else if (geminiTextConfigured()) raw = await geminiChat({ system, user, json: true });
+    else if (groqConfigured()) raw = await groqChat({ system, user, json: true });
+    else return null;
+  } catch { return null; }
 
+  let parsed: any; try { parsed = JSON.parse(raw); } catch { return null; }
   const steps: DivaStep[] = [];
   for (const s of Array.isArray(parsed?.steps) ? parsed.steps : []) {
     const tool = toolByName(String(s?.tool));
     if (!tool) continue;
     steps.push({ tool: tool.name, args: s?.args ?? {}, label: String(s?.label ?? tool.desc).slice(0, 80), kind: tool.kind, needsConfirm: !!tool.confirm });
   }
-  if (steps.length === 0) return { ...nluPlan, reply: String(parsed?.reply ?? nluPlan.reply).slice(0, 200) };
-  return { ok: true, reply: String(parsed?.reply ?? "On it.").slice(0, 200), steps, context: nluPlan.context };
+  return { reply: String(parsed?.reply ?? "On it.").slice(0, 240), steps };
+}
+
+/**
+ * DIVA's EARS — transcribe a voice clip (recorded in the console) to text via OpenAI Whisper, then the
+ * caller feeds it straight into divaPlan. Far more accurate on Hinglish than browser speech recognition.
+ */
+export async function divaTranscribe(form: FormData): Promise<{ ok: boolean; text?: string; error?: string }> {
+  const file = form.get("audio");
+  if (!(file instanceof File)) return { ok: false, error: "No audio received." };
+  if (!openaiConfigured()) return { ok: false, error: "Voice needs the OpenAI key set in Vercel (OPENAI_API_KEY)." };
+  try {
+    const buf = Buffer.from(await file.arrayBuffer());
+    if (buf.length < 800) return { ok: false, error: "That clip was too short — hold the mic and speak." };
+    const text = await openaiTranscribe(buf, file.type || "audio/webm", file.name || "voice.webm");
+    if (!text) return { ok: false, error: "Couldn't catch that — please try again." };
+    return { ok: true, text };
+  } catch (e) {
+    return { ok: false, error: `Voice transcription failed: ${e instanceof Error ? e.message : "error"}` };
+  }
 }
 
 // ---------------------------------------------------------------- SUGGESTIONS

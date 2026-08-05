@@ -88,6 +88,37 @@ export async function openaiChat(a: ChatArgs): Promise<string> {
   return chat("https://api.openai.com/v1/chat/completions", key, model, a);
 }
 
+/**
+ * VOICE → TEXT (OpenAI Whisper). DIVA's "ears": the owner holds the mic and speaks in Hinglish; this
+ * transcribes it far more accurately than browser speech recognition (which mangles Hindi). Uses the same
+ * OpenAI key already set in Vercel. Model overridable via OPENAI_TRANSCRIBE_MODEL (whisper-1 by default;
+ * gpt-4o-transcribe / gpt-4o-mini-transcribe also work). Returns the transcript text, or throws.
+ */
+export async function openaiTranscribe(audio: Buffer, mime: string, filename = "voice.webm"): Promise<string> {
+  if (!openaiEnabled()) throw new Error("OpenAI disabled");
+  const key = openaiKey(); if (!key) throw new Error("no openai key");
+  const model = env("OPENAI_TRANSCRIBE_MODEL") ?? "whisper-1";
+  const form = new FormData();
+  form.append("file", new Blob([audio], { type: mime || "audio/webm" }), filename);
+  form.append("model", model);
+  // Bias toward Hindi/Hinglish; whisper handles code-switching well when the language is hinted.
+  form.append("language", env("OPENAI_TRANSCRIBE_LANG") ?? "hi");
+  form.append("prompt", "Blythe Diva jewellery admin. Hinglish command. SKUs like BD1004, WT1035. Terms: stock, add, kam, price, wholesale, retail, estimate, hold, invoice.");
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}` },
+      body: form,
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const j: any = await res.json();
+    return String(j?.text ?? "").trim();
+  } finally { clearTimeout(t); }
+}
+
 export function geminiTextConfigured() { return !!geminiTextKey(); }
 
 /** Gemini text reasoning (gemini-2.5-flash) — fast, capable, uses the existing GEMINI_API_KEY. */
