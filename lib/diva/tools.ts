@@ -10,36 +10,64 @@ export type DivaParam = { name: string; type: "string" | "number"; required?: bo
 export type DivaTool = { name: string; kind: DivaKind; permission?: string; confirm?: boolean; desc: string; params: DivaParam[] };
 
 /** Friendly page names → admin routes (used by open_page). */
+// EVERY admin page DIVA can open, with English + Hinglish aliases. The open_page executor also does a
+// partial (substring) match, so near-misses still resolve — but exact keys are fastest and safest.
 export const PAGE_MAP: Record<string, string> = {
-  dashboard: "/admin/dashboard",
-  analytics: "/admin/analytics",
-  catalogue: "/admin/catalogue",
-  products: "/admin/catalogue",
-  "add inventory": "/admin/upload",
-  upload: "/admin/upload",
-  "product photos": "/admin/media",
-  media: "/admin/media",
-  categories: "/admin/categories",
-  inventory: "/admin/inventory",
-  barcodes: "/admin/barcodes",
-  "ai reorder": "/admin/reorder",
-  reorder: "/admin/reorder",
-  billing: "/admin/billing",
-  pos: "/admin/billing",
-  sales: "/admin/sales",
-  "sales records": "/admin/sales",
-  estimates: "/admin/estimates",
-  returns: "/admin/returns",
-  purchases: "/admin/purchases",
-  customers: "/admin/customers",
-  suppliers: "/admin/suppliers",
-  vendors: "/admin/suppliers",
-  reviews: "/admin/reviews",
-  reels: "/admin/reels",
-  "abandoned carts": "/admin/abandoned",
-  approvals: "/admin/approvals",
-  notifications: "/admin/inbox",
-  roles: "/admin/roles",
+  // Overview
+  dashboard: "/admin/dashboard", home: "/admin/dashboard", overview: "/admin/dashboard",
+  analytics: "/admin/analytics", reports: "/admin/analytics", report: "/admin/analytics",
+
+  // Catalogue & inventory
+  catalogue: "/admin/catalogue", catalog: "/admin/catalogue", products: "/admin/catalogue",
+  inventory: "/admin/inventory", stock: "/admin/inventory",
+  "stock movements": "/admin/stock-movements", "stock movement": "/admin/stock-movements",
+  "stock history": "/admin/stock-movements", "stock ledger": "/admin/stock-movements", movements: "/admin/stock-movements",
+  "add inventory": "/admin/upload", upload: "/admin/upload", "bulk upload": "/admin/upload", import: "/admin/upload",
+  media: "/admin/media", "product photos": "/admin/media", photos: "/admin/media", images: "/admin/media", gallery: "/admin/media",
+  categories: "/admin/categories", category: "/admin/categories", subcategories: "/admin/categories",
+  pricing: "/admin/pricing", "price settings": "/admin/pricing", "pricing formula": "/admin/pricing", "price formula": "/admin/pricing",
+  colours: "/admin/colours", colors: "/admin/colours", "colour master": "/admin/colours",
+  barcodes: "/admin/barcodes", barcode: "/admin/barcodes", labels: "/admin/barcodes",
+  reorder: "/admin/reorder", "ai reorder": "/admin/reorder", restock: "/admin/reorder",
+
+  // Selling & bills
+  billing: "/admin/billing", pos: "/admin/billing", counter: "/admin/billing", "new bill": "/admin/billing",
+  sales: "/admin/sales", "sales records": "/admin/sales", bikri: "/admin/sales", "sale records": "/admin/sales",
+  orders: "/admin/orders", "all orders": "/admin/orders",
+  estimates: "/admin/estimates", estimate: "/admin/estimates", quotation: "/admin/estimates", quotations: "/admin/estimates",
+  quotes: "/admin/quotes", "design quotes": "/admin/quotes",
+  cod: "/admin/cod", "cod orders": "/admin/cod", "cash on delivery": "/admin/cod", "cod hold": "/admin/cod",
+  backorders: "/admin/backorders", backorder: "/admin/backorders",
+  returns: "/admin/returns", "return": "/admin/returns", wapsi: "/admin/returns",
+
+  // Money
+  "wholesale payments": "/admin/wholesale-payments", "wholesale payment": "/admin/wholesale-payments",
+  "dealer payments": "/admin/wholesale-payments", "payment verify": "/admin/wholesale-payments", "thok payment": "/admin/wholesale-payments",
+  creditors: "/admin/creditors", udhaar: "/admin/creditors", credit: "/admin/creditors", "who owes": "/admin/creditors",
+  cashbook: "/admin/cashbook", "cash book": "/admin/cashbook", rokad: "/admin/cashbook", "bank and cash": "/admin/cashbook",
+  vouchers: "/admin/vouchers", voucher: "/admin/vouchers", coupons: "/admin/vouchers", "discount codes": "/admin/vouchers",
+  promotions: "/admin/promotions", promotion: "/admin/promotions", offers: "/admin/promotions", campaigns: "/admin/promotions", promo: "/admin/promotions",
+
+  // Purchases & suppliers
+  purchases: "/admin/purchases", purchase: "/admin/purchases", kharid: "/admin/purchases", buying: "/admin/purchases",
+  suppliers: "/admin/suppliers", supplier: "/admin/suppliers", vendors: "/admin/suppliers",
+
+  // People & storefront
+  customers: "/admin/customers", customer: "/admin/customers", grahak: "/admin/customers", parties: "/admin/customers", dealers: "/admin/customers",
+  reviews: "/admin/reviews", ratings: "/admin/reviews",
+  reels: "/admin/reels", videos: "/admin/reels",
+  "abandoned carts": "/admin/abandoned", abandoned: "/admin/abandoned", "left carts": "/admin/abandoned",
+  visitors: "/admin/visitors", "trade visitors": "/admin/visitors", leads: "/admin/visitors",
+  enquiries: "/admin/enquiries", enquiry: "/admin/enquiries", "design enquiries": "/admin/enquiries",
+  submissions: "/admin/submissions", "product submissions": "/admin/submissions", "sell with us": "/admin/submissions",
+  approvals: "/admin/approvals", approval: "/admin/approvals",
+  feedback: "/admin/feedback", complaints: "/admin/feedback",
+
+  // Admin / staff
+  notifications: "/admin/inbox", inbox: "/admin/inbox", alerts: "/admin/inbox",
+  notify: "/admin/notify", broadcast: "/admin/notify", "send notification": "/admin/notify",
+  employees: "/admin/employees", staff: "/admin/employees", workers: "/admin/employees",
+  roles: "/admin/roles", role: "/admin/roles", permissions: "/admin/roles",
 };
 
 export const DIVA_TOOLS: DivaTool[] = [

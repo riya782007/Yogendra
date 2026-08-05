@@ -597,24 +597,40 @@ function extractInvoiceNo(text: string): string | undefined {
   return m ? m[1].replace(/^#/, "") : undefined;
 }
 
+// Fallback navigation vocabulary (the LLM handles nav primarily; this is the offline safety net). Values
+// are keys that PAGE_MAP resolves to a route. Keep in step with PAGE_MAP in lib/diva/tools.ts.
 const PAGE_ALIASES: Record<string, string> = {
-  dashboard: "dashboard", analytics: "analytics", catalogue: "catalogue", catalog: "catalogue",
-  products: "catalogue", inventory: "inventory", stock: "inventory", upload: "upload",
-  media: "media", "product photos": "media", photos: "media", categories: "categories",
-  barcodes: "barcodes", barcode: "barcodes", reorder: "reorder", billing: "billing", pos: "billing",
-  sales: "sales", estimates: "estimates", returns: "returns", purchases: "purchases",
-  customers: "customers", suppliers: "suppliers", vendors: "suppliers", reviews: "reviews",
-  reels: "reels", abandoned: "abandoned carts", approvals: "approvals", notifications: "notifications",
-  inbox: "notifications", roles: "roles",
+  dashboard: "dashboard", home: "dashboard", analytics: "analytics", reports: "analytics",
+  catalogue: "catalogue", catalog: "catalogue", products: "catalogue",
+  inventory: "inventory", stock: "inventory",
+  "stock movement": "stock movements", "stock movements": "stock movements", "stock history": "stock movements", "stock ledger": "stock movements",
+  upload: "upload", "add inventory": "upload", import: "upload",
+  media: "media", "product photos": "media", photos: "media", images: "media",
+  categories: "categories", pricing: "pricing", "pricing formula": "pricing",
+  colours: "colours", colors: "colours",
+  barcodes: "barcodes", barcode: "barcodes", reorder: "reorder",
+  billing: "billing", pos: "billing", counter: "billing",
+  sales: "sales", orders: "orders", estimates: "estimates", quotes: "quotes",
+  cod: "cod", "cod orders": "cod", "cash on delivery": "cod",
+  backorders: "backorders", backorder: "backorders",
+  returns: "returns",
+  "wholesale payments": "wholesale payments", "wholesale payment": "wholesale payments", "dealer payments": "wholesale payments",
+  creditors: "creditors", udhaar: "creditors", cashbook: "cashbook", "cash book": "cashbook",
+  vouchers: "vouchers", coupons: "vouchers", promotions: "promotions", offers: "promotions", promo: "promotions",
+  purchases: "purchases", suppliers: "suppliers", vendors: "suppliers",
+  customers: "customers", grahak: "customers", dealers: "customers",
+  reviews: "reviews", reels: "reels", abandoned: "abandoned carts", "abandoned carts": "abandoned carts",
+  visitors: "visitors", leads: "visitors", enquiries: "enquiries", submissions: "submissions",
+  approvals: "approvals", feedback: "feedback",
+  notifications: "notifications", inbox: "notifications", notify: "notify", broadcast: "notify",
+  employees: "employees", staff: "employees", roles: "roles",
 };
 
 function matchPage(lower: string): string | undefined {
-  const wantsNav = hasAny(lower, ["open", "go to", "kholo", "show me the", "take me", "le chalo", "jao", "navigate"]);
-  for (const alias of Object.keys(PAGE_ALIASES)) {
-    if (lower.includes(alias)) {
-      // require a navigation verb for ambiguous single words like "sales"/"stock" handled elsewhere
-      if (wantsNav || alias.includes(" ")) return PAGE_ALIASES[alias];
-    }
+  const wantsNav = hasAny(lower, ["open", "go to", "kholo", "khol", "show", "dikhao", "dikha", "le chalo", "jao", "chalo", "navigate", "take me"]);
+  // Check the LONGEST alias first, so "cod orders" beats "orders" and "stock movements" beats "stock".
+  for (const alias of Object.keys(PAGE_ALIASES).sort((a, b) => b.length - a.length)) {
+    if (lower.includes(alias) && (wantsNav || alias.includes(" "))) return PAGE_ALIASES[alias];
   }
   return undefined;
 }
