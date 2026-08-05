@@ -15,6 +15,7 @@ import {
 } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { liveOffer } from "@/lib/offers";
+import { BUSINESS } from "@/lib/business";
 import { DIVA_TOOLS, PAGE_MAP, toolByName } from "@/lib/diva/tools";
 import { interpret, type DivaContext } from "@/lib/diva/nlu";
 import { requirePerm } from "@/lib/auth";
@@ -126,6 +127,7 @@ async function llmPlan(cmd: string, history: { role: string; text: string }[]): 
     `Sections you can open (pass the name to open_page): dashboard, analytics, catalogue, inventory, stock movements, upload (add inventory), media (photos), categories, pricing, colours, barcodes, reorder, billing (POS/counter), sales, orders, estimates, quotes, COD orders, backorders, returns, wholesale payments, creditors (udhaar/who owes), cashbook, vouchers, promotions, purchases, suppliers, customers, reviews, reels, abandoned carts, visitors, enquiries, submissions, approvals, feedback, notifications (inbox), notify (broadcast), employees, roles. ` +
     `SKUs are uppercased (BD1004, WT1035). Match a product by SKU OR by a detail hint (name/colour/category) passed as "query" to the *_by_name / *_of / set_stock / product_photos tools. ` +
     `Hints: "stock N kar do"=set_stock (exact total); "N add/kam karo"=add_stock/remove_stock; colours=add_variant/list_variants; recent bills=recent_sales; cash memo→GST=convert_invoice; last cost=last_purchase; new product=create_product. ` +
+    `WRITING: to draft any text — an image/photo prompt, a product title or description, a social caption, a personalised WhatsApp message or reply to a customer (pass their name/phone as "customer" so it uses their history), or business guidance/ideas — use compose(kind, about, sku?, customer?, tone?). e.g. "Preethi ko festive message likho"→compose(kind:"message", customer:"Preethi", about:"festive offer"); "BD1004 ki description likho"→compose(kind:"description", sku:"BD1004"). ` +
     `CLARIFY, DON'T GUESS: if which product is unclear, several could match, or a required value (quantity, price, name, category, colour) is missing, return EMPTY steps and ask ONE short question in "reply" (in his language). As soon as the conversation gives you enough, act. ` +
     `Respond ONLY as compact JSON: {"reply":"<one short friendly sentence in the owner's language>","steps":[{"tool":"<name>","args":{...},"label":"<short label>"}]}.`;
   const convo = history.length ? `Conversation so far:\n${history.map((h) => `${h.role}: ${h.text}`).join("\n")}\n\n` : "";
@@ -715,6 +717,81 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         if (error) return { ok: false, message: error.message };
         revalidatePath("/admin/sales"); revalidatePath(`/admin/invoice/${(o as any).id}`);
         return { ok: true, message: `Converted cash memo ${invoice} into a GST invoice.${warn}` };
+      }
+
+      case "compose": {
+        // DIVA as the owner's copywriter/advisor — grounded on live brand + product + customer data.
+        const kind = String(args.kind ?? "message").toLowerCase().trim();
+        const about = String(args.about ?? args.topic ?? "").trim();
+        const tone = String(args.tone ?? "").trim();
+        const sb = supabaseServer();
+        const ctxLines: string[] = [];
+
+        // Brand facts (so nothing is invented).
+        ctxLines.push(`Brand: ${BUSINESS.brand} (by ${BUSINESS.legalName}) — artificial/imitation jewellery, Sadar Bazar Delhi. Retail store blythediva.com, wholesale trade.blythediva.com, WhatsApp ${BUSINESS.phone}. Retail: Cash on Delivery, ₹80 flat shipping, easy 7-day returns. Wholesale: factory-direct rates, ₹3,000 minimum order.`);
+
+        // Product context (title/description/image prompt/caption).
+        const sku = String(args.sku ?? "").trim().toUpperCase();
+        let prod: any = sku ? await getProductBySku(sku) : null;
+        if (prod) {
+          const formula = await getPricingFormula();
+          const o = liveOffer(prod.base_wholesale, formula);
+          const gc = (prod.generated_content as any) ?? {};
+          const colours = ((prod.variants as any[]) ?? []).map((v) => v.color).filter(Boolean).join(", ");
+          ctxLines.push(`Product: ${prod.name} (${prod.sku}), category ${prod.category?.name ?? "—"}. Retail ${formatPaise(o.price)}, MRP ${formatPaise(o.mrp)}, wholesale ${formatPaise(prod.base_wholesale)}. Stock ${prod.qty}.${colours ? ` Colours: ${colours}.` : ""}${(gc.tags?.length) ? ` Tags: ${gc.tags.slice(0, 8).join(", ")}.` : ""}${gc.description ? ` Current description: ${String(gc.description).slice(0, 280)}` : ""}`);
+        }
+
+        // Customer context (personalised message/reply) — resolve + pull recent orders.
+        let cust: any = null;
+        const custRef = String(args.customer ?? "").trim();
+        if (custRef) {
+          const rows = await getCustomersDb({ q: custRef });
+          cust = rows[0] ?? null;
+          if (cust) {
+            const last10 = String(cust.phone ?? "").replace(/\D/g, "").slice(-10);
+            const orFilter = [`customer_name.ilike.%${custRef}%`, last10 ? `customer_phone.ilike.%${last10}%` : ""].filter(Boolean).join(",");
+            const { data: ords } = await sb.from("orders").select("invoice_no,total,created_at,channel").or(orFilter).order("created_at", { ascending: false }).limit(5);
+            const list = ((ords as any[]) ?? []);
+            const spent = list.reduce((s, o) => s + (o.total ?? 0), 0);
+            ctxLines.push(`Customer: ${cust.name}${cust.type ? ` (${cust.type})` : ""}${cust.city ? `, ${cust.city}` : ""}${cust.phone ? `, ${cust.phone}` : ""}. ${list.length ? `Recent orders: ${list.map((o) => `${o.invoice_no ?? "order"} ${formatPaise(o.total ?? 0)} on ${new Date(o.created_at).toLocaleDateString("en-IN")}`).join("; ")}. Lifetime ~${formatPaise(spent)}.` : "No past orders on record — a fresh customer."}`);
+          } else {
+            ctxLines.push(`Customer "${custRef}" not found in records — write a warm, general message (no invented history).`);
+          }
+        }
+
+        const kindInstr: Record<string, string> = {
+          image_prompt: "Write ONE detailed text-to-image prompt for a premium studio photo of this jewellery on an Indian model — describe the piece, material, colour, model styling, lighting and background. Output ONLY the prompt, no preamble.",
+          title: "Write ONE catchy e-commerce product TITLE (~60 characters max). Output only the title, no quotes.",
+          description: "Write a 2–3 sentence product DESCRIPTION — specific, appealing, SEO-friendly, mentions material and occasion.",
+          caption: "Write a short, catchy social-media caption with 4–6 relevant hashtags.",
+          message: "Write a short, warm WhatsApp MESSAGE to this customer in the owner's voice (Hinglish is welcome). Greet by their name, reference their history when it exists, be specific and friendly, and end with one clear next step + the shop link or WhatsApp. No placeholders like [name] — use the real name.",
+          reply: "Write a polite, helpful REPLY to the customer in the owner's warm voice (Hinglish welcome).",
+          guide: "Give clear, practical GUIDANCE grounded in the business context — a few short, concrete sentences the owner can act on.",
+          idea: "Suggest 3 short, concrete IDEAS grounded in the business context.",
+        };
+        const instr = kindInstr[kind] ?? kindInstr.message;
+        const system = `You are DIVA, the in-house AI for ${BUSINESS.brand} — you know the business, catalogue and customers. Write on the owner's behalf in his warm voice, matching his language (English or Hinglish). Be concrete and ready-to-use. Never invent facts that aren't in the context. No markdown, no placeholders. ${instr}`;
+        const user = `${ctxLines.join("\n")}\n\nOwner's request: ${about || kind}${tone ? `\nTone: ${tone}` : ""}`;
+
+        let out = "";
+        try {
+          if (openaiConfigured()) out = await openaiChat({ system, user, temperature: 0.6 });
+          else if (geminiTextConfigured()) out = await geminiChat({ system, user });
+          else if (groqConfigured()) out = await groqChat({ system, user });
+          else return { ok: false, message: "Writing needs the OpenAI key set in Vercel (OPENAI_API_KEY)." };
+        } catch (e) {
+          return { ok: false, message: `I couldn't write that: ${e instanceof Error ? e.message : "error"}` };
+        }
+        out = out.trim();
+        if (!out) return { ok: false, message: "I couldn't draft that — give me a little more to go on." };
+
+        // For a client message/reply, offer a one-tap WhatsApp send link with the text pre-filled.
+        let extra = "";
+        if ((kind === "message" || kind === "reply") && cust?.phone) {
+          const d = String(cust.phone).replace(/\D/g, "");
+          if (d.length >= 10) extra = `\n\n📲 Send on WhatsApp: https://wa.me/${d.length === 10 ? "91" + d : d}?text=${encodeURIComponent(out)}`;
+        }
+        return { ok: true, data: { text: out }, message: out + extra };
       }
 
       default:

@@ -125,6 +125,13 @@ export const DIVA_TOOLS: DivaTool[] = [
   { name: "product_photos", kind: "read", permission: "catalog.view", desc: "Show how many photos a product has and their links.", params: [{ name: "sku", type: "string", desc: "product SKU" }, { name: "query", type: "string", desc: "name if no SKU" }] },
   { name: "recent_sales", kind: "read", permission: "sales.view", desc: "List the most recent bills/invoices (amount, customer, type, date).", params: [{ name: "limit", type: "number", desc: "how many (default 8)" }] },
   { name: "last_purchase", kind: "read", permission: "purchases.view", desc: "Show the most recent purchase cost & date recorded for a product.", params: [{ name: "sku", type: "string", desc: "product SKU" }, { name: "query", type: "string", desc: "name if no SKU" }] },
+  { name: "compose", kind: "read", desc: "WRITE text for the owner: an image/photo prompt, a product title or description, a social caption, a personalised WhatsApp message or reply to a customer (using that customer's own history), or business guidance/ideas. Automatically pulls the relevant product/customer/brand context.", params: [
+    { name: "kind", type: "string", required: true, desc: "image_prompt | title | description | caption | message | reply | guide | idea" },
+    { name: "about", type: "string", desc: "what to write / the topic or instruction" },
+    { name: "sku", type: "string", desc: "product SKU to ground the writing on" },
+    { name: "customer", type: "string", desc: "customer name or phone to personalise a message/reply" },
+    { name: "tone", type: "string", desc: "optional tone e.g. festive, formal, friendly" },
+  ] },
 ];
 
 export function toolByName(name: string): DivaTool | undefined {
