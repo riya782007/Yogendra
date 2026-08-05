@@ -38,13 +38,24 @@ export type DivaPlan = {
 
 const slugify = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
+/**
+ * CONFIRMATION POLICY (owner: "make it ask for confidential work such as deletion").
+ * DIVA now just DOES routine work — stock, prices, create/edit, publish, bills — no "Run it" tap needed.
+ * It pauses for a Yes ONLY on destructive / irreversible / confidential actions: anything that DELETES.
+ * Add tool names here to require confirmation for other sensitive actions later.
+ */
+const CONFIRM_REQUIRED = new Set<string>(["delete_product", "delete_role"]);
+function needsConfirmTool(name: string): boolean {
+  return CONFIRM_REQUIRED.has(name) || name.startsWith("delete_");
+}
+
 /** Wrap NLU steps into executable DivaSteps (attaching tool kind + confirm flag). */
 function toDivaSteps(steps: { tool: string; args: Record<string, any>; label: string }[]): DivaStep[] {
   const out: DivaStep[] = [];
   for (const s of steps) {
     const tool = toolByName(s.tool);
     if (!tool) continue;
-    out.push({ tool: tool.name, args: s.args ?? {}, label: s.label.slice(0, 80), kind: tool.kind, needsConfirm: !!tool.confirm });
+    out.push({ tool: tool.name, args: s.args ?? {}, label: s.label.slice(0, 80), kind: tool.kind, needsConfirm: needsConfirmTool(tool.name) });
   }
   return out;
 }
@@ -130,7 +141,7 @@ async function llmPlan(cmd: string, history: { role: string; text: string }[]): 
   for (const s of Array.isArray(parsed?.steps) ? parsed.steps : []) {
     const tool = toolByName(String(s?.tool));
     if (!tool) continue;
-    steps.push({ tool: tool.name, args: s?.args ?? {}, label: String(s?.label ?? tool.desc).slice(0, 80), kind: tool.kind, needsConfirm: !!tool.confirm });
+    steps.push({ tool: tool.name, args: s?.args ?? {}, label: String(s?.label ?? tool.desc).slice(0, 80), kind: tool.kind, needsConfirm: needsConfirmTool(tool.name) });
   }
   return { reply: String(parsed?.reply ?? "On it.").slice(0, 240), steps };
 }
