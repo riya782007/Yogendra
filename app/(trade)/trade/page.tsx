@@ -78,9 +78,12 @@ const loadTradeCatalog = unstable_cache(
 
     // Variants (colours): a wholesale buyer orders specific colours, so configurable designs are
     // expanded into one orderable row PER colour. Page through ALL variants (12k+ rows), then group.
+    // PERF: fetch ONLY in-stock colours (the catalogue drops out-of-stock ones anyway). This nearly
+    // halves the rows read (~12.8k → ~7.3k), cutting both rebuild time and payload size so the assembled
+    // catalogue fits Vercel's data-cache limit and can actually be cached instead of rebuilt every hit.
     const varsBy = new Map<string, any[]>();
     for (let from = 0; ; from += 1000) {
-      const { data: vRows } = await sb.from("variants").select("product_id,sku,color,qty,image_paths").order("product_id", { ascending: true }).range(from, from + 999);
+      const { data: vRows } = await sb.from("variants").select("product_id,sku,color,qty,image_paths").gt("qty", 0).order("product_id", { ascending: true }).range(from, from + 999);
       const rows = (vRows as any[]) ?? [];
       for (const v of rows) { const a = varsBy.get(v.product_id) ?? []; a.push(v); varsBy.set(v.product_id, a); }
       if (rows.length < 1000) break;
@@ -111,7 +114,8 @@ const loadTradeCatalog = unstable_cache(
         const vs = allVs.filter((v) => (v.qty ?? 0) > 0);
         return vs.map((v) => {
           const vImgs = Array.isArray(v.image_paths) ? v.image_paths.filter((x: string) => typeof x === "string" && x.startsWith("http")) : [];
-          const images = vImgs.length ? vImgs : (parentImg ? [parentImg] : []);
+          // Cap to 3 photos/colour — the card gallery only shows a few, and this keeps the cached payload small.
+          const images = (vImgs.length ? vImgs : (parentImg ? [parentImg] : [])).slice(0, 3);
           return {
             pid, sku: v.sku, name: p.name, category: p.category.name, sub, style, colour: v.color ?? null,
             qty: v.qty ?? 0, price, mrp: ps.mrp,
@@ -135,8 +139,8 @@ const loadTradeCatalog = unstable_cache(
     const wholesaleTiers = formula.wholesaleTiers ?? [];
     return { list, minOrder, minRupees, payInfo, wholesaleTiers };
   },
-  ["trade-catalog-v2"],
-  { revalidate: 180, tags: ["trade-catalog"] },
+  ["trade-catalog-v3-fast"],
+  { revalidate: 300, tags: ["trade-catalog"] },
 );
 
 export default async function TradeDashboard() {

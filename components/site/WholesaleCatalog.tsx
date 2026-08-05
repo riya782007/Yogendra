@@ -130,6 +130,14 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", s
     return arr;
   }, [q, cat, sub, styleF, colour, bracket, inStock, sort, products]);
 
+  // PERFORMANCE: paint the designs a page at a time. Filters/search still run over the FULL catalogue,
+  // but the browser only renders a slice — so the panel opens fast even with 1,200+ designs instead of
+  // hydrating every card at once (the main cause of the "ultra slow" catalogue).
+  const PAGE_SIZE = 60;
+  const [visN, setVisN] = useState(PAGE_SIZE);
+  useEffect(() => { setVisN(PAGE_SIZE); }, [q, cat, sub, styleF, colour, bracket, inStock, sort]);
+  const visibleGroups = useMemo(() => groups.slice(0, visN), [groups, visN]);
+
   /** The colour currently shown for a design: the global colour filter wins, then the dealer's
    *  dropdown pick, then any colour already in the cart, then the first colour. */
   const activeOf = (g: Grp): P => {
@@ -262,9 +270,12 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", s
   async function confirmOrder() {
     if (lines.length === 0) return;
     const miss = guestDetailsMissing(); if (miss) { setErr(miss); return; }
+    // PAYMENT PROOF IS MANDATORY for a prepaid order (owner's rule): no screenshot → no order. This stops
+    // "paid without proof" orders that the owner can't verify. (COD orders don't need a screenshot.)
+    if (!proof) { setErr("Please upload your payment screenshot to place the order — it's required so we can verify your payment and dispatch."); return; }
     setBusy(true); setErr("");
     let proofUrl: string | undefined;
-    if (proof) {
+    {
       const fd = new FormData(); fd.set("file", proof);
       const up = guest ? await uploadGuestPaymentProofAction(fd) : await uploadPaymentProofAction(fd);
       if (!up.ok) { setBusy(false); setErr(up.error ?? "Could not upload the screenshot — try a smaller image."); return; }
@@ -479,7 +490,7 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", s
               </tr></thead>
               <tbody>
                 {groups.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-muted">No designs match.</td></tr>}
-                {groups.map((g) => {
+                {visibleGroups.map((g) => {
                   const p = activeOf(g);
                   const n = qty[p.sku] ?? 0;
                   const margin = p.mrp - p.price;
@@ -542,7 +553,7 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", s
           {/* Mobile: cards */}
           <div className="md:hidden space-y-2.5">
             {groups.length === 0 && <p className="text-sm text-muted text-center py-6">No designs match.</p>}
-            {groups.map((g) => {
+            {visibleGroups.map((g) => {
               const p = activeOf(g);
               const n = qty[p.sku] ?? 0;
               const margin = p.mrp - p.price;
@@ -587,6 +598,14 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", s
               );
             })}
           </div>
+
+          {visN < groups.length && (
+            <div className="text-center mt-5">
+              <button onClick={() => setVisN((n) => n + PAGE_SIZE)} className="px-6 py-2.5 rounded-full border border-emerald text-emerald text-sm font-medium hover:bg-emerald-mist">
+                Load more designs — showing {visN} of {groups.length}
+              </button>
+            </div>
+          )}
 
           {/* Sticky order bar with ₹3,000 minimum progress */}
           <div className="sticky bottom-4 mt-4 bg-ink text-cream rounded-2xl shadow-luxe px-5 py-4">
@@ -746,7 +765,7 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", s
               <p className="mt-4 text-sm text-gold-dark bg-gold/10 rounded-xl px-4 py-3">Payment details will be shared with you on WhatsApp right after you place the order. You can add the UPI reference now or later.</p>
             )}
 
-            <label className="block text-xs font-medium text-ink mt-4 mb-1">Upload your payment screenshot <span className="text-muted/70 font-normal">— just drop the screenshot, no need to type anything</span></label>
+            <label className="block text-xs font-medium text-ink mt-4 mb-1">Upload your payment screenshot <span className="text-rose font-semibold">(required)</span> <span className="text-muted/70 font-normal">— just drop the screenshot, no need to type anything</span></label>
             <label className="flex items-center gap-3 rounded-xl border border-dashed border-emerald/50 bg-emerald-mist/30 px-3 py-3 cursor-pointer hover:bg-emerald-mist/50 transition-colors">
               <span className="text-xl">📷</span>
               <span className="text-sm text-ink truncate">{proof ? proof.name : "Tap to add payment screenshot"}</span>
