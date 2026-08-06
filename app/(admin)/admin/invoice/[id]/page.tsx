@@ -85,6 +85,13 @@ export default async function Invoice({ params }: { params: { id: string } }) {
   const defUpi = ((pmRows as any[]) ?? []).filter((m) => m.upi_id).sort((a, b) => (b.is_default ? 1 : 0) - (a.is_default ? 1 : 0))[0] ?? null;
   const payMethods = ((pmRows as any[]) ?? []);
   const defMethodId = (payMethods.find((m) => m.is_default) ?? payMethods[0])?.id ?? "";
+  // WHICH account(s) the money for THIS bill actually landed in — read from the account ledger so the
+  // settled-payment line names the real account (Cash / a UPI id / a bank), not a generic label.
+  const nameById = new Map(payMethods.map((m: any) => [m.id, m.name]));
+  const { data: payTxns } = await supabaseServer().from("payment_method_transactions").select("amount,method_id").eq("ref_id", order.id).eq("direction", "in");
+  const paidAccounts = new Map<string, number>();
+  for (const t of ((payTxns as any[]) ?? [])) { const nm = nameById.get(t.method_id) ?? "Other"; paidAccounts.set(nm, (paidAccounts.get(nm) ?? 0) + (t.amount ?? 0)); }
+  const paidAccountLabel = [...paidAccounts.entries()].map(([nm, amt]) => `${nm} ${formatPaise(amt)}`).join(" · ");
   const session = getSession();
   const PAY_STYLE: Record<string, string> = { Paid: "bg-emerald-mist text-emerald-dark", Partial: "bg-gold/15 text-gold-dark", Unpaid: "bg-rose/10 text-rose" };
 
@@ -419,17 +426,19 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                   <p className="font-medium text-emerald-dark text-sm">Payment recorded — bill settled</p>
                   <p className="text-[11px] text-emerald-dark/80">
                     {(() => {
-                      // WHERE the money came in — read it from the actual cash/bank tender, NOT payment_mode
-                      // (which stays "pending" on an estimate-billed order and showed the confusing
-                      // "received via PENDING"). Show the split when both were taken, else the single tender.
+                      // WHERE the money came in. Prefer the EXACT account(s) from the account ledger (e.g.
+                      // "Kotak Bank Transfer ₹20,085"); else fall back to the cash/bank tender. Never show the
+                      // stale payment_mode (which stays "pending" on an estimate-billed order → "via PENDING").
                       const bothSplit = order.pay_cash > 0 && order.pay_bank > 0;
-                      const via = bothSplit
-                        ? `Cash ${formatPaise(order.pay_cash)} · UPI/Bank ${formatPaise(order.pay_bank)}`
+                      const via = paidAccountLabel
+                        ? paidAccountLabel
+                        : bothSplit ? `Cash ${formatPaise(order.pay_cash)} · UPI/Bank ${formatPaise(order.pay_bank)}`
                         : order.pay_cash > 0 ? "Cash"
                         : order.pay_bank > 0 ? "UPI / Bank"
                         : (order.payment_mode && !["pending", "cod"].includes(String(order.payment_mode).toLowerCase())) ? String(order.payment_mode).toUpperCase()
                         : "";
-                      return <>{formatPaise(paid)} received{via ? (bothSplit ? ` — ${via}` : ` via ${via}`) : ""}. Bill is marked <b>Paid</b>.</>;
+                      const useDash = !!paidAccountLabel || bothSplit;
+                      return <>{formatPaise(paid)} received{via ? (useDash ? ` — ${via}` : ` via ${via}`) : ""}. Bill is marked <b>Paid</b>.</>;
                     })()}
                   </p>
                 </div>

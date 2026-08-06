@@ -774,12 +774,28 @@ export async function cancelOrderAction(orderId: string, reason?: string): Promi
  * (GST-inclusive receivable, net of return credits), pay_cash/pay_bank feed Bank & Cash, and the
  * customer's outstanding falls everywhere (customer page, creditors, sales status chips).
  */
-export async function receiveCustomerPaymentAction(input: { customerId?: string | null; phone?: string | null; amountRupees: number; method: "cash" | "upi" | "bank"; note?: string }): Promise<{ ok: boolean; allocated?: { invoice: string; paise: number }[]; leftoverPaise?: number; error?: string }> {
+/** Active payment accounts (Cash / UPI ids / banks) for the "Receive payment" account picker. */
+export async function listReceiveAccountsAction(): Promise<{ id: string; name: string; kind: string; upiId: string | null; isDefault: boolean }[]> {
+  const { data } = await supabaseServer().from("payment_methods").select("id,name,kind,upi_id,is_default,sort").eq("active", true).order("sort").order("name");
+  return ((data as any[]) ?? []).map((m) => ({ id: m.id, name: m.name, kind: m.kind, upiId: m.upi_id ?? null, isDefault: !!m.is_default }));
+}
+
+export async function receiveCustomerPaymentAction(input: { customerId?: string | null; phone?: string | null; amountRupees: number; method: "cash" | "upi" | "bank"; methodId?: string | null; note?: string }): Promise<{ ok: boolean; allocated?: { invoice: string; paise: number }[]; leftoverPaise?: number; error?: string }> {
   if (!(await requirePerm("billing.sell"))) return { ok: false, error: "Your role can't receive payments." };
   const paise = Math.round((input.amountRupees ?? 0) * 100);
   if (!Number.isFinite(paise) || paise <= 0) return { ok: false, error: "Enter the amount received." };
   if (!input.customerId && !input.phone) return { ok: false, error: "Missing customer" };
   const sb = supabaseServer();
+
+  // EXACT ACCOUNT the money came into (owner: "kahan aaye paise") — the owner picks a specific account
+  // (Cash / a UPI id / a bank). Its `kind` decides whether it feeds Cash or Bank, and the money is logged
+  // to that account's ledger + tied to each bill it settles, so the invoice can name the real account.
+  const methodId = (input.methodId ?? "").trim() || null;
+  let toCash = input.method === "cash";
+  if (methodId) {
+    const { data: pm } = await sb.from("payment_methods").select("kind").eq("id", methodId).maybeSingle();
+    if (pm) toCash = String((pm as any).kind ?? "").toLowerCase() === "cash";
+  }
 
   const sel = "id,invoice_no,total,amount_paid,bill_type,gst_mode,status,pay_cash,pay_bank,created_at";
   const byId = input.customerId ? await sb.from("orders").select(sel).eq("customer_id", input.customerId).order("created_at", { ascending: true }).limit(200) : { data: [] as any[] };
@@ -799,10 +815,19 @@ export async function receiveCustomerPaymentAction(input: { customerId?: string 
     if (due <= 0) continue;
     const alloc = Math.min(due, remaining);
     const patch: Record<string, number> = { amount_paid: (o.amount_paid ?? 0) + alloc };
-    if (input.method === "cash") patch.pay_cash = (o.pay_cash ?? 0) + alloc;
+    if (toCash) patch.pay_cash = (o.pay_cash ?? 0) + alloc;
     else patch.pay_bank = (o.pay_bank ?? 0) + alloc;
     const { error } = await sb.from("orders").update(patch).eq("id", o.id);
     if (error) return { ok: false, error: error.message };
+    // Record the money into the CHOSEN account's ledger, tied to this bill — so the invoice names the exact
+    // account and Bank & Cash stays reconciled. Best-effort (never blocks the payment).
+    if (methodId) {
+      await sb.from("payment_method_transactions").insert({
+        method_id: methodId, txn_type: "payment", direction: "in", amount: alloc,
+        ref_type: "order", ref_id: o.id, note: (input.note ?? "").trim() || null,
+        created_by: "owner", occurred_at: new Date().toISOString(),
+      }).then(() => {}, () => {});
+    }
     allocated.push({ invoice: o.invoice_no || String(o.id).slice(0, 8).toUpperCase(), paise: alloc });
     remaining -= alloc;
   }

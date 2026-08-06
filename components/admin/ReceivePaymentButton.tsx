@@ -4,10 +4,12 @@
  * Owner enters the amount + method; it auto-allocates OLDEST BILL FIRST across the customer's
  * outstanding (GST-inclusive, net of returns), feeds Bank & Cash, and refreshes the ledgers.
  */
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { formatPaise } from "@/lib/pricing";
-import { receiveCustomerPaymentAction } from "@/app/actions/billing";
+import { receiveCustomerPaymentAction, listReceiveAccountsAction } from "@/app/actions/billing";
+
+type Account = { id: string; name: string; kind: string; upiId: string | null; isDefault: boolean };
 
 export function ReceivePaymentButton({ customerId, phone, customerName, outstandingPaise }: {
   customerId?: string | null; phone?: string | null; customerName?: string; outstandingPaise?: number;
@@ -15,16 +17,29 @@ export function ReceivePaymentButton({ customerId, phone, customerName, outstand
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
-  const [method, setMethod] = useState<"cash" | "upi" | "bank">("upi");
+  const [accounts, setAccounts] = useState<Account[] | null>(null);
+  const [accountId, setAccountId] = useState<string>("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
+  // Load the owner's real accounts (Cash / UPI / banks) when the dialog opens, default to his default one.
+  useEffect(() => {
+    if (!open || accounts !== null) return;
+    listReceiveAccountsAction().then((a) => {
+      setAccounts(a);
+      setAccountId(a.find((x) => x.isDefault)?.id ?? a[0]?.id ?? "");
+    }).catch(() => setAccounts([]));
+  }, [open, accounts]);
+
   async function submit() {
     const n = Number(amount);
     if (!Number.isFinite(n) || n <= 0) { setMsg("Enter the amount received."); return; }
+    const acct = (accounts ?? []).find((a) => a.id === accountId);
+    if (!acct) { setMsg("Choose the account the money came into."); return; }
     setBusy(true); setMsg("");
-    const r = await receiveCustomerPaymentAction({ customerId, phone, amountRupees: n, method, note });
+    const method = acct.kind === "cash" ? "cash" : "bank";
+    const r = await receiveCustomerPaymentAction({ customerId, phone, amountRupees: n, method, methodId: acct.id, note });
     setBusy(false);
     if (!r.ok) { setMsg(`✕ ${r.error}`); return; }
     const alloc = (r.allocated ?? []).map((a) => `${a.invoice} ${formatPaise(a.paise)}`).join(", ");
@@ -46,11 +61,14 @@ export function ReceivePaymentButton({ customerId, phone, customerName, outstand
             {outstandingPaise != null && <p className="text-xs text-muted mt-0.5">Outstanding {formatPaise(outstandingPaise)} — allocates to the oldest bill first.</p>}
             <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="Amount received (₹)"
               className="w-full rounded-xl border border-sand px-3.5 py-2.5 text-sm outline-none focus:border-emerald mt-3" autoFocus />
-            <div className="flex gap-1.5 mt-2">
-              {(["cash", "upi", "bank"] as const).map((m) => (
-                <button key={m} onClick={() => setMethod(m)} className={`px-3 py-1.5 rounded-full text-xs uppercase ${method === m ? "bg-ink text-white" : "border border-sand text-muted hover:border-emerald"}`}>{m}</button>
+            <label className="block text-[11px] text-muted mt-3 mb-1">Received in which account?</label>
+            <select value={accountId} onChange={(e) => setAccountId(e.target.value)}
+              className="w-full rounded-xl border border-sand px-3.5 py-2.5 text-sm outline-none focus:border-emerald bg-white">
+              {accounts === null && <option value="">Loading accounts…</option>}
+              {(accounts ?? []).map((a) => (
+                <option key={a.id} value={a.id}>{a.name}{a.upiId ? ` · ${a.upiId}` : ""}{a.kind === "cash" ? " · Cash" : ""}</option>
               ))}
-            </div>
+            </select>
             <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional — e.g. UTR, cheque no.)"
               className="w-full rounded-xl border border-sand px-3.5 py-2.5 text-sm outline-none focus:border-emerald mt-2" />
             {msg && <p className="text-xs mt-2 text-ink">{msg}</p>}
