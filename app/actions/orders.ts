@@ -1,5 +1,5 @@
 "use server";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { isWalkInPlaceholder } from "@/lib/supabase/queries";
 import { requirePerm } from "@/lib/auth";
@@ -76,6 +76,10 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
   if (discount > 0 && appliedCode) await bumpVoucherUsage(appliedCode);
 
   await sendPurchase({ orderId, valuePaise: total, channel: "retail", items: input.items.map((i) => ({ sku: i.sku, qty: i.qty })) });
+  // A PREPAID/online order deducts stock now, so a design that just sold out must drop off the cached
+  // storefront immediately (owner: "out of stock hide nahi ho raha"). A COD order is only HELD — no stock
+  // moved yet — so its refresh happens when the owner confirms it on the COD Orders page.
+  if (input.payment !== "cod") revalidateTag("storefront");
   await notifyOrderPlaced({
     orderId, customerName: input.customer.name, customerPhone: input.customer.phone,
     totalPaise: total, payment: input.payment, itemCount: input.items.reduce((n, i) => n + i.qty, 0),
@@ -339,6 +343,9 @@ export async function posSaleAction(input: {
   }
 
   await sendPurchase({ orderId, valuePaise: total, channel: "retail", items: input.items.map((i) => ({ sku: i.sku, qty: i.qty })) });
+  // A real counter sale deducts stock now (a backorder holds none), so refresh the storefront so a
+  // design that just sold out drops off the shop at once.
+  if (!input.backorder) revalidateTag("storefront");
   return { ok: true, orderId, total };
 }
 
@@ -378,6 +385,8 @@ export async function rejectStorefrontOrderAction(formData: FormData): Promise<v
       await sendWhatsAppText(ph, `Hi ${(o as any)?.customer_name || "there"}, we're sorry — your Blythe Diva order ${inv} couldn't be fulfilled and has been cancelled. Any payment will be refunded. Reason: ${reason}`).catch(() => {});
     }
   }
+  // Cancelling RESTOCKS every line, so a design that was hidden as sold-out can reappear on the shop.
+  revalidateTag("storefront");
   revalidatePath("/admin/orders"); revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard");
 }
 

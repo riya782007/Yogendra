@@ -342,6 +342,9 @@ async function placeWholesaleCore(
   }
 
   revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard");
+  // A PREPAID wholesale order deducts the same shared stock, so a design that just sold out must also
+  // drop off the retail shop. (A COD order is only held — its refresh happens when the owner confirms it.)
+  if (!opts?.cod) revalidateTag("storefront");
   return { ok: true, orderId, total };
 }
 

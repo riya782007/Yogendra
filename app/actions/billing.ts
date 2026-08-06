@@ -517,6 +517,7 @@ export async function fulfillBackorderAction(formData: FormData): Promise<void> 
   // the bill into the sales record. The old flag-flip skipped all of that.
   const { error } = await supabaseServer().rpc("fulfill_backorder", { p_order_id: id });
   revalidatePath("/admin/backorders"); revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard");
+  if (!error) revalidateTag("storefront"); // stock moves on fulfilment → refresh the shop
   if (error) redirect(`/admin/backorders?err=${encodeURIComponent(error.message)}`);
   redirect("/admin/backorders?ok=1");
 }
@@ -530,6 +531,7 @@ export async function confirmCodAction(formData: FormData): Promise<void> {
   if (!id) return;
   const { error } = await supabaseServer().rpc("confirm_cod_order", { p_order_id: id });
   revalidatePath("/admin/cod"); revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard");
+  if (!error) revalidateTag("storefront"); // stock finally moves here → refresh the shop so it hides if sold out
   if (error) redirect(`/admin/cod?err=${encodeURIComponent(error.message)}`);
   redirect("/admin/cod?ok=1");
 }

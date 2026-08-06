@@ -2242,8 +2242,18 @@ export async function getPurchaseById(id: string) {
   return { purchase: p, items: items ?? [], deletionPending: !!pending, suppliers: (suppliers as any[]) ?? [], products: (products as any[]) ?? [] };
 }
 
+// Search ran getStorefront() UNCACHED on every keystroke-submit (force-dynamic page), re-reading the whole
+// catalogue each time — so searching felt as slow as a cold shop load. The in-stock catalogue is identical
+// for every shopper, so cache it (5 min, refreshed instantly by the "storefront" tag on any stock/price/
+// product edit) and just filter in memory. Search is now near-instant.
+const getSearchCatalogue = unstable_cache(
+  () => getStorefront({ onlyInStock: true }),
+  ["search-catalogue-instock"],
+  { revalidate: 300, tags: ["storefront"] },
+);
+
 export async function searchProducts(q: string) {
-  const { products, formula } = await getStorefront({ onlyInStock: true });
+  const { products, formula } = await getSearchCatalogue();
   const s = q.trim().toLowerCase();
   const results = s ? products.filter((p) => (p.name + " " + p.category.name + " " + p.sku).toLowerCase().includes(s)) : [];
   return { formula, results };

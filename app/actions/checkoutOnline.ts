@@ -13,6 +13,7 @@
  * Verifying the signature server-side before placing the order is the whole security point:
  * the browser can't fake a paid order.
  */
+import { revalidateTag } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { getPricingFormula } from "@/lib/supabase/queries";
 import { resolvePrices } from "@/lib/pricing";
@@ -182,6 +183,10 @@ async function finalizeOnlineOrder(args: {
   await sb.from("checkout_intents").update({
     status: "placed", order_id: orderId, payment_ref: args.paymentId, placed_at: new Date().toISOString(),
   }).eq("razorpay_order_id", args.razorpayOrderId);
+
+  // A paid online order deducts stock, so a design that just sold out must drop off the cached
+  // storefront right away (covers both the browser-confirm and webhook finalise paths).
+  revalidateTag("storefront");
 
   await sendPurchase({ orderId, valuePaise: total, channel: "retail", items: items.map((i) => ({ sku: i.sku, qty: i.qty })) }).catch(() => {});
   await notifyOrderPlaced({
