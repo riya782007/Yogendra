@@ -418,7 +418,19 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                 <div>
                   <p className="font-medium text-emerald-dark text-sm">Payment recorded — bill settled</p>
                   <p className="text-[11px] text-emerald-dark/80">
-                    {formatPaise(paid)} received{order.pay_cash > 0 && order.pay_bank > 0 ? ` — Cash ${formatPaise(order.pay_cash)} · UPI/Bank ${formatPaise(order.pay_bank)}` : order.payment_mode ? ` via ${String(order.payment_mode).toUpperCase()}` : ""}. Bill is marked <b>Paid</b>.
+                    {(() => {
+                      // WHERE the money came in — read it from the actual cash/bank tender, NOT payment_mode
+                      // (which stays "pending" on an estimate-billed order and showed the confusing
+                      // "received via PENDING"). Show the split when both were taken, else the single tender.
+                      const bothSplit = order.pay_cash > 0 && order.pay_bank > 0;
+                      const via = bothSplit
+                        ? `Cash ${formatPaise(order.pay_cash)} · UPI/Bank ${formatPaise(order.pay_bank)}`
+                        : order.pay_cash > 0 ? "Cash"
+                        : order.pay_bank > 0 ? "UPI / Bank"
+                        : (order.payment_mode && !["pending", "cod"].includes(String(order.payment_mode).toLowerCase())) ? String(order.payment_mode).toUpperCase()
+                        : "";
+                      return <>{formatPaise(paid)} received{via ? (bothSplit ? ` — ${via}` : ` via ${via}`) : ""}. Bill is marked <b>Paid</b>.</>;
+                    })()}
                   </p>
                 </div>
               </div>

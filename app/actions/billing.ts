@@ -96,7 +96,10 @@ export async function updateEstimateLineAction(formData: FormData): Promise<void
   if (!it) return;
   await sb.from("estimate_items").update({ qty, line_total: (it as any).unit_price * qty }).eq("id", itemId);
   await recomputeEstimateTotal(sb, estimateId);
-  revalidatePath(`/admin/estimate/${estimateId}`);
+  // If this estimate is ON HOLD, its stock reservation must follow the new quantity (owner changed 3→4,
+  // the reserved count MUST become 4). Safe no-op when the estimate isn't held.
+  await sb.rpc("resync_estimate_hold", { p_estimate_id: estimateId });
+  revalidatePath(`/admin/estimate/${estimateId}`); revalidatePath("/admin/inventory"); revalidatePath("/admin/stock-movements");
 }
 
 /** Pillar 4/15: edit a line's UNIT PRICE (₹) on an open estimate — the negotiated rate
@@ -125,7 +128,9 @@ export async function removeEstimateLineAction(formData: FormData): Promise<void
   const sb = supabaseServer();
   await sb.from("estimate_items").delete().eq("id", itemId);
   await recomputeEstimateTotal(sb, estimateId);
-  revalidatePath(`/admin/estimate/${estimateId}`);
+  // Removed line → release whatever was reserved for it (no-op if the estimate isn't held).
+  await sb.rpc("resync_estimate_hold", { p_estimate_id: estimateId });
+  revalidatePath(`/admin/estimate/${estimateId}`); revalidatePath("/admin/inventory"); revalidatePath("/admin/stock-movements");
 }
 
 type PosItem = { sku: string; name: string; price: number; wholesale: number; mrp: number; category: string; qty: number; parentSku?: string; parentName?: string };
@@ -253,7 +258,9 @@ export async function addEstimateLineAction(formData: FormData): Promise<void> {
   const unit = resolvePrices(base, formula, ov).retailPrice;
   await sb.from("estimate_items").insert({ estimate_id: estimateId, product_id: productId, variant_id: variantId, qty, unit_price: unit, line_total: unit * qty });
   await recomputeEstimateTotal(sb, estimateId);
-  revalidatePath(`/admin/estimate/${estimateId}`);
+  // New line on a held estimate → reserve it too (no-op if the estimate isn't held).
+  await sb.rpc("resync_estimate_hold", { p_estimate_id: estimateId });
+  revalidatePath(`/admin/estimate/${estimateId}`); revalidatePath("/admin/inventory"); revalidatePath("/admin/stock-movements");
 }
 
 /**
@@ -349,7 +356,10 @@ export async function saveEstimateAction(input: {
   }).eq("id", id).then(() => {}, () => {});
 
   await recomputeEstimateTotal(sb, id);
-  revalidatePath(`/admin/estimate/${id}`);
+  // Whole-estimate save (qty edits, removals, new items) → snap the hold reservation to the new lines so
+  // "Reserved" always equals what's actually on the estimate (owner: 3→4 but reserved stayed wrong).
+  await sb.rpc("resync_estimate_hold", { p_estimate_id: id });
+  revalidatePath(`/admin/estimate/${id}`); revalidatePath("/admin/inventory"); revalidatePath("/admin/stock-movements");
   return { ok: true };
 }
 
