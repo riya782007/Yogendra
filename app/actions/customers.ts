@@ -72,3 +72,16 @@ export async function deleteCustomerAction(formData: FormData) {
   revalidatePath("/admin/customers");
   redirect("/admin/customers");
 }
+
+/** Merge customers that share the same name into one (keeps a wholesale record / the one with most
+ *  orders / the oldest, re-points every order onto it, deletes the extras). Pass "name" to scope to one
+ *  name (e.g. Myntra), or leave blank to clean every duplicate-name group. Cleans up the duplicates that
+ *  marketplace automations create per order. */
+export async function mergeDuplicateCustomersAction(formData: FormData) {
+  if (!(await requirePerm("customers.manage"))) return;
+  const name = String(formData.get("name") ?? "").trim() || null;
+  const { data } = await supabaseServer().rpc("merge_duplicate_customers", { p_name: name });
+  revalidateTag("customers");
+  revalidatePath("/admin/customers");
+  redirect(`/admin/customers?merged=${(data as any)?.removed ?? 0}`);
+}

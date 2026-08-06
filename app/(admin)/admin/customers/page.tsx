@@ -4,7 +4,7 @@ import { getCustomersDb, getCustomers, getCustomerSpend } from "@/lib/supabase/q
 import { formatPaise } from "@/lib/pricing";
 import { Pager } from "@/components/admin/Pager";
 import { getSession, can } from "@/lib/auth";
-import { upsertCustomerAction } from "@/app/actions/customers";
+import { upsertCustomerAction, mergeDuplicateCustomersAction } from "@/app/actions/customers";
 import { ReceivePaymentButton } from "@/components/admin/ReceivePaymentButton";
 
 export const metadata = { title: "Owner Console · Customers" };
@@ -24,8 +24,9 @@ const waLink = (phone: string, msg: string) => {
   return d.length === 10 ? `https://wa.me/91${d}?text=${encodeURIComponent(msg)}` : "";
 };
 
-export default async function Customers({ searchParams }: { searchParams: { q?: string; type?: string; page?: string; period?: string; target?: string; band?: string; delerror?: string } }) {
+export default async function Customers({ searchParams }: { searchParams: { q?: string; type?: string; page?: string; period?: string; target?: string; band?: string; delerror?: string; merged?: string } }) {
   const delError = searchParams.delerror?.trim();
+  const mergedN = searchParams.merged ? parseInt(searchParams.merged, 10) || 0 : null;
   const q = searchParams.q ?? "";
   const type = searchParams.type ?? "all";
   const period = searchParams.period ?? "month";
@@ -64,6 +65,15 @@ export default async function Customers({ searchParams }: { searchParams: { q?: 
       <h1 className="font-display text-4xl text-ink mb-1">Customers</h1>
       <p className="text-sm text-muted mb-5">Your customer directory — retail &amp; wholesale, with GST details and credit balance. Click a customer for full history.</p>
       {delError && <div className="mb-5 rounded-xl border border-rose/40 bg-rose/5 px-4 py-3 text-sm text-rose">Couldn&apos;t delete that customer — {delError}</div>}
+      {mergedN !== null && <div className="mb-5 rounded-xl border border-emerald/40 bg-emerald-mist/40 px-4 py-3 text-sm text-emerald-dark">{mergedN > 0 ? `Merged ${mergedN} duplicate customer${mergedN === 1 ? "" : "s"} into their main record — all orders kept.` : "No duplicate customers found — nothing to merge. 🎉"}</div>}
+
+      <div className="mb-5">
+        <form action={mergeDuplicateCustomersAction} className="inline">
+          {q && <input type="hidden" name="name" value={q} />}
+          <button className="text-xs px-3.5 py-1.5 rounded-full border border-sand text-ink hover:border-emerald hover:text-emerald transition-colors">🧹 Merge {q ? `“${q}”` : "all"} duplicate customers</button>
+        </form>
+        <span className="ml-2 text-[11px] text-muted">Same-name duplicates become one — orders are kept, extras removed.</span>
+      </div>
 
       {/* Add */}
       {canManage && (

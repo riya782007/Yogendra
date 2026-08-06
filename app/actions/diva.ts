@@ -45,7 +45,7 @@ const slugify = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-"
  * It pauses for a Yes ONLY on destructive / irreversible / confidential actions: anything that DELETES.
  * Add tool names here to require confirmation for other sensitive actions later.
  */
-const CONFIRM_REQUIRED = new Set<string>(["delete_product", "delete_role"]);
+const CONFIRM_REQUIRED = new Set<string>(["delete_product", "delete_role", "merge_customers"]);
 function needsConfirmTool(name: string): boolean {
   return CONFIRM_REQUIRED.has(name) || name.startsWith("delete_");
 }
@@ -719,6 +719,17 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         return { ok: true, message: `Converted cash memo ${invoice} into a GST invoice.${warn}` };
       }
 
+      case "merge_customers": {
+        const name = String(args.name ?? "").trim() || null;
+        const sb = supabaseServer();
+        const { data, error } = await sb.rpc("merge_duplicate_customers", { p_name: name });
+        if (error) return { ok: false, message: error.message };
+        revalidatePath("/admin/customers"); revalidateTag("customers");
+        const removed = (data as any)?.removed ?? 0;
+        return { ok: true, message: removed > 0
+          ? `Merged ${removed} duplicate customer${removed === 1 ? "" : "s"}${name ? ` named "${name}"` : ""} into their main record — all orders kept.`
+          : `No duplicate customers${name ? ` named "${name}"` : ""} to merge.` };
+      }
       case "compose": {
         // DIVA as the owner's copywriter/advisor — grounded on live brand + product + customer data.
         const kind = String(args.kind ?? "message").toLowerCase().trim();
