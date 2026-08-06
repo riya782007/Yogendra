@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { updateTradeVisitorAction } from "@/app/actions/leads";
-import { SITE } from "@/lib/siteUrl";
+import { LeadMessageComposer } from "@/components/admin/LeadMessageComposer";
 
 type V = {
   id: string; created_at: string; name: string | null; phone: string | null; city: string | null;
@@ -36,9 +36,6 @@ export function VisitorCard({ v }: { v: V }) {
     router.refresh();
   }
 
-  const waMsg = `Namaste ${v.name || "ji"}! 🙏 This is Blythe Diva (Sadar Bazar, Delhi) — thank you for viewing our wholesale catalogue!\n\n✨ 2000+ latest designs · best trade rates · new arrivals every week.\n\nMain aapko first order me help karna chahungi — bas 2 minute lagenge:\n👉 ${SITE}/trade\n\nAgar koi dikkat aayi ho — rate, minimum order, ya koi design nahi mili — bas reply kar dijiye, main khud aapke liye sort kar dungi. 🌸`;
-  const wa = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(waMsg)}` : null;
-
   const isNew = v.status === "new";
   const chip = isNew ? "bg-gold/15 text-gold-dark"
     : v.status === "approved" ? "bg-emerald-mist text-emerald-dark"
@@ -64,7 +61,7 @@ export function VisitorCard({ v }: { v: V }) {
           </p>
         </div>
         <div className="flex flex-col items-end gap-1.5 shrink-0">
-          {wa && <a href={wa} target="_blank" rel="noreferrer" className="px-3 py-1.5 rounded-full bg-emerald text-white text-xs font-medium">WhatsApp →</a>}
+          <LeadMessageComposer lead={{ name: v.name, phone: v.phone, city: v.city, designsViewed: v.designs_viewed }} />
           <div className="flex gap-1.5">
             {v.status !== "contacted" && <button onClick={() => setStatus("contacted")} disabled={busy} className="px-2.5 py-1 rounded-full border border-emerald text-emerald-dark text-[11px] disabled:opacity-50">Contacted</button>}
             {v.status !== "approved" && <button onClick={() => setStatus("approved")} disabled={busy} className="px-2.5 py-1 rounded-full border border-gold text-gold-dark text-[11px] disabled:opacity-50">Became dealer</button>}

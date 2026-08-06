@@ -9,6 +9,10 @@
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
+import { BUSINESS } from "@/lib/business";
+import { SITE } from "@/lib/siteUrl";
+import { defaultLeadMessage } from "@/lib/leadMessage";
+import { openaiChat, geminiChat, groqChat, openaiConfigured, geminiTextConfigured, groqConfigured } from "@/lib/ai/providers";
 
 export async function captureTradeVisitorAction(input: {
   name: string; phone: string; city?: string;
@@ -42,6 +46,55 @@ export async function captureTradeVisitorAction(input: {
   }
   revalidatePath("/admin/visitors");
   return { ok: true };
+}
+
+/**
+ * Draft or refine the outreach WhatsApp message for a trade lead, on the owner's behalf. The owner can
+ * edit the text by hand OR give an instruction ("thoda chhota karo", "aur warm", "diwali offer add karo")
+ * and DIVA rewrites it — grounded on the real brand facts so nothing is invented. Nothing is sent here;
+ * the client opens WhatsApp with the final text pre-filled. Falls back to the default template if no AI key.
+ */
+export async function composeLeadMessageAction(input: {
+  name?: string | null; city?: string | null; designsViewed?: number | null;
+  currentText?: string | null; instruction?: string | null;
+}): Promise<{ ok: boolean; text?: string; error?: string }> {
+  if (!(await requirePerm("billing.sell"))) return { ok: false, error: "not permitted" };
+
+  const name = (input.name ?? "").trim();
+  const base = (input.currentText ?? "").trim() || defaultLeadMessage(name);
+  const instruction = (input.instruction ?? "").trim();
+
+  if (!openaiConfigured() && !geminiTextConfigured() && !groqConfigured()) {
+    // No AI key configured — hand back the editable template so the owner can still tweak it by hand.
+    return { ok: false, text: base, error: "AI writing needs OPENAI_API_KEY set in Vercel. You can still edit the message by hand." };
+  }
+
+  const facts =
+    `Brand: ${BUSINESS.brand} (by ${BUSINESS.legalName}) — artificial/imitation jewellery, Sadar Bazar Delhi. ` +
+    `Wholesale catalogue: ${SITE}/trade. Factory-direct trade rates, ₹3,000 minimum order, 2000+ designs, new arrivals weekly. WhatsApp ${BUSINESS.phone}.`;
+  const lead =
+    `Lead: ${name || "a wholesale dealer"}${input.city ? `, ${input.city}` : ""}` +
+    `${input.designsViewed ? `, viewed ~${input.designsViewed} designs on the catalogue` : ""}.`;
+
+  const system =
+    `You are DIVA, the in-house AI for ${BUSINESS.brand}. You write the owner's outreach WhatsApp message to a wholesale dealer who just viewed the catalogue. ` +
+    `Warm, respectful, human — the owner's own voice. Hinglish is welcome (Roman script). Keep it SHORT (WhatsApp length), greet by name when known, keep the ${SITE}/trade link, and end with one clear, low-pressure next step. ` +
+    `A few tasteful emojis are fine. Never invent facts, discounts or claims that aren't in the context. No markdown, no placeholders like [name] — use the real name. Output ONLY the final message text, nothing else.`;
+  const user = instruction
+    ? `${facts}\n${lead}\n\nCurrent message:\n"""${base}"""\n\nRewrite it following this instruction: ${instruction}`
+    : `${facts}\n${lead}\n\nHere is the current message:\n"""${base}"""\n\nRewrite it to be warmer and more natural while keeping the same intent and the trade link.`;
+
+  let out = "";
+  try {
+    if (openaiConfigured()) out = await openaiChat({ system, user, temperature: 0.6 });
+    else if (geminiTextConfigured()) out = await geminiChat({ system, user });
+    else out = await groqChat({ system, user });
+  } catch (e) {
+    return { ok: false, text: base, error: `Couldn't rewrite it: ${e instanceof Error ? e.message : "error"}. You can still edit by hand.` };
+  }
+  out = out.trim().replace(/^"+|"+$/g, "").trim();
+  if (!out) return { ok: false, text: base, error: "Couldn't draft that — try a different instruction." };
+  return { ok: true, text: out };
 }
 
 /** Owner-side: work the list — contacted / approved / ignored. */
