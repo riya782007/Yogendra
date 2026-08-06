@@ -57,7 +57,17 @@ export async function upsertCustomerAction(formData: FormData): Promise<void> {
 export async function deleteCustomerAction(formData: FormData) {
   if (!(await requirePerm("customers.manage"))) return;
   const id = String(formData.get("id"));
-  await supabaseServer().from("customers").delete().eq("id", id);
+  const sb = supabaseServer();
+  // Orders reference the customer with a BLOCKING foreign key, so a customer who had any past order
+  // could never be deleted — the delete failed silently and nothing happened (owner: "delete ho nahi
+  // raha"). Detach those orders first: clear the customer link but KEEP the order and its customer_name,
+  // so the sales history stays intact. Then the customer row deletes cleanly.
+  await sb.from("orders").update({ customer_id: null }).eq("customer_id", id);
+  const { error } = await sb.from("customers").delete().eq("id", id);
+  if (error) {
+    revalidatePath("/admin/customers");
+    redirect(`/admin/customers?delerror=${encodeURIComponent(error.message)}`);
+  }
   revalidateTag("customers");
   revalidatePath("/admin/customers");
   redirect("/admin/customers");

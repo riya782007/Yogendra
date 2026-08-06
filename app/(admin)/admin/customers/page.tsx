@@ -24,7 +24,8 @@ const waLink = (phone: string, msg: string) => {
   return d.length === 10 ? `https://wa.me/91${d}?text=${encodeURIComponent(msg)}` : "";
 };
 
-export default async function Customers({ searchParams }: { searchParams: { q?: string; type?: string; page?: string; period?: string; target?: string; band?: string } }) {
+export default async function Customers({ searchParams }: { searchParams: { q?: string; type?: string; page?: string; period?: string; target?: string; band?: string; delerror?: string } }) {
+  const delError = searchParams.delerror?.trim();
   const q = searchParams.q ?? "";
   const type = searchParams.type ?? "all";
   const period = searchParams.period ?? "month";
@@ -62,6 +63,7 @@ export default async function Customers({ searchParams }: { searchParams: { q?: 
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen max-w-5xl">
       <h1 className="font-display text-4xl text-ink mb-1">Customers</h1>
       <p className="text-sm text-muted mb-5">Your customer directory — retail &amp; wholesale, with GST details and credit balance. Click a customer for full history.</p>
+      {delError && <div className="mb-5 rounded-xl border border-rose/40 bg-rose/5 px-4 py-3 text-sm text-rose">Couldn&apos;t delete that customer — {delError}</div>}
 
       {/* Add */}
       {canManage && (
