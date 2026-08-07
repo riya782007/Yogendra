@@ -144,7 +144,16 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
   const pageSize = opts.pageSize ?? 25;
   const page = Math.max(1, opts.page ?? 1);
   let query = sb.from("products").select("id,sku,name,qty,base_wholesale,type,status,generated_content,admin_tags,thumbnail_path,default_variant_id,more_designs,category:categories(id,name,slug)", { count: "exact" });
-  if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.or(`name.ilike.%${s}%,sku.ilike.%${s}%`); }
+  // Tokenised search: every WORD the owner typed must appear (in the name OR the sku), in ANY order.
+  // A single contiguous ilike missed "prisha gold watch" for "Prisha Floral Design Gold Watch" (the words
+  // aren't adjacent) — owner: "Prisha gold watch nhi hai". Each token is a separate OR group, and multiple
+  // .or() calls are ANDed, so all words must match.
+  if (opts.q?.trim()) {
+    for (const tok of opts.q.trim().split(/\s+/)) {
+      const t = escLike(tok);
+      if (t) query = query.or(`name.ilike.%${t}%,sku.ilike.%${t}%`);
+    }
+  }
   if (opts.category && opts.category !== "all") {
     const { data: cat } = await sb.from("categories").select("id").eq("slug", opts.category).maybeSingle();
     if (cat) query = query.eq("category_id", (cat as any).id);
@@ -2254,8 +2263,15 @@ const getSearchCatalogue = unstable_cache(
 
 export async function searchProducts(q: string) {
   const { products, formula } = await getSearchCatalogue();
-  const s = q.trim().toLowerCase();
-  const results = s ? products.filter((p) => (p.name + " " + p.category.name + " " + p.sku).toLowerCase().includes(s)) : [];
+  // Match EVERY word the shopper typed, in any order (name + category + sku), so "prisha gold watch"
+  // finds "Prisha Floral Design Gold Watch" — a single contiguous match would miss it.
+  const tokens = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const results = tokens.length
+    ? products.filter((p) => {
+        const hay = (p.name + " " + p.category.name + " " + p.sku).toLowerCase();
+        return tokens.every((t) => hay.includes(t));
+      })
+    : [];
   return { formula, results };
 }
 
