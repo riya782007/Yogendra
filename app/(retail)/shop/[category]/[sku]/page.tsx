@@ -1,4 +1,7 @@
-export const dynamic = "force-dynamic";
+// ISR: each product page is edge-cached and refreshed in the background, so repeat views load instantly
+// instead of re-rendering on the server every time. Its data is already wrapped in unstable_cache below,
+// and edits/stock changes bust it immediately via the "storefront" tag.
+export const revalidate = 300;
 import type { Metadata } from "next";
 import { unstable_cache } from "next/cache";
 import Link from "next/link";
@@ -17,13 +20,6 @@ import { ProductCard } from "@/components/site/ProductCard";
 
 type Params = { params: { category: string; sku: string } };
 
-export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const p = await getProductBySku(params.sku);
-  if (!p) return { title: "Product not found" };
-  const c = resolveProductContent({ name: p.name, sku: p.sku, categoryName: p.category?.name, subcategoryName: (p as any).subcategory?.name, polishes: p.variants?.map((v) => v.polish ?? "").filter(Boolean), colors: p.variants?.map((v) => v.color ?? "").filter(Boolean), generated_content: p.generated_content });
-  return { title: c.seo.metaTitle, description: c.seo.metaDescription, keywords: c.seo.keywords, openGraph: { title: c.seo.metaTitle, description: c.seo.metaDescription } };
-}
-
 // Cache the product page's data per-SKU (3 min). getRecommendations scans the catalogue, so rendering
 // this uncached re-ran heavy queries on every product view. Edits refresh within the window / "storefront" tag.
 const loadProductPage = unstable_cache(
@@ -41,6 +37,15 @@ const loadProductPage = unstable_cache(
   ["shop-product-page-v1"],
   { revalidate: 180, tags: ["storefront"] },
 );
+
+export async function generateMetadata({ params }: Params): Promise<Metadata> {
+  // Reuse the cached per-SKU load (was an extra uncached read that also forced the page to render
+  // dynamically on every visit).
+  const p = (await loadProductPage(params.sku))?.p;
+  if (!p) return { title: "Product not found" };
+  const c = resolveProductContent({ name: p.name, sku: p.sku, categoryName: p.category?.name, subcategoryName: (p as any).subcategory?.name, polishes: p.variants?.map((v) => v.polish ?? "").filter(Boolean), colors: p.variants?.map((v) => v.color ?? "").filter(Boolean), generated_content: p.generated_content });
+  return { title: c.seo.metaTitle, description: c.seo.metaDescription, keywords: c.seo.keywords, openGraph: { title: c.seo.metaTitle, description: c.seo.metaDescription } };
+}
 
 export default async function ProductPage({ params }: Params) {
   const data = await loadProductPage(params.sku);

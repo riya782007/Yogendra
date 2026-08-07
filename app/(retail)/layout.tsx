@@ -1,20 +1,19 @@
-import { redirect } from "next/navigation";
 import { Header } from "@/components/site/Header";
 import { Footer } from "@/components/site/Footer";
 import { Assistant } from "@/components/site/Assistant";
 import { getCategoryTreeCached, getLivePromosCached } from "@/lib/supabase/queries";
-import { getWholesaleSession } from "@/lib/wholesale";
 import { CartProvider } from "@/components/cart/CartContext";
 import { WishlistProvider } from "@/components/wishlist/WishlistContext";
 import { PromoPopup } from "@/components/site/PromoPopup";
 import { RetailLeadPopup } from "@/components/site/RetailLeadPopup";
 import { WhatsAppFab } from "@/components/site/WhatsAppFab";
 
-export const dynamic = "force-dynamic";
+// Refresh the shared shell (menu + promos) periodically; catalogue/promo edits also bust it instantly via
+// the "storefront" tag. No force-dynamic here anymore: the dealer→/trade gate moved to middleware, so this
+// layout reads no cookies and the storefront pages can be edge-cached (fast) instead of rendered per request.
+export const revalidate = 300;
 
 export default async function RetailLayout({ children }: { children: React.ReactNode }) {
-  // #24: a signed-in dealer is kept off the D2C storefront — route them to the trade portal.
-  if (await getWholesaleSession()) redirect("/trade");
   const tree = await getCategoryTreeCached();
   const cats = tree.map((c) => ({ name: c.name, slug: c.slug, subcategories: c.subcategories.map((s) => ({ name: s.name, slug: s.slug })) }));
   const [popupList, stripList] = await Promise.all([

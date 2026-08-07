@@ -1850,9 +1850,18 @@ export async function getStorefront(
   const sb = supabaseServer();
   // D2C-safe defaults: only published, and never wholesale-only items (#1, #23).
   // NOTE: products / images / variants all exceed PostgREST's 1000-row cap — page through them.
+  // PERF: select ONLY the columns the storefront actually renders — crucially NOT `generated_content`
+  // (the AI copy blob, ~78% of each row) or `embedding` (the search vector). The whole in-stock catalogue
+  // is cached and re-parsed on every page render; dropping those two blobs shrinks that cached payload by
+  // ~4× so every storefront page (home, category, search) deserializes and renders much faster.
+  const STOREFRONT_COLS =
+    "id, category_id, sku, name, type, base_wholesale, qty, status, last_movement_at, created_at, " +
+    "subcategory_id, wholesale_override, retail_override, mrp_override, wholesale_only, retail_only, " +
+    "style_id, thumbnail_path, default_variant_id, hide_oos_variants, in_stock, more_designs, more_designs_note, " +
+    "category:categories(id,name,slug)";
   const [prods, revs, pimgs, vimgs, formula] = await Promise.all([
     fetchAll((f, t) => {
-      let q = sb.from("products").select("*, category:categories(id,name,slug)").order("sku");
+      let q = sb.from("products").select(STOREFRONT_COLS).order("sku");
       if (!opts.includeDrafts) q = q.eq("status", "published");
       return q.range(f, t);
     }),

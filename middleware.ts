@@ -116,6 +116,15 @@ export function middleware(req: NextRequest) {
     return pass();
   }
 
+  // Keep a signed-in DEALER on the trade portal and off the D2C storefront. This used to live in the
+  // retail layout via getWholesaleSession(), but that read a cookie (+ a DB lookup) on EVERY storefront
+  // page, which forced every page to render dynamically (no edge cache = slow). Doing it here — a
+  // cookie-only check at the edge, no DB — lets the storefront pages be statically cached and load fast.
+  // A retail shopper never has this cookie; a stale/invalid one just lands on the open /trade catalogue.
+  if (!rewritten && !isAuthPath && req.cookies.get("bd_wholesale")?.value) {
+    const url = req.nextUrl.clone(); url.pathname = "/trade"; url.search = ""; return NextResponse.redirect(url);
+  }
+
   // Everything else (retail store, shop pages) — public, plus any subdomain rewrite.
   return pass();
 }
