@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
-import { getCatalogProducts, getCategoryTree, getCatalogSuggestions, getStyles } from "@/lib/supabase/queries";
+import { getCatalogProductsCached, getCategoryTreeCached, getCatalogSuggestionsCached, getStyles } from "@/lib/supabase/queries";
 import { CatalogSearch } from "@/components/site/CatalogSearch";
 import { SelectableCatalog } from "@/components/site/SelectableCatalog";
 import { BUSINESS } from "@/lib/business";
@@ -24,16 +24,16 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
   const view: "retail" | "wholesale" = searchParams.view === "wholesale" && canSeeWholesale ? "wholesale" : "retail";
 
   const [tree, fetched, suggestions] = await Promise.all([
-    getCategoryTree(),
-    getCatalogProducts({ category, subcategory, style, q, skus: skus.length ? skus : undefined, includeWholesaleOnly: view === "wholesale", excludeRetailOnly: view === "wholesale", includeWholesalePricing: view === "wholesale", inStock: true }),
-    getCatalogSuggestions().catch(() => ({ products: [], categories: [], colours: [] })),
+    getCategoryTreeCached(),
+    getCatalogProductsCached({ category, subcategory, style, q, skus: skus.length ? skus : undefined, includeWholesaleOnly: view === "wholesale", excludeRetailOnly: view === "wholesale", includeWholesalePricing: view === "wholesale", inStock: true }),
+    getCatalogSuggestionsCached().catch(() => ({ products: [], categories: [], colours: [] })),
   ]);
   // Never dead-end a shared sub-category link: if nothing is tagged there yet,
   // fall back to the whole parent category so the catalogue always shows stock.
   let products = fetched;
   let subFellBack = false;
   if (products.length === 0 && subcategory !== "all" && skus.length === 0) {
-    products = await getCatalogProducts({ category, q, inStock: true });
+    products = await getCatalogProductsCached({ category, q, inStock: true });
     subFellBack = products.length > 0;
   }
 

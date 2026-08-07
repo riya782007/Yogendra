@@ -1841,6 +1841,14 @@ export const getProductsForPurchaseCached = unstable_cache(() => getProductsForP
  *  memoising them removes 3 DB round-trips per page load and makes navigation feel instant. Any catalogue
  *  or promo edit calls revalidateTag("storefront") and refreshes them at once. */
 export const getCategoryTreeCached = unstable_cache(() => getCategoryTree(), ["category-tree"], { tags: ["storefront"], revalidate: 300 });
+
+// Shareable catalogue (/catalog) reads were UNCACHED (supabaseServer is no-store), so every share view
+// re-ran the heavy RICH query (all in-stock products + images + labels joins) — slow, and prone to timing
+// out on a big collection. Cache per filter-set (5 min, busted by the "storefront" tag on any edit) so a
+// shared link opens fast for the customer instead of re-querying the whole catalogue each time.
+export const getCatalogProductsCached = (opts: Parameters<typeof getCatalogProducts>[0]) =>
+  unstable_cache(() => getCatalogProducts(opts), ["catalog-products", JSON.stringify(opts)], { tags: ["storefront"], revalidate: 300 })();
+export const getCatalogSuggestionsCached = unstable_cache(() => getCatalogSuggestions(), ["catalog-suggestions"], { tags: ["storefront"], revalidate: 600 });
 export const getLivePromosCached = (scope: "retail" | "wholesale", placement: "hero" | "popup" | "strip") =>
   unstable_cache(() => getLivePromos(scope, placement), ["live-promos", scope, placement], { tags: ["storefront"], revalidate: 120 })();
 

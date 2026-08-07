@@ -42,6 +42,13 @@ const ROUTE_PERM: [string, string | string[]][] = [
 // simply never match the vercel.app host, so nothing changes on the current URL.
 const TRADE_HOST = (process.env.TRADE_HOST || "trade.blythediva.com").toLowerCase();
 const ADMIN_HOST = (process.env.ADMIN_HOST || "admin-bd.blythediva.com").toLowerCase();
+// The public retail host (blythediva.com). Public storefront pages must always live here — if one is hit
+// on the trade/admin subdomain (e.g. a "Share Catalogue" link that resolved to a relative /catalog), we
+// bounce it here instead of letting the subdomain rewrite turn /catalog into /trade|/admin + /catalog → 404.
+const RETAIL_HOST = (process.env.NEXT_PUBLIC_SITE_URL || "https://blythediva.com")
+  .replace(/^https?:\/\//, "").replace(/\/.*$/, "").toLowerCase();
+const isPublicStorefront = (p: string) =>
+  p === "/catalog" || p.startsWith("/catalog/") || p === "/shop" || p.startsWith("/shop/") || p.startsWith("/search");
 
 export function middleware(req: NextRequest) {
   const host = (req.headers.get("host") || "").split(":")[0].toLowerCase();
@@ -54,6 +61,14 @@ export function middleware(req: NextRequest) {
   // admin host rewrites /login → /admin/login, which needs auth, which redirects back to /login…
   // an infinite ERR_TOO_MANY_REDIRECTS loop. Keep /login (and its assets) un-prefixed.
   const isAuthPath = path === "/login" || path.startsWith("/login/");
+
+  // A public storefront page (/catalog, /shop, /search) hit on the trade/admin subdomain belongs on the
+  // retail host — send it there so a "Share Catalogue" link never 404s as /trade/catalog or /admin/catalog.
+  if ((host === TRADE_HOST || host === ADMIN_HOST) && host !== RETAIL_HOST && RETAIL_HOST && isPublicStorefront(path)) {
+    const url = req.nextUrl.clone(); url.host = RETAIL_HOST; url.protocol = "https:"; url.port = "";
+    return NextResponse.redirect(url);
+  }
+
   if (host === TRADE_HOST && !path.startsWith("/trade") && !isAuthPath) {
     path = "/trade" + (path === "/" ? "" : path); rewritten = true;
   } else if (host === ADMIN_HOST && !path.startsWith("/admin") && !isAuthPath) {
