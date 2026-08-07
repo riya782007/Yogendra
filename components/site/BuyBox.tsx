@@ -7,7 +7,7 @@ import { formatPaise } from "@/lib/pricing";
 import { requestNotifyAction } from "@/app/actions/notify";
 import { useVariantImage } from "@/components/site/VariantImageSync";
 
-export type BuyVariant = { sku: string; label: string; image: string | null; price: number; qty: number };
+export type BuyVariant = { sku: string; label: string; value?: string | null; image: string | null; price: number; qty: number };
 
 export function BuyBox({ variants = [], waHref, item }: {
   variants?: BuyVariant[];
@@ -27,8 +27,12 @@ export function BuyBox({ variants = [], waHref, item }: {
   const price = sel ? sel.price : item.price;
   const outOfStock = sel ? sel.qty <= 0 : (item.qty != null && item.qty <= 0);
 
-  // The exact line that goes into the cart for this product/variant + chosen qty.
-  const cartLine = () => ({ sku: item.sku, name: item.name, price, category: item.category, color: sel?.label });
+  // The exact line that goes into the cart for this product/variant + chosen qty. IMPORTANT: store the
+  // variant's REAL colour value (e.g. "Gold"), NOT the display label ("Gold · Gold"). place_order matches
+  // the chosen option on the colour column, so a composite label made checkout fail to place the order
+  // even after the customer had paid (money captured, no order). Fall back to the label only if a variant
+  // has no colour value.
+  const cartLine = () => ({ sku: item.sku, name: item.name, price, category: item.category, color: sel?.value || sel?.label });
 
   const onAdd = () => {
     if (outOfStock) return;

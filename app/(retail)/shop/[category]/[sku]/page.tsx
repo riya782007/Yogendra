@@ -75,7 +75,9 @@ export default async function ProductPage({ params }: Params) {
     const merged = { wholesale: vOv.wholesale ?? pOv.wholesale, retail: vOv.retail ?? pOv.retail, mrp: vOv.mrp ?? pOv.mrp };
     const vo = liveOffer(p.base_wholesale, formula, merged);
     const label = [v.color, v.size, v.polish].filter(Boolean).join(" · ") || v.sku;
-    return { sku: v.sku, label, image: (v.image_paths?.[0] ?? null) as string | null, price: vo.price, qty: v.qty ?? 0 };
+    // `value` is the raw colour the order matches on (place_order matches the colour column); `label` is
+    // only for display. Keeping them separate stops a composite label ("Gold · Gold") from breaking checkout.
+    return { sku: v.sku, label, value: v.color ?? null, image: (v.image_paths?.[0] ?? null) as string | null, price: vo.price, qty: v.qty ?? 0 };
   });
   // Gallery shows AI-generated product photos + every visible variant photo, all zoomable. The raw
   // upload (kind 'source'/'flatlay') is kept for the Fix-a-detail editor but never shown to customers.

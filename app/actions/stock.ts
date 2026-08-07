@@ -72,6 +72,10 @@ export async function adjustStockAction(formData: FormData): Promise<void> {
   revalidatePath("/admin/dashboard");
   revalidatePath(`/admin/catalogue/${sku}`);
   revalidatePath(`/admin/product/${sku}`);
+  // Refresh the customer-facing shop too, otherwise a RESTOCK doesn't bring a sold-out design back online
+  // (the storefront hides zero-stock designs and caches that list) — owner: "restock hone pe stock online
+  // nahi ho raha". This makes a restocked design reappear on the shop at once (and a manual removal hide it).
+  revalidateTag("storefront");
 }
 
 /**
