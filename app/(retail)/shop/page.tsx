@@ -1,7 +1,8 @@
-// ISR: serve the shop home from the edge cache and refresh in the background — instant loads instead of a
-// full server render every visit. Product/stock/promo edits still refresh it at once via the "storefront"
-// tag; the inner loadShopHome cache also holds the heavy catalogue read.
-export const revalidate = 300;
+// Rendered per request (NOT prerendered at build): the shop-home loader intentionally throws if the
+// storefront read is momentarily empty (so it never caches a blank shop), and at build time that read has
+// no data — which would fail the build. Speed still comes from the slim catalogue query + the inner
+// loadShopHome cache (15 min, busted instantly by the "storefront" tag on any edit).
+export const dynamic = "force-dynamic";
 import { unstable_cache } from "next/cache";
 import Link from "next/link";
 import { getStorefront, getFeaturedReviews, getShoppableReels, getActivePromotions, getCategoryTree } from "@/lib/supabase/queries";
