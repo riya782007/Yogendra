@@ -245,6 +245,8 @@ export type CatalogCard = {
   labels: string[];
   /** True when the product is marked wholesale-only — hidden on the D2C shop, visible on wholesale + POS. */
   wholesaleOnly: boolean;
+  /** In-stock colour variants this design comes in — shown as chips on the shared-catalogue card. */
+  colors: string[];
 };
 
 export async function getCatalogProducts(opts: { category?: string; subcategory?: string; style?: string; q?: string; skus?: string[]; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean; includeWholesalePricing?: boolean; inStock?: boolean }): Promise<CatalogCard[]> {
@@ -330,13 +332,21 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
   // hero — the card should still show an image instead of a blank tile.
   const cardRows = (data as any[]) ?? [];
   const vImgByP = new Map<string, string>();
+  // Colours a design comes in, IN STOCK only — so the shared catalogue card can show colour chips
+  // (owner: "catalog me variant nahi dikh raha"). Same variant fetch that already resolves cover images.
+  const colorsByP = new Map<string, Set<string>>();
   const cardIds = cardRows.map((p) => p.id).filter(Boolean);
   if (cardIds.length) {
-    const vimgs = await fetchByIds(cardIds, (chunk) => sb.from("variants").select("product_id,image_paths").in("product_id", chunk));
+    const vimgs = await fetchByIds(cardIds, (chunk) => sb.from("variants").select("product_id,image_paths,color,qty").in("product_id", chunk));
     for (const v of ((vimgs as any[]) ?? [])) {
-      if (vImgByP.has(v.product_id) || !Array.isArray(v.image_paths)) continue;
-      const hit = v.image_paths.find((x: string) => typeof x === "string" && x.startsWith("http"));
-      if (hit) vImgByP.set(v.product_id, hit);
+      if (!vImgByP.has(v.product_id) && Array.isArray(v.image_paths)) {
+        const hit = v.image_paths.find((x: string) => typeof x === "string" && x.startsWith("http"));
+        if (hit) vImgByP.set(v.product_id, hit);
+      }
+      const c = String(v.color ?? "").trim();
+      if (c && (v.qty ?? 0) > 0) {
+        let s = colorsByP.get(v.product_id); if (!s) { s = new Set(); colorsByP.set(v.product_id, s); } s.add(c);
+      }
     }
   }
   return cardRows.map((p): CatalogCard => {
@@ -362,6 +372,7 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       keywords: (seo.keywords ?? []).slice(0, 6),
       labels: labelNames.slice(0, 6),
       wholesaleOnly: !!p.wholesale_only,
+      colors: [...(colorsByP.get(p.id) ?? [])].sort(),
     };
   })
   // A shareable catalogue must never show a photo-less design (letter placeholder) — it looks unfinished

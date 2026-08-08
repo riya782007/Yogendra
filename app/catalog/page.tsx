@@ -16,12 +16,13 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
   const q = (searchParams.q ?? "").trim();
   const skus = (searchParams.skus ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 
-  // AUTHORIZATION GATE: the wholesale view + trade pricing are only available to an
-  // authenticated admin/staff OR an approved dealer. A retail visitor (or anyone who
-  // receives a shared ?view=wholesale link) is silently forced back to the retail view,
-  // and trade prices are never fetched or serialized for them.
+  // The owner shares WHOLESALE catalogues with dealers, and trade rates are already public on the trade
+  // storefront (trade.blythediva.com is open, no login) — so an explicit ?view=wholesale from a shared
+  // link is honoured for everyone. Retail stays the DEFAULT when no view is given, so the public shop link
+  // never shows trade prices unless the owner deliberately shared a wholesale link. `canSeeWholesale` still
+  // gates the Retail/Wholesale TOGGLE (only the owner/dealer sees it).
   const canSeeWholesale = getSession().authed || !!(await getWholesaleSession());
-  const view: "retail" | "wholesale" = searchParams.view === "wholesale" && canSeeWholesale ? "wholesale" : "retail";
+  const view: "retail" | "wholesale" = searchParams.view === "wholesale" ? "wholesale" : "retail";
 
   const [tree, fetched, suggestions] = await Promise.all([
     getCategoryTreeCached(),

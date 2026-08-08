@@ -20,6 +20,7 @@ export type CatalogItem = {
   subcategory: string | null; subcategorySlug: string | null;
   qty: number; wholesale?: number; price: number; mrp: number; offerPct: number; hasOffer: boolean;
   image: string | null; tags: string[]; keywords: string[]; labels: string[]; wholesaleOnly: boolean;
+  colors?: string[];
 };
 
 export function SelectableCatalog({ products, view, brand, phone }: { products: CatalogItem[]; view: "retail" | "wholesale"; brand: string; phone: string }) {
@@ -182,6 +183,13 @@ export function SelectableCatalog({ products, view, brand, phone }: { products: 
                       <span className="text-xs text-muted line-through">{formatPaise(p.mrp)}</span>
                     ) : null}
                   </div>
+                  {(p.colors?.length ?? 0) > 0 && (
+                    <div className="flex flex-wrap items-center gap-1 mt-1.5" title={p.colors!.join(", ")}>
+                      <span className="text-[9px] uppercase tracking-wide text-muted mr-0.5">Colours</span>
+                      {p.colors!.slice(0, 6).map((c) => <span key={c} className="text-[9px] px-1.5 py-0.5 rounded-full border border-sand text-ink/75">{c}</span>)}
+                      {p.colors!.length > 6 && <span className="text-[9px] text-muted">+{p.colors!.length - 6}</span>}
+                    </div>
+                  )}
                   {(p.labels ?? []).length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-1.5">
                       {p.labels.slice(0, 3).map((l) => <span key={l} className="text-[9px] px-1.5 py-0.5 rounded-full bg-gold/15 text-gold-dark font-medium">{l}</span>)}
