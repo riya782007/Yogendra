@@ -5,7 +5,7 @@
 export const dynamic = "force-dynamic";
 import { unstable_cache } from "next/cache";
 import Link from "next/link";
-import { getStorefront, getFeaturedReviews, getShoppableReels, getActivePromotions, getCategoryTree } from "@/lib/supabase/queries";
+import { getStorefront, getFeaturedReviews, getShoppableReels, getActivePromotions, getCategoryTree, getPricingFormula } from "@/lib/supabase/queries";
 import { ProductCard } from "@/components/site/ProductCard";
 import { PromoHero } from "@/components/site/PromoHero";
 import { ProductImage } from "@/components/Placeholder";
@@ -38,8 +38,21 @@ const loadShopHome = unstable_cache(
   { revalidate: 900, tags: ["storefront"] },
 );
 
+// loadShopHome THROWS on an empty read (so it never caches a blank shop). That's right for runtime, but it
+// must NOT propagate — a transient empty read (or the build environment, which has no data) would 500 the
+// page / fail the build. Catch it and render a minimal shell (category tiles still show; rails are empty
+// this once) so the shop always renders and self-heals on the next request.
+async function loadShopHomeSafe() {
+  try {
+    return await loadShopHome();
+  } catch {
+    const [formula, tree] = await Promise.all([getPricingFormula(), getCategoryTree()]);
+    return { products: [] as any[], formula, reviews: [] as any[], reels: [] as any[], promos: [] as any[], tree };
+  }
+}
+
 export default async function Shop() {
-  const { products, formula, reviews, reels, promos, tree } = await loadShopHome();
+  const { products, formula, reviews, reels, promos, tree } = await loadShopHomeSafe();
   // Category tiles are driven by the catalogue tree, so they always show — even before
   // any products are published (the storefront starts with everything in draft).
   // Category tiles get a REAL jewellery photo automatically — the first in-stock product image in that
