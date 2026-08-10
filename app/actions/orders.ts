@@ -364,7 +364,7 @@ export async function acceptStorefrontOrderAction(formData: FormData): Promise<v
       await sendWhatsAppText(ph, `Hi ${(o as any)?.customer_name || "there"}! 💛 Your Blythe Diva order ${inv} is CONFIRMED and being packed. We'll share tracking soon.`).catch(() => {});
     }
   }
-  revalidatePath("/admin/orders"); revalidatePath("/admin/sales");
+  revalidatePath("/admin/orders"); revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard");
 }
 
 /** REJECT a storefront order — cancels it properly: restocks every line, reverses the revenue
@@ -419,7 +419,7 @@ export async function dispatchStorefrontOrderAction(formData: FormData): Promise
       await sendWhatsAppText(ph, bits.join("\n")).catch(() => {});
     }
   }
-  revalidatePath("/admin/orders");
+  revalidatePath("/admin/orders"); revalidatePath("/admin/dashboard");
 }
 
 /** Mark a storefront order DELIVERED — final tracking step. */
@@ -437,5 +437,5 @@ export async function deliverStorefrontOrderAction(formData: FormData): Promise<
       await sendWhatsAppText(ph, `Hi ${(o as any)?.customer_name || "there"}! ✅ Your Blythe Diva order ${inv} has been DELIVERED. We hope you love it — thank you for shopping with us! 💛`).catch(() => {});
     }
   }
-  revalidatePath("/admin/orders");
+  revalidatePath("/admin/orders"); revalidatePath("/admin/dashboard");
 }

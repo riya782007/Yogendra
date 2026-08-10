@@ -1716,7 +1716,7 @@ export async function getOrderAlerts(limit = 8): Promise<{ orders: OrderAlertRow
   return { orders: ((listRes.data as any[]) ?? []) as OrderAlertRow[], last24h: cntRes.count ?? 0 };
 }
 
-export type StorefrontOrderRow = { id: string; invoice_no: string | null; channel: string; status: string | null; total: number; amount_paid: number; payment_mode: string | null; customer_name: string | null; customer_phone: string | null; created_at: string };
+export type StorefrontOrderRow = { id: string; invoice_no: string | null; channel: string; status: string | null; total: number; amount_paid: number; payment_mode: string | null; customer_name: string | null; customer_phone: string | null; created_at: string; fulfillment?: string | null };
 /** Orders placed BY CUSTOMERS on the storefront (retail / wholesale online) in the last 3 days — the ones
  *  the owner must actually see and fulfil. Kept separate from his own counter (POS) bills, which flood the
  *  general feed ~9×/day and bury the rare online order. */
@@ -1725,13 +1725,18 @@ export async function getStorefrontOrderAlerts(limit = 12): Promise<StorefrontOr
   const since = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
   const { data } = await sb
     .from("orders")
-    .select("id,invoice_no,channel,status,total,amount_paid,payment_mode,customer_name,customer_phone,created_at")
+    .select("id,invoice_no,channel,status,total,amount_paid,payment_mode,customer_name,customer_phone,created_at,fulfillment")
     .in("channel", ["retail", "wholesale"])
     .gte("created_at", since)
     .order("created_at", { ascending: false })
-    .limit(30);
+    .limit(40);
   return ((data as any[]) ?? [])
-    .filter((o) => !["cancelled", "refunded"].includes(String(o.status ?? "").toLowerCase())
+    .filter((o) =>
+      // Only orders that STILL NEED action stay in the "pack & ship" box. Once the owner accepts / dispatches
+      // / delivers / rejects an order it has been handled and must drop off this list (owner: "accepted orders
+      // are not moving out from here"). A new order has status 'completed' but NO fulfilment set yet.
+      !["cancelled", "refunded", "dispatched", "delivered", "shipped"].includes(String(o.status ?? "").toLowerCase())
+      && ["", "new", "pending"].includes(String(o.fulfillment ?? "").toLowerCase())
       // Wholesale PREPAID orders live in their own "Wholesale payments to verify" box (with Accept/Reject),
       // so don't repeat them here. This box is for orders with no other home: all retail, plus wholesale-COD.
       && (o.channel === "retail" || String(o.payment_mode ?? "").toLowerCase() === "cod"))
