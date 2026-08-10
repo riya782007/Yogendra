@@ -6,13 +6,13 @@ import Script from "next/script";
 import { useCart } from "@/components/cart/CartContext";
 import { formatPaise } from "@/lib/pricing";
 import { Back } from "@/components/site/Back";
-import { placeOrderAction } from "@/app/actions/orders";
+import { placeOrderAction, checkCartStockAction } from "@/app/actions/orders";
 import { createRazorpayOrderAction, confirmRazorpayAction } from "@/app/actions/checkoutOnline";
 import { validateVoucherAction } from "@/app/actions/vouchers";
 import { retailShippingPaise } from "@/lib/wholesaleShipping";
 
 export default function Checkout() {
-  const { items, total, clear } = useCart();
+  const { items, total, clear, remove } = useCart();
   const router = useRouter();
   const [payment, setPayment] = useState<"cod" | "online">("cod");
   const [busy, setBusy] = useState(false);
@@ -68,6 +68,21 @@ export default function Checkout() {
   async function submit(e: React.FormEvent) {
     e.preventDefault(); setErr(""); setBusy(true);
     const cartItems = items.map((i) => ({ sku: i.sku, qty: i.qty, color: i.color }));
+
+    // STOCK RE-CHECK — a design (or the chosen colour) can sell out after it was added to the bag. Drop
+    // any now-unavailable item from the cart, tell the shopper, and let them confirm the corrected order —
+    // so they never pay for something out of stock (owner: "cart se product disappear ho jaye").
+    const stock = await checkCartStockAction(cartItems);
+    if (!stock.ok) {
+      const names = stock.unavailable.map((u) => {
+        const it = items.find((x) => x.sku === u.sku && (x.color ?? null) === (u.color ?? null));
+        return (it?.name ?? u.sku) + (u.color ? ` (${u.color})` : "");
+      });
+      stock.unavailable.forEach((u) => remove(u.sku, u.color ?? undefined));
+      setBusy(false);
+      setErr(`${names.join(", ")} just sold out and ${names.length > 1 ? "were" : "was"} removed from your bag. Please review your order and place it again.`);
+      return;
+    }
 
     // ---- Pay Online (Razorpay) ----
     if (payment === "online") {

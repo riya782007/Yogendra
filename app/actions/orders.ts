@@ -19,6 +19,30 @@ export type PlaceOrderInput = {
   voucher?: string; // optional coupon code — re-validated server-side, never trusted from the client
 };
 
+/**
+ * Live stock re-check for a cart, used at checkout. Returns the items that can no longer be fulfilled (a
+ * design or the chosen colour sold out since it was added). The checkout drops these from the bag so the
+ * customer never pays for something out of stock, and the rest of the order goes through. Uses the SAME
+ * variant resolution as place_order (a no-colour line reports the best in-stock colour), so what we show
+ * matches what would actually be sold. Fails OPEN — a check glitch never blocks a genuine order.
+ */
+export async function checkCartStockAction(
+  items: { sku: string; qty: number; color?: string | null }[],
+): Promise<{ ok: boolean; unavailable: { sku: string; color: string | null; available: number }[] }> {
+  if (!items?.length) return { ok: true, unavailable: [] };
+  const sb = supabaseServer();
+  const { data, error } = await sb.rpc("cart_availability", {
+    p_items: items.map((i) => ({ sku: i.sku, qty: i.qty, color: i.color ?? null })),
+  });
+  if (error) return { ok: true, unavailable: [] };
+  const unavailable: { sku: string; color: string | null; available: number }[] = [];
+  for (const r of ((data as any[]) ?? [])) {
+    const requested = items[r.idx]?.qty ?? 1;
+    if ((r.available ?? 0) < requested) unavailable.push({ sku: r.sku, color: r.color ?? null, available: r.available ?? 0 });
+  }
+  return { ok: unavailable.length === 0, unavailable };
+}
+
 export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: boolean; orderId?: string; total?: number; error?: string }> {
   if (!input.items?.length) return { ok: false, error: "Cart is empty" };
   if (!input.customer?.name || !input.customer?.phone || !input.customer?.address) return { ok: false, error: "Please fill name, phone and address" };
