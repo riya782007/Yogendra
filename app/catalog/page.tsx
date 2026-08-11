@@ -4,8 +4,6 @@ import { getCatalogProductsCached, getCategoryTreeCached, getCatalogSuggestionsC
 import { CatalogSearch } from "@/components/site/CatalogSearch";
 import { SelectableCatalog } from "@/components/site/SelectableCatalog";
 import { BUSINESS } from "@/lib/business";
-import { getSession } from "@/lib/auth";
-import { getWholesaleSession } from "@/lib/wholesale";
 
 export const metadata = { title: "Catalogue — Blythe Diva" };
 
@@ -19,9 +17,7 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
   // The owner shares WHOLESALE catalogues with dealers, and trade rates are already public on the trade
   // storefront (trade.blythediva.com is open, no login) — so an explicit ?view=wholesale from a shared
   // link is honoured for everyone. Retail stays the DEFAULT when no view is given, so the public shop link
-  // never shows trade prices unless the owner deliberately shared a wholesale link. `canSeeWholesale` still
-  // gates the Retail/Wholesale TOGGLE (only the owner/dealer sees it).
-  const canSeeWholesale = getSession().authed || !!(await getWholesaleSession());
+  // never shows trade prices unless a wholesale link is opened / the Wholesale toggle is used.
   const view: "retail" | "wholesale" = searchParams.view === "wholesale" ? "wholesale" : "retail";
 
   const [tree, fetched, suggestions] = await Promise.all([
@@ -71,13 +67,15 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
           <div className="flex flex-col items-end gap-2">
             {/* Search with live suggestions — designs, SKUs, categories, colours. */}
             <CatalogSearch suggestions={suggestions} view={view} initialQuery={q} />
-            {/* Retail / Wholesale toggle — shown ONLY to authenticated admin/dealer users. */}
-            {canSeeWholesale && (
-              <div className="no-print inline-flex rounded-full bg-white/10 p-1 text-sm">
-                <Link href={{ pathname: "/catalog", query: cleanQuery({ category, subcategory, style, q, skus: searchParams.skus }) }} className={`px-3 py-1 rounded-full ${view === "retail" ? "bg-gold text-ink" : "text-cream/80"}`}>Retail</Link>
-                <Link href={{ pathname: "/catalog", query: cleanQuery({ category, subcategory, style, q, skus: searchParams.skus, view: "wholesale" }) }} className={`px-3 py-1 rounded-full ${view === "wholesale" ? "bg-gold text-ink" : "text-cream/80"}`}>Wholesale</Link>
-              </div>
-            )}
+            {/* Retail / Wholesale toggle. Shown to EVERYONE on this shareable catalogue: the owner opens it
+                on the public host (blythediva.com) where his admin cookie isn't visible, so gating it by login
+                meant he never saw the wholesale option (owner: "wholesale price ka option nahi h"). Trade
+                rates are already public on trade.blythediva.com, so exposing the toggle here is fine — and it
+                lets him flip to Wholesale and share that link. (The main retail shop is /shop, not this page.) */}
+            <div className="no-print inline-flex rounded-full bg-white/10 p-1 text-sm">
+              <Link href={{ pathname: "/catalog", query: cleanQuery({ category, subcategory, style, q, skus: searchParams.skus }) }} className={`px-3 py-1 rounded-full ${view === "retail" ? "bg-gold text-ink" : "text-cream/80"}`}>Retail</Link>
+              <Link href={{ pathname: "/catalog", query: cleanQuery({ category, subcategory, style, q, skus: searchParams.skus, view: "wholesale" }) }} className={`px-3 py-1 rounded-full ${view === "wholesale" ? "bg-gold text-ink" : "text-cream/80"}`}>Wholesale</Link>
+            </div>
           </div>
         </div>
       </div>
