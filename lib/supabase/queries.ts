@@ -854,14 +854,22 @@ export async function getSupplierLedger(id: string) {
   if (!supplier) return null;
   const [{ data: purchases }, { data: pays }] = await Promise.all([
     sb.from("purchases").select("id,bill_no,total,created_at, items:purchase_items(qty)").eq("supplier_id", id).order("created_at", { ascending: false }),
-    sb.from("supplier_payments").select("id,amount,mode,ref,note,created_at").eq("supplier_id", id).order("created_at", { ascending: false }),
+    sb.from("supplier_payments").select("id,amount,mode,ref,note,created_at,method_id").eq("supplier_id", id).order("created_at", { ascending: false }),
   ]);
   const list = ((purchases as any[]) ?? []).map((p) => ({
     id: p.id, bill_no: p.bill_no, total: p.total ?? 0, created_at: p.created_at,
     qty: ((p.items as any[]) ?? []).reduce((s, x) => s + (x.qty ?? 0), 0),
     lines: ((p.items as any[]) ?? []).length,
   }));
-  const payments = ((pays as any[]) ?? []).map((p) => ({ id: p.id, amount: p.amount ?? 0, mode: p.mode as string, ref: p.ref as string | null, note: p.note as string | null, created_at: p.created_at }));
+  // Resolve each payment's SPECIFIC account name (Kotak / SBI / HDFC / UPI / Cash) so the ledger shows
+  // where the money went out from, not just a coarse "bank".
+  const pmIds = [...new Set(((pays as any[]) ?? []).map((p) => p.method_id).filter(Boolean))] as string[];
+  const pmName = new Map<string, string>();
+  if (pmIds.length) {
+    const { data: pms } = await sb.from("payment_methods").select("id,name").in("id", pmIds);
+    for (const m of ((pms as any[]) ?? [])) pmName.set(m.id, m.name);
+  }
+  const payments = ((pays as any[]) ?? []).map((p) => ({ id: p.id, amount: p.amount ?? 0, mode: (p.method_id && pmName.get(p.method_id)) ? pmName.get(p.method_id)! : (p.mode as string), ref: p.ref as string | null, note: p.note as string | null, created_at: p.created_at }));
   const opening = ((supplier as any).opening_balance ?? 0) as number;
   const totalPurchased = list.reduce((s, p) => s + p.total, 0);
   const totalPaid = payments.reduce((s, p) => s + p.amount, 0);

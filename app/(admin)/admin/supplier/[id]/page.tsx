@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getSupplierLedger } from "@/lib/supabase/queries";
+import { getSupplierLedger, getPaymentMethods } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { setSupplierOpeningBalanceAction, recordSupplierPaymentAction, deleteSupplierPaymentAction } from "@/app/actions/suppliers";
 
@@ -10,8 +10,9 @@ const card = "bg-white rounded-2xl border border-sand p-5 shadow-card";
 const inp = "rounded-xl border border-sand px-3 py-2 text-sm bg-white outline-none focus:border-emerald";
 
 export default async function SupplierLedger({ params }: { params: { id: string } }) {
-  const data = await getSupplierLedger(params.id);
+  const [data, methods] = await Promise.all([getSupplierLedger(params.id), getPaymentMethods({ activeOnly: true })]);
   if (!data) notFound();
+  const payAccounts = (methods as any[]) ?? [];
   const { supplier, purchases, payments, totalPurchased, totalQty, opening, totalPaid, balanceOwed } = data as any;
 
   // Combined chronological ledger with a running "balance owed".
@@ -55,7 +56,17 @@ export default async function SupplierLedger({ params }: { params: { id: string 
         <form action={recordSupplierPaymentAction} className={`${card} flex items-end gap-2 flex-wrap`}>
           <input type="hidden" name="id" value={supplier.id} />
           <label className="text-[11px] text-muted">Pay ₹<input name="amount" type="number" min={1} step="0.01" placeholder="0" className={`${inp} w-24 block mt-0.5`} /></label>
-          <label className="text-[11px] text-muted">Mode<select name="mode" className={`${inp} block mt-0.5`}><option value="cash">Cash</option><option value="bank">Bank</option><option value="upi">UPI</option></select></label>
+          <label className="text-[11px] text-muted">From account
+            {payAccounts.length > 0 ? (
+              <select name="method_id" className={`${inp} block mt-0.5`}>
+                {payAccounts.map((m: any) => (
+                  <option key={m.id} value={m.id}>{m.name}{m.upi_id ? ` · ${m.upi_id}` : ""}</option>
+                ))}
+              </select>
+            ) : (
+              <select name="mode" className={`${inp} block mt-0.5`}><option value="cash">Cash</option><option value="bank">Bank</option><option value="upi">UPI</option></select>
+            )}
+          </label>
           <label className="text-[11px] text-muted">Ref<input name="ref" placeholder="cheque/UTR" className={`${inp} w-28 block mt-0.5`} /></label>
           <button className="btn-primary px-4 py-2 text-sm font-medium">Record payment</button>
         </form>
