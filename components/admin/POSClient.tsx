@@ -150,9 +150,11 @@ export function POSClient({ products: propProducts, customers = [], methods = []
     const s = q.toLowerCase();
     const local = products.filter((p) => p.name.toLowerCase().includes(s) || p.sku.toLowerCase().includes(s) || p.category.toLowerCase().includes(s));
     const seen = new Set(local.map((p) => p.sku.toUpperCase()));
-    // Merge already-loaded local hits with the live server results (deduped) — local first so items the
-    // owner just used still appear instantly.
-    return [...local, ...remote.filter((r) => !seen.has(r.sku.toUpperCase()))].slice(0, 8);
+    // Merge already-loaded local hits with the live server results (deduped), then rank so the closest
+    // SKU is first: exact SKU → SKU starts with the code → the rest. This keeps a shorter SKU
+    // (MISC-EARRINGS1) above its longer sibling (MISC-EARRINGS10) so the owner never mis-taps.
+    const rank = (p: P) => { const sk = p.sku.toLowerCase(); return sk === s ? 0 : sk.startsWith(s) ? 1 : 2; };
+    return [...local, ...remote.filter((r) => !seen.has(r.sku.toUpperCase()))].sort((a, b) => rank(a) - rank(b) || a.sku.length - b.sku.length).slice(0, 8);
   }, [q, products, remote]);
 
   // Debounced live search against the server (name OR sku), so we never preload the whole catalogue.
@@ -253,24 +255,37 @@ export function POSClient({ products: propProducts, customers = [], methods = []
   async function submitSearch() {
     const code = q.trim();
     if (!code) return;
-    const exact = products.find((x) => x.sku.toLowerCase() === code.toLowerCase());
-    const p = exact ?? (matches.length === 1 ? matches[0] : undefined);
-    if (p) { addLine(p); setScanMsg({ text: `✓ ${p.name} · ${p.qty} in stock${p.qty <= 0 ? " (OUT)" : ""}`, ok: p.qty > 0 }); setQ(""); searchRef.current?.focus(); return; }
-    if (matches.length > 1) { setScanMsg({ text: `“${code}” is not an exact SKU — ${matches.length} similar items, NOT added — pick one from the list`, ok: false }); scanBeep(); searchRef.current?.focus(); return; }
-    // Nothing in memory — the SKU may be a product created after this page loaded. Look it up LIVE
-    // from the database so a brand-new SKU always bills without a reload (client's request).
+    const lc = code.toLowerCase();
+
+    // 1) An EXACT SKU already in the working set always wins.
+    const exact = products.find((x) => x.sku.toLowerCase() === lc);
+    if (exact) { addLine(exact); setScanMsg({ text: `✓ ${exact.name} · ${exact.qty} in stock${exact.qty <= 0 ? " (OUT)" : ""}`, ok: exact.qty > 0 }); setQ(""); searchRef.current?.focus(); return; }
+
+    // 2) No exact match loaded → ask the DB for an EXACT SKU before trusting any substring match. This
+    //    is the fix for "type MISC-EARRINGS1, bills MISC-EARRINGS10": a real SKU must resolve to THAT
+    //    SKU and never fall through to a longer sibling that merely contains it as a prefix. Exact
+    //    always beats substring, and the result is deterministic — same code → same item, every time.
     setLooking(true); setScanMsg({ text: `Looking up “${code}”…`, ok: true });
     try {
       const found = await posLookupAction(code);
       if (found.length) {
-        // Merge any newly-found items into the working catalogue so they scan/search instantly next time.
+        // Merge newly-found items into the working catalogue so they scan/search instantly next time.
         setProducts((prev) => { const have = new Set(prev.map((x) => x.sku.toUpperCase())); return [...prev, ...found.filter((f) => !have.has(f.sku.toUpperCase()))]; });
-        const hit = found.find((f) => f.sku.toLowerCase() === code.toLowerCase()) ?? (found.length === 1 ? found[0] : undefined);
-        if (hit) { addLine(hit); setScanMsg({ text: `✓ ${hit.name} · ${hit.qty} in stock${hit.qty <= 0 ? " (OUT)" : ""}`, ok: hit.qty > 0 }); setQ(""); }
-        else { setScanMsg({ text: `${found.length} matches for “${code}” — NOT added, pick one from the list`, ok: false }); scanBeep(); }
-      } else {
-        setScanMsg({ text: `No product “${code}” — NOTHING added, check the label/SKU`, ok: false }); setQ(""); scanBeep();
       }
+      const dbExact = found.find((f) => f.sku.toLowerCase() === lc);
+      if (dbExact) { addLine(dbExact); setScanMsg({ text: `✓ ${dbExact.name} · ${dbExact.qty} in stock${dbExact.qty <= 0 ? " (OUT)" : ""}`, ok: dbExact.qty > 0 }); setQ(""); return; }
+
+      // 3) No exact SKU anywhere → only auto-add a SINGLE, unambiguous substring match. Candidates are
+      //    computed fresh (local + this lookup), not from stale memo state. If the code is a prefix of a
+      //    longer SKU (…1 ⊂ …10) it is ambiguous → make the owner pick, so the wrong sibling is never
+      //    billed silently.
+      const localHits = products.filter((x) => x.name.toLowerCase().includes(lc) || x.sku.toLowerCase().includes(lc) || x.category.toLowerCase().includes(lc));
+      const seen = new Set(localHits.map((x) => x.sku.toUpperCase()));
+      const cands = [...localHits, ...found.filter((f) => !seen.has(f.sku.toUpperCase()))];
+      const prefixCollision = cands.some((m) => m.sku.toLowerCase() !== lc && m.sku.toLowerCase().startsWith(lc));
+      if (cands.length === 1 && !prefixCollision) { const hit = cands[0]; addLine(hit); setScanMsg({ text: `✓ ${hit.name} · ${hit.qty} in stock${hit.qty <= 0 ? " (OUT)" : ""}`, ok: hit.qty > 0 }); setQ(""); return; }
+      if (cands.length >= 1) { setScanMsg({ text: `“${code}” is not an exact SKU — ${cands.length} similar item(s), NOT added — pick the exact one from the list`, ok: false }); scanBeep(); return; }
+      setScanMsg({ text: `No product “${code}” — NOTHING added, check the label/SKU`, ok: false }); setQ(""); scanBeep();
     } catch {
       setScanMsg({ text: `Couldn't look up “${code}” — NOTHING added, try again`, ok: false }); scanBeep();
     } finally { setLooking(false); searchRef.current?.focus(); }

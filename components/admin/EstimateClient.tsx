@@ -51,13 +51,22 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
     return [...products, ...extra.filter((e) => !seen.has(e.sku.toUpperCase()))];
   }, [products, extra]);
 
-  const matches = useMemo(() => (q.trim() ? pool.filter((p) => (p.name + p.sku).toLowerCase().includes(q.toLowerCase())).slice(0, 6) : []), [q, pool]);
+  const matches = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return [];
+    // Rank so the closest SKU is first: exact SKU → SKU starts with the code → everything else. This
+    // keeps a shorter SKU (MISC-EARRINGS1) above its longer sibling (MISC-EARRINGS10) in the list.
+    const rank = (p: P) => { const sk = p.sku.toLowerCase(); return sk === s ? 0 : sk.startsWith(s) ? 1 : 2; };
+    return pool.filter((p) => (p.name + p.sku).toLowerCase().includes(s)).sort((a, b) => rank(a) - rank(b) || a.sku.length - b.sku.length).slice(0, 6);
+  }, [q, pool]);
 
   useEffect(() => {
     const code = q.trim();
     if (code.length < 2) return;
-    // Already have a local hit → no need to hit the server.
-    if (pool.some((p) => (p.name + p.sku).toLowerCase().includes(code.toLowerCase()))) return;
+    // Only skip the live lookup when the EXACT SKU is already loaded. A mere substring hit is NOT
+    // enough: typing "MISC-EARRINGS1" substring-matches the loaded "MISC-EARRINGS10", which would
+    // otherwise suppress the lookup and hide the real MISC-EARRINGS1. Fetch unless we truly have it.
+    if (pool.some((p) => p.sku.toLowerCase() === code.toLowerCase())) return;
     const t = setTimeout(() => {
       posLookupAction(code).then((hits) => {
         if (!hits?.length) return;
@@ -131,18 +140,32 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
   async function scanAdd() {
     const code = q.trim();
     if (!code) return;
-    const exact = pool.find((p) => p.sku.toLowerCase() === code.toLowerCase());
+    const lc = code.toLowerCase();
+
+    // 1) An EXACT SKU already in memory always wins.
+    const exact = pool.find((p) => p.sku.toLowerCase() === lc);
     if (exact) { add(exact); setScanMsg(`✓ Added ${exact.sku}`); return; }
-    const fuzzy = pool.filter((p) => (p.name + p.sku).toLowerCase().includes(code.toLowerCase()));
-    if (fuzzy.length === 1) { add(fuzzy[0]); setScanMsg(`✓ Added ${fuzzy[0].sku}`); return; }
-    // Something WAS scanned but NOT added — alert loudly (banner + beep) so nothing is silently missed.
-    if (fuzzy.length > 1) { scanFail(`“${code}” matches ${fuzzy.length} items — NOT added, pick one from the list`); return; }
-    try {
-      const hits = await posLookupAction(code);
-      const pick = (hits as any[]).find((h) => String(h.sku).toLowerCase() === code.toLowerCase()) ?? (hits.length === 1 ? (hits as any[])[0] : null);
-      if (pick) { add({ sku: pick.sku, name: pick.name, price: pick.price, wholesale: pick.wholesale, parentSku: pick.parentSku, parentName: pick.parentName } as P); setScanMsg(`✓ Added ${pick.sku}`); }
-      else scanFail(`“${code}” NOT found — nothing was added`);
-    } catch { scanFail(`“${code}” NOT found — nothing was added`); }
+
+    // 2) No exact match loaded → ALWAYS ask the database for an exact SKU before any substring guess.
+    //    This is the fix for the "MISC-EARRINGS1 adds MISC-EARRINGS10" bug: a typed/scanned code that
+    //    is a real SKU must resolve to THAT SKU, never to a longer sibling that merely contains it as
+    //    a prefix. Exact-code always beats substring.
+    let hits: any[] = [];
+    try { hits = ((await posLookupAction(code)) as any[]) ?? []; } catch { hits = []; }
+    const dbExact = hits.find((h) => String(h.sku).toLowerCase() === lc);
+    if (dbExact) { add({ sku: dbExact.sku, name: dbExact.name, price: dbExact.price, wholesale: dbExact.wholesale, parentSku: dbExact.parentSku, parentName: dbExact.parentName } as P); setScanMsg(`✓ Added ${dbExact.sku}`); return; }
+
+    // 3) Local substring match — only auto-add when it is truly unambiguous. If the code is a prefix
+    //    of a longer SKU (e.g. "…1" ⊂ "…10"), treat it as ambiguous and make the owner pick, so the
+    //    wrong sibling is never added silently.
+    const fuzzy = pool.filter((p) => (p.name + p.sku).toLowerCase().includes(lc));
+    const prefixCollision = fuzzy.some((p) => p.sku.toLowerCase() !== lc && p.sku.toLowerCase().startsWith(lc));
+    if (fuzzy.length === 1 && !prefixCollision) { add(fuzzy[0]); setScanMsg(`✓ Added ${fuzzy[0].sku}`); return; }
+    if (fuzzy.length > 1 || prefixCollision) { scanFail(`“${code}” matches multiple items — NOT added, pick the exact one from the list`); return; }
+
+    // 4) A single live hit (non-exact) as a last resort.
+    if (hits.length === 1) { const pick = hits[0]; add({ sku: pick.sku, name: pick.name, price: pick.price, wholesale: pick.wholesale, parentSku: pick.parentSku, parentName: pick.parentName } as P); setScanMsg(`✓ Added ${pick.sku}`); return; }
+    scanFail(`“${code}” NOT found — nothing was added`);
   }
   /** A scan that added nothing: red banner + beep + clear the box so the owner immediately sees it. */
   function scanFail(msg: string) { setScanMsg("✕ " + msg); setQ(""); scanBeep(); }
