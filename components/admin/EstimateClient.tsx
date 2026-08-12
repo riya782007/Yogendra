@@ -155,13 +155,12 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
     const dbExact = hits.find((h) => String(h.sku).toLowerCase() === lc);
     if (dbExact) { add({ sku: dbExact.sku, name: dbExact.name, price: dbExact.price, wholesale: dbExact.wholesale, parentSku: dbExact.parentSku, parentName: dbExact.parentName } as P); setScanMsg(`✓ Added ${dbExact.sku}`); return; }
 
-    // 3) Local substring match — only auto-add when it is truly unambiguous. If the code is a prefix
-    //    of a longer SKU (e.g. "…1" ⊂ "…10"), treat it as ambiguous and make the owner pick, so the
-    //    wrong sibling is never added silently.
+    // 3) Local substring match — auto-add when exactly ONE item matches, so a half/fragment like "wn84"
+    //    resolves to its single hit "wn84-all". The exact-SKU lookup above already guarantees a real
+    //    typed SKU wins over any longer sibling, so a lone fuzzy hit is unambiguous. Only 2+ → pick.
     const fuzzy = pool.filter((p) => (p.name + p.sku).toLowerCase().includes(lc));
-    const prefixCollision = fuzzy.some((p) => p.sku.toLowerCase() !== lc && p.sku.toLowerCase().startsWith(lc));
-    if (fuzzy.length === 1 && !prefixCollision) { add(fuzzy[0]); setScanMsg(`✓ Added ${fuzzy[0].sku}`); return; }
-    if (fuzzy.length > 1 || prefixCollision) { scanFail(`“${code}” matches multiple items — NOT added, pick the exact one from the list`); return; }
+    if (fuzzy.length === 1) { add(fuzzy[0]); setScanMsg(`✓ Added ${fuzzy[0].sku}`); return; }
+    if (fuzzy.length > 1) { scanFail(`“${code}” matches ${fuzzy.length} items — NOT added, pick the exact one from the list`); return; }
 
     // 4) A single live hit (non-exact) as a last resort.
     if (hits.length === 1) { const pick = hits[0]; add({ sku: pick.sku, name: pick.name, price: pick.price, wholesale: pick.wholesale, parentSku: pick.parentSku, parentName: pick.parentName } as P); setScanMsg(`✓ Added ${pick.sku}`); return; }

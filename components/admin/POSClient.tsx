@@ -275,16 +275,15 @@ export function POSClient({ products: propProducts, customers = [], methods = []
       const dbExact = found.find((f) => f.sku.toLowerCase() === lc);
       if (dbExact) { addLine(dbExact); setScanMsg({ text: `✓ ${dbExact.name} · ${dbExact.qty} in stock${dbExact.qty <= 0 ? " (OUT)" : ""}`, ok: dbExact.qty > 0 }); setQ(""); return; }
 
-      // 3) No exact SKU anywhere → only auto-add a SINGLE, unambiguous substring match. Candidates are
-      //    computed fresh (local + this lookup), not from stale memo state. If the code is a prefix of a
-      //    longer SKU (…1 ⊂ …10) it is ambiguous → make the owner pick, so the wrong sibling is never
-      //    billed silently.
+      // 3) No exact SKU anywhere → auto-add when exactly ONE item matches, so a half/fragment like
+      //    "wn84" resolves to its single hit "wn84-all" (the owner's fast-search habit). The exact-SKU
+      //    lookup above already guarantees a real typed SKU wins over any longer sibling, so a lone fuzzy
+      //    hit is unambiguous and safe to add. Only when 2+ items match do we ask the owner to pick.
       const localHits = products.filter((x) => x.name.toLowerCase().includes(lc) || x.sku.toLowerCase().includes(lc) || x.category.toLowerCase().includes(lc));
       const seen = new Set(localHits.map((x) => x.sku.toUpperCase()));
       const cands = [...localHits, ...found.filter((f) => !seen.has(f.sku.toUpperCase()))];
-      const prefixCollision = cands.some((m) => m.sku.toLowerCase() !== lc && m.sku.toLowerCase().startsWith(lc));
-      if (cands.length === 1 && !prefixCollision) { const hit = cands[0]; addLine(hit); setScanMsg({ text: `✓ ${hit.name} · ${hit.qty} in stock${hit.qty <= 0 ? " (OUT)" : ""}`, ok: hit.qty > 0 }); setQ(""); return; }
-      if (cands.length >= 1) { setScanMsg({ text: `“${code}” is not an exact SKU — ${cands.length} similar item(s), NOT added — pick the exact one from the list`, ok: false }); scanBeep(); return; }
+      if (cands.length === 1) { const hit = cands[0]; addLine(hit); setScanMsg({ text: `✓ ${hit.name} · ${hit.qty} in stock${hit.qty <= 0 ? " (OUT)" : ""}`, ok: hit.qty > 0 }); setQ(""); return; }
+      if (cands.length > 1) { setScanMsg({ text: `“${code}” matches ${cands.length} items — NOT added, pick the exact one from the list`, ok: false }); scanBeep(); return; }
       setScanMsg({ text: `No product “${code}” — NOTHING added, check the label/SKU`, ok: false }); setQ(""); scanBeep();
     } catch {
       setScanMsg({ text: `Couldn't look up “${code}” — NOTHING added, try again`, ok: false }); scanBeep();
