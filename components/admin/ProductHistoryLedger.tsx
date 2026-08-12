@@ -15,7 +15,7 @@ const KIND_STYLE: Record<string, string> = {
   sale: "bg-gold/15 text-gold-dark", purchase: "bg-emerald-mist text-emerald-dark",
   damage: "bg-rose/10 text-rose", opening: "bg-blue-100 text-blue-700",
   adjustment: "bg-cream text-muted", estimate: "bg-gold/10 text-gold-dark",
-  return: "bg-blue-50 text-blue-700",
+  return: "bg-blue-50 text-blue-700", reserve: "bg-gold/10 text-gold-dark",
 };
 
 const fmt = (paise?: number | null) => paise == null ? null : `₹${Math.round(paise / 100).toLocaleString("en-IN")}`;
@@ -67,10 +67,10 @@ export function ProductHistoryLedger({ productId }: { productId: string }) {
               {rows.map((r) => (
                 <tr key={r.id} className="border-t border-sand/60">
                   <td className="p-2.5 text-muted whitespace-nowrap">{when(r.created_at)}</td>
-                  <td className="p-2.5"><span className={`px-2 py-0.5 rounded-full text-[10px] capitalize ${KIND_STYLE[r.kind] ?? "bg-cream text-muted"}`}>{r.hold ? "estimate ⏳" : r.kind}</span></td>
+                  <td className="p-2.5"><span title={r.kind === "reserve" ? "Set aside for a held estimate — release that estimate to return this piece to stock" : undefined} className={`px-2 py-0.5 rounded-full text-[10px] capitalize ${KIND_STYLE[r.kind] ?? "bg-cream text-muted"}`}>{r.hold ? "estimate ⏳" : r.kind === "reserve" ? "reserved ⏳" : r.kind}</span></td>
                   <td className="p-2.5 text-ink">{r.party ?? <span className="text-muted">—</span>}</td>
                   <td className="p-2.5 text-ink">{r.variant?.color ?? <span className="text-muted">—</span>}</td>
-                  <td className={`p-2.5 text-right font-semibold tabular-nums ${r.hold ? "text-gold-dark" : r.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{r.hold ? `⏳ ${Math.abs(r.delta)}` : `${r.delta > 0 ? "+" : ""}${r.delta}`}</td>
+                  <td className={`p-2.5 text-right font-semibold tabular-nums ${r.hold || r.kind === "reserve" ? "text-gold-dark" : r.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{r.hold ? `⏳ ${Math.abs(r.delta)}` : `${r.delta > 0 ? "+" : ""}${r.delta}`}</td>
                   <td className="p-2.5 text-right tabular-nums" title={r.kind === "purchase" ? "Unit cost" : "Unit rate billed"}>{fmt(r.price) ?? <span className="text-muted">—</span>}</td>
                   <td className="p-2.5 whitespace-nowrap">
                     {r.invoice_no && <span className="block text-[11px] font-medium text-ink">{r.invoice_no}</span>}

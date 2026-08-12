@@ -22,6 +22,7 @@ const KIND_STYLE: Record<string, string> = {
   damage: "bg-rose/10 text-rose", opening: "bg-blue-100 text-blue-700",
   adjustment: "bg-cream text-muted", estimate: "bg-gold/10 text-gold-dark",
   return: "bg-blue-50 text-blue-700", purchase_return: "bg-wine/10 text-wine",
+  reserve: "bg-gold/10 text-gold-dark",
 };
 
 function docFor(r: Row): { href: string; label: string } | null {
@@ -29,6 +30,7 @@ function docFor(r: Row): { href: string; label: string } | null {
   if (r.kind === "sale" || r.kind === "return") return { href: `/admin/invoice/${r.ref_id}`, label: r.kind === "return" ? "View original bill →" : "View bill →" };
   if (r.kind === "purchase" || r.kind === "purchase_return") return { href: `/admin/purchase/${r.ref_id}`, label: r.kind === "purchase_return" ? "View original purchase →" : "View purchase →" };
   if (r.kind === "estimate") return { href: `/admin/estimate/${r.ref_id}`, label: "View estimate →" };
+  if (r.kind === "reserve") return { href: `/admin/estimate/${r.ref_id}`, label: "View held estimate →" };
   return null;
 }
 
@@ -66,7 +68,7 @@ export function StockMovementsTable({ rows }: { rows: Row[] }) {
                     <span className="block text-xs text-muted">{r.sku ?? r.product?.sku}{colour ? ` · ${colour}` : ""}{variantOos ? " · out of stock" : ""}</span>
                   </td>
                   <td className="p-3 text-ink">{r.party ? <span>{r.party}</span> : <span className="text-muted">—</span>}</td>
-                  <td className="p-3"><span className={`px-2 py-0.5 rounded-full text-xs capitalize ${KIND_STYLE[r.kind ?? ""] ?? "bg-cream text-muted"}`}>{r.kind ?? "—"}</span></td>
+                  <td className="p-3"><span title={r.kind === "reserve" ? "Set aside for a held estimate — release that estimate to return this piece to stock" : undefined} className={`px-2 py-0.5 rounded-full text-xs capitalize ${KIND_STYLE[r.kind ?? ""] ?? "bg-cream text-muted"}`}>{r.kind === "reserve" ? "reserved" : (r.kind ?? "—")}</span></td>
                   <td className={`p-3 text-right font-semibold tabular-nums ${r.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{r.delta > 0 ? "+" : ""}{r.delta}</td>
                   <td className="p-3 text-right tabular-nums text-ink" title={r.kind === "purchase" ? "Unit cost on that purchase" : "Unit rate billed on that document"}>{rupees(r.price) ?? <span className="text-muted">—</span>}</td>
                   <td className="p-3 text-muted max-w-[260px] truncate">{r.source ?? ""}{r.reason ? ` — ${r.reason}` : ""}</td>

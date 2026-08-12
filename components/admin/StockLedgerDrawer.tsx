@@ -48,7 +48,7 @@ const KIND_STYLE: Record<string, string> = {
   damage: "bg-rose/10 text-rose", opening: "bg-blue-100 text-blue-700",
   adjustment: "bg-cream text-muted", estimate: "bg-gold/10 text-gold-dark",
   return: "bg-violet-50 text-violet-700", correction: "bg-cream text-muted",
-  transfer: "bg-sky-50 text-sky-700",
+  transfer: "bg-sky-50 text-sky-700", reserve: "bg-gold/10 text-gold-dark",
 };
 const FILTERS: { key: string; label: string; kinds: string[] }[] = [
   { key: "all", label: "All", kinds: [] },
@@ -245,7 +245,7 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
                   <div className="rounded-xl border border-sand bg-white divide-y divide-sand/60">
                     {items.map((r) => (
                       <div key={r.id} className="p-2.5 flex items-center gap-3 text-sm">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] capitalize ${KIND_STYLE[r.kind] ?? "bg-cream text-muted"}`}>{r.kind}</span>
+                        <span title={r.kind === "reserve" ? "Set aside for a held estimate — release that estimate to return this piece to stock" : undefined} className={`px-2 py-0.5 rounded-full text-[10px] capitalize ${KIND_STYLE[r.kind] ?? "bg-cream text-muted"}`}>{r.kind === "reserve" ? "reserved" : r.kind}</span>
                         {r.variant?.color && <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-cream text-ink border border-sand whitespace-nowrap">{r.variant.color}</span>}
                         <div className="flex-1 min-w-0">
                           <p className="text-xs text-ink truncate">{r.invoice_no ? <b>{r.invoice_no} · </b> : ""}{r.reason ?? r.source ?? "—"}</p>
