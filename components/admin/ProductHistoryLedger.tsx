@@ -21,6 +21,30 @@ const KIND_STYLE: Record<string, string> = {
 const fmt = (paise?: number | null) => paise == null ? null : `₹${Math.round(paise / 100).toLocaleString("en-IN")}`;
 const when = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" });
 
+/** A "return" (stock came back IN) happens for three different reasons — label each plainly instead of
+ *  the ambiguous "Return", so the owner instantly knows WHY a piece returned. */
+function typeLabel(r: any): string {
+  if (r.hold) return "estimate ⏳";
+  if (r.kind === "reserve") return "reserved ⏳";
+  if (r.kind === "return") {
+    const s = String(r.source ?? "").toLowerCase();
+    if (s.includes("cancel")) return "cancelled ↩";   // order cancelled/rejected → its stock came back
+    if (s.includes("bill edit")) return "bill edit ↩"; // bill qty reduced → the un-billed piece came back
+    return "customer return ↩";                        // a customer physically sent goods back
+  }
+  return r.kind;
+}
+function typeHint(r: any): string | undefined {
+  if (r.kind === "reserve") return "Set aside for a held estimate — release that estimate to return this piece to stock";
+  if (r.kind === "return") {
+    const s = String(r.source ?? "").toLowerCase();
+    if (s.includes("cancel")) return "This order was cancelled/rejected, so the piece it had taken went back to stock";
+    if (s.includes("bill edit")) return "This bill's quantity was reduced, so the un-billed piece went back to stock";
+    return "A customer returned this piece, so it went back to stock";
+  }
+  return undefined;
+}
+
 export function ProductHistoryLedger({ productId }: { productId: string }) {
   const [data, setData] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
@@ -67,7 +91,7 @@ export function ProductHistoryLedger({ productId }: { productId: string }) {
               {rows.map((r) => (
                 <tr key={r.id} className="border-t border-sand/60">
                   <td className="p-2.5 text-muted whitespace-nowrap">{when(r.created_at)}</td>
-                  <td className="p-2.5"><span title={r.kind === "reserve" ? "Set aside for a held estimate — release that estimate to return this piece to stock" : undefined} className={`px-2 py-0.5 rounded-full text-[10px] capitalize ${KIND_STYLE[r.kind] ?? "bg-cream text-muted"}`}>{r.hold ? "estimate ⏳" : r.kind === "reserve" ? "reserved ⏳" : r.kind}</span></td>
+                  <td className="p-2.5"><span title={typeHint(r)} className={`px-2 py-0.5 rounded-full text-[10px] capitalize ${KIND_STYLE[r.kind] ?? "bg-cream text-muted"}`}>{typeLabel(r)}</span></td>
                   <td className="p-2.5 text-ink">{r.party ?? <span className="text-muted">—</span>}</td>
                   <td className="p-2.5 text-ink">{r.variant?.color ?? <span className="text-muted">—</span>}</td>
                   <td className={`p-2.5 text-right font-semibold tabular-nums ${r.hold || r.kind === "reserve" ? "text-gold-dark" : r.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{r.hold ? `⏳ ${Math.abs(r.delta)}` : `${r.delta > 0 ? "+" : ""}${r.delta}`}</td>
