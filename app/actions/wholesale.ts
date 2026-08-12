@@ -271,10 +271,10 @@ async function placeWholesaleCore(
   // and hand them to the RPC, which applies the per-line discount as it records the order.
   const formula = await getPricingFormula().catch(() => null);
   const pTiers = (formula?.wholesaleTiers ?? []).map((t) => ({ min_qty: t.minQty, pct_off: t.pctOff }));
-  // COD-HOLD: a wholesale COD order must NOT touch stock or post revenue until the owner confirms
-  // dispatch + receipt on /admin/cod. Passing p_cod_hold routes it through the held path so it lands
-  // in COD Orders, not straight into Sales (owner: "cod orders are directly going in sales").
-  const { data, error } = await sb.rpc("place_wholesale_order", { p_customer: sess.id, p_items: clean, p_allow_oversell: false, p_tiers: pTiers, p_cod_hold: opts?.cod === true });
+  // HELD until accepted: a dealer's online order (COD or prepaid) must NOT touch stock or post revenue
+  // until the owner accepts it — COD on /admin/cod, prepaid via payment verification. This is the rule
+  // "online order jab tak accept na ho, koi stock movement nahi" — so rejecting one changes nothing.
+  const { data, error } = await sb.rpc("place_wholesale_order", { p_customer: sess.id, p_items: clean, p_allow_oversell: false, p_tiers: pTiers, p_cod_hold: true });
   if (error) return { ok: false, error: error.message };
   const orderId = (data as any)?.order_id as string | undefined;
   let total = (data as any)?.total as number | undefined;
@@ -455,6 +455,11 @@ export async function verifyWholesalePaymentAction(input: { orderId: string; app
   if ((o as any).channel !== "wholesale") return { ok: false, error: "Not a wholesale order." };
   const total = (o as any).total ?? 0;
   if (input.approve) {
+    // ACCEPT = deduct the held stock + post revenue now (all-or-nothing). A dealer's order held NO stock
+    // until this moment, so approving is when the real sale happens. If a piece sold out while the payment
+    // was pending, this raises and we do NOT approve. Legacy already-deducted orders are a safe no-op.
+    const { error: cErr } = await sb.rpc("confirm_cod_order", { p_order_id: id });
+    if (cErr) return { ok: false, error: `Can't approve — stock check failed: ${cErr.message}` };
     await sb.from("orders").update({ amount_paid: total, payment_mode: "upi", admin_note: "✓ Payment verified by owner" }).eq("id", id);
     // Money received into the UPI account → post to that account's book so Bank & Cash reflects it.
     try {
