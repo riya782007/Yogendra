@@ -224,9 +224,12 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", s
     // the deal (esp. international dealers who settle over a video call), not wait for it to "abandon".
     const items = lines.map(([sku, n]) => { const p = bySku.get(sku.toUpperCase()); return { sku, name: p?.name ?? sku, qty: n, price: p?.price ?? 0 }; });
     const contact = guest ? guestContact() : { name: customerName, phone: customerPhone, city: "" };
-    // A guest reaching checkout has already passed the mandatory popup, so we have their contact — record
-    // it. Guard against the edge case of no phone so we never write another anonymous "Guest" row.
-    if (!(guest && !contact.phone)) fetch("/api/cart/track", {
+    // ALWAYS record a cart that reaches the payment screen — even if the phone isn't captured in this
+    // session — because reaching checkout is the strongest intent signal and must NEVER be lost (owner:
+    // "cart bnaya lekin kahin nahi dikh raha"). Earlier this was gated on having a phone, so a dealer who
+    // reached "Pay" with a blank form left no trace at all. reached_checkout=true surfaces it on the
+    // Abandoned Carts page at once; a blank contact can be matched to the Trade Visitor lead by time/city.
+    fetch("/api/cart/track", {
       method: "POST", headers: { "content-type": "application/json" }, keepalive: true,
       body: JSON.stringify({ items, total: orderTotal, name: contact.name, phone: contact.phone, city: contact.city, channel: "wholesale", stage: "checkout" }),
     }).catch(() => {});
