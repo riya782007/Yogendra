@@ -155,6 +155,9 @@ async function finalizeOnlineOrder(args: {
     p_payment: "online",
     p_allow_oversell: false, // online checkout never oversells
     p_tier: "retail",
+    // HELD until the owner accepts: a prepaid order no longer deducts stock at placement, so rejecting it
+    // never adds a phantom piece back. Accepting deducts the stock (real sale) + posts revenue.
+    p_cod_hold: true,
   });
   if (error) {
     // Release the claim so a webhook retry (or the other path) can try again.

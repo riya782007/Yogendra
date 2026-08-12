@@ -54,10 +54,11 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
     p_payment: input.payment,
     p_allow_oversell: false, // online retail never oversells
     p_tier: "retail",
-    // COD orders are HELD: stock is checked but NOT deducted and no revenue posts until the owner
-    // confirms dispatch + receipt on the COD Orders page (owner: unshipped COD must not reduce stock or
-    // hit the sales record). Prepaid/online orders deduct immediately as before.
-    p_cod_hold: input.payment === "cod",
+    // EVERY storefront order is now HELD until the owner ACCEPTS it: stock is checked but NOT deducted and
+    // no revenue posts at placement. Accepting deducts the stock (the real sale); rejecting changes NOTHING
+    // — so a rejected order can never add a phantom piece back (owner: "sale hui hi nahi, bill bana hi nahi,
+    // to stock kaise badh gaya — ye na ho"). COD already worked this way; this extends it to prepaid too.
+    p_cod_hold: true,
   });
   if (error) return { ok: false, error: error.message };
   const orderId = (data as any)?.order_id;
@@ -100,10 +101,8 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
   if (discount > 0 && appliedCode) await bumpVoucherUsage(appliedCode);
 
   await sendPurchase({ orderId, valuePaise: total, channel: "retail", items: input.items.map((i) => ({ sku: i.sku, qty: i.qty })) });
-  // A PREPAID/online order deducts stock now, so a design that just sold out must drop off the cached
-  // storefront immediately (owner: "out of stock hide nahi ho raha"). A COD order is only HELD — no stock
-  // moved yet — so its refresh happens when the owner confirms it on the COD Orders page.
-  if (input.payment !== "cod") revalidateTag("storefront");
+  // The order is HELD — no stock moved at placement — so there's nothing to refresh on the storefront yet.
+  // The storefront cache is busted when the owner ACCEPTS the order (that's when the stock actually leaves).
   await notifyOrderPlaced({
     orderId, customerName: input.customer.name, customerPhone: input.customer.phone,
     totalPaise: total, payment: input.payment, itemCount: input.items.reduce((n, i) => n + i.qty, 0),
@@ -379,7 +378,19 @@ export async function acceptStorefrontOrderAction(formData: FormData): Promise<v
   const id = String(formData.get("id") ?? "").trim();
   if (!id) return;
   const sb = supabaseServer();
+  // ACCEPT is the moment stock actually leaves + revenue posts for a HELD PREPAID order. confirm_cod_order
+  // deducts all-or-nothing; if a piece sold out while the order waited, it raises and we do NOT accept —
+  // the order stays in the queue for the owner to reject/refund. COD orders keep their own dispatch/receipt
+  // confirmation on the COD page (they must not be marked paid before delivery), and legacy already-deducted
+  // orders are a safe no-op (confirm returns "already"). So only a prepaid HELD order deducts here.
+  const { data: o0 } = await sb.from("orders").select("cod_hold,payment_mode").eq("id", id).maybeSingle();
+  const isPrepaidHeld = (o0 as any)?.cod_hold === true && String((o0 as any)?.payment_mode ?? "").toLowerCase() !== "cod";
+  if (isPrepaidHeld) {
+    const { error: cErr } = await sb.rpc("confirm_cod_order", { p_order_id: id });
+    if (cErr) return; // out of stock now — leave it in the queue; the owner can reject/refund
+  }
   const { error } = await sb.from("orders").update({ fulfillment: "accepted" }).eq("id", id);
+  if (isPrepaidHeld) revalidateTag("storefront"); // stock just deducted → refresh the shop
   if (!error) {
     const { data: o } = await sb.from("orders").select("invoice_no,customer_name,customer_phone,total").eq("id", id).maybeSingle();
     const ph = (o as any)?.customer_phone;

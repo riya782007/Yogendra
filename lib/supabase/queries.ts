@@ -1273,8 +1273,10 @@ export async function getPendingHeldOrders(limit = 60) {
   const sb = supabaseServer();
   const { data } = await sb
     .from("orders")
-    .select("id, invoice_no, customer_name, channel, is_backorder, cod_hold, created_at, order_items(qty, unit_price, variant:variants(color), product:products(sku,name))")
-    .or("is_backorder.eq.true,cod_hold.eq.true")
+    .select("id, invoice_no, customer_name, channel, is_backorder, cod_hold, payment_mode, created_at, order_items(qty, unit_price, variant:variants(color), product:products(sku,name))")
+    // This page is for BACKORDERS and true COD holds only. Prepaid orders are now also held until accepted,
+    // but they live in the storefront "pack & ship" box (accepted there) — don't repeat them on the COD page.
+    .or("is_backorder.eq.true,and(cod_hold.eq.true,payment_mode.eq.cod)")
     .neq("status", "cancelled")
     .order("created_at", { ascending: false })
     .limit(limit);
