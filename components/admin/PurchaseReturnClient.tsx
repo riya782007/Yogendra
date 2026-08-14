@@ -47,6 +47,7 @@ export function PurchaseReturnClient({ purchases }: { purchases: Purchase[] }) {
     const res = await recordPurchaseReturnAction({ purchaseId: sel, reason, items: selLines });
     setBusy(false);
     if (res.ok) {
+      if (res.returnId) { router.push(`/admin/returns/${res.returnId}`); return; }
       setMsg(`✓ Returned ${res.qty} pcs to supplier · debit note ${formatPaise(res.amount ?? 0)}`);
       setSel(""); setItems(null); setQty({}); setReason("");
       router.refresh();

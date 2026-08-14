@@ -330,7 +330,7 @@ export async function fetchPurchaseForReturnAction(purchaseId: string): Promise<
 
 /** Record a PURCHASE RETURN (goods back to the supplier): variant-exact stock out + debit note.
  *  The RPC enforces the per-line cap (bought − already returned) — same rule as sales returns. */
-export async function recordPurchaseReturnAction(input: { purchaseId: string; reason: string; items: { productId: string; variantId?: string | null; qty: number }[] }): Promise<{ ok: boolean; qty?: number; amount?: number; error?: string }> {
+export async function recordPurchaseReturnAction(input: { purchaseId: string; reason: string; items: { productId: string; variantId?: string | null; qty: number }[] }): Promise<{ ok: boolean; qty?: number; amount?: number; returnId?: string; error?: string }> {
   if (!(await requirePerm("purchases.manage"))) return { ok: false, error: "Your role can't manage purchases." };
   if (!input.items?.length) return { ok: false, error: "Select items to return" };
   if (!input.reason?.trim()) return { ok: false, error: "Add a reason (damaged, wrong goods, excess…)" };
@@ -339,5 +339,7 @@ export async function recordPurchaseReturnAction(input: { purchaseId: string; re
   const { data, error } = await sb.rpc("record_purchase_return", { p_purchase_id: input.purchaseId, p_reason: input.reason, p_items });
   if (error) return { ok: false, error: error.message };
   revalidatePath("/admin/purchases"); revalidatePath(`/admin/purchase/${input.purchaseId}`); revalidatePath("/admin/returns"); revalidatePath("/admin/stock-movements"); revalidatePath("/admin/catalogue"); revalidatePath("/admin/inventory"); revalidatePath("/admin/suppliers"); revalidatePath("/shop"); revalidateTag("storefront");
-  return { ok: true, qty: (data as any)?.qty, amount: (data as any)?.amount };
+  const returnId = (data as any)?.return_id as string | undefined;
+  if (returnId) revalidatePath(`/admin/returns/${returnId}`);
+  return { ok: true, qty: (data as any)?.qty, amount: (data as any)?.amount, returnId };
 }

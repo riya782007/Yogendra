@@ -5,26 +5,30 @@ export const dynamic = "force-dynamic";
  * money value (credit note to customer / debit note to supplier).
  */
 import Link from "next/link";
-import { getRecentOrders, getRecentPurchases, getReturnsDetailed } from "@/lib/supabase/queries";
+import { getRecentOrders, getRecentPurchases, getReturnsDetailed, getSuppliers } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { ReturnClient } from "@/components/admin/ReturnClient";
 import { PurchaseReturnClient } from "@/components/admin/PurchaseReturnClient";
 import { OpenReturnClient } from "@/components/admin/OpenReturnClient";
+import { OpenPurchaseReturnClient } from "@/components/admin/OpenPurchaseReturnClient";
 import { supabaseServer } from "@/lib/supabase/server";
 
 export const metadata = { title: "Owner Console · Returns" };
 
 export default async function Returns() {
-  const [orders, purchases, returns] = await Promise.all([getRecentOrders(12), getRecentPurchases(), getReturnsDetailed(40)]);
+  const [orders, purchases, returns, suppliers] = await Promise.all([getRecentOrders(12), getRecentPurchases(), getReturnsDetailed(40), getSuppliers()]);
   // Payment methods, so a refund that genuinely leaves the drawer can be posted to the right account.
   const { data: pmRows } = await supabaseServer().from("payment_methods").select("id,name").eq("active", true);
   const methods = ((pmRows as any[]) ?? []).map((m) => ({ id: m.id as string, name: (m.name as string) ?? "Account" }));
   return (
     <main className="p-8 bg-cream/40 min-h-screen max-w-5xl">
       <h1 className="font-display text-4xl text-ink mb-1">Returns — Sales &amp; Purchases</h1>
-      <p className="text-sm text-muted mb-2">Sales returns credit the customer and restock the exact colour; purchase returns send goods back to the supplier as a debit note. Every movement is capped per bill — the same pieces can never be returned twice.</p>
-      <p className="text-xs text-gold-dark bg-gold/10 rounded-lg px-3 py-2 mb-4 inline-block">Staff-created sales returns go to Approvals for the owner&apos;s OTP. Purchase returns can be recorded right below, or from any purchase bill (<b>↩ Return to supplier</b>). Sales returns can also start from any bill row on <Link href="/admin/sales" className="underline">Sales Records</Link>.</p>
-      <OpenReturnClient methods={methods} />
+      <p className="text-sm text-muted mb-2">Sales returns credit the customer and restock the exact colour; purchase returns send goods back to the supplier as a debit note. Bill-linked returns are capped per bill so the same pieces can never be returned twice. Open (no-bill) returns are for mixed/old lots — sales restock, purchase returns deduct only what is on the shelf.</p>
+      <p className="text-xs text-gold-dark bg-gold/10 rounded-lg px-3 py-2 mb-4 inline-block">Staff-created sales returns go to Approvals for the owner&apos;s OTP. Purchase returns against a bill stay on this page or any purchase bill (<b>↩ Return to supplier</b>). Every purchase return also opens a debit note you can print or WhatsApp to the supplier.</p>
+      <div className="flex flex-wrap items-start gap-0">
+        <OpenReturnClient methods={methods} />
+        <OpenPurchaseReturnClient suppliers={suppliers as any} methods={methods} />
+      </div>
       <ReturnClient orders={orders as any} />
       <PurchaseReturnClient purchases={purchases as any} />
 
@@ -34,10 +38,10 @@ export default async function Returns() {
           <thead className="bg-cream text-muted text-left"><tr>
             <th className="p-3">Type</th><th className="p-3">Against bill</th><th className="p-3">Party</th>
             <th className="p-3">Items · variant</th><th className="p-3 text-right">Qty</th>
-            <th className="p-3 text-right">Value</th><th className="p-3">Reason</th><th className="p-3">When</th>
+            <th className="p-3 text-right">Value</th><th className="p-3">Reason</th><th className="p-3">When</th><th className="p-3 no-print"></th>
           </tr></thead>
           <tbody>
-            {returns.length === 0 && <tr><td colSpan={8} className="p-4 text-muted">No returns recorded.</td></tr>}
+            {returns.length === 0 && <tr><td colSpan={9} className="p-4 text-muted">No returns recorded.</td></tr>}
             {returns.map((r) => (
               <tr key={r.id} className="border-t border-sand/60 align-top">
                 <td className="p-3">
@@ -67,6 +71,9 @@ export default async function Returns() {
                 </td>
                 <td className="p-3 text-muted max-w-[180px] truncate">{r.reason ?? ""}</td>
                 <td className="p-3 text-muted whitespace-nowrap">{new Date(r.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" })}</td>
+                <td className="p-3 no-print whitespace-nowrap">
+                  <Link href={r.noteHref} className="text-emerald nav-link text-xs font-medium">{r.kind === "purchase" ? "Debit note ↗" : "Credit note ↗"}</Link>
+                </td>
               </tr>
             ))}
           </tbody>

@@ -41,8 +41,11 @@ export function PurchaseReturnButton({ purchaseId, billNo }: { purchaseId: strin
     setBusy(true); setMsg("");
     const res = await recordPurchaseReturnAction({ purchaseId, reason, items: sel });
     setBusy(false);
-    if (res.ok) { setMsg(`✓ Returned ${res.qty} pcs to supplier · debit note ${formatPaise(res.amount ?? 0)}`); router.refresh(); setTimeout(() => setOpen(false), 1600); }
-    else setMsg(`✕ ${res.error}`);
+    if (res.ok) {
+      if (res.returnId) { router.push(`/admin/returns/${res.returnId}`); return; }
+      setMsg(`✓ Returned ${res.qty} pcs to supplier · debit note ${formatPaise(res.amount ?? 0)}`);
+      router.refresh(); setTimeout(() => setOpen(false), 1600);
+    } else setMsg(`✕ ${res.error}`);
   }
 
   const allClosed = !!items && items.every((it) => it.returnable <= 0);
