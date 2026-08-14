@@ -17,6 +17,7 @@ const GROUPS: { title: string; links: L[] }[] = [
     { href: "/admin/upload", label: "Add Products", icon: "↑", perm: "catalog.create" },
     { href: "/admin/submissions", label: "Submissions", icon: "📥", perm: "catalog.create", hidden: true },
     { href: "/admin/catalogue", label: "Catalogue", icon: "✦", perm: "catalog.view" },
+    { href: "/admin/share-catalogue", label: "Share Catalogue", icon: "📤", perm: "catalog.view" },
     { href: "/admin/media", label: "Product Photos", icon: "▣", perm: "catalog.ai" },
     { href: "/admin/categories", label: "Categories", icon: "▦", perm: "catalog.edit" },
     { href: "/admin/pricing", label: "Pricing formula", icon: "％", perm: "catalog.price_edit", hidden: true },
@@ -69,7 +70,6 @@ const TRADE = SITE.replace("://", "://trade.");
 const EXTERNAL: L[] = [
   { href: `${SITE}/shop`, label: "Retail store", icon: "🛍" },
   { href: TRADE, label: "Trade Portal", icon: "📦" },
-  { href: `${SITE}/catalog?view=wholesale&manage=1`, label: "Share Catalogue", icon: "📤" },
 ];
 
 const allow = (perms: Perms, perm?: string) => !perm || perms === "*" || perms.includes(perm);

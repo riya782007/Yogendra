@@ -9,6 +9,7 @@ const STAFF = OWNER + "-staff";
 const ROUTE_PERM: [string, string | string[]][] = [
   ["/admin/upload", "catalog.create"],
   ["/admin/catalogue", "catalog.view"],
+  ["/admin/share-catalogue", "catalog.view"],
   ["/admin/media", "catalog.ai"],
   ["/admin/categories", "catalog.edit"],
   ["/admin/inventory", "inventory.view"],

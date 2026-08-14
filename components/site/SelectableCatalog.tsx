@@ -91,7 +91,7 @@ function CatalogCard({
   );
 }
 
-export function SelectableCatalog({ products, view, brand, phone, manage = false }: { products: CatalogItem[]; view: "retail" | "wholesale"; brand: string; phone: string; manage?: boolean }) {
+export function SelectableCatalog({ products, view, brand, phone, manage = false, shareOrigin }: { products: CatalogItem[]; view: "retail" | "wholesale"; brand: string; phone: string; manage?: boolean; shareOrigin?: string }) {
   const [picking, setPicking] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState(false);
@@ -99,24 +99,28 @@ export function SelectableCatalog({ products, view, brand, phone, manage = false
   const toggle = (sku: string) =>
     setSel((s) => { const n = new Set(s); n.has(sku) ? n.delete(sku) : n.add(sku); return n; });
 
-  // Customer-facing URL: lock the current price mode via ?view=wholesale when needed, NEVER include
-  // manage=1 (that flag is only for the owner composing the catalogue).
+  // Customer-facing URL always points at the public /catalog (never /admin, never ?manage=1).
   const shareUrl = useMemo(() => {
-    if (typeof window === "undefined") return "";
-    const u = new URL("/catalog", window.location.origin);
-    const cur = new URL(window.location.href);
-    for (const k of ["category", "subcategory", "style", "q"] as const) {
-      const v = cur.searchParams.get(k);
-      if (v) u.searchParams.set(k, v);
-    }
-    if (sel.size > 0) u.searchParams.set("skus", [...sel].join(","));
-    else {
-      const skus = cur.searchParams.get("skus");
-      if (skus) u.searchParams.set("skus", skus);
+    const origin = (shareOrigin || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
+    if (!origin) return "";
+    const u = new URL("/catalog", origin);
+    if (typeof window !== "undefined") {
+      const cur = new URL(window.location.href);
+      for (const k of ["category", "subcategory", "style", "q"] as const) {
+        const v = cur.searchParams.get(k);
+        if (v) u.searchParams.set(k, v);
+      }
+      if (sel.size > 0) u.searchParams.set("skus", [...sel].join(","));
+      else {
+        const skus = cur.searchParams.get("skus");
+        if (skus) u.searchParams.set("skus", skus);
+      }
+    } else if (sel.size > 0) {
+      u.searchParams.set("skus", [...sel].join(","));
     }
     if (view === "wholesale") u.searchParams.set("view", "wholesale");
     return u.toString();
-  }, [sel, view]);
+  }, [sel, view, shareOrigin]);
 
   const copy = () => { if (shareUrl) navigator.clipboard?.writeText(shareUrl).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600); }).catch(() => {}); };
   const whatsapp = () => {
