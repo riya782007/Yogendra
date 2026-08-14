@@ -2192,6 +2192,7 @@ export async function getReturns() {
  *  linkage existed) fall back to a ±20s window on the same bill so history still shows its items. */
 export async function getReturnsDetailed(limit = 40): Promise<{
   id: string; kind: string; refId: string | null; billRef: string; billHref: string | null;
+  noteHref: string;
   party: string; qty: number; amount: number; reason: string | null; created_at: string;
   lines: { sku: string | null; color: string | null; qty: number }[];
 }[]> {
@@ -2236,13 +2237,124 @@ export async function getReturnsDetailed(limit = 40): Promise<{
       // A return with no bill is a legitimate case (marketplace stock coming back), not missing data —
       // label it plainly so the register reads honestly instead of showing a blank reference.
       billRef: (o?.invoice_no as string) || (p?.bill_no as string) || (r.ref_order_id ? String(r.ref_order_id).slice(0, 8).toUpperCase() : "No bill"),
-      billHref: r.ref_order_id ? (r.kind === "sales" ? `/admin/invoice/${r.ref_order_id}` : `/admin/purchase/${r.ref_order_id}`) : null,
+      billHref: r.ref_order_id ? (r.kind === "sales" ? `/admin/invoice/${r.ref_order_id}` : `/admin/purchase/${r.ref_order_id}`) : `/admin/returns/${r.id}`,
+      noteHref: `/admin/returns/${r.id}`,
       party: (o?.customer_name as string) || (p?.supplier?.name as string) || (r.party as string) || "—",
       qty: (r.qty as number) ?? 0, amount: (r.amount as number) ?? 0,
       reason: (r.reason as string | null) ?? null, created_at: r.created_at as string,
       lines,
     };
   });
+}
+
+/** One return as a shareable debit/credit note — lines from stock_adjustments.return_id (and
+ *  audit_log line costs for open purchase returns). Used by /admin/returns/[id]. */
+export async function getReturnNote(id: string): Promise<{
+  ret: { id: string; kind: string; ref_order_id: string | null; party: string | null; reason: string | null; qty: number; amount: number; created_at: string };
+  billRef: string | null; billHref: string | null;
+  supplier: { id: string; name: string; phone: string | null; gstin: string | null; address: string | null; city: string | null } | null;
+  lines: { sku: string; name: string; color: string | null; qty: number; unitCost: number; lineTotal: number }[];
+} | null> {
+  const sb = supabaseServer();
+  const { data: row } = await sb.from("returns").select("id,kind,ref_order_id,party,reason,qty,amount,created_at").eq("id", id).maybeSingle();
+  if (!row) return null;
+  const ret = row as any;
+
+  const rich = await sb.from("stock_adjustments")
+    .select("sku,delta,reason,product_id,variant_id,created_at, variant:variants(color,sku), product:products(name,sku)")
+    .eq("return_id", id)
+    .in("kind", ["return", "purchase_return"]);
+  let mv = ((rich.data as any[]) ?? []);
+  if (rich.error) {
+    const basic = await sb.from("stock_adjustments")
+      .select("sku,delta,reason,product_id,variant_id,created_at")
+      .eq("return_id", id)
+      .in("kind", ["return", "purchase_return"]);
+    mv = ((basic.data as any[]) ?? []);
+  }
+  if (!mv.length && ret.ref_order_id) {
+    const kind = ret.kind === "purchase" ? "purchase_return" : "return";
+    const { data: byRef } = await sb.from("stock_adjustments")
+      .select("sku,delta,reason,product_id,variant_id,created_at, variant:variants(color,sku), product:products(name,sku)")
+      .eq("ref_id", ret.ref_order_id).eq("kind", kind);
+    const t = new Date(ret.created_at).getTime();
+    mv = ((byRef as any[]) ?? []).filter((m) => Math.abs(new Date(m.created_at).getTime() - t) < 20000);
+  }
+
+  const costBySku = new Map<string, number>();
+  const { data: audit } = await sb.from("audit_log").select("detail").eq("ref", id).eq("action", "purchase_return").order("created_at", { ascending: false }).limit(1);
+  try {
+    const d = JSON.parse(String(((audit as any[]) ?? [])[0]?.detail ?? "{}"));
+    for (const l of (d.lines ?? [])) {
+      if (l?.sku && Number(l.unit_cost) > 0) costBySku.set(String(l.sku).toUpperCase(), Number(l.unit_cost));
+    }
+  } catch { /* ignore */ }
+
+  if (ret.kind === "purchase" && ret.ref_order_id) {
+    const { data: pItems } = await sb.from("purchase_items")
+      .select("unit_cost,mapped_product_id,variant_id, product:products(sku), variant:variants(sku)")
+      .eq("purchase_id", ret.ref_order_id);
+    for (const it of ((pItems as any[]) ?? [])) {
+      const sku = String(it.variant?.sku || it.product?.sku || "").toUpperCase();
+      if (sku && Number(it.unit_cost) > 0) costBySku.set(sku, Number(it.unit_cost));
+    }
+  }
+
+  const lines = mv.map((m) => {
+    const sku = String(m.sku || m.variant?.sku || m.product?.sku || "").trim();
+    const qty = Math.abs(m.delta ?? 0);
+    const unitCost = costBySku.get(sku.toUpperCase()) ?? 0;
+    return {
+      sku: sku || "—",
+      name: (m.product?.name as string) || sku || "—",
+      color: (m.variant?.color as string | null) ?? null,
+      qty,
+      unitCost,
+      lineTotal: unitCost * qty,
+    };
+  });
+
+  // If movements didn't carry costs but the header has an amount, spread it so the note still totals.
+  const lined = lines.reduce((s, l) => s + l.lineTotal, 0);
+  if (lined === 0 && (ret.amount ?? 0) > 0 && lines.length) {
+    const q = lines.reduce((s, l) => s + l.qty, 0) || 1;
+    const per = Math.round((ret.amount as number) / q);
+    for (const l of lines) { l.unitCost = per; l.lineTotal = per * l.qty; }
+  }
+
+  let billRef: string | null = null;
+  let billHref: string | null = null;
+  let supplier: { id: string; name: string; phone: string | null; gstin: string | null; address: string | null; city: string | null } | null = null;
+
+  if (ret.kind === "purchase" && ret.ref_order_id) {
+    const { data: p } = await sb.from("purchases").select("id,bill_no, supplier:suppliers(id,name,phone,gstin,address,city)").eq("id", ret.ref_order_id).maybeSingle();
+    if (p) {
+      billRef = (p as any).bill_no || String((p as any).id).slice(0, 8).toUpperCase();
+      billHref = `/admin/purchase/${(p as any).id}`;
+      const s = (p as any).supplier;
+      if (s) supplier = { id: s.id, name: s.name, phone: s.phone ?? null, gstin: s.gstin ?? null, address: s.address ?? null, city: s.city ?? null };
+    }
+  } else if (ret.kind === "sales" && ret.ref_order_id) {
+    const { data: o } = await sb.from("orders").select("id,invoice_no").eq("id", ret.ref_order_id).maybeSingle();
+    if (o) {
+      billRef = (o as any).invoice_no || String((o as any).id).slice(0, 8).toUpperCase();
+      billHref = `/admin/invoice/${(o as any).id}`;
+    }
+  }
+
+  if (!supplier && ret.party) {
+    const { data: s } = await sb.from("suppliers").select("id,name,phone,gstin,address,city").ilike("name", ret.party).maybeSingle();
+    if (s) supplier = s as any;
+  }
+
+  return {
+    ret: {
+      id: ret.id, kind: ret.kind, ref_order_id: ret.ref_order_id ?? null,
+      party: ret.party ?? null, reason: ret.reason ?? null,
+      qty: ret.qty ?? 0, amount: ret.amount ?? 0, created_at: ret.created_at,
+    },
+    billRef, billHref, supplier, lines,
+  };
 }
 
 // ---------- purchases ----------

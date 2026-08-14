@@ -44,6 +44,7 @@ export default async function PurchaseDetail({ params, searchParams }: { params:
                 <span className="text-ink">{r.qty} pc{r.qty === 1 ? "" : "s"}</span>
                 {(r.amount ?? 0) > 0 && <span className="text-ink font-medium tabular-nums">debit note {formatPaise(r.amount)}</span>}
                 {r.reason && <span className="text-muted truncate">— {r.reason}</span>}
+                <Link href={`/admin/returns/${r.id}`} className="text-emerald nav-link text-xs ml-auto">Print / share ↗</Link>
               </li>
             ))}
           </ul>
