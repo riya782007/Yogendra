@@ -200,7 +200,10 @@ export function SelectableCatalog({ products, view, brand, phone, manage = false
     <div>
       {manage && (
       <div className="no-print flex flex-wrap items-center gap-2 mb-4">
-        <p className="w-full text-[11px] text-muted">You are composing a catalogue. Copy / WhatsApp sends a customer link with these prices locked — they will not see Retail or Wholesale.</p>
+        <p className="w-full text-[11px] text-muted">
+          Compose here, then use <b>Copy customer link</b> or <b>Share on WhatsApp</b> — not the address bar.
+          Customers get these prices with no Retail/Wholesale toggle.
+        </p>
         <button onClick={() => { setPicking((p) => !p); setSel(new Set()); }}
           className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${picking ? "bg-ink text-white" : "bg-white border border-sand text-ink hover:border-gold"}`}>
           {picking ? "✓ Selecting — tap pieces" : "✷ Select pieces to share"}

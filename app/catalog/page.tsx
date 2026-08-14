@@ -4,7 +4,6 @@ import { getCatalogProductsCached, getCategoryTreeCached, getCatalogSuggestionsC
 import { CatalogSearch } from "@/components/site/CatalogSearch";
 import { SelectableCatalog } from "@/components/site/SelectableCatalog";
 import { BUSINESS } from "@/lib/business";
-import { getSession } from "@/lib/auth";
 
 export const metadata = { title: "Catalogue — Blythe Diva" };
 
@@ -20,10 +19,11 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
   // link is honoured for everyone. Retail stays the DEFAULT when no view is given, so the public shop link
   // never shows trade prices unless a wholesale link is opened / the Wholesale toggle is used.
   const view: "retail" | "wholesale" = searchParams.view === "wholesale" ? "wholesale" : "retail";
-  // Owner composer (?manage=1 AND signed in): toggle + select-to-share. Shared customer links omit
-  // manage, and even a leaked ?manage=1 URL stays customer-facing without an admin session — no
-  // Retail/Wholesale toggle or tags, only the prices locked into ?view=.
-  const manage = searchParams.manage === "1" && getSession().authed;
+  // Owner composer is ?manage=1 (Share Catalogue in admin opens this). Do NOT also require an admin
+  // session: login cookies live on admin-bd.blythediva.com, while this page always runs on the public
+  // store host — so getSession() is never authed here, and gating on it hid Copy / WhatsApp / PDF.
+  // Customer links omit manage; they only get prices locked by ?view= (or retail when view is absent).
+  const manage = searchParams.manage === "1";
 
   const [tree, fetched, suggestions] = await Promise.all([
     getCategoryTreeCached(),
