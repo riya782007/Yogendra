@@ -69,7 +69,7 @@ const TRADE = SITE.replace("://", "://trade.");
 const EXTERNAL: L[] = [
   { href: `${SITE}/shop`, label: "Retail store", icon: "🛍" },
   { href: TRADE, label: "Trade Portal", icon: "📦" },
-  { href: `${SITE}/catalog?view=wholesale`, label: "Share Catalogue", icon: "📤" },
+  { href: `${SITE}/catalog?view=wholesale&manage=1`, label: "Share Catalogue", icon: "📤" },
 ];
 
 const allow = (perms: Perms, perm?: string) => !perm || perms === "*" || perms.includes(perm);

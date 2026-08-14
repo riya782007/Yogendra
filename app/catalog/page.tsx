@@ -4,10 +4,11 @@ import { getCatalogProductsCached, getCategoryTreeCached, getCatalogSuggestionsC
 import { CatalogSearch } from "@/components/site/CatalogSearch";
 import { SelectableCatalog } from "@/components/site/SelectableCatalog";
 import { BUSINESS } from "@/lib/business";
+import { getSession } from "@/lib/auth";
 
 export const metadata = { title: "Catalogue — Blythe Diva" };
 
-export default async function Catalog({ searchParams }: { searchParams: { category?: string; subcategory?: string; style?: string; view?: string; q?: string; skus?: string } }) {
+export default async function Catalog({ searchParams }: { searchParams: { category?: string; subcategory?: string; style?: string; view?: string; q?: string; skus?: string; manage?: string } }) {
   const category = searchParams.category ?? "all";
   const subcategory = searchParams.subcategory ?? "all";
   const style = searchParams.style ?? "all";
@@ -19,6 +20,10 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
   // link is honoured for everyone. Retail stays the DEFAULT when no view is given, so the public shop link
   // never shows trade prices unless a wholesale link is opened / the Wholesale toggle is used.
   const view: "retail" | "wholesale" = searchParams.view === "wholesale" ? "wholesale" : "retail";
+  // Owner composer (?manage=1 AND signed in): toggle + select-to-share. Shared customer links omit
+  // manage, and even a leaked ?manage=1 URL stays customer-facing without an admin session — no
+  // Retail/Wholesale toggle or tags, only the prices locked into ?view=.
+  const manage = searchParams.manage === "1" && getSession().authed;
 
   const [tree, fetched, suggestions] = await Promise.all([
     getCategoryTreeCached(),
@@ -49,6 +54,7 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
 
   // Helpers to build chip links that preserve the view + the OTHER active filter (2-basis filter).
   const viewQ = view === "wholesale" ? "&view=wholesale" : "";
+  const manageQ = manage ? "&manage=1" : "";
   const subQ = subcategory !== "all" ? `&subcategory=${subcategory}` : "";
   const styleQ = style !== "all" ? `&style=${style}` : "";
   const chip = (active: boolean) =>
@@ -62,29 +68,25 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
           <div>
             <p className="text-[10px] tracking-[0.3em] uppercase text-gold-light">{BUSINESS.brand} · Premium Artificial Jewellery</p>
             <h1 className="font-display text-4xl text-ivory mt-1">{BUSINESS.brand}</h1>
-            <p className="text-cream/70 text-sm mt-1">{scopeName} · {products.length} designs · {view === "wholesale" ? "Wholesale rates" : "Retail prices"} · WhatsApp {BUSINESS.phone}</p>
+            <p className="text-cream/70 text-sm mt-1">{scopeName} · {products.length} designs{manage ? ` · ${view === "wholesale" ? "Wholesale rates" : "Retail prices"}` : ""} · WhatsApp {BUSINESS.phone}</p>
           </div>
           <div className="flex flex-col items-end gap-2">
-            {/* Search with live suggestions — designs, SKUs, categories, colours. */}
-            <CatalogSearch suggestions={suggestions} view={view} initialQuery={q} />
-            {/* Retail / Wholesale toggle. Shown to EVERYONE on this shareable catalogue: the owner opens it
-                on the public host (blythediva.com) where his admin cookie isn't visible, so gating it by login
-                meant he never saw the wholesale option (owner: "wholesale price ka option nahi h"). Trade
-                rates are already public on trade.blythediva.com, so exposing the toggle here is fine — and it
-                lets him flip to Wholesale and share that link. (The main retail shop is /shop, not this page.) */}
+            <CatalogSearch suggestions={suggestions} view={view} initialQuery={q} manage={manage} />
+            {manage && (
             <div className="no-print inline-flex rounded-full bg-white/10 p-1 text-sm">
-              <Link href={{ pathname: "/catalog", query: cleanQuery({ category, subcategory, style, q, skus: searchParams.skus }) }} className={`px-3 py-1 rounded-full ${view === "retail" ? "bg-gold text-ink" : "text-cream/80"}`}>Retail</Link>
-              <Link href={{ pathname: "/catalog", query: cleanQuery({ category, subcategory, style, q, skus: searchParams.skus, view: "wholesale" }) }} className={`px-3 py-1 rounded-full ${view === "wholesale" ? "bg-gold text-ink" : "text-cream/80"}`}>Wholesale</Link>
+              <Link href={{ pathname: "/catalog", query: cleanQuery({ category, subcategory, style, q, skus: searchParams.skus, manage: "1" }) }} className={`px-3 py-1 rounded-full ${view === "retail" ? "bg-gold text-ink" : "text-cream/80"}`}>Retail</Link>
+              <Link href={{ pathname: "/catalog", query: cleanQuery({ category, subcategory, style, q, skus: searchParams.skus, view: "wholesale", manage: "1" }) }} className={`px-3 py-1 rounded-full ${view === "wholesale" ? "bg-gold text-ink" : "text-cream/80"}`}>Wholesale</Link>
             </div>
+            )}
           </div>
         </div>
       </div>
 
       {/* Category chips */}
       <div className="no-print max-w-6xl mx-auto px-5 pt-5 flex flex-wrap gap-2">
-        <Link href={`/catalog?${viewQ.slice(1)}`} className={chip(category === "all" && !q && skus.length === 0)}>All</Link>
+        <Link href={viewQ || manageQ ? `/catalog?${(viewQ + manageQ).replace(/^&/, "")}` : "/catalog"} className={chip(category === "all" && !q && skus.length === 0)}>All</Link>
         {tree.map((c) => (
-          <Link key={c.slug} href={`/catalog?category=${c.slug}${viewQ}`} className={chip(category === c.slug && subcategory === "all")}>{c.name}</Link>
+          <Link key={c.slug} href={`/catalog?category=${c.slug}${viewQ}${manageQ}`} className={chip(category === c.slug && subcategory === "all")}>{c.name}</Link>
         ))}
       </div>
 
@@ -92,9 +94,9 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
       {subs.length > 0 && (
         <div className="no-print max-w-6xl mx-auto px-5 pt-2 flex flex-wrap gap-2 items-center">
           <span className="text-[10px] uppercase tracking-wide text-emerald-dark/70 mr-1">Type</span>
-          <Link href={`/catalog?category=${category}${styleQ}${viewQ}`} className={`px-3 py-1 rounded-full text-xs ${subcategory === "all" ? "bg-emerald text-white" : "bg-emerald-mist/60 text-emerald-dark hover:bg-emerald-mist"}`}>All {activeCat?.name}</Link>
+          <Link href={`/catalog?category=${category}${styleQ}${viewQ}${manageQ}`} className={`px-3 py-1 rounded-full text-xs ${subcategory === "all" ? "bg-emerald text-white" : "bg-emerald-mist/60 text-emerald-dark hover:bg-emerald-mist"}`}>All {activeCat?.name}</Link>
           {subs.map((s) => (
-            <Link key={s.slug} href={`/catalog?category=${category}&subcategory=${s.slug}${styleQ}${viewQ}`} className={`px-3 py-1 rounded-full text-xs ${subcategory === s.slug ? "bg-emerald text-white" : "bg-emerald-mist/60 text-emerald-dark hover:bg-emerald-mist"}`}>{s.name}</Link>
+            <Link key={s.slug} href={`/catalog?category=${category}&subcategory=${s.slug}${styleQ}${viewQ}${manageQ}`} className={`px-3 py-1 rounded-full text-xs ${subcategory === s.slug ? "bg-emerald text-white" : "bg-emerald-mist/60 text-emerald-dark hover:bg-emerald-mist"}`}>{s.name}</Link>
           ))}
         </div>
       )}
@@ -103,9 +105,9 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
       {styleChips.length > 0 && (
         <div className="no-print max-w-6xl mx-auto px-5 pt-2 flex flex-wrap gap-2 items-center">
           <span className="text-[10px] uppercase tracking-wide text-gold-dark/70 mr-1">Style</span>
-          <Link href={`/catalog?category=${category}${subQ}${viewQ}`} className={`px-3 py-1 rounded-full text-xs ${style === "all" ? "bg-gold text-ink" : "bg-gold/15 text-gold-dark hover:bg-gold/25"}`}>All styles</Link>
+          <Link href={`/catalog?category=${category}${subQ}${viewQ}${manageQ}`} className={`px-3 py-1 rounded-full text-xs ${style === "all" ? "bg-gold text-ink" : "bg-gold/15 text-gold-dark hover:bg-gold/25"}`}>All styles</Link>
           {styleChips.map((st) => (
-            <Link key={st.slug} href={`/catalog?category=${category}${subQ}&style=${st.slug}${viewQ}`} className={`px-3 py-1 rounded-full text-xs ${style === st.slug ? "bg-gold text-ink" : "bg-gold/15 text-gold-dark hover:bg-gold/25"}`}>{st.name}</Link>
+            <Link key={st.slug} href={`/catalog?category=${category}${subQ}&style=${st.slug}${viewQ}${manageQ}`} className={`px-3 py-1 rounded-full text-xs ${style === st.slug ? "bg-gold text-ink" : "bg-gold/15 text-gold-dark hover:bg-gold/25"}`}>{st.name}</Link>
           ))}
         </div>
       )}
@@ -115,7 +117,7 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
         {subFellBack && (
           <p className="no-print text-xs text-muted mb-3">No designs are tagged under <b>{activeSub?.name}</b> yet — showing all of <b>{activeCat?.name}</b>.</p>
         )}
-        <SelectableCatalog products={products} view={view} brand={BUSINESS.brand} phone={BUSINESS.phone} />
+        <SelectableCatalog products={products} view={view} brand={BUSINESS.brand} phone={BUSINESS.phone} manage={manage} />
       </div>
 
       <div className="bg-ink text-cream/70 text-center text-sm py-6 mt-6 catalog-dark">
@@ -127,7 +129,7 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
 }
 
 /** Build a query object dropping empty/all values (keeps URLs clean). */
-function cleanQuery(o: { category?: string; subcategory?: string; style?: string; q?: string; skus?: string; view?: string }): Record<string, string> {
+function cleanQuery(o: { category?: string; subcategory?: string; style?: string; q?: string; skus?: string; view?: string; manage?: string }): Record<string, string> {
   const out: Record<string, string> = {};
   if (o.category && o.category !== "all") out.category = o.category;
   if (o.subcategory && o.subcategory !== "all") out.subcategory = o.subcategory;
@@ -135,5 +137,6 @@ function cleanQuery(o: { category?: string; subcategory?: string; style?: string
   if (o.q) out.q = o.q;
   if (o.skus) out.skus = o.skus;
   if (o.view) out.view = o.view;
+  if (o.manage) out.manage = o.manage;
   return out;
 }
