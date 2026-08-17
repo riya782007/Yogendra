@@ -10,6 +10,7 @@ import { getProductVariantsAction, addVariantImageAction } from "@/app/actions/v
 import { generateContentAction } from "@/app/actions/aiContent";
 import { compressImage } from "@/lib/image";
 import { downloadProductTemplate } from "@/lib/xlsxTemplate";
+import { snapColorName, barcodeCodeForColor } from "@/lib/colors";
 
 /** Load SheetJS from CDN on demand (no build dependency) so bulk import can read real Excel files. */
 async function loadSheetJS(): Promise<any> {
@@ -114,7 +115,7 @@ export function UploadClient({
     const parent = (form.sku.trim() || "BD####").toUpperCase();
     if (v.sku.trim()) return v.sku.trim().toUpperCase().replace(/\s+/g, "-");
     const colorCode = v.color.trim()
-      ? (colorCodes[v.color.trim().toLowerCase()] ?? v.color.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))
+      ? (colorCodes[snapColorName(v.color).toLowerCase()] ?? barcodeCodeForColor(snapColorName(v.color)))
       : null;
     const sizeCode = v.size.trim() ? v.size.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4) : null;
     const polishCode = v.polish.trim() ? v.polish.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4) : null;
@@ -298,9 +299,7 @@ export function UploadClient({
 
   return (
     <div className="max-w-3xl">
-      {/* Datalists power as-you-type suggestions for variant attributes. Typing a brand-new
-          value is fine — the server upserts it into variant_options so it shows up here
-          next time, matching the catalogue's Variants tab behaviour. */}
+      {/* Colour suggestions are the approved catalog only — typing SILVAR snaps to Silver on save. */}
       <datalist id="upload-opt-color">{variantOptions.color.map((o) => <option key={o} value={o} />)}</datalist>
       <datalist id="upload-opt-size">{variantOptions.size.map((o) => <option key={o} value={o} />)}</datalist>
       <datalist id="upload-opt-polish">{variantOptions.polish.map((o) => <option key={o} value={o} />)}</datalist>
@@ -435,6 +434,7 @@ export function UploadClient({
                         <input
                           className={vInput} list="upload-opt-color" placeholder="Colour"
                           value={v.color} onChange={(e) => updateVariant(idx, { color: e.target.value })}
+                          onBlur={(e) => updateVariant(idx, { color: snapColorName(e.target.value) })}
                         />
                         <input
                           className={vInput} list="upload-opt-size" placeholder="Size"

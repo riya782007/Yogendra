@@ -268,7 +268,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
   const vInput = "rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald";
   const variantsPanel = (
     <div className={card}>
-      {/* Datalists power as-you-type suggestions; typing a brand-new value grows the master list. */}
+      {/* Colour list is the approved catalog (plus genuine customs) — typos like SILVAR are not suggested. */}
       <datalist id="opt-color">{vopts.color.map((o) => <option key={o} value={o} />)}</datalist>
       <datalist id="opt-size">{vopts.size.map((o) => <option key={o} value={o} />)}</datalist>
       <datalist id="opt-polish">{vopts.polish.map((o) => <option key={o} value={o} />)}</datalist>

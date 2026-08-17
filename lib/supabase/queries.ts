@@ -4,6 +4,7 @@ import { unstable_cache } from "next/cache";
 import { supabaseServer } from "./server";
 import type { PricingFormula } from "../pricing";
 import { cleanTiers } from "../pricing";
+import { uniqueColorOptions, COLOR_CATALOG, compactColorKey, barcodeCodeForColor } from "../colors";
 
 /**
  * PostgREST caps every select at 1000 rows (the `max-rows` default). With a 4000+ product
@@ -961,7 +962,7 @@ export async function getCashBankLedger(opts: { from?: string; to?: string } = {
   return { moves };
 }
 
-/** Self-growing master lists for variant attributes (colour / size / polish). */
+/** Self-growing master lists for size / polish. Colours are the canonical catalog plus genuine customs — never typo duplicates. */
 export async function getVariantOptions(): Promise<{ color: string[]; size: string[]; polish: string[] }> {
   const sb = supabaseServer();
   const { data } = await sb.from("variant_options").select("kind,value,sort").order("sort").order("value");
@@ -970,6 +971,7 @@ export async function getVariantOptions(): Promise<{ color: string[]; size: stri
     const k = (r as any).kind as "color" | "size" | "polish";
     if (out[k]) out[k].push((r as any).value);
   }
+  out.color = uniqueColorOptions(out.color);
   return out;
 }
 
@@ -977,13 +979,19 @@ export async function getVariantOptions(): Promise<{ color: string[]; size: stri
  *  auto-SKU code path (manual variant add, bulk upload, catalogue edit) so the printed
  *  barcode is consistent: BD2024-RED for a red variant, not BD2024-RED5. */
 export async function getColorCodeMap(): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const c of COLOR_CATALOG) {
+    out[c.name.toLowerCase()] = c.code;
+    out[compactColorKey(c.name)] = c.code;
+  }
   const sb = supabaseServer();
   const { data } = await sb.from("variant_options").select("value,barcode_code").eq("kind", "color");
-  const out: Record<string, string> = {};
   for (const r of (data as any[]) ?? []) {
     const v = String((r as any).value ?? "").trim();
-    const c = String((r as any).barcode_code ?? "").trim();
-    if (v && c) out[v.toLowerCase()] = c;
+    const c = String((r as any).barcode_code ?? "").trim() || barcodeCodeForColor(v) || "";
+    if (!v || !c) continue;
+    out[v.toLowerCase()] = c;
+    out[compactColorKey(v)] = c;
   }
   return out;
 }
