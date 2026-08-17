@@ -529,20 +529,32 @@ export async function confirmCodAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("billing.sell"))) return;
   const id = String(formData.get("id") ?? "").trim();
   if (!id) return;
-  const { error } = await supabaseServer().rpc("confirm_cod_order", { p_order_id: id });
+  const sb = supabaseServer();
+  const { data: o } = await sb.from("orders").select("payment_mode,cod_hold").eq("id", id).maybeSingle();
+  const mode = String((o as any)?.payment_mode ?? "").toLowerCase();
+  // Prepaid website orders also sit on cod_hold until Accept — they belong on Storefront Orders, not here.
+  if (!o || (o as any).cod_hold !== true || mode !== "cod") {
+    redirect("/admin/cod?err=" + encodeURIComponent("That order is prepaid — accept or reject it under Storefront Orders, not COD."));
+  }
+  const { error } = await sb.rpc("confirm_cod_order", { p_order_id: id });
   revalidatePath("/admin/cod"); revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard");
-  if (!error) revalidateTag("storefront"); // stock finally moves here → refresh the shop so it hides if sold out
+  if (!error) revalidateTag("storefront");
   if (error) redirect(`/admin/cod?err=${encodeURIComponent(error.message)}`);
   redirect("/admin/cod?ok=1");
 }
 
 /** Cancel a held COD order (customer refused / didn't confirm). It held NO stock and NO revenue, so we
- *  simply delete it — there is nothing to restock or reverse. */
+ *  simply delete it — there is nothing to restock or reverse. Never delete a prepaid (Razorpay) hold. */
 export async function cancelCodAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("billing.sell"))) return;
   const id = String(formData.get("id") ?? "").trim();
   if (!id) return;
   const sb = supabaseServer();
+  const { data: o } = await sb.from("orders").select("payment_mode,cod_hold").eq("id", id).maybeSingle();
+  const mode = String((o as any)?.payment_mode ?? "").toLowerCase();
+  if (!o || (o as any).cod_hold !== true || mode !== "cod") {
+    redirect("/admin/cod?err=" + encodeURIComponent("That order is prepaid — reject it under Storefront Orders. Do not cancel it from COD."));
+  }
   await sb.from("order_items").delete().eq("order_id", id).then(() => {}, () => {});
   await sb.from("orders").delete().eq("id", id).then(() => {}, () => {});
   revalidatePath("/admin/cod"); revalidatePath("/admin/dashboard");
