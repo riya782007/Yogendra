@@ -4,6 +4,11 @@ import { unstable_cache } from "next/cache";
 import { supabaseServer } from "./server";
 import type { PricingFormula } from "../pricing";
 import { cleanTiers } from "../pricing";
+import {
+  isWalkInPlaceholder, phoneLast10, directoryNameKey, billGrandPaise, isLiveSale, directoryIdsForOrder,
+} from "../customerSpend";
+
+export { isWalkInPlaceholder, phoneLast10, directoryNameKey, billGrandPaise };
 
 /**
  * PostgREST caps every select at 1000 rows (the `max-rows` default). With a 4000+ product
@@ -381,13 +386,6 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
 }
 
 // ---------- customer directory (real customers table) ----------
-/** Placeholder "walk-in" names used at the counter for anonymous cash sales — these should NOT
- *  clutter the customer directory (the owner: "walk in ko 1 manke chalo"). */
-const WALKIN_NAMES = new Set(["cash (w)", "cash (r)", "walk-in", "walk in", "walkin"]);
-export function isWalkInPlaceholder(name?: string | null, phone?: string | null): boolean {
-  const n = (name ?? "").trim().toLowerCase();
-  return !((phone ?? "").trim()) && (n === "" || WALKIN_NAMES.has(n));
-}
 
 export async function getCustomersDb(opts: { q?: string; type?: string }) {
   const sb = supabaseServer();
@@ -397,6 +395,43 @@ export async function getCustomersDb(opts: { q?: string; type?: string }) {
   const { data } = await query.order("name");
   // Collapse anonymous walk-ins: they're bill placeholders, not real directory contacts.
   return ((data as any[]) ?? []).filter((c) => !isWalkInPlaceholder(c.name, c.phone));
+}
+
+/** Reuse the directory row for a real customer (phone last-10, then exact name). Never mint a
+ *  second "Pooja Fashion" on a no-phone bill — that split this-month spend across two cards. */
+export async function ensureDirectoryCustomer(
+  sb: ReturnType<typeof supabaseServer>,
+  input: { name?: string | null; phone?: string | null; gstin?: string | null; address?: string | null; type?: string | null },
+): Promise<string | null> {
+  const nm = (input.name ?? "").trim().replace(/\s+/g, " ");
+  const ph = (input.phone ?? "").trim();
+  if (isWalkInPlaceholder(nm, ph)) return null;
+  const last10 = phoneLast10(ph);
+  const nameKey = directoryNameKey(nm);
+  let hit: any = null;
+  if (last10) {
+    const { data } = await sb.from("customers").select("id,name,phone,type").ilike("phone", `%${last10}%`).limit(20);
+    hit = ((data as any[]) ?? []).find((c) => phoneLast10(c.phone) === last10) ?? null;
+  }
+  if (!hit && nameKey) {
+    const fuzzy = nameKey.split(" ").filter(Boolean).join("%") || nameKey;
+    const { data } = await sb.from("customers").select("id,name,phone,type").ilike("name", fuzzy).limit(40);
+    const rows = ((data as any[]) ?? []).filter((c) => directoryNameKey(c.name) === nameKey);
+    hit = rows.find((c) => c.type === "wholesale") ?? rows[0] ?? null;
+  }
+  if (hit?.id) {
+    const patch: Record<string, string> = {};
+    if (input.gstin?.trim()) patch.gstin = input.gstin.trim();
+    if (input.address?.trim()) patch.address = input.address.trim();
+    if (ph && !phoneLast10(hit.phone)) patch.phone = ph;
+    if (input.type === "wholesale" && hit.type !== "wholesale") patch.type = "wholesale";
+    if (Object.keys(patch).length) await sb.from("customers").update(patch).eq("id", hit.id);
+    return hit.id as string;
+  }
+  const { data: created } = await sb.from("customers")
+    .insert({ name: nm || last10 || ph, phone: ph || null, gstin: input.gstin?.trim() || null, address: input.address?.trim() || null, type: input.type === "wholesale" ? "wholesale" : "retail" })
+    .select("id").maybeSingle();
+  return ((created as any)?.id as string | undefined) ?? null;
 }
 
 // ---------- employees (salespeople) + sales attribution (0037) ----------
@@ -462,26 +497,42 @@ export async function getEmployeeSalesLedger(range?: { from?: string; to?: strin
 }
 
 /** Per-customer spend + order count + last-order date over an optional date range (paise), keyed by
- *  customer_id. Powers promotional targeting on the Customers page (who hit / is near a target). */
+ *  customer_id. Powers promotional targeting on the Customers page (who hit / is near a target).
+ *  Bills are attributed by customer_id, then last-10 phone, then firm name — so a ₹46,000
+ *  "Pooja Fashion" bill counts on the directory row even if POS minted a duplicate or left customer_id null. */
 export async function getCustomerSpend(range?: { from?: string; to?: string }): Promise<Map<string, { spend: number; orders: number; last: string | null }>> {
   const sb = supabaseServer();
-  // Count EVERY bill the customer took — cash memos AND GST invoices — at the amount they actually
-  // spent (the GST-inclusive grand total, matching the ledger and the printed bill). GST bills store
-  // `total` pre-tax, so add the 3% GST rounded to ₹1; cash memos have no tax.
-  let q = sb.from("orders").select("customer_id,total,bill_type,gst_mode,created_at,status,is_backorder").not("customer_id", "is", null).or("is_backorder.is.null,is_backorder.eq.false").eq("cod_hold", false);
-  if (range?.from) q = q.gte("created_at", range.from);
-  if (range?.to) q = q.lte("created_at", range.to);
-  const { data } = await q;
+  const dir = await fetchAll((f, t) => sb.from("customers").select("id,name,phone").range(f, t));
+  const orders = await fetchAll((f, t) => {
+    let q = sb.from("orders")
+      .select("customer_id,customer_name,customer_phone,total,bill_type,gst_mode,created_at,status,is_backorder,cod_hold")
+      .or("is_backorder.is.null,is_backorder.eq.false")
+      .order("created_at", { ascending: true });
+    if (range?.from) q = q.gte("created_at", range.from);
+    if (range?.to) q = q.lte("created_at", range.to);
+    return q.range(f, t);
+  });
+
   const m = new Map<string, { spend: number; orders: number; last: string | null }>();
-  for (const o of ((data as any[]) ?? [])) {
-    if (o.status === "cancelled" || o.status === "refunded") continue;
-    const t = o.total ?? 0;
-    // Inclusive GST bills already contain the tax in `total` — don't add 3% again (matches the bill).
-    const grand = o.bill_type === "cash" || o.gst_mode === "inclusive" ? Math.round(t / 100) * 100 : Math.round((t + Math.round(t * 0.03)) / 100) * 100;
-    const cur = m.get(o.customer_id) ?? { spend: 0, orders: 0, last: null as string | null };
+  const bump = (id: string, grand: number, at: string) => {
+    const cur = m.get(id) ?? { spend: 0, orders: 0, last: null as string | null };
     cur.spend += grand; cur.orders += 1;
-    if (!cur.last || o.created_at > cur.last) cur.last = o.created_at;
-    m.set(o.customer_id, cur);
+    if (!cur.last || at > cur.last) cur.last = at;
+    m.set(id, cur);
+  };
+  for (const o of orders as any[]) {
+    if (!isLiveSale(o)) continue;
+    if (isWalkInPlaceholder(o.customer_name, o.customer_phone)) continue;
+    const grand = billGrandPaise(o);
+    const ids = directoryIdsForOrder(o, dir as any);
+    // Same bill must not increment order-count twice when two directory copies share a name —
+    // spend is copied to each row, order count once per row (the owner reads one card).
+    const seen = new Set<string>();
+    for (const id of ids) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      bump(id, grand, o.created_at);
+    }
   }
   return m;
 }
@@ -2484,20 +2535,18 @@ export async function getActivityLog(limit = 60) {
 // ---------- CRM + abandoned carts + SEO ----------
 export async function getCustomers() {
   const sb = supabaseServer();
-  const { data } = await sb.from("orders").select("customer_name,customer_phone,total,bill_type,gst_mode,status,is_backorder,cod_hold,created_at");
+  const data = await fetchAll((f, t) =>
+    sb.from("orders").select("customer_name,customer_phone,total,bill_type,gst_mode,status,is_backorder,cod_hold,created_at").range(f, t));
   const map = new Map<string, { name: string; phone: string | null; orders: number; spent: number; last: string }>();
-  for (const o of (data as any[]) ?? []) {
+  for (const o of data as any[]) {
     const name = (o.customer_name ?? "").trim(); if (!name) continue;
-    if (isWalkInPlaceholder(name, o.customer_phone)) continue; // walk-in cash placeholders aren't directory customers
-    // Not a real sale: a cancelled/refunded bill, or a pending backorder (held, no revenue) — skip so
-    // "top customers" doesn't count a cancelled backorder's revenue (owner's report).
-    if (o.status === "cancelled" || o.status === "refunded" || o.is_backorder === true || o.cod_hold === true) continue;
-    const t = o.total ?? 0;
-    // Inclusive-GST bills already contain the tax in `total`; only exclusive bills add 3% on top.
-    const grand = o.bill_type === "cash" || o.gst_mode === "inclusive" ? Math.round(t / 100) * 100 : Math.round((t + Math.round(t * 0.03)) / 100) * 100;
-    const c = map.get(name) ?? { name, phone: o.customer_phone ?? null, orders: 0, spent: 0, last: o.created_at };
+    if (isWalkInPlaceholder(name, o.customer_phone)) continue;
+    if (!isLiveSale(o)) continue;
+    const key = directoryNameKey(name);
+    const grand = billGrandPaise(o);
+    const c = map.get(key) ?? { name, phone: o.customer_phone ?? null, orders: 0, spent: 0, last: o.created_at };
     c.orders++; c.spent += grand; if (o.created_at > c.last) c.last = o.created_at; if (!c.phone) c.phone = o.customer_phone ?? null;
-    map.set(name, c);
+    map.set(key, c);
   }
   return [...map.values()].sort((a, b) => b.spent - a.spent);
 }
