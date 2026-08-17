@@ -40,9 +40,19 @@ export default function Checkout() {
     if (name.length < 2 || phone.replace(/\D/g, "").length < 7) return;
     const t = setTimeout(() => {
       try { localStorage.setItem("bd_retail_contact", JSON.stringify({ name, phone, city: f.city.trim() })); } catch { /* ignore */ }
+      try { window.dispatchEvent(new Event("bd-contact")); } catch { /* ignore */ }
+      try {
+        fetch("/api/cart/track", {
+          method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true,
+          body: JSON.stringify({
+            items: items.map((i) => ({ sku: i.sku, name: i.name, qty: i.qty, price: i.price, color: i.color })),
+            total, name, phone, city: f.city.trim() || undefined, stage: "checkout",
+          }),
+        }).catch(() => {});
+      } catch { /* ignore */ }
     }, 800);
     return () => clearTimeout(t);
-  }, [f.name, f.phone, f.city]);
+  }, [f.name, f.phone, f.city, items, total]);
 
   async function applyCoupon() {
     const code = coupon.trim();

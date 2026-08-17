@@ -6,6 +6,7 @@ import { posSaleAction } from "@/app/actions/orders";
 import { posLookupAction, posStockAction } from "@/app/actions/billing";
 import { quickAddEmployeeAction } from "@/app/actions/employees";
 import { QtyField } from "@/components/admin/QtyField";
+import { phoneMatchesQuery } from "@/lib/phone";
 
 type P = { sku: string; name: string; price: number; wholesale: number; mrp: number; category: string; qty: number; parentSku?: string; parentName?: string };
 type Line = { sku: string; name: string; price: number; wholesale: number; mrp: number; qty: number; stock: number; override: string; disc: string };
@@ -40,6 +41,22 @@ export function POSClient({ products: propProducts, customers = [], methods = []
   const [expanded, setExpanded] = useState<string | null>(null);
   const [cust, setCust] = useState({ name: "", phone: "" });
   const [custType, setCustType] = useState<"retail" | "wholesale">("retail");
+  useEffect(() => {
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const phone = (sp.get("phone") || "").trim();
+      const name = (sp.get("name") || "").trim();
+      if (!phone && !name) return;
+      const hit = customers.find((c) => phone && (phoneMatchesQuery(c.phone, phone) || c.phone === phone));
+      if (hit) {
+        setCust({ name: hit.name, phone: hit.phone });
+        setCustType(hit.type === "wholesale" ? "wholesale" : "retail");
+      } else {
+        setCust({ name, phone });
+      }
+    } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customers]);
   const [salesEmp, setSalesEmp] = useState(""); // who dealt with the customer (performance attribution)
   // Local, editable roster so a staffer can add their name here and be selected immediately.
   const [emps, setEmps] = useState<Emp[]>(employees);
@@ -132,7 +149,7 @@ export function POSClient({ products: propProducts, customers = [], methods = []
   const custMatches = useMemo(() => {
     const s = custQ.trim().toLowerCase();
     if (!s) return [];
-    return customers.filter((c) => (c.name ?? "").toLowerCase().includes(s) || (c.phone ?? "").includes(s)).slice(0, 6);
+    return customers.filter((c) => (c.name ?? "").toLowerCase().includes(s) || phoneMatchesQuery(c.phone, custQ) || (c.phone ?? "").includes(s)).slice(0, 8);
   }, [custQ, customers]);
   function pickCustomer(c: Cust) {
     setCust({ name: c.name, phone: c.phone });
@@ -424,7 +441,7 @@ export function POSClient({ products: propProducts, customers = [], methods = []
               </div>
               {customers.length > 0 && (
                 <div className="relative">
-                  <input autoFocus className={`${inp} w-full`} placeholder="🔎 Find customer by name / phone…" value={custQ} onChange={(e) => setCustQ(e.target.value)} />
+                  <input autoFocus className={`${inp} w-full`} placeholder="🔎 Name or last 4 of phone…" value={custQ} onChange={(e) => setCustQ(e.target.value)} />
                   {custQ.trim() && (
                     <div className="mt-1 max-h-52 overflow-y-auto rounded-lg border border-sand divide-y divide-sand/60">
                       {custMatches.map((c) => (

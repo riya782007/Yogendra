@@ -4,6 +4,7 @@ import { formatPaise } from "@/lib/pricing";
 import { GST_RATE } from "@/lib/business";
 import { createEstimateAction, posLookupAction } from "@/app/actions/billing";
 import { QtyField } from "@/components/admin/QtyField";
+import { phoneMatchesQuery } from "@/lib/phone";
 
 type P = { sku: string; name: string; price: number; wholesale: number; parentSku?: string; parentName?: string };
 type Cust = { id: string; name: string; phone: string; type: string; gstin: string };
@@ -94,7 +95,7 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
   const custMatches = useMemo(() => {
     const s = custQ.trim().toLowerCase();
     if (!s) return [];
-    return customers.filter((c) => (c.name ?? "").toLowerCase().includes(s) || (c.phone ?? "").includes(s)).slice(0, 6);
+    return customers.filter((c) => (c.name ?? "").toLowerCase().includes(s) || phoneMatchesQuery(c.phone, custQ) || (c.phone ?? "").includes(s)).slice(0, 8);
   }, [custQ, customers]);
 
   // WC uses the wholesale rate (falls back to retail if missing). Manual override wins.
@@ -202,7 +203,7 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
         </div>
         {customers.length > 0 && (
           <div className="relative">
-            <input className={input} placeholder="🔎 Find existing customer by name / phone…" value={custQ}
+            <input className={input} placeholder="🔎 Name or last 4 of phone…" value={custQ}
               onChange={(e) => { setCustQ(e.target.value); setCustOpen(true); }} onFocus={() => setCustOpen(true)} />
             {custOpen && custQ.trim() && (
               <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl shadow-luxe border border-sand overflow-hidden">

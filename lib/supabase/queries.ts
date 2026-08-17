@@ -4,6 +4,7 @@ import { unstable_cache } from "next/cache";
 import { supabaseServer } from "./server";
 import type { PricingFormula } from "../pricing";
 import { cleanTiers } from "../pricing";
+import { phoneDigits, phoneMatchesQuery, nameMatchesQuery, recordMatchesShopperQuery, phonesAreSameShopper } from "../phone";
 
 /**
  * PostgREST caps every select at 1000 rows (the `max-rows` default). With a 4000+ product
@@ -391,8 +392,23 @@ export function isWalkInPlaceholder(name?: string | null, phone?: string | null)
 
 export async function getCustomersDb(opts: { q?: string; type?: string }) {
   const sb = supabaseServer();
+  const q = opts.q?.trim() ?? "";
+  const qDigits = phoneDigits(q);
+  // Last-4 / international numbers: PostgREST ilike on the raw phone misses "+1 783-739-1427"
+  // when the owner types "1427" if formatting splits digit groups. Digit-match the directory.
+  if (qDigits.length >= 4) {
+    const rows = await fetchAll((f, t) => {
+      let query = sb.from("customers").select("id,name,phone,type,gstin,city,credit_balance,created_at").order("name").range(f, t);
+      if (opts.type && opts.type !== "all") query = query.eq("type", opts.type);
+      return query;
+    });
+    const ql = q.toLowerCase();
+    return rows.filter((c) => !isWalkInPlaceholder(c.name, c.phone) && (
+      phoneMatchesQuery(c.phone, q) || nameMatchesQuery(c.name, q) || String(c.gstin ?? "").toLowerCase().includes(ql)
+    ));
+  }
   let query = sb.from("customers").select("id,name,phone,type,gstin,city,credit_balance,created_at");
-  if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.or(`name.ilike.%${s}%,phone.ilike.%${s}%,gstin.ilike.%${s}%`); }
+  if (q) { const s = escLike(q); if (s) query = query.or(`name.ilike.%${s}%,phone.ilike.%${s}%,gstin.ilike.%${s}%`); }
   if (opts.type && opts.type !== "all") query = query.eq("type", opts.type);
   const { data } = await query.order("name");
   // Collapse anonymous walk-ins: they're bill placeholders, not real directory contacts.
@@ -697,9 +713,13 @@ export async function getCustomerById(id: string) {
   const phone = (c as any).phone;
   const sel = "id,total,amount_paid,invoice_no,channel,bill_type,gst_mode,payment_mode,status,created_at,customer_id,customer_phone";
   const byId = await sb.from("orders").select(sel).eq("customer_id", id).order("created_at", { ascending: false }).limit(100);
-  const byPhone = phone ? await sb.from("orders").select(sel).eq("customer_phone", phone).order("created_at", { ascending: false }).limit(100) : { data: [] as any[] };
+  const suffix = phoneDigits(phone).slice(-8);
+  const byPhone = suffix.length >= 7
+    ? await sb.from("orders").select(sel).ilike("customer_phone", `%${suffix}`).order("created_at", { ascending: false }).limit(200)
+    : { data: [] as any[] };
   const seen = new Set<string>();
   const list = [...((byId.data as any[]) ?? []), ...((byPhone.data as any[]) ?? [])]
+    .filter((o) => phonesAreSameShopper(o.customer_phone, phone) || o.customer_id === id)
     .filter((o) => (seen.has(o.id) ? false : (seen.add(o.id), true)))
     .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
   // Pillar 8 — customer ledger view of "outstanding". Compute it from the actual orders
@@ -753,7 +773,10 @@ export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?
   query = query.or("is_backorder.is.null,is_backorder.eq.false");
   // Held COD orders aren't sales yet either — they live on /admin/cod until dispatch is confirmed.
   query = query.eq("cod_hold", false);
-  if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.or(`customer_name.ilike.%${s}%,customer_phone.ilike.%${s}%`); }
+  const rawQ = opts.q?.trim() ?? "";
+  const qDigits = phoneDigits(rawQ);
+  const last4Search = qDigits.length >= 4 && /^[\d\s+\-().]+$/.test(rawQ);
+  if (rawQ && !last4Search) { const s = escLike(rawQ); if (s) query = query.or(`customer_name.ilike.%${s}%,customer_phone.ilike.%${s}%`); }
   if (opts.channel && opts.channel !== "all") query = query.eq("channel", opts.channel);
   if (opts.billType) query = query.eq("bill_type", opts.billType);
   if (opts.from) query = query.gte("created_at", opts.from);
@@ -765,8 +788,21 @@ export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?
   // Stable tiebreaker on created_at so equal keys keep a deterministic order.
   let q = query.order(col, { ascending: asc, nullsFirst: false });
   if (col !== "created_at") q = q.order("created_at", { ascending: false });
-  const { data, count } = await q.range(fromIdx, fromIdx + pageSize - 1);
-  const rows = (data as any[]) ?? [];
+  let rows: any[];
+  let total: number;
+  if (last4Search) {
+    // Last-4 of any visitor/buyer phone — match digits, not the formatted string.
+    const { data } = await q.limit(2500);
+    const filtered = ((data as any[]) ?? []).filter((o) =>
+      phoneMatchesQuery(o.customer_phone, rawQ) || nameMatchesQuery(o.customer_name, rawQ)
+    );
+    total = filtered.length;
+    rows = filtered.slice(fromIdx, fromIdx + pageSize);
+  } else {
+    const res = await q.range(fromIdx, fromIdx + pageSize - 1);
+    rows = (res.data as any[]) ?? [];
+    total = res.count ?? 0;
+  }
   // Attach returned-piece counts so the sales list shows "↩ N returned" on affected bills —
   // the chain-of-events note the client asked for (avoids double returns / miscommunication).
   if (rows.length) {
@@ -775,7 +811,7 @@ export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?
     for (const r of ((rets as any[]) ?? [])) if (r.ref_order_id) by.set(r.ref_order_id, (by.get(r.ref_order_id) ?? 0) + (r.qty ?? 0));
     for (const r of rows) r.returned_qty = by.get(r.id) ?? 0;
   }
-  return { rows, total: count ?? 0, page, pageSize };
+  return { rows, total, page, pageSize };
 }
 
 export async function getPublishedProducts(): Promise<(DbProduct & { category: DbCategory })[]> {
@@ -2559,11 +2595,22 @@ export async function getPendingWholesalePayments(): Promise<{
     }),
   }));
 }
-export async function getAbandonedCarts() {
+export async function getAbandonedCarts(opts?: { search?: string }) {
   const sb = supabaseServer();
+  const search = (opts?.search ?? "").trim();
   // Surface carts gone quiet for 20+ min (a shopper still browsing isn't "abandoned" yet) — OR any cart
   // that REACHED CHECKOUT (finalised), which the owner wants to see immediately so he can close it.
   const idleSince = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+
+  if (search) {
+    // Last-4 / name search must see LIVE carts too (US shopper still on the site) and recovered ones
+    // (already billed) — otherwise the owner types the number he has and gets an empty list.
+    const all = await fetchAll((f, t) =>
+      sb.from("abandoned_carts").select("*").order("updated_at", { ascending: false }).range(f, t),
+    );
+    return all.filter((c) => recordMatchesShopperQuery({ phone: c.phone, customer_name: c.customer_name }, search));
+  }
+
   let res = await sb.from("abandoned_carts")
     .select("*").eq("recovered", false).or(`updated_at.lt.${idleSince},reached_checkout.eq.true`)
     .order("updated_at", { ascending: false });
@@ -2575,7 +2622,32 @@ export async function getAbandonedCarts() {
   // Only surface carts the owner can actually ACT on — a cart with no phone is un-contactable and just
   // clutters the list (owner: "no cart without contact — warna iska koi sense nahi"). This is the final
   // guard; the trackers also avoid saving phone-less carts, but this ensures the admin list is always clean.
-  return ((data as any[]) ?? []).filter((c) => String(c?.phone ?? "").replace(/\D/g, "").length >= 7);
+  return ((data as any[]) ?? []).filter((c) => phoneDigits(c?.phone).length >= 7);
+}
+
+/** Visitors / directory customers / recent bills that match last-4 (or name) when they have no open cart. */
+export async function searchShopperContacts(search: string): Promise<{
+  visitors: any[];
+  customers: any[];
+  orders: any[];
+}> {
+  const q = search.trim();
+  if (!q) return { visitors: [], customers: [], orders: [] };
+  const sb = supabaseServer();
+  const [vis, cust, ords] = await Promise.all([
+    (sb.from("trade_visitors") as any).select("*").order("created_at", { ascending: false }).limit(400),
+    sb.from("customers").select("id,name,phone,type,city,wholesale_approved").order("name").limit(800),
+    sb.from("orders").select("id,invoice_no,customer_name,customer_phone,total,status,channel,created_at")
+      .order("created_at", { ascending: false }).limit(800),
+  ]);
+  const visitors = ((vis.data as any[]) ?? []).filter((v) => recordMatchesShopperQuery(v, q));
+  const customers = ((cust.data as any[]) ?? []).filter((c) =>
+    !isWalkInPlaceholder(c.name, c.phone) && recordMatchesShopperQuery(c, q),
+  );
+  const orders = ((ords.data as any[]) ?? []).filter((o) =>
+    recordMatchesShopperQuery({ phone: o.customer_phone, customer_name: o.customer_name }, q),
+  );
+  return { visitors, customers, orders };
 }
 export async function getSitemapData() {
   const sb = supabaseServer();

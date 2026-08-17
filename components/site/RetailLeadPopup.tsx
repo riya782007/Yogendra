@@ -83,6 +83,7 @@ export function RetailLeadPopup() {
     try {
       localStorage.setItem("bd_retail_contact", JSON.stringify({ name: name.trim(), phone: phone.trim() }));
       localStorage.setItem(K_DONE, "1");
+      try { window.dispatchEvent(new Event("bd-contact")); } catch { /* ignore */ }
     } catch { /* ignore */ }
     // Push the contact onto the live cart row immediately so it surfaces (with name + phone) on the
     // owner's Abandoned Carts page even if they leave right now.
@@ -92,7 +93,7 @@ export function RetailLeadPopup() {
       const total = list.reduce((s: number, i: any) => s + (Number(i?.price) || 0) * (Number(i?.qty) || 0), 0);
       await fetch("/api/cart/track", {
         method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true,
-        body: JSON.stringify({ items: list.map((i: any) => ({ sku: i?.sku, name: i?.name, qty: i?.qty, price: i?.price })), total, name: name.trim(), phone: phone.trim() }),
+        body: JSON.stringify({ items: list.map((i: any) => ({ sku: i?.sku, name: i?.name, qty: i?.qty, price: i?.price, color: i?.color })), total, name: name.trim(), phone: phone.trim() }),
       });
     } catch { /* never break over analytics */ }
     setBusy(false); setDone(true);

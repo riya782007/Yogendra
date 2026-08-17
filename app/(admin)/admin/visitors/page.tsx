@@ -2,13 +2,17 @@ export const dynamic = "force-dynamic";
 import { supabaseServer } from "@/lib/supabase/server";
 import { VisitorCard } from "@/components/admin/VisitorCard";
 import { BulkVisitorWhatsAppButton } from "@/components/admin/BulkVisitorWhatsAppButton";
+import { recordMatchesShopperQuery } from "@/lib/phone";
+import Link from "next/link";
 
 export const metadata = { title: "Owner Console · Trade Visitors" };
 
-export default async function TradeVisitors() {
+export default async function TradeVisitors({ searchParams }: { searchParams: { q?: string } }) {
+  const q = (searchParams.q ?? "").trim();
   const sb = supabaseServer();
-  const { data } = await (sb.from("trade_visitors") as any).select("*").order("created_at", { ascending: false }).limit(300);
-  const list = ((data as any[]) ?? []);
+  const { data } = await (sb.from("trade_visitors") as any).select("*").order("created_at", { ascending: false }).limit(400);
+  const all = ((data as any[]) ?? []);
+  const list = q ? all.filter((v) => recordMatchesShopperQuery(v, q)) : all;
   const fresh = list.filter((v) => v.status === "new");
   const rest = list.filter((v) => v.status !== "new");
 
@@ -19,7 +23,14 @@ export default async function TradeVisitors() {
         The wholesale catalogue is open to browse — no sign-in needed, so dealers don&apos;t bounce before
         seeing a single rate. Once someone has genuinely browsed, we ask for their name, number and city.
         Everyone who left details lands here, with how much they actually looked at, so you know who&apos;s worth a call.
+        Search by last 4 digits of their phone — international numbers included.
       </p>
+      <form action="/admin/visitors" className="mb-5 flex flex-wrap gap-2">
+        <input name="q" defaultValue={q} placeholder="Last 4 of phone or name…"
+          className="rounded-xl border border-sand bg-white px-4 py-2 text-sm outline-none focus:border-emerald flex-1 min-w-[200px]" />
+        <button className="px-4 py-2 rounded-xl bg-ink text-white text-sm">Search</button>
+        {q && <Link href="/admin/visitors" className="px-3 py-2 text-sm text-muted hover:text-ink">Clear</Link>}
+      </form>
 
       {list.length === 0 && (
         <div className="bg-white rounded-2xl p-6 shadow-card">
