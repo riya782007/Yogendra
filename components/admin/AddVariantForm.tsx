@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { addVariantAction } from "@/app/actions/variants";
-import { barcodeCodeForColor } from "@/lib/colors";
+import { barcodeCodeForColor, snapColorName } from "@/lib/colors";
 
 const vInput = "rounded-lg border border-sand bg-white px-2.5 py-1.5 text-sm text-ink focus:border-gold focus:outline-none";
 
@@ -42,7 +42,7 @@ export function AddVariantForm({
     <div className="border-t border-sand/60 pt-4">
       <form action={addVariantAction} className="flex flex-wrap items-end gap-2">
         <input type="hidden" name="product_sku" value={parentSku} />
-        <label className="text-[11px] text-muted">Colour<input name="color" value={color} onChange={(e) => setColor(e.target.value)} list="opt-color" placeholder="e.g. Green" className={`${vInput} w-28 block mt-0.5`} /></label>
+        <label className="text-[11px] text-muted">Colour<input name="color" value={color} onChange={(e) => setColor(e.target.value)} onBlur={() => setColor((v) => snapColorName(v))} list="opt-color" placeholder="e.g. Green" className={`${vInput} w-28 block mt-0.5`} /></label>
         <label className="text-[11px] text-muted">Size<input name="size" value={size} onChange={(e) => setSize(e.target.value)} list="opt-size" placeholder="e.g. 2.6" className={`${vInput} w-24 block mt-0.5`} /></label>
         <label className="text-[11px] text-muted">Polish<input name="polish" value={polish} onChange={(e) => setPolish(e.target.value)} list="opt-polish" placeholder="e.g. Oxidised" className={`${vInput} w-28 block mt-0.5`} /></label>
         <label className="text-[11px] text-muted">SKU<input name="sku" value={sku} onChange={(e) => setSku(e.target.value)} placeholder="blank = auto" className={`${vInput} w-32 block mt-0.5 font-mono`} /></label>
