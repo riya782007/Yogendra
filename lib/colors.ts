@@ -97,15 +97,131 @@ export const COLOR_CATALOG: readonly ColorEntry[] = [
   { name: "Green Mint",      code: "GMINT",   sort: 75 },
 ] as const;
 
-/** Case-insensitive lookup index (built once per process). */
+/** Letters+digits only, lowercased — so "Silver 2", "silver2", "SILVER-2" are the same key. */
+export function compactColorKey(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function editDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (Math.abs(a.length - b.length) > 2) return 99;
+  const m = a.length, n = b.length;
+  const dp = new Array(n + 1);
+  for (let j = 0; j <= n; j++) dp[j] = j;
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
+      prev = tmp;
+    }
+  }
+  return dp[n];
+}
+
+/** Shop typos / synonyms that compact-match would miss (gold ≠ golden, silvar ≠ silver). */
+const COLOR_ALIASES: Record<string, string> = {
+  silvar: "Silver", silwer: "Silver", sliver: "Silver", slivar: "Silver", siler: "Silver", silvr: "Silver",
+  gold: "Golden", golden: "Golden", gld: "Golden",
+  gray: "Grey", grey: "Grey",
+  gren: "Green", grn: "Green", greeen: "Green", greene: "Green",
+  rani: "Magenta", ranipink: "Magenta", magent: "Magenta",
+  ferozi: "Feroji", firozi: "Feroji", firoji: "Feroji",
+  oxodised: "skip", oxidised: "skip", oxidized: "skip", // polish, never a colour
+  rumimint: "Ruby Mint",
+  offwhite: "Off White", offwhte: "Off White",
+  rosegold: "Rose Gold", rosegld: "Rose Gold",
+  skyblue: "Sky Blue", royalblue: "Royal Blue", navyblue: "Navy Blue",
+  peacockgreen: "Peacock Green", peacockblue: "Peacock Blue",
+  babypink: "Baby Pink", blushpink: "Blush Pink",
+  lightgold: "Light Golden", lightgolden: "Light Golden",
+  mattegold: "Matte Gold", mattesilver: "Matte Silver", matteslver: "Matte Silver",
+  blackwhite: "Black and White", blackandwhite: "Black and White", bnw: "Black and White",
+  dualtone: "Dual Tone", dual: "Dual Tone",
+  multi1: "Multicolor 1", multi2: "Multicolor 2", multi3: "Multicolor 3",
+  multi4: "Multicolor 4", multi5: "Multicolor 5",
+  multicolor1: "Multicolor 1", multicolor2: "Multicolor 2",
+  multicolour1: "Multicolor 1", multicolour2: "Multicolor 2",
+};
+
 const BY_NAME = new Map<string, ColorEntry>(
   COLOR_CATALOG.map((c) => [c.name.toLowerCase(), c]),
 );
+const BY_COMPACT = new Map<string, ColorEntry>();
+for (const c of COLOR_CATALOG) {
+  const k = compactColorKey(c.name);
+  const prev = BY_COMPACT.get(k);
+  if (!prev || c.name.length >= prev.name.length) BY_COMPACT.set(k, c);
+}
+const COMPACT_KEYS = [...BY_COMPACT.keys()];
 
-/** Resolve "Red" / "red" / "RED" → its catalog entry, or null if not a canonical colour. */
+/** Resolve any spelling/casing/spacing of a colour to the catalog entry, or null. */
 export function findColor(name: string | null | undefined): ColorEntry | null {
   if (!name) return null;
-  return BY_NAME.get(name.trim().toLowerCase()) ?? null;
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const exact = BY_NAME.get(trimmed.toLowerCase());
+  if (exact) return exact;
+  const key = compactColorKey(trimmed);
+  if (!key) return null;
+  const alias = COLOR_ALIASES[key];
+  if (alias === "skip") return null;
+  if (alias) return BY_NAME.get(alias.toLowerCase()) ?? null;
+  const compact = BY_COMPACT.get(key);
+  if (compact) return compact;
+  // Missing a letter: "gren" is a prefix of "green" (+1). Prefer that over a same-distance
+  // substitution ("grey") — at the jewellery counter gren always means Green.
+  if (key.length >= 4) {
+    const missingLetter = COMPACT_KEYS.filter((ck) => ck.startsWith(key) && ck.length === key.length + 1);
+    if (missingLetter.length === 1) return BY_COMPACT.get(missingLetter[0])!;
+    const extraLetter = COMPACT_KEYS.filter((ck) => key.startsWith(ck) && key.length === ck.length + 1);
+    if (extraLetter.length === 1) return BY_COMPACT.get(extraLetter[0])!;
+  }
+  // One-character typo against a unique catalog key (SILVAR → Silver). Skip when several
+  // colours are equally close so "Silver" never swallows "Silver 2". If they tie, the
+  // missing-letter (prefix) candidate still wins.
+  if (key.length >= 4) {
+    let best: ColorEntry | null = null;
+    let bestD = 99;
+    let ties = 0;
+    const d1: string[] = [];
+    for (const ck of COMPACT_KEYS) {
+      if (Math.abs(ck.length - key.length) > 1) continue;
+      const d = editDistance(key, ck);
+      if (d === 1) d1.push(ck);
+      if (d > 1 || (d >= bestD && d !== 0)) {
+        if (d === bestD && d <= 1) ties++;
+        continue;
+      }
+      if (d < bestD) { bestD = d; best = BY_COMPACT.get(ck)!; ties = 1; }
+    }
+    if (best && ties === 1 && bestD === 1) return best;
+    if (bestD === 1 && d1.length > 1) {
+      const prefix = d1.filter((ck) => ck.startsWith(key) && ck.length === key.length + 1);
+      if (prefix.length === 1) return BY_COMPACT.get(prefix[0])!;
+    }
+  }
+  return null;
+}
+
+/** Canonical display name ("Silver") for storage, or null if this isn't a known colour. */
+export function canonicalColorName(name: string | null | undefined): string | null {
+  return findColor(name)?.name ?? null;
+}
+
+/** Snap a typed value to the catalog name when we can; otherwise keep the trimmed original. */
+export function snapColorName(name: string | null | undefined): string {
+  const trimmed = String(name ?? "").trim();
+  if (!trimmed) return "";
+  return canonicalColorName(trimmed) ?? trimmed;
+}
+
+/** True when `value` is a misspelling / case-duplicate of a catalog colour (safe to drop from master). */
+export function isRedundantColorOption(value: string): boolean {
+  const canon = canonicalColorName(value);
+  if (!canon) return false;
+  return canon !== value.trim();
 }
 
 /** The barcode suffix for a colour, or a sensible fallback derived from the name. */
@@ -117,6 +233,23 @@ export function barcodeCodeForColor(name: string | null | undefined): string | n
   // can always append it to a parent SKU and get a unique-ish variant code.
   const fallback = name.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
   return fallback || null;
+}
+
+/** Catalog colours first, then any genuine custom colours — never SILVAR / silver / Silver2 duplicates. */
+export function uniqueColorOptions(dbValues: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const c of COLOR_CATALOG) {
+    seen.add(c.name.toLowerCase());
+    out.push(c.name);
+  }
+  for (const raw of dbValues) {
+    const v = String(raw ?? "").trim();
+    if (!v || seen.has(v.toLowerCase()) || isRedundantColorOption(v)) continue;
+    seen.add(v.toLowerCase());
+    out.push(v);
+  }
+  return out;
 }
 
 /** Build the canonical variant SKU for a given parent SKU + colour name (and optional

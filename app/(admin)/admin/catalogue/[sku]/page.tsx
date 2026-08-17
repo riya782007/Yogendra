@@ -18,6 +18,7 @@ import { requirePerm, getSession, can } from "@/lib/auth";
 import { updateVariantAction, deleteVariantAction } from "@/app/actions/variants";
 import { VariantPhotos } from "@/components/admin/VariantPhotos";
 import { AddVariantForm } from "@/components/admin/AddVariantForm";
+import { ColorNameInput } from "@/components/admin/ColorNameInput";
 import { setProductVisibilityAction, moveProductToSubcategoryAction, moveProductToStyleAction, savePricingAction, setWholesaleOnlyAction, setHideOosVariantsAction, toggleProductLabelAction, setDefaultVariantFormAction } from "@/app/actions/catalog";
 
 const LABEL_CHIP: Record<string, string> = {
@@ -268,7 +269,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
   const vInput = "rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald";
   const variantsPanel = (
     <div className={card}>
-      {/* Datalists power as-you-type suggestions; typing a brand-new value grows the master list. */}
+      {/* Colour list is the approved catalog (plus genuine customs) — typos like SILVAR are not suggested. */}
       <datalist id="opt-color">{vopts.color.map((o) => <option key={o} value={o} />)}</datalist>
       <datalist id="opt-size">{vopts.size.map((o) => <option key={o} value={o} />)}</datalist>
       <datalist id="opt-polish">{vopts.polish.map((o) => <option key={o} value={o} />)}</datalist>
@@ -319,7 +320,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
               <AutosaveForm action={updateVariantAction} className="flex flex-wrap items-end gap-2" savedMsg={`${v.color ?? "Colour"} saved ✓`}>
                 <input type="hidden" name="id" value={v.id} />
                 <input type="hidden" name="product_sku" value={p.sku} />
-                <label className="text-[11px] text-muted">Colour<input name="color" list="opt-color" defaultValue={v.color ?? ""} placeholder="Colour" className={`${vInput} w-28 block mt-0.5`} /></label>
+                <label className="text-[11px] text-muted">Colour<ColorNameInput name="color" list="opt-color" defaultValue={v.color ?? ""} placeholder="Colour" className={`${vInput} w-28 block mt-0.5`} /></label>
                 <label className="text-[11px] text-muted">Size<input name="size" list="opt-size" defaultValue={v.size ?? ""} placeholder="Size" className={`${vInput} w-24 block mt-0.5`} /></label>
                 <label className="text-[11px] text-muted">Polish<input name="polish" list="opt-polish" defaultValue={v.polish ?? ""} placeholder="Polish" className={`${vInput} w-28 block mt-0.5`} /></label>
                 <label className="text-[11px] text-muted">SKU<input name="sku" defaultValue={v.sku ?? ""} placeholder="auto" className={`${vInput} w-32 block mt-0.5 font-mono`} /></label>

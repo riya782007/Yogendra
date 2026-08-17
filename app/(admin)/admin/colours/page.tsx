@@ -3,6 +3,8 @@ import Link from "next/link";
 import { getOptionMaster } from "@/lib/supabase/queries";
 import { addOptionAction, updateOptionAction, deleteOptionAction } from "@/app/actions/options";
 import { SeedColoursButton } from "@/components/admin/SeedColoursButton";
+import { DeduplicateColoursButton } from "@/components/admin/DeduplicateColoursButton";
+import { isRedundantColorOption } from "@/lib/colors";
 
 export const metadata = { title: "Owner Console · Colours & Options" };
 
@@ -45,14 +47,18 @@ export default async function ColoursPage({ searchParams }: { searchParams: { q?
   const duplicates = [...codeMap.entries()].filter(([, names]) => names.length > 1);
   const missingCode = (color as any[]).filter((c) => !c.barcode_code).map((c) => c.value);
   const seededCount = (color as any[]).filter((c) => c.barcode_code).length;
+  const extraSpellings = (color as any[]).filter((c) => isRedundantColorOption(c.value)).length;
 
   return (
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
       <div className="flex flex-wrap items-start justify-between gap-3 mb-1">
         <h1 className="font-display text-4xl text-ink">Colours &amp; Options</h1>
-        <SeedColoursButton seeded={seededCount} total={(color as any[]).length} />
+        <div className="flex flex-wrap gap-2">
+          <DeduplicateColoursButton extras={extraSpellings} />
+          <SeedColoursButton seeded={seededCount} total={(color as any[]).length} />
+        </div>
       </div>
-      <p className="text-sm text-muted mb-5">Your master list of colours, sizes and polishes. Each colour carries a <b>barcode code</b> (RED, MULTI1, SBLUE…) that prints on every variant&apos;s label — when you add a variant, the SKU auto-generates as <code className="bg-cream px-1 rounded">{`{productSKU}-{barcode code}`}</code>. Rename, set a swatch, or remove — every variant using it updates instantly.</p>
+      <p className="text-sm text-muted mb-5">Your master list of colours, sizes and polishes. Each colour carries a <b>barcode code</b> (RED, MULTI1, SBLUE…) that prints on every variant&apos;s label — when you add a variant, the SKU auto-generates as <code className="bg-cream px-1 rounded">{`{productSKU}-{barcode code}`}</code>. Bulk upload and the Variants tab snap spellings like <b>SILVAR</b> / <b>silver</b> onto the catalog name so extra colours are not created. Rename, set a swatch, or remove — every variant using it updates instantly.</p>
 
       {/* Filter / sort bar */}
       <form action="/admin/colours" className="flex flex-wrap items-center gap-2 mb-4">
@@ -70,8 +76,11 @@ export default async function ColoursPage({ searchParams }: { searchParams: { q?
       </form>
 
       {/* Data-integrity hints */}
-      {(duplicates.length > 0 || missingCode.length > 0) && (
+      {(duplicates.length > 0 || missingCode.length > 0 || extraSpellings > 0) && (
         <div className="rounded-2xl border border-gold/40 bg-gold/5 p-4 mb-5 text-xs text-gold-dark space-y-1">
+          {extraSpellings > 0 && (
+            <p>⚠️ <b>{extraSpellings} extra spelling{extraSpellings === 1 ? "" : "s"}</b> in the master (SILVAR, silver, Silver2…). They clutter the Variants dropdown. Click <b>Remove extra colour spellings</b> to merge them onto the real names without losing stock.</p>
+          )}
           {duplicates.length > 0 && (
             <p>⚠️ <b>Duplicate barcode codes:</b> {duplicates.map(([code, names]) => `${code} → ${names.join(" + ")}`).join("; ")}. Two colours with the same code will produce the same barcode for both — change one to keep scans unambiguous.</p>
           )}

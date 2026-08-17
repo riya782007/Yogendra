@@ -5,7 +5,7 @@ import { requirePerm } from "@/lib/auth";
 import { generateImage, geminiConfigured } from "@/lib/ai/gemini";
 import { buildVariantImagePrompt } from "@/lib/ai/imagePrompt";
 import { getColorCodeMap } from "@/lib/supabase/queries";
-import { barcodeCodeForColor } from "@/lib/colors";
+import { barcodeCodeForColor, snapColorName, findColor } from "@/lib/colors";
 
 const BUCKET = "product-media";
 
@@ -52,10 +52,13 @@ function toPaise(v: FormDataEntryValue | null): number | null {
   return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null;
 }
 
-/** Remember any new colour/size/polish value so the master list grows itself. */
+/** Remember size/polish (self-growing) and ONLY canonical / genuine custom colours — never SILVAR vs Silver. */
 async function rememberOptions(sb: ReturnType<typeof supabaseServer>, o: { color?: string; size?: string; polish?: string }) {
   const rows: { kind: string; value: string }[] = [];
-  if (o.color) rows.push({ kind: "color", value: o.color });
+  const color = o.color ? snapColorName(o.color) : "";
+  // Catalog colours (after snap) may be remembered. Typos never become a new master row.
+  // A genuine custom name is stored on the variant but does not grow the dropdown.
+  if (color && findColor(color)) rows.push({ kind: "color", value: findColor(color)!.name });
   if (o.size) rows.push({ kind: "size", value: o.size });
   if (o.polish) rows.push({ kind: "polish", value: o.polish });
   if (rows.length) await sb.from("variant_options").upsert(rows, { onConflict: "kind,value", ignoreDuplicates: true });
@@ -80,7 +83,7 @@ async function resyncProductQty(sb: ReturnType<typeof supabaseServer>, productSk
 export async function addVariantAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("catalog.edit"))) return;
   const productSku = String(formData.get("product_sku") ?? "").trim();
-  const color = String(formData.get("color") ?? "").trim();
+  const color = snapColorName(String(formData.get("color") ?? ""));
   const size = String(formData.get("size") ?? "").trim();
   const polish = String(formData.get("polish") ?? "").trim();
   const qty = Math.max(0, Math.floor(Number(formData.get("qty") ?? 0)));
@@ -130,7 +133,7 @@ export async function updateVariantAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("catalog.edit"))) return;
   const id = String(formData.get("id") ?? "");
   const productSku = String(formData.get("product_sku") ?? "");
-  const color = String(formData.get("color") ?? "").trim();
+  const color = snapColorName(String(formData.get("color") ?? ""));
   const size = String(formData.get("size") ?? "").trim();
   const polish = String(formData.get("polish") ?? "").trim();
   const sku = String(formData.get("sku") ?? "").trim().toUpperCase();

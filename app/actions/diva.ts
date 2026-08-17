@@ -18,6 +18,7 @@ import { liveOffer } from "@/lib/offers";
 import { BUSINESS } from "@/lib/business";
 import { DIVA_TOOLS, PAGE_MAP, toolByName } from "@/lib/diva/tools";
 import { interpret, type DivaContext } from "@/lib/diva/nlu";
+import { snapColorName, barcodeCodeForColor } from "@/lib/colors";
 import { requirePerm } from "@/lib/auth";
 import { generateContentAction } from "@/app/actions/aiContent";
 import { generateOneAction } from "@/app/actions/images";
@@ -513,14 +514,14 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
       }
       case "add_variant": {
         const sku = String(args.sku ?? "").trim().toUpperCase();
-        const color = String(args.color ?? "").trim(), size = String(args.size ?? "").trim(), polish = String(args.polish ?? "").trim();
+        const color = snapColorName(String(args.color ?? "")), size = String(args.size ?? "").trim(), polish = String(args.polish ?? "").trim();
         const qty = Math.max(0, Math.trunc(Number(args.qty) || 0));
         if (!sku || !(color || size || polish)) return { ok: false, message: "I need the product SKU and at least a colour, size or polish." };
         const sb = supabaseServer();
         const { data: p } = await sb.from("products").select("id,type").eq("sku", sku).maybeSingle();
         if (!p) return { ok: false, message: `No product with SKU ${sku}.` };
-        const label = [color, size, polish].filter(Boolean).join("-");
-        const vsku = `${sku}-${label.replace(/[^a-z0-9]/gi, "").slice(0, 5).toUpperCase() || "VAR"}`;
+        const code = color ? (barcodeCodeForColor(color) ?? color.replace(/[^a-z0-9]/gi, "").slice(0, 6).toUpperCase()) : "";
+        const vsku = `${sku}-${[code, size, polish].filter(Boolean).join("-").replace(/[^A-Z0-9-]/gi, "").slice(0, 24) || "VAR"}`;
         await sb.from("variants").insert({ product_id: (p as any).id, color: color || null, size: size || null, polish: polish || null, sku: vsku, qty });
         if ((p as any).type !== "configurable") await sb.from("products").update({ type: "configurable" }).eq("id", (p as any).id);
         revalidatePath(`/admin/catalogue/${sku}`); revalidatePath("/shop"); revalidateTag("storefront");
