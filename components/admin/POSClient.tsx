@@ -316,13 +316,15 @@ export function POSClient({ products: propProducts, customers = [], methods = []
     const validPays = payLines.filter((l) => l.methodId && (Number(l.amount) || 0) > 0).map((l) => ({ methodId: l.methodId, amount: Number(l.amount) || 0 }));
     const res = await posSaleAction({
       items: lines.map((l) => {
+        // Always send the screen net. A Rate typed after a bargain must become unit_price (Amount
+        // on the invoice). If they knocked the catalogue rate down, keep the original as list so
+        // the bill can show Rate → Disc → Amount instead of reprinting only the old ₹60.
+        const billed = Math.round(effUnit(l));
+        let listed = Math.round(rawUnit(l));
+        const catalogue = Math.round(baseUnit(l));
         const ov = l.override.trim();
-        const hasOv = ov !== "" && Number.isFinite(Number(ov)) && Number(ov) >= 0;
-        const d = lineDisc(l);
-        // When a rate is overridden OR a discount applies (percent OR rupee amount), bill the NET
-        // unit and record the ORIGINAL rate (listRupees) so the invoice shows Rate → Disc → Amount.
-        if (hasOv || d.pct > 0 || d.amtPaise > 0) return { sku: l.sku, qty: l.qty, priceRupees: effUnit(l) / 100, listRupees: rawUnit(l) / 100 };
-        return { sku: l.sku, qty: l.qty };
+        if (ov !== "" && Number.isFinite(Number(ov)) && catalogue > billed) listed = Math.max(listed, catalogue);
+        return { sku: l.sku, qty: l.qty, priceRupees: billed / 100, listRupees: listed / 100 };
       }),
       customer: cust, payment: "cash",
       billType, gstMode: billType === "gst" ? gstMode : undefined, buyerGstin: billType === "gst" ? gstin : "", buyerAddress: addr,
