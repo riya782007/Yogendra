@@ -2,6 +2,7 @@
 import { useMemo, useState } from "react";
 import { formatPaise } from "@/lib/pricing";
 import { SITE } from "@/lib/siteUrl";
+import { waMeHref } from "@/lib/phone";
 
 type Item = { sku?: string; name: string; qty: number; price: number };
 type Cart = { id: string; customer_name?: string | null; phone?: string | null; total: number; items: Item[]; channel?: string | null; reached_checkout?: boolean | null };
@@ -10,10 +11,6 @@ const K_DONE = "bd_ab_messaged_v1";
 
 /** Builds the SAME WhatsApp message + recovery link the per-cart card uses. */
 function waLink(cart: Cart): string | null {
-  let phone = cart.phone ? String(cart.phone).replace(/\D/g, "") : "";
-  if (phone.startsWith("0")) phone = phone.slice(1);
-  if (phone.length === 10) phone = "91" + phone;
-  if (phone.length < 11) return null;
   const totalQty = (cart.items ?? []).reduce((s, it) => s + (Number(it.qty) || 0), 0);
   const money = formatPaise(cart.total);
   const isWholesale = String(cart.channel ?? "").toLowerCase() === "wholesale";
@@ -21,7 +18,7 @@ function waLink(cart: Cart): string | null {
   const msg = isWholesale
     ? `Hi ${cart.customer_name || "there"}! 🙏 Your Blythe Diva wholesale cart has ${totalQty} piece${totalQty === 1 ? "" : "s"} (${money}). Tap below to review and confirm your order — payment is quick and secure:\n${recoverUrl}`
     : `Hi ${cart.customer_name || "there"}! ✨ You left ${totalQty} beautiful piece${totalQty === 1 ? "" : "s"} (${money}) in your Blythe Diva bag. Complete your order and pay securely here:\n${recoverUrl}`;
-  return `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+  return waMeHref(cart.phone, msg);
 }
 
 /**

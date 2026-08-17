@@ -5,12 +5,12 @@ import Link from "next/link";
 import { formatPaise } from "@/lib/pricing";
 import { SITE } from "@/lib/siteUrl";
 import { ProductImage } from "@/components/Placeholder";
-import { placeWholesaleOrderFromCartAction } from "@/app/actions/wholesale";
-import { deleteAbandonedCartAction } from "@/app/actions/abandoned";
+import { placeOrderFromCartAction, deleteAbandonedCartAction } from "@/app/actions/abandoned";
 import { openAbandonedCartsPdf } from "@/lib/abandonedCartPdf";
+import { waMeHref, phoneDigits } from "@/lib/phone";
 
 type Item = { sku?: string; name: string; qty: number; price: number };
-type Cart = { id: string; session_id?: string | null; customer_name?: string | null; phone?: string | null; total: number; created_at: string; items: Item[]; channel?: string | null; reached_checkout?: boolean | null };
+type Cart = { id: string; session_id?: string | null; customer_name?: string | null; phone?: string | null; total: number; created_at: string; updated_at?: string; items: Item[]; channel?: string | null; reached_checkout?: boolean | null; recovered?: boolean | null };
 
 const agoText = (d: string) => {
   const h = Math.round((Date.now() - new Date(d).getTime()) / 3600000);
@@ -37,14 +37,11 @@ export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMa
     else setPlaceMsg({ text: r.error ?? "Couldn't delete.", ok: false });
   }
   const totalQty = items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
-  let phone = cart.phone ? String(cart.phone).replace(/\D/g, "") : "";
-  if (phone.startsWith("0")) phone = phone.slice(1);
-  if (phone.length === 10) phone = "91" + phone; // country code so WhatsApp opens the right chat
+  const tel = phoneDigits(cart.phone);
 
   async function placeOrder(markPaid: boolean) {
-    if (!cart.session_id) { setPlaceMsg({ text: "Missing cart id.", ok: false }); return; }
     setPlacing(true); setPlaceMsg(null);
-    const r = await placeWholesaleOrderFromCartAction({ sessionId: cart.session_id, markPaid });
+    const r = await placeOrderFromCartAction({ sessionId: cart.session_id ?? undefined, cartId: cart.id, markPaid });
     setPlacing(false); setConfirmPlace(false);
     if (!r.ok) { setPlaceMsg({ text: r.error ?? "Couldn't place the order.", ok: false }); return; }
     setPlaceMsg({ text: `Order placed ✓${markPaid ? " (marked paid)" : ""} — now in your pipeline.`, ok: true });
@@ -58,8 +55,9 @@ export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMa
   const waMsg = isWholesale
     ? `Hi ${cart.customer_name || "there"}! 🙏 Your Blythe Diva wholesale cart has ${totalQty} piece${totalQty === 1 ? "" : "s"} (${money}). Tap below to review and confirm your order — payment is quick and secure:\n${recoverUrl}`
     : `Hi ${cart.customer_name || "there"}! ✨ You left ${totalQty} beautiful piece${totalQty === 1 ? "" : "s"} (${money}) in your Blythe Diva bag. Complete your order and pay securely here:\n${recoverUrl}\n\n🎁 Pay online and get a FREE mystery gift with your order!`;
-  const wa = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(waMsg)}` : null;
+  const wa = waMeHref(cart.phone, waMsg);
   const when = new Date(cart.created_at).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  const live = !cart.recovered && !!cart.updated_at && (Date.now() - new Date(cart.updated_at).getTime()) < 20 * 60 * 1000;
 
   if (gone) return null;
 
@@ -71,6 +69,8 @@ export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMa
           {cart.customer_name || "Anonymous visitor"}
           {isWholesale && <span className="ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-wine/10 text-wine align-middle">WHOLESALE</span>}
           {cart.reached_checkout && <span className="ml-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald text-white align-middle">REACHED PAYMENT</span>}
+          {live && <span className="ml-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-gold/20 text-gold-dark align-middle">LIVE</span>}
+          {cart.recovered && <span className="ml-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-ink/10 text-muted align-middle">BILLED</span>}
           <span className="text-xs text-muted"> · {agoText(cart.created_at)} · {totalQty} item{totalQty === 1 ? "" : "s"}</span>
         </p>
         <div className="text-right shrink-0 flex items-start gap-2">
@@ -101,20 +101,21 @@ export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMa
         </div>
       </button>
 
-      {/* Wholesale: after confirming with the dealer (e.g. on a call), place the order in one click —
-          it converts this captured cart into a real wholesale order in the pipeline. */}
-      {isWholesale && (
+      {/* Take the order from this cart — retail visitors (US last-4 search) and wholesale dealers. */}
+      {!cart.recovered && (
         <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-sand/50 pt-2">
           {confirmPlace ? (
             <>
-              <span className="text-[11px] text-muted">Place this order for the dealer?</span>
+              <span className="text-[11px] text-muted">Bill this cart{isWholesale ? " for the dealer" : ""}?</span>
               <button onClick={() => placeOrder(false)} disabled={placing} className="px-3 py-1.5 rounded-full bg-emerald text-white text-xs font-medium disabled:opacity-50">{placing ? "Placing…" : "Place (unpaid)"}</button>
               <button onClick={() => placeOrder(true)} disabled={placing} className="px-3 py-1.5 rounded-full bg-ink text-white text-xs font-medium disabled:opacity-50">Place &amp; mark paid</button>
               <button onClick={() => setConfirmPlace(false)} className="px-3 py-1.5 rounded-full border border-sand text-muted text-xs">Cancel</button>
             </>
           ) : (
-            <button onClick={() => setConfirmPlace(true)} className="px-3 py-1.5 rounded-full border border-emerald text-emerald-dark text-xs font-medium hover:bg-emerald-mist/40">✓ Place this order for the dealer</button>
+            <button onClick={() => setConfirmPlace(true)} className="px-3 py-1.5 rounded-full border border-emerald text-emerald-dark text-xs font-medium hover:bg-emerald-mist/40">✓ Take this order</button>
           )}
+          <Link href={`/admin/billing?phone=${encodeURIComponent(cart.phone || "")}&name=${encodeURIComponent(cart.customer_name || "")}`}
+            className="px-3 py-1.5 rounded-full border border-sand text-ink text-xs hover:border-emerald">Open in POS</Link>
           {placeMsg && <span className={`text-[11px] ${placeMsg.ok ? "text-emerald-dark" : "text-rose"}`}>{placeMsg.text}</span>}
         </div>
       )}
@@ -143,7 +144,7 @@ export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMa
           {/* Customer block */}
           <div className="rounded-xl border border-sand bg-cream/30 p-3 text-sm grid sm:grid-cols-3 gap-2">
             <div><p className="text-[11px] text-muted">Customer</p><p className="text-ink">{cart.customer_name || "Anonymous visitor"}</p></div>
-            <div><p className="text-[11px] text-muted">Phone</p>{phone ? <p className="text-ink"><a href={`tel:${phone}`} className="hover:text-emerald">{cart.phone}</a></p> : <p className="text-muted">Not captured</p>}</div>
+            <div><p className="text-[11px] text-muted">Phone</p>{tel ? <p className="text-ink"><a href={`tel:${tel}`} className="hover:text-emerald">{cart.phone}</a></p> : <p className="text-muted">Not captured</p>}</div>
             <div><p className="text-[11px] text-muted">Abandoned on</p><p className="text-ink">{when}</p></div>
           </div>
 

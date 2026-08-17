@@ -9,6 +9,7 @@ import { getPricingFormula } from "@/lib/supabase/queries";
 import { sendWhatsAppText } from "@/lib/whatsapp";
 import { wholesaleShippingPaise, WHOLESALE_COD_FEE_PAISE } from "@/lib/wholesaleShipping";
 import { GST_RATE } from "@/lib/business";
+import { phonesAreSameShopper, phoneDigits } from "@/lib/phone";
 
 const COOKIE = { httpOnly: true, sameSite: "lax" as const, secure: true, path: "/", maxAge: 60 * 60 * 12 };
 
@@ -411,13 +412,13 @@ export async function placeWholesaleOrderFromCartAction(input: { sessionId: stri
   const items = (((cart as any).items as any[]) ?? []).filter((i) => i?.sku && Number(i?.qty) > 0).map((i) => ({ sku: String(i.sku), qty: Math.floor(Number(i.qty)) }));
   if (!items.length) return { ok: false, error: "This cart has no billable items." };
 
-  // Resolve the dealer by phone — must be an approved wholesale customer. Suffix match handles any
-  // format (with/without country code), same as wholesale login.
-  const digits = String((cart as any).phone ?? "").replace(/\D/g, "");
+  // Resolve the dealer by phone — must be an approved wholesale customer. Digit matching handles any
+  // format (+1 / +91 / local), same as wholesale login. Last-8 ilike alone misses hyphenated US numbers.
+  const cartPhone = String((cart as any).phone ?? "");
   let dealerId: string | null = null;
-  if (digits.length >= 8) {
-    const { data: c } = await sb.from("customers").select("id").eq("type", "wholesale").eq("wholesale_approved", true).ilike("phone", `%${digits.slice(-8)}`).limit(1).maybeSingle();
-    dealerId = (c as any)?.id ?? null;
+  if (phoneDigits(cartPhone).length >= 7) {
+    const { data: dealers } = await sb.from("customers").select("id,phone").eq("type", "wholesale").eq("wholesale_approved", true).limit(500);
+    dealerId = (((dealers as any[]) ?? []).find((c) => phonesAreSameShopper(c.phone, cartPhone)) as any)?.id ?? null;
   }
   if (!dealerId) return { ok: false, error: `No approved wholesale dealer found for ${(cart as any).phone ?? "this cart"}. Approve them under Customers first, then place the order.` };
 

@@ -42,6 +42,7 @@ export async function POST(req: Request) {
       name: (i?.name ?? "").toString().slice(0, 160),
       qty: Math.max(1, Math.round(Number(i?.qty) || 1)),
       price: Math.max(0, Math.round(Number(i?.price) || 0)),
+      ...(i?.color ? { color: String(i.color).slice(0, 40) } : {}),
     }));
 
     // When the shopper opens the payment step, flag it so the owner is informed IMMEDIATELY (a dealer

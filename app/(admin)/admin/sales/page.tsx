@@ -73,7 +73,7 @@ export default async function SalesRecords({ searchParams }: { searchParams: { p
       {gstOnly && <div className="mb-5 rounded-xl border border-emerald/30 bg-emerald-mist/40 px-4 py-2 text-sm text-emerald-dark">Compliance view — showing <b>GST tax invoices only</b>. Cash memos and estimates are hidden for this role.</div>}
 
       <form action="/admin/sales" className="flex flex-wrap gap-2 mb-4 items-center">
-        <input name="q" defaultValue={q} placeholder="Search customer / phone…" className="rounded-xl border border-sand bg-white px-4 py-2 text-sm outline-none focus:border-emerald flex-1 min-w-[160px]" />
+        <input name="q" defaultValue={q} placeholder="Name or last 4 of phone…" className="rounded-xl border border-sand bg-white px-4 py-2 text-sm outline-none focus:border-emerald flex-1 min-w-[160px]" />
         <select name="channel" defaultValue={channel} className={sel}>{CHANNELS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}</select>
         <label className="text-xs text-muted flex items-center gap-1">From <input type="date" name="from" defaultValue={from} className={sel} /></label>
         <label className="text-xs text-muted flex items-center gap-1">To <input type="date" name="to" defaultValue={to} className={sel} /></label>

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { updateTradeVisitorAction } from "@/app/actions/leads";
 import { LeadMessageComposer } from "@/components/admin/LeadMessageComposer";
+import { phoneDigits } from "@/lib/phone";
 
 type V = {
   id: string; created_at: string; name: string | null; phone: string | null; city: string | null;
@@ -25,9 +26,7 @@ const WHY: Record<string, string> = {
 export function VisitorCard({ v }: { v: V }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
-  let phone = v.phone ? String(v.phone).replace(/\D/g, "") : "";
-  if (phone.startsWith("0")) phone = phone.slice(1);
-  if (phone.length === 10) phone = "91" + phone; // country code so WhatsApp opens the right chat
+  const tel = phoneDigits(v.phone);
 
   async function setStatus(status: string) {
     setBusy(true);
@@ -52,7 +51,7 @@ export function VisitorCard({ v }: { v: V }) {
             <span className="text-xs text-muted"> · {agoText(v.created_at)}</span>
           </p>
           <p className="text-sm text-ink mt-1">
-            {v.phone ? <a href={`tel:${phone}`} className="hover:text-emerald">{v.phone}</a> : "no number"}
+            {v.phone ? <a href={`tel:${tel}`} className="hover:text-emerald">{v.phone}</a> : "no number"}
             {v.city ? <span className="text-muted"> · {v.city}</span> : null}
           </p>
           <p className="text-xs text-muted mt-1">

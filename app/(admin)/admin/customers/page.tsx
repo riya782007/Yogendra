@@ -6,6 +6,7 @@ import { Pager } from "@/components/admin/Pager";
 import { getSession, can } from "@/lib/auth";
 import { upsertCustomerAction, mergeDuplicateCustomersAction } from "@/app/actions/customers";
 import { ReceivePaymentButton } from "@/components/admin/ReceivePaymentButton";
+import { waMeHref } from "@/lib/phone";
 
 export const metadata = { title: "Owner Console · Customers" };
 const PAGE_SIZE = 20;
@@ -19,10 +20,7 @@ function rangeFor(period: string): { from?: string; label: string } {
   if (period === "quarter") return { from: new Date(now.getFullYear(), now.getMonth() - 2, 1).toISOString(), label: "last 3 months" };
   return { from: new Date(now.getFullYear(), now.getMonth(), 1).toISOString(), label: "this month" };
 }
-const waLink = (phone: string, msg: string) => {
-  const d = (phone || "").replace(/\D/g, "").slice(-10);
-  return d.length === 10 ? `https://wa.me/91${d}?text=${encodeURIComponent(msg)}` : "";
-};
+const waLink = (phone: string, msg: string) => waMeHref(phone, msg) ?? "";
 
 export default async function Customers({ searchParams }: { searchParams: { q?: string; type?: string; page?: string; period?: string; target?: string; band?: string; delerror?: string; merged?: string } }) {
   const delError = searchParams.delerror?.trim();
@@ -125,7 +123,7 @@ export default async function Customers({ searchParams }: { searchParams: { q?: 
 
       {/* Search filters */}
       <form action="/admin/customers" className="flex flex-wrap gap-2 mb-4">
-        <input name="q" defaultValue={q} placeholder="Search name / phone / GSTIN…" className="rounded-xl border border-sand bg-white px-4 py-2 text-sm outline-none focus:border-emerald flex-1 min-w-[160px]" />
+        <input name="q" defaultValue={q} placeholder="Search name, last 4 of phone, GSTIN…" className="rounded-xl border border-sand bg-white px-4 py-2 text-sm outline-none focus:border-emerald flex-1 min-w-[160px]" />
         <select name="type" defaultValue={type} className={sel}><option value="all">All types</option><option value="retail">Retail</option><option value="wholesale">Wholesale</option></select>
         <input type="hidden" name="period" value={period} />
         <input type="hidden" name="target" value={targetRupees} />
