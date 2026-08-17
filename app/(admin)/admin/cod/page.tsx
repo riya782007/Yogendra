@@ -19,6 +19,8 @@ export default async function CodOrders({ searchParams }: { searchParams?: { err
     .from("orders")
     .select("id,total,amount_paid,invoice_no,channel,customer_name,customer_phone,buyer_address,created_at,payment_mode")
     .eq("cod_hold", true)
+    .eq("payment_mode", "cod")
+    .neq("status", "cancelled")
     .order("created_at", { ascending: false })
     .limit(300);
   const rows = (data as any[]) ?? [];
@@ -38,7 +40,7 @@ export default async function CodOrders({ searchParams }: { searchParams?: { err
       <h1 className="font-display text-4xl text-ink mb-1">COD Orders</h1>
       <p className="text-sm text-muted mb-5">
         Cash-on-Delivery orders from the storefront are held here — inventory is <b>not</b> reduced and they are
-        <b> not</b> in the sales record yet. Pack &amp; dispatch, and once the customer has received &amp; paid, hit
+        <b> not</b> in the sales record yet. Prepaid (Razorpay/UPI) orders stay under <Link href="/admin/orders" className="text-emerald nav-link">Storefront Orders</Link>. Pack &amp; dispatch, and once the customer has received &amp; paid, hit
         <b> Confirm dispatched &amp; received</b> — stock then moves, the sale posts, and the bill joins Sales.
       </p>
       {searchParams?.err && <div className="rounded-2xl border border-rose/40 bg-rose/10 p-4 text-sm text-ink mb-4"><b>Couldn&apos;t confirm:</b> {searchParams.err}</div>}
