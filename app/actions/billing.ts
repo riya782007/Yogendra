@@ -1,7 +1,7 @@
 "use server";
 import {revalidateTag,  revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { orderReceivable, returnCreditsByOrder } from "@/lib/supabase/queries";
+import { orderReceivable, returnCreditsByOrder, isCancelledSale } from "@/lib/supabase/queries";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm, getSession } from "@/lib/auth";
 import { getPricingFormula } from "@/lib/supabase/queries";
@@ -806,7 +806,7 @@ export async function receiveCustomerPaymentAction(input: { customerId?: string 
   const seen = new Set<string>();
   const orders = [...(((byId.data as any[]) ?? [])), ...(((byPhone.data as any[]) ?? []))]
     .filter((o) => (seen.has(o.id) ? false : (seen.add(o.id), true)))
-    .filter((o) => o.status !== "cancelled")
+    .filter((o) => !isCancelledSale(o.status))
     .sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
 
   const credits = await returnCreditsByOrder(orders.map((o) => o.id));

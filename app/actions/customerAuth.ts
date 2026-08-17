@@ -13,6 +13,7 @@ import crypto from "crypto";
 import { supabaseServer } from "@/lib/supabase/server";
 import { setCustomerSession, clearCustomerSession, normalizePhone } from "@/lib/customerAuth";
 import { sendWhatsAppText, whatsappConfigured, toE164 } from "@/lib/whatsapp";
+import { ensureDirectoryCustomer } from "@/lib/supabase/queries";
 
 const hashCode = (code: string) => crypto.createHash("sha256").update(`${code}|blythediva-otp`).digest("hex");
 
@@ -63,13 +64,8 @@ export async function verifyCustomerOtpAction(input: { phone: string; code: stri
 
   // Success: consume the code, upsert the customer, set the session.
   await sb.from("customer_otps").delete().eq("phone", phone);
-  const { data: cust } = await sb.from("customers").select("id,name").eq("phone", phone).maybeSingle();
   const nm = (input.name ?? "").trim();
-  if (cust) {
-    if (nm && !(cust as any).name) await sb.from("customers").update({ name: nm }).eq("id", (cust as any).id);
-  } else {
-    await sb.from("customers").insert({ phone, name: nm || phone, type: "retail" });
-  }
+  await ensureDirectoryCustomer(sb, { name: nm || phone, phone, type: "retail" });
   setCustomerSession(phone);
   revalidatePath("/account");
   return { ok: true };

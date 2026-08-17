@@ -132,7 +132,17 @@ export function POSClient({ products: propProducts, customers = [], methods = []
   const custMatches = useMemo(() => {
     const s = custQ.trim().toLowerCase();
     if (!s) return [];
-    return customers.filter((c) => (c.name ?? "").toLowerCase().includes(s) || (c.phone ?? "").includes(s)).slice(0, 6);
+    const hits = customers.filter((c) => (c.name ?? "").toLowerCase().includes(s) || (c.phone ?? "").includes(s));
+    // Never list the same person three times (The Opal Factory R / W / R).
+    const seen = new Set<string>();
+    const uniq: Cust[] = [];
+    for (const c of hits) {
+      const key = `${(c.name ?? "").trim().toLowerCase().replace(/\s+/g, " ")}|${(c.phone ?? "").replace(/\D/g, "").slice(-10)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      uniq.push(c);
+    }
+    return uniq.slice(0, 6);
   }, [custQ, customers]);
   function pickCustomer(c: Cust) {
     setCust({ name: c.name, phone: c.phone });
