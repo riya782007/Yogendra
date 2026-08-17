@@ -140,8 +140,18 @@ export async function posSaleAction(input: {
   if (!input.items?.length) return { ok: false, error: "Add at least one item" };
   for (const it of input.items) if (!Number.isFinite(it.qty) || it.qty < 1) return { ok: false, error: "Every line needs a quantity of 1 or more" };
   const sb = supabaseServer();
+  const pricedItems = input.items.map((i) => {
+    const row: { sku: string; qty: number; unit_price?: number; unit_mrp?: number } = { sku: i.sku, qty: i.qty };
+    if (i.priceRupees != null && Number.isFinite(i.priceRupees) && i.priceRupees >= 0) {
+      row.unit_price = Math.round(i.priceRupees * 100);
+      const list = Number.isFinite(i.listRupees as number) ? Math.round((i.listRupees as number) * 100) : 0;
+      // listRupees is only sent for an explicit Disc column. A Rate-box edit (up or down) has no list.
+      if (list > row.unit_price) row.unit_mrp = list;
+    }
+    return row;
+  });
   const { data, error } = await sb.rpc("place_order", {
-    p_items: input.items.map((i) => ({ sku: i.sku, qty: i.qty })), p_customer: input.customer ?? {}, p_channel: "pos", p_payment: input.payment || "cash",
+    p_items: pricedItems, p_customer: input.customer ?? {}, p_channel: "pos", p_payment: input.payment || "cash",
     p_allow_oversell: !!input.allowOversell, p_tier: input.tier === "wholesale" ? "wholesale" : "retail",
     // BACKORDER = held like an estimate: the RPC records the bill but does NOT move stock, log a
     // sale movement, or post revenue. All of that happens when the owner fulfils it manually.
@@ -151,18 +161,18 @@ export async function posSaleAction(input: {
   const orderId = (data as any)?.order_id;
   let total = (data as any)?.total as number;
 
-  // Pillar 15 — per-line price edits (manual discount / custom rate at the counter).
-  // The RPC priced every line at the catalogue/tier rate; here we overwrite the unit price
-  // on the specific lines the owner edited, then ALWAYS recompute the order total from the
-  // actual order_items so the bill, GST split and ledger stay internally consistent even
-  // if a match is skipped. Best-effort and fully guarded — a failed match falls back to the
-  // catalogue price rather than corrupting the bill.
+  // The Rate box is the selling price (higher or lower than catalogue). place_order bills
+  // unit_price from the payload so the invoice and sales ledger are born at that rate.
+  // Fallback if the RPC is not yet applied: match each POS line to an order_items row by
+  // product (and colour SKU when scanned). Never require variant_id IS NULL — scanning a
+  // product SKU still sells a colour variant, and that filter used to match zero rows.
   const overrides = (input.items ?? []).filter((i) => i.priceRupees != null && Number.isFinite(i.priceRupees) && (i.priceRupees as number) >= 0);
   if (orderId && overrides.length) {
     try {
+      const { data: dbLines } = await sb.from("order_items").select("id, product_id, variant_id, qty, unit_price").eq("order_id", orderId);
+      const remaining = [...((dbLines as any[]) ?? [])];
       for (const o of overrides) {
         const unit = Math.round((o.priceRupees as number) * 100);
-        // Resolve the scanned SKU to its product (and variant, if it's a variant SKU).
         let productId: string | null = null;
         let variantId: string | null = null;
         const { data: prod } = await sb.from("products").select("id").ilike("sku", o.sku).maybeSingle();
@@ -171,17 +181,20 @@ export async function posSaleAction(input: {
           const { data: v } = await sb.from("variants").select("id,product_id").ilike("sku", o.sku).maybeSingle();
           if (v) { variantId = (v as any).id; productId = (v as any).product_id; }
         }
-        if (!productId) continue; // can't map — leave the catalogue price on that line
-        // Original (pre-discount) rate for the invoice's Rate → Disc → Amount display. Only stored
-        // when it's actually higher than the billed net, so a plain override doesn't fake a discount.
+        if (!productId) continue;
+        const idx = remaining.findIndex((l) => {
+          if (l.product_id !== productId) return false;
+          if (l.qty !== o.qty) return false;
+          if (variantId && l.variant_id !== variantId) return false;
+          return true;
+        });
+        if (idx < 0) continue;
+        const line = remaining.splice(idx, 1)[0];
         const list = Number.isFinite(o.listRupees as number) ? Math.round((o.listRupees as number) * 100) : 0;
-        const patch: Record<string, number> = { unit_price: unit, line_total: unit * o.qty };
-        if (list > unit) patch.unit_mrp = list;
-        let upd = sb.from("order_items").update(patch).eq("order_id", orderId).eq("product_id", productId);
-        upd = variantId ? upd.eq("variant_id", variantId) : upd.is("variant_id", null);
-        await upd;
+        const patch: Record<string, number | null> = { unit_price: unit, line_total: unit * o.qty };
+        patch.unit_mrp = list > unit ? list : null;
+        await sb.from("order_items").update(patch).eq("id", line.id);
       }
-      // Recompute the authoritative total from the (possibly edited) line items.
       const { data: lines } = await sb.from("order_items").select("line_total").eq("order_id", orderId);
       const recomputed = ((lines as any[]) ?? []).reduce((s, l) => s + (l.line_total ?? 0), 0);
       if (recomputed > 0) total = recomputed;

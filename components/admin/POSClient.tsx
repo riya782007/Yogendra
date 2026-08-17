@@ -6,6 +6,7 @@ import { posSaleAction } from "@/app/actions/orders";
 import { posLookupAction, posStockAction } from "@/app/actions/billing";
 import { quickAddEmployeeAction } from "@/app/actions/employees";
 import { QtyField } from "@/components/admin/QtyField";
+import { posItemPayload } from "@/lib/posLinePrice";
 
 type P = { sku: string; name: string; price: number; wholesale: number; mrp: number; category: string; qty: number; parentSku?: string; parentName?: string };
 type Line = { sku: string; name: string; price: number; wholesale: number; mrp: number; qty: number; stock: number; override: string; disc: string };
@@ -316,13 +317,14 @@ export function POSClient({ products: propProducts, customers = [], methods = []
     const validPays = payLines.filter((l) => l.methodId && (Number(l.amount) || 0) > 0).map((l) => ({ methodId: l.methodId, amount: Number(l.amount) || 0 }));
     const res = await posSaleAction({
       items: lines.map((l) => {
-        const ov = l.override.trim();
-        const hasOv = ov !== "" && Number.isFinite(Number(ov)) && Number(ov) >= 0;
         const d = lineDisc(l);
-        // When a rate is overridden OR a discount applies (percent OR rupee amount), bill the NET
-        // unit and record the ORIGINAL rate (listRupees) so the invoice shows Rate → Disc → Amount.
-        if (hasOv || d.pct > 0 || d.amtPaise > 0) return { sku: l.sku, qty: l.qty, priceRupees: effUnit(l) / 100, listRupees: rawUnit(l) / 100 };
-        return { sku: l.sku, qty: l.qty };
+        return posItemPayload({
+          sku: l.sku,
+          qty: l.qty,
+          billedPaise: effUnit(l),
+          ratePaise: rawUnit(l),
+          hasExplicitDisc: d.pct > 0 || d.amtPaise > 0,
+        });
       }),
       customer: cust, payment: "cash",
       billType, gstMode: billType === "gst" ? gstMode : undefined, buyerGstin: billType === "gst" ? gstin : "", buyerAddress: addr,
@@ -497,8 +499,8 @@ export function POSClient({ products: propProducts, customers = [], methods = []
                 <th className="px-3 py-2 w-24">SKU</th>
                 <th className="px-3 py-2">Product</th>
                 <th className="px-2 py-2 w-28 text-center">Qty</th>
-                <th className="px-2 py-2 w-24 text-right">Rate ₹</th>
-                <th className="px-2 py-2 w-16 text-right">Disc %</th>
+                <th className="px-2 py-2 w-24 text-right" title="Selling price. Type a higher or lower amount — that prints as Rate on the bill.">Rate ₹</th>
+                <th className="px-2 py-2 w-16 text-right" title="Optional. Percent (10%) or rupees off (50). Editing Rate is not a discount.">Disc</th>
                 <th className="px-3 py-2 w-24 text-right">Amount</th>
                 <th className="px-2 py-2 w-8"></th>
               </tr>
@@ -530,6 +532,7 @@ export function POSClient({ products: propProducts, customers = [], methods = []
                       </td>
                       <td className="px-2 py-1.5 text-right align-middle">
                         <input value={l.override} onChange={(e) => setOverride(l.sku, e.target.value)} inputMode="decimal" placeholder={String(Math.round(baseUnit(l) / 100))}
+                          title="Selling price for this bill. Type a higher or lower amount — that is the Rate on the invoice. Use Disc only for a discount."
                           className={`w-20 text-right rounded border border-transparent hover:border-sand focus:border-emerald px-1 py-0.5 outline-none ${l.override.trim() !== "" ? "text-emerald-dark font-medium" : "text-ink"}`} />
                       </td>
                       <td className="px-2 py-1.5 text-right align-middle">
