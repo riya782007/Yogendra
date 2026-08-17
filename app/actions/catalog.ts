@@ -5,7 +5,7 @@ import { computePrices, isValidPriceSet } from "@/lib/pricing";
 import { getPricingFormula, getColorCodeMap } from "@/lib/supabase/queries";
 import { requirePerm } from "@/lib/auth";
 import { generateContentAction } from "@/app/actions/aiContent";
-import { barcodeCodeForColor } from "@/lib/colors";
+import { barcodeCodeForColor, snapColorName } from "@/lib/colors";
 import { logActivity } from "@/lib/audit";
 
 const slugify = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -126,6 +126,8 @@ async function insertOne(sb: ReturnType<typeof supabaseServer>, formula: any, n:
   if (!n.name) return { row: skuNum, ok: false, error: "Missing name" };
   if (!(n.basePriceRupees > 0)) return { row: skuNum, ok: false, error: "Base price must be > 0" };
   if (!n.categoryId) return { row: skuNum, ok: false, error: "Missing category" };
+  n.colors = (n.colors ?? []).map((c) => snapColorName(c)).filter(Boolean);
+  if (n.variants?.length) n.variants = n.variants.map((v) => ({ ...v, color: v.color ? snapColorName(v.color) : v.color }));
   const prices = computePrices(n.basePriceRupees * 100, formula);
   if (!isValidPriceSet(prices)) return { row: skuNum, ok: false, error: "Computed price invalid — flagged" };
   // Use a manually-entered SKU if provided, else auto-generate BD####.
@@ -197,7 +199,7 @@ async function insertOne(sb: ReturnType<typeof supabaseServer>, formula: any, n:
 
   if (useExplicit) {
     const variantRows = explicitVariants.map((v) => {
-      const color = (v.color ?? "").trim();
+      const color = snapColorName(v.color ?? "");
       const size = (v.size ?? "").trim();
       const polish = (v.polish ?? "").trim();
       const manualV = (v.sku ?? "").trim().toUpperCase().replace(/\s+/g, "-");
@@ -226,7 +228,7 @@ async function insertOne(sb: ReturnType<typeof supabaseServer>, formula: any, n:
     // suggestions next time (same behaviour as addVariantAction's rememberOptions).
     const optRows: { kind: string; value: string }[] = [];
     for (const v of explicitVariants) {
-      const c = (v.color ?? "").trim(), z = (v.size ?? "").trim(), p = (v.polish ?? "").trim();
+      const c = snapColorName(v.color ?? ""), z = (v.size ?? "").trim(), p = (v.polish ?? "").trim();
       if (c) optRows.push({ kind: "color", value: c });
       if (z) optRows.push({ kind: "size", value: z });
       if (p) optRows.push({ kind: "polish", value: p });
@@ -238,12 +240,12 @@ async function insertOne(sb: ReturnType<typeof supabaseServer>, formula: any, n:
     // paths print proper barcodes (BD2024-RED instead of BD2024-RED5).
     const legacyCodes = await getColorCodeMap();
     const { data: vs } = await sb.from("variants").insert(n.colors.map((c) => {
-      const code = legacyCodes[c.toLowerCase()] ?? barcodeCodeForColor(c) ?? c.slice(0, 3).toUpperCase();
-      return { product_id: prod!.id, color: c, sku: `${sku}-${code}`, qty: per };
+      const color = snapColorName(c);
+      const code = legacyCodes[color.toLowerCase()] ?? barcodeCodeForColor(color) ?? color.slice(0, 3).toUpperCase();
+      return { product_id: prod!.id, color, sku: `${sku}-${code}`, qty: per };
     })).select("id, qty");
     for (const v of (vs as any[]) ?? []) if (v.qty > 0) opening.push({ product_id: prod!.id, variant_id: v.id, delta: v.qty, kind: "opening", source: "create", reason: "Opening stock" });
-    // Also remember the colours so they appear as suggestions on the Variants tab later.
-    const optRows = n.colors.map((c) => ({ kind: "color", value: c.trim() })).filter((r) => r.value);
+    const optRows = n.colors.map((c) => ({ kind: "color", value: snapColorName(c) })).filter((r) => r.value);
     if (optRows.length) await sb.from("variant_options").upsert(optRows, { onConflict: "kind,value", ignoreDuplicates: true });
   } else if (n.qty > 0) {
     opening.push({ product_id: prod!.id, delta: n.qty, kind: "opening", source: "create", reason: "Opening stock" });
@@ -320,7 +322,7 @@ export async function createProductWithImageAction(formData: FormData): Promise<
     basePriceRupees: Number(formData.get("price")) || 0,
     qty: Number(formData.get("qty")) || 0,
     type: String(formData.get("type")) === "configurable" ? "configurable" : "simple",
-    colors: String(formData.get("colors") ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+    colors: String(formData.get("colors") ?? "").split(",").map((s) => snapColorName(s)).filter(Boolean),
     manualSku: String(formData.get("sku") ?? "").trim() || undefined,
     variants,
   };
@@ -1015,7 +1017,7 @@ export async function createProductFullAction(
   if (configurable) {
     const rows = resolved.map((v) => ({
       product_id: productId,
-      color: (v.color ?? "").trim() || null, size: (v.size ?? "").trim() || null, polish: (v.polish ?? "").trim() || null,
+      color: (v.color ?? "").trim() ? snapColorName(v.color) : null, size: (v.size ?? "").trim() || null, polish: (v.polish ?? "").trim() || null,
       sku: v.skuFinal, qty: Math.max(0, Math.floor(Number(v.qty) || 0)),
       retail_override: v.retailRupees == null ? null : toPaise(v.retailRupees),
       wholesale_override: v.wholesaleRupees == null ? null : toPaise(v.wholesaleRupees),
@@ -1034,7 +1036,7 @@ export async function createProductFullAction(
     await sb.from("variant_channel_settings").upsert(vcs, { onConflict: "variant_id,channel" }).then(() => {}, () => {});
     // remember any new master values for autocomplete
     const optRows: { kind: string; value: string }[] = [];
-    for (const v of resolved) { if (v.color) optRows.push({ kind: "color", value: v.color.trim() }); if (v.size) optRows.push({ kind: "size", value: v.size.trim() }); if (v.polish) optRows.push({ kind: "polish", value: v.polish.trim() }); }
+    for (const v of resolved) { if (v.color) optRows.push({ kind: "color", value: snapColorName(v.color) }); if (v.size) optRows.push({ kind: "size", value: v.size.trim() }); if (v.polish) optRows.push({ kind: "polish", value: v.polish.trim() }); }
     if (optRows.length) await sb.from("variant_options").upsert(optRows, { onConflict: "kind,value", ignoreDuplicates: true }).then(() => {}, () => {});
   } else if (productQty > 0) {
     opening.push({ product_id: productId, delta: productQty, kind: "opening", source: "create", reason: "Opening stock", created_by: "owner" });

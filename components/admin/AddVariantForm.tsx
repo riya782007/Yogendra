@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { addVariantAction } from "@/app/actions/variants";
-import { barcodeCodeForColor } from "@/lib/colors";
+import { barcodeCodeForColor, snapColorName } from "@/lib/colors";
 
 const vInput = "rounded-lg border border-sand bg-white px-2.5 py-1.5 text-sm text-ink focus:border-gold focus:outline-none";
 
@@ -10,7 +10,8 @@ const vInput = "rounded-lg border border-sand bg-white px-2.5 py-1.5 text-sm tex
  *  reassures them the system makes the SKU automatically (they don't type it) and matches what the
  *  server will store. The server stays authoritative (and guarantees uniqueness). */
 function previewSku(parentSku: string, color: string, size: string, polish: string, codes: Record<string, string>): string {
-  const cc = color ? (codes[color.trim().toLowerCase()] ?? barcodeCodeForColor(color)) : null;
+  const snapped = snapColorName(color);
+  const cc = snapped ? (codes[snapped.toLowerCase()] ?? barcodeCodeForColor(snapped)) : null;
   const sz = size ? size.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4) : null;
   const po = polish ? polish.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4) : null;
   const suffix = [cc, sz, po].filter(Boolean).join("-") || "VAR";
@@ -42,7 +43,7 @@ export function AddVariantForm({
     <div className="border-t border-sand/60 pt-4">
       <form action={addVariantAction} className="flex flex-wrap items-end gap-2">
         <input type="hidden" name="product_sku" value={parentSku} />
-        <label className="text-[11px] text-muted">Colour<input name="color" value={color} onChange={(e) => setColor(e.target.value)} list="opt-color" placeholder="e.g. Green" className={`${vInput} w-28 block mt-0.5`} /></label>
+        <label className="text-[11px] text-muted">Colour<input name="color" value={color} onChange={(e) => setColor(e.target.value)} onBlur={() => setColor((v) => snapColorName(v))} list="opt-color" placeholder="e.g. Green" className={`${vInput} w-28 block mt-0.5`} /></label>
         <label className="text-[11px] text-muted">Size<input name="size" value={size} onChange={(e) => setSize(e.target.value)} list="opt-size" placeholder="e.g. 2.6" className={`${vInput} w-24 block mt-0.5`} /></label>
         <label className="text-[11px] text-muted">Polish<input name="polish" value={polish} onChange={(e) => setPolish(e.target.value)} list="opt-polish" placeholder="e.g. Oxidised" className={`${vInput} w-28 block mt-0.5`} /></label>
         <label className="text-[11px] text-muted">SKU<input name="sku" value={sku} onChange={(e) => setSku(e.target.value)} placeholder="blank = auto" className={`${vInput} w-32 block mt-0.5 font-mono`} /></label>
