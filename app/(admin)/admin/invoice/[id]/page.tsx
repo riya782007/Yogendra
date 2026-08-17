@@ -11,6 +11,7 @@ import { EditBillPanel } from "@/components/admin/EditBillPanel";
 import { BUSINESS, HSN_JEWELLERY, GST_RATE, gstSplit, gstSplitExclusive, stateCodeFromGstin, stateNameFromCode, bankHasDetails, amountInWords } from "@/lib/business";
 import { getSession, can } from "@/lib/auth";
 import { recordPaymentAction, setDocTypeAction, saveOrderNoteAction, setBillTypeAction, setGstModeAction } from "@/app/actions/payments";
+import { invoiceLineDisplay } from "@/lib/posLinePrice";
 
 export const metadata = { title: "Invoice" };
 
@@ -208,11 +209,7 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                 // exclusive bill the rate is pre-tax and GST is added below. Either way the line shows the
                 // real rate the owner and customer recognise.
                 const lineTaxable = it.line_total;
-                const unit = it.unit_price;
-                // Original (pre-discount) rate for the Rate column; Amount stays the discounted net.
-                const origRaw = it.unit_mrp && it.unit_mrp > it.unit_price ? it.unit_mrp : it.unit_price;
-                const origUnit = origRaw;
-                const discPct = origUnit > unit ? Math.round((1 - unit / origUnit) * 100) : 0;
+                const { ratePaise: origUnit, discPct, isDiscounted } = invoiceLineDisplay(it);
                 return (
                   <tr key={i} className="border-b border-sand/60">
                     <td className={`${td} text-muted`}>{i + 1}</td>
@@ -224,8 +221,8 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                     <td className={`${td} text-ink text-[13px] leading-snug`}>{it.product?.name}</td>
                     {!isCash && <td className={`${td} text-center text-muted`}>{HSN_JEWELLERY}</td>}
                     <td className={`${td} text-right`}>{it.qty}</td>
-                    <td className={`${td} text-right ${discPct > 0 ? "text-muted line-through" : ""}`}>{formatPaise(origUnit)}</td>
-                    <td className={`${td} text-right ${discPct > 0 ? "text-emerald-dark" : "text-muted"}`}>{discPct > 0 ? `${discPct}%` : "—"}</td>
+                    <td className={`${td} text-right ${isDiscounted ? "text-muted line-through" : ""}`}>{formatPaise(origUnit)}</td>
+                    <td className={`${td} text-right ${isDiscounted ? "text-emerald-dark" : "text-muted"}`}>{isDiscounted ? `${discPct}%` : "—"}</td>
                     <td className={`${td} text-right`}>{formatPaise(lineTaxable)}</td>
                   </tr>
                 );
