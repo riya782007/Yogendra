@@ -1,13 +1,32 @@
 "use server";
 import {revalidateTag,  revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { orderReceivable, returnCreditsByOrder } from "@/lib/supabase/queries";
+import { orderReceivable, returnCreditsByOrder, ensureDirectoryCustomer } from "@/lib/supabase/queries";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm, getSession } from "@/lib/auth";
 import { getPricingFormula } from "@/lib/supabase/queries";
 import { resolvePrices, overridesOf } from "@/lib/pricing";
 
 const OWNER_OTP = () => process.env.OWNER_OTP ?? "482913";
+
+/** Converted bills must land on the same directory row promotional targeting uses. */
+async function linkEstimateBillToCustomer(
+  sb: ReturnType<typeof supabaseServer>,
+  orderId: string,
+  est: any,
+) {
+  const customerId = await ensureDirectoryCustomer(sb, {
+    name: est?.customer_name,
+    phone: est?.customer_phone,
+    gstin: est?.buyer_gstin,
+    address: est?.buyer_address,
+  });
+  const patch: Record<string, string> = {};
+  if (customerId) patch.customer_id = customerId;
+  if (est?.customer_phone) patch.customer_phone = String(est.customer_phone);
+  if (est?.customer_name) patch.customer_name = String(est.customer_name);
+  if (Object.keys(patch).length) await sb.from("orders").update(patch).eq("id", orderId);
+}
 
 /** Recompute an estimate's total from its current line items. */
 async function recomputeEstimateTotal(sb: ReturnType<typeof supabaseServer>, estimateId: string) {
@@ -416,8 +435,15 @@ export async function createEstimateAction(input: { items: { sku: string; qty: n
 export async function convertEstimateAction(formData: FormData) {
   if (!(await requirePerm("estimates.bill"))) return;
   const id = String(formData.get("id"));
-  await supabaseServer().rpc("convert_estimate", { p_estimate_id: id });
-  revalidatePath("/admin/estimates"); revalidatePath("/admin/dashboard");
+  const sb = supabaseServer();
+  const { data } = await sb.rpc("convert_estimate", { p_estimate_id: id });
+  const orderId = (data as any)?.order_id;
+  if (orderId) {
+    const { data: est } = await sb.from("estimates").select("*").eq("id", id).maybeSingle();
+    await linkEstimateBillToCustomer(sb, orderId, est);
+  }
+  revalidatePath("/admin/estimates"); revalidatePath("/admin/dashboard"); revalidatePath("/admin/customers");
+  revalidateTag("customers");
 }
 
 /**
@@ -465,9 +491,11 @@ export async function billEstimateAction(formData: FormData) {
       const itemsSum = ((oi as any[]) ?? []).reduce((s, r) => s + (r.line_total ?? 0), 0);
       await sb.from("orders").update({ extra_packing: xp, extra_courier: xc, extra_adjustment: xa, total: itemsSum + xp + xc + xa }).eq("id", orderId);
     }
+    await linkEstimateBillToCustomer(sb, orderId, est);
     await sb.rpc("assign_invoice_no", { p_order: orderId });
   }
-  revalidatePath("/admin/estimates"); revalidatePath("/admin/dashboard"); revalidatePath("/admin/sales");
+  revalidatePath("/admin/estimates"); revalidatePath("/admin/dashboard"); revalidatePath("/admin/sales"); revalidatePath("/admin/customers");
+  revalidateTag("customers");
   if (orderId) redirect(`/admin/invoice/${orderId}`);
   redirect("/admin/estimates");
 }

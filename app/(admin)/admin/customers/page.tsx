@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { getCustomersDb, getCustomers, getCustomerSpend } from "@/lib/supabase/queries";
+import { targetingRange } from "@/lib/customerSpend";
 import { formatPaise } from "@/lib/pricing";
 import { Pager } from "@/components/admin/Pager";
 import { getSession, can } from "@/lib/auth";
@@ -13,11 +14,7 @@ const TYPE_STYLE: Record<string, string> = { wholesale: "bg-gold/15 text-gold-da
 const CLOSE = 0.7; // "close to target" = has spent at least 70% of the target
 
 function rangeFor(period: string): { from?: string; label: string } {
-  const now = new Date();
-  if (period === "all") return { label: "all time" };
-  if (period === "30d") return { from: new Date(now.getTime() - 30 * 86400000).toISOString(), label: "last 30 days" };
-  if (period === "quarter") return { from: new Date(now.getFullYear(), now.getMonth() - 2, 1).toISOString(), label: "last 3 months" };
-  return { from: new Date(now.getFullYear(), now.getMonth(), 1).toISOString(), label: "this month" };
+  return targetingRange(period);
 }
 const waLink = (phone: string, msg: string) => {
   const d = (phone || "").replace(/\D/g, "").slice(-10);
