@@ -766,6 +766,7 @@ export async function cancelOrderAction(orderId: string, reason?: string): Promi
   const { data, error } = await sb.rpc("cancel_order", { p_order_id: orderId, p_reason: (reason ?? "").trim() || "Cancelled" });
   if (error) return { ok: false, error: error.message };
   revalidatePath("/admin/sales"); revalidatePath("/admin/backorders"); revalidatePath("/admin/dashboard");
+  revalidatePath("/admin/customers"); revalidateTag("customers");
   revalidatePath(`/admin/invoice/${orderId}`);
   return { ok: true, already: !!(data as any)?.already };
 }

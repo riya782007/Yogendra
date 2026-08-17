@@ -433,7 +433,7 @@ export function POSClient({ products: propProducts, customers = [], methods = []
                           <span className={`text-xs ${c.type === "wholesale" ? "text-wine" : "text-muted"}`}>{TIER_LABEL[c.type] ?? "R"}</span>
                         </button>
                       ))}
-                      {!custMatches.some((c) => (c.name ?? "").toLowerCase() === custQ.trim().toLowerCase()) && (
+                      {custMatches.length === 0 && (
                         <button onClick={() => { setCust({ name: custQ.trim(), phone: "" }); setCustQ(""); setCustPanel(false); }} className="w-full text-left px-3 py-2 text-sm text-emerald-dark hover:bg-gold/10">+ Add “{custQ.trim()}”</button>
                       )}
                     </div>

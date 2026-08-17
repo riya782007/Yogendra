@@ -11,7 +11,7 @@ import { groqChat, openaiChat, geminiChat, groqConfigured, openaiConfigured, gem
 import { supabaseServer } from "@/lib/supabase/server";
 import {
   getChannelReport, getInventoryClassified, getProductsPage, getDashboardData,
-  getProductBySku, getProductSalesStats, getCustomersDb, getPricingFormula,
+  getProductBySku, getProductSalesStats, getCustomersDb, getPricingFormula, ensureDirectoryCustomer,
 } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { liveOffer } from "@/lib/offers";
@@ -622,18 +622,13 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         const name = String(args.name ?? "").trim();
         if (!name) return { ok: false, message: "Which customer?" };
         const type = String(args.type ?? "retail") === "wholesale" ? "wholesale" : "retail";
-        const sb = supabaseServer();
-        const { data: existing } = await sb.from("customers").select("id,name,type").ilike("name", name).maybeSingle();
-        if (existing) {
-          await sb.from("customers").update({ type }).eq("id", (existing as any).id);
-          revalidatePath("/admin/customers");
-          return { ok: true, message: `${(existing as any).name} is now a ${type} customer${type === "wholesale" ? " — they'll see wholesale prices." : "."}` };
-        }
         const phone = String(args.phone ?? "").trim() || null;
-        const { error } = await sb.from("customers").insert({ name, type, phone });
-        if (error) return { ok: false, message: error.message };
+        const sb = supabaseServer();
+        const id = await ensureDirectoryCustomer(sb, { name, phone, type });
+        if (!id) return { ok: false, message: "Couldn't save that customer." };
+        await sb.from("customers").update({ type }).eq("id", id);
         revalidatePath("/admin/customers");
-        return { ok: true, message: `Added ${name} as a ${type} customer.` };
+        return { ok: true, message: `${name} is a ${type} customer${type === "wholesale" ? " — they'll see wholesale prices." : "."}` };
       }
       case "create_category": {
         const name = String(args.name ?? "").trim();

@@ -3,6 +3,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
+import { ensureDirectoryCustomer } from "@/lib/supabase/queries";
 
 export async function upsertCustomerAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("customers.manage"))) return;
@@ -30,18 +31,8 @@ export async function upsertCustomerAction(formData: FormData): Promise<void> {
   // one customer's order history across two rows.
   let targetId = id;
   if (!targetId) {
-    let existing: { id: string } | null = null;
-    if (phone) {
-      const { data } = await sb.from("customers").select("id").eq("phone", phone).maybeSingle();
-      existing = (data as any) ?? null;
-    }
-    if (!existing && name) {
-      const { data } = await sb.from("customers").select("id").ilike("name", name).maybeSingle();
-      existing = (data as any) ?? null;
-    }
-    if (existing) targetId = existing.id;
+    targetId = (await ensureDirectoryCustomer(sb, { name, phone, gstin: row.gstin, address: row.address, type: row.type })) ?? "";
   }
-
   if (targetId) await sb.from("customers").update(row).eq("id", targetId);
   else await sb.from("customers").insert(row);
   // Bust the cached customer list so a NEW customer shows up IMMEDIATELY in the estimate builder and POS
