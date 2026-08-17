@@ -51,6 +51,8 @@ export const ACTIVITY_META: Record<string, { label: string; tone: string; icon: 
   rejected: { label: "Rejected", tone: "rose", icon: "✕" },
   applied: { label: "Applied", tone: "emerald", icon: "✓" },
   reorder_approved: { label: "Reorder approved", tone: "emerald", icon: "✓" },
+  order_charges_edit: { label: "Bill charges edited", tone: "gold", icon: "₹" },
+  order_line_edit: { label: "Bill line edited", tone: "gold", icon: "✎" },
 };
 
 export const ACTIVITY_TONE: Record<string, string> = {

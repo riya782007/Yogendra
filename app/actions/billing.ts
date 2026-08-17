@@ -584,6 +584,7 @@ export async function updateBackorderLineAction(formData: FormData): Promise<voi
 type EditableBill = {
   id: string; invoice_no: string | null; total: number; amount_paid: number;
   is_backorder: boolean; status: string; customer_name: string | null;
+  extra_packing: number; extra_courier: number; extra_adjustment: number;
   items: { id: string; sku: string; name: string; qty: number; unit_price: number; line_total: number }[];
 };
 
@@ -594,7 +595,7 @@ export async function fetchOrderForEditAction(orderId: string): Promise<{ ok: bo
   if (!id) return { ok: false, error: "Missing bill" };
   const sb = supabaseServer();
   const { data, error } = await sb.from("orders")
-    .select("id,invoice_no,total,amount_paid,is_backorder,status, order_items(id,qty,unit_price,line_total, product:products(name,sku), variant:variants(sku,color))")
+    .select("id,invoice_no,total,amount_paid,is_backorder,status,extra_packing,extra_courier,extra_adjustment, order_items(id,qty,unit_price,line_total, product:products(name,sku), variant:variants(sku,color))")
     .eq("id", id).maybeSingle();
   if (error || !data) return { ok: false, error: error?.message ?? "Bill not found" };
   const o = data as any;
@@ -602,6 +603,7 @@ export async function fetchOrderForEditAction(orderId: string): Promise<{ ok: bo
     id: o.id, invoice_no: o.invoice_no ?? null, total: o.total ?? 0, amount_paid: o.amount_paid ?? 0,
     is_backorder: !!o.is_backorder, status: o.status ?? "",
     customer_name: o.customer_name ?? null,
+    extra_packing: Number(o.extra_packing ?? 0), extra_courier: Number(o.extra_courier ?? 0), extra_adjustment: Number(o.extra_adjustment ?? 0),
     items: ((o.order_items as any[]) ?? []).map((it) => ({
       id: it.id,
       sku: (it.variant?.sku ?? it.product?.sku ?? "") as string,
@@ -627,6 +629,73 @@ export async function editOrderLineAction(input: { orderId: string; itemId: stri
   revalidatePath(`/admin/invoice/${orderId}`);
   revalidatePath("/admin/sales"); revalidatePath("/admin/backorders"); revalidatePath("/admin/dashboard");
   return { ok: true, total: (data as any)?.total, removed: (data as any)?.removed };
+}
+
+/** OTP-gated edit of packing / courier / adjustment on an issued bill.
+ *  COD confirmation often collects only courier up front while the invoice still carries goods + courier;
+ *  zeroing or changing courier (or packing/adjustment) retotals the bill and posts the revenue delta. */
+export async function editOrderChargesAction(input: {
+  orderId: string; packingRupees: number; courierRupees: number; adjustmentRupees: number; otp: string;
+}): Promise<{ ok: boolean; error?: string; total?: number }> {
+  if (!(await requirePerm("billing.sell"))) return { ok: false, error: "Your role can't edit bills." };
+  const otp = (input.otp ?? "").trim();
+  if (!otp || otp !== OWNER_OTP()) return { ok: false, error: "Wrong OTP — ask the owner for the code." };
+  const orderId = (input.orderId ?? "").trim();
+  if (!orderId) return { ok: false, error: "Missing bill." };
+  const packing = Math.max(0, Math.round((Number(input.packingRupees) || 0) * 100));
+  const courier = Math.max(0, Math.round((Number(input.courierRupees) || 0) * 100));
+  const adjustment = Math.round((Number(input.adjustmentRupees) || 0) * 100);
+  const sb = supabaseServer();
+  const { data, error } = await sb.rpc("edit_order_charges", {
+    p_order_id: orderId, p_packing: packing, p_courier: courier, p_adjustment: adjustment,
+  });
+  if (error) {
+    const missing = /edit_order_charges|does not exist|schema cache/i.test(error.message);
+    if (!missing) return { ok: false, error: error.message };
+    const fb = await editOrderChargesFallback(sb, orderId, packing, courier, adjustment);
+    if (!fb.ok) return fb;
+    revalidatePath(`/admin/invoice/${orderId}`);
+    revalidatePath("/admin/sales"); revalidatePath("/admin/cod"); revalidatePath("/admin/dashboard");
+    return { ok: true, total: fb.total };
+  }
+  revalidatePath(`/admin/invoice/${orderId}`);
+  revalidatePath("/admin/sales"); revalidatePath("/admin/cod"); revalidatePath("/admin/dashboard");
+  return { ok: true, total: (data as any)?.total };
+}
+
+async function editOrderChargesFallback(
+  sb: ReturnType<typeof supabaseServer>,
+  orderId: string,
+  packing: number, courier: number, adjustment: number,
+): Promise<{ ok: boolean; error?: string; total?: number }> {
+  const { data: o } = await sb.from("orders")
+    .select("id,status,is_backorder,cod_hold,channel,bill_type,total")
+    .eq("id", orderId).maybeSingle();
+  if (!o) return { ok: false, error: "Order not found" };
+  const st = String((o as any).status ?? "");
+  if (st === "cancelled" || st === "refunded") return { ok: false, error: "This bill is cancelled — nothing to edit." };
+  const oldTotal = Number((o as any).total ?? 0);
+  const { error: upErr } = await sb.from("orders").update({ extra_packing: packing, extra_courier: courier, extra_adjustment: adjustment }).eq("id", orderId);
+  if (upErr) return { ok: false, error: upErr.message };
+  const { data: lines } = await sb.from("order_items").select("line_total,unit_price,qty").eq("order_id", orderId);
+  let items = ((lines as any[]) ?? []).reduce((s, r) => s + (r.line_total ?? (r.unit_price ?? 0) * (r.qty ?? 0)), 0);
+  const channel = String((o as any).channel ?? "").toLowerCase();
+  const billType = String((o as any).bill_type ?? "").toLowerCase();
+  if (channel === "wholesale" && billType === "gst") items = Math.round(items * 1.03);
+  const total = items + packing + courier + adjustment;
+  await sb.from("orders").update({ total }).eq("id", orderId);
+  const hold = !!(o as any).cod_hold || !!(o as any).is_backorder;
+  if (!hold && total !== oldTotal) {
+    const delta = total - oldTotal;
+    await sb.from("ledger").insert({
+      kind: "sales", ref_id: orderId,
+      debit: delta < 0 ? -delta : 0, credit: delta > 0 ? delta : 0,
+      balance: 0,
+      note: delta > 0 ? "Bill edited — charges increased" : "Bill edited — charges reduced",
+    });
+  }
+  await sb.from("audit_log").insert({ actor: "owner", action: "order_charges_edit", ref: orderId, detail: `packing ${packing} courier ${courier} adj ${adjustment} total ${oldTotal} → ${total}` });
+  return { ok: true, total };
 }
 
 /**

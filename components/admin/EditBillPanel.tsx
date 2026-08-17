@@ -2,19 +2,20 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { fetchOrderForEditAction, editOrderLineAction, addOrderLineAction } from "@/app/actions/billing";
+import { fetchOrderForEditAction, editOrderLineAction, addOrderLineAction, editOrderChargesAction } from "@/app/actions/billing";
 
 type EditableBill = {
   id: string; invoice_no: string | null; total: number; amount_paid: number;
   is_backorder: boolean; status: string; customer_name: string | null;
+  extra_packing: number; extra_courier: number; extra_adjustment: number;
   items: { id: string; sku: string; name: string; qty: number; unit_price: number; line_total: number }[];
 };
 
 function rupees(paise: number) { return `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 0 })}`; }
+function paiseToInput(p: number) { return (Number(p) / 100).toFixed(2).replace(/\.00$/, ""); }
 
-/** OTP-gated bill editor. The owner opens it, enters the OTP once, then can fix a wrong quantity or
- *  remove a mis-scanned line WITHOUT cancelling the whole bill — stock, revenue and the total are
- *  corrected server-side (edit_order_line RPC). Staff can't edit silently: no OTP, no change. */
+/** OTP-gated bill editor. Lines AND packing/courier/adjustment. Stock, revenue and the total
+ *  correct themselves; staff can't edit silently (no OTP, no change). */
 export function EditBillPanel({ orderId }: { orderId: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -27,13 +28,21 @@ export function EditBillPanel({ orderId }: { orderId: string }) {
   const [addSku, setAddSku] = useState("");
   const [addQty, setAddQty] = useState("1");
   const [addPrice, setAddPrice] = useState("");
+  const [packing, setPacking] = useState("0");
+  const [courier, setCourier] = useState("0");
+  const [adjustment, setAdjustment] = useState("0");
+
+  function applyBill(b: EditableBill) {
+    setBill(b);
+    setQtyDraft(Object.fromEntries(b.items.map((it) => [it.id, String(it.qty)])));
+    setPacking(paiseToInput(b.extra_packing ?? 0));
+    setCourier(paiseToInput(b.extra_courier ?? 0));
+    setAdjustment(paiseToInput(b.extra_adjustment ?? 0));
+  }
 
   async function reload() {
     const fresh = await fetchOrderForEditAction(orderId);
-    if (fresh.ok && fresh.bill) {
-      setBill(fresh.bill);
-      setQtyDraft(Object.fromEntries(fresh.bill.items.map((it) => [it.id, String(it.qty)])));
-    }
+    if (fresh.ok && fresh.bill) applyBill(fresh.bill);
     router.refresh();
   }
 
@@ -58,8 +67,7 @@ export function EditBillPanel({ orderId }: { orderId: string }) {
     const r = await fetchOrderForEditAction(orderId);
     setBusy(false);
     if (!r.ok || !r.bill) { setMsg({ text: r.error ?? "Couldn't load the bill.", ok: false }); return; }
-    setBill(r.bill);
-    setQtyDraft(Object.fromEntries(r.bill.items.map((it) => [it.id, String(it.qty)])));
+    applyBill(r.bill);
     setOpen(true);
   }
 
@@ -70,19 +78,30 @@ export function EditBillPanel({ orderId }: { orderId: string }) {
     setBusy(false);
     if (!r.ok) { setMsg({ text: r.error ?? "Edit failed.", ok: false }); return; }
     setMsg({ text: r.removed ? "Line removed ✓" : "Quantity updated ✓", ok: true });
-    const fresh = await fetchOrderForEditAction(orderId);
-    if (fresh.ok && fresh.bill) {
-      setBill(fresh.bill);
-      setQtyDraft(Object.fromEntries(fresh.bill.items.map((it) => [it.id, String(it.qty)])));
-    }
-    router.refresh(); // repaint the printed invoice with corrected totals
+    await reload();
+  }
+
+  async function saveCharges() {
+    if (!otp.trim()) { setMsg({ text: "Enter the owner OTP first.", ok: false }); return; }
+    setBusy(true); setMsg(null);
+    const r = await editOrderChargesAction({
+      orderId,
+      packingRupees: Number(packing) || 0,
+      courierRupees: Number(courier) || 0,
+      adjustmentRupees: Number(adjustment) || 0,
+      otp: otp.trim(),
+    });
+    setBusy(false);
+    if (!r.ok) { setMsg({ text: r.error ?? "Couldn't save charges.", ok: false }); return; }
+    setMsg({ text: "Charges updated ✓", ok: true });
+    await reload();
   }
 
   if (!open) {
     return (
       <div className="bg-white rounded-2xl p-5 shadow-card">
         <h2 className="font-medium text-ink mb-1">✎ Edit this bill <span className="text-xs text-muted font-normal">· owner OTP required</span></h2>
-        <p className="text-xs text-muted mb-3">Fix a wrong quantity, remove a mis-scanned line, or add the right one — e.g. swap a wrongly-picked colour. Stock &amp; totals correct themselves; no need to cancel the whole bill.</p>
+        <p className="text-xs text-muted mb-3">Fix quantities, add/remove lines, or change packing / courier / adjustment (e.g. drop courier on a COD bill after taking it as confirmation). Stock &amp; totals correct themselves.</p>
         <button onClick={load} disabled={busy} className="px-4 py-2 rounded-full bg-ink/5 text-ink text-sm hover:bg-ink/10 disabled:opacity-50">{busy ? "Loading…" : "Edit bill →"}</button>
         {msg && <p className={`text-xs mt-2 ${msg.ok ? "text-emerald-dark" : "text-rose"}`}>{msg.text}</p>}
       </div>
@@ -142,11 +161,34 @@ export function EditBillPanel({ orderId }: { orderId: string }) {
         </div>
       </div>
 
+      <div className="mt-3 border border-sand rounded-xl p-3 bg-cream/30">
+        <p className="text-xs font-medium text-ink mb-1">Packing / courier / adjustment</p>
+        <p className="text-[11px] text-muted mb-2">COD confirmation often takes courier in advance while the invoice still shows goods + courier. Set courier to 0 (or the true amount) so the remaining due is only what is still to be collected. If that advance should sit against this bill, record it as a payment on the invoice first.</p>
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="text-[11px] text-muted">Packing ₹
+            <input type="number" min={0} step="0.01" value={packing} onChange={(e) => setPacking(e.target.value)}
+              className="rounded-lg border border-sand px-2 py-1.5 text-sm w-24 text-right block mt-0.5 outline-none focus:border-emerald" />
+          </label>
+          <label className="text-[11px] text-muted">Courier ₹
+            <input type="number" min={0} step="0.01" value={courier} onChange={(e) => setCourier(e.target.value)}
+              className="rounded-lg border border-sand px-2 py-1.5 text-sm w-24 text-right block mt-0.5 outline-none focus:border-emerald" />
+          </label>
+          <label className="text-[11px] text-muted">Adjustment ₹
+            <input type="number" step="0.01" value={adjustment} onChange={(e) => setAdjustment(e.target.value)}
+              className="rounded-lg border border-sand px-2 py-1.5 text-sm w-24 text-right block mt-0.5 outline-none focus:border-emerald" />
+          </label>
+          <button onClick={saveCharges} disabled={busy}
+            className="px-3 py-1.5 rounded-full bg-gold text-ink text-xs font-medium disabled:opacity-50">Save charges</button>
+        </div>
+      </div>
+
       <div className="flex items-center justify-between mt-3">
-        <p className="text-sm text-ink">Bill items total: <b>{rupees(bill?.total ?? 0)}</b></p>
+        <p className="text-sm text-ink">Bill total: <b>{rupees(bill?.total ?? 0)}</b>
+          {bill ? <span className="text-muted font-normal text-xs"> · paid {rupees(bill.amount_paid ?? 0)}</span> : null}
+        </p>
         {msg && <p className={`text-xs ${msg.ok ? "text-emerald-dark" : "text-rose"}`}>{msg.text}</p>}
       </div>
-      <p className="text-[11px] text-muted mt-2">Note: this changes stock and the recorded sale. If money was already collected, settle any difference with the customer in cash — the bill will show the new balance.</p>
+      <p className="text-[11px] text-muted mt-2">This changes the recorded sale. If money was already collected, settle any difference with the customer — the invoice will show the new balance due.</p>
     </div>
   );
 }
