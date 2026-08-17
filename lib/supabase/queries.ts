@@ -4,6 +4,15 @@ import { unstable_cache } from "next/cache";
 import { supabaseServer } from "./server";
 import type { PricingFormula } from "../pricing";
 import { cleanTiers } from "../pricing";
+import {
+  isWalkInPlaceholder, isCancelledSale, isLiveSale, phoneLast10, directoryNameKey,
+  pickDirectoryKeeper, collapseDirectoryCustomers,
+} from "../customers";
+
+export {
+  isWalkInPlaceholder, isCancelledSale, isLiveSale, phoneLast10, directoryNameKey,
+  collapseDirectoryCustomers,
+};
 
 /**
  * PostgREST caps every select at 1000 rows (the `max-rows` default). With a 4000+ product
@@ -381,12 +390,55 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
 }
 
 // ---------- customer directory (real customers table) ----------
-/** Placeholder "walk-in" names used at the counter for anonymous cash sales — these should NOT
- *  clutter the customer directory (the owner: "walk in ko 1 manke chalo"). */
-const WALKIN_NAMES = new Set(["cash (w)", "cash (r)", "walk-in", "walk in", "walkin"]);
-export function isWalkInPlaceholder(name?: string | null, phone?: string | null): boolean {
-  const n = (name ?? "").trim().toLowerCase();
-  return !((phone ?? "").trim()) && (n === "" || WALKIN_NAMES.has(n));
+/**
+ * One directory row per real customer. POS used to INSERT a new retail row on every no-phone
+ * bill ("The Opal Factory" × 3). Match phone (last 10) then exact name; never demote wholesale.
+ * Unique indexes + retry on 23505 stop a race of two bills creating two rows.
+ */
+export async function ensureDirectoryCustomer(
+  sb: ReturnType<typeof supabaseServer>,
+  input: { name?: string | null; phone?: string | null; gstin?: string | null; address?: string | null; type?: string | null },
+): Promise<string | null> {
+  const nm = (input.name ?? "").trim().replace(/\s+/g, " ");
+  const ph = (input.phone ?? "").trim();
+  if (isWalkInPlaceholder(nm, ph)) return null;
+  const gstin = (input.gstin ?? "").trim() || null;
+  const address = (input.address ?? "").trim() || null;
+  const wantType = input.type === "wholesale" ? "wholesale" : "retail";
+  const last10 = phoneLast10(ph);
+  const nameKey = directoryNameKey(nm);
+
+  const find = async (): Promise<any | null> => {
+    let hit: any = null;
+    if (last10) {
+      const { data } = await sb.from("customers").select("id,name,phone,type,created_at").ilike("phone", `%${last10}%`).limit(20);
+      hit = pickDirectoryKeeper(((data as any[]) ?? []).filter((c) => phoneLast10(c.phone) === last10));
+    }
+    if (!hit && nameKey) {
+      const fuzzy = nameKey.split(" ").filter(Boolean).map((t) => escLike(t)).filter(Boolean).join("%");
+      const { data } = await sb.from("customers").select("id,name,phone,type,created_at").ilike("name", fuzzy || nameKey).limit(40);
+      hit = pickDirectoryKeeper(((data as any[]) ?? []).filter((c) => directoryNameKey(c.name) === nameKey));
+    }
+    return hit;
+  };
+
+  const hit = await find();
+  if (hit?.id) {
+    const patch: Record<string, string> = {};
+    if (gstin) patch.gstin = gstin;
+    if (address) patch.address = address;
+    if (ph && !phoneLast10(hit.phone)) patch.phone = ph;
+    if (wantType === "wholesale" && hit.type !== "wholesale") patch.type = "wholesale";
+    if (Object.keys(patch).length) await sb.from("customers").update(patch).eq("id", hit.id);
+    return hit.id as string;
+  }
+  const { data: created, error } = await sb.from("customers")
+    .insert({ name: nm || last10 || ph, phone: ph || null, gstin, address, type: wantType })
+    .select("id").maybeSingle();
+  if (!error && (created as any)?.id) return (created as any).id as string;
+  // Unique index fired (two bills at once) — reuse the row the other insert won with.
+  const again = await find();
+  return (again?.id as string | undefined) ?? null;
 }
 
 export async function getCustomersDb(opts: { q?: string; type?: string }) {
@@ -396,7 +448,9 @@ export async function getCustomersDb(opts: { q?: string; type?: string }) {
   if (opts.type && opts.type !== "all") query = query.eq("type", opts.type);
   const { data } = await query.order("name");
   // Collapse anonymous walk-ins: they're bill placeholders, not real directory contacts.
-  return ((data as any[]) ?? []).filter((c) => !isWalkInPlaceholder(c.name, c.phone));
+  // Then collapse same-name / same-phone copies so POS never lists The Opal Factory three times.
+  const raw = ((data as any[]) ?? []).filter((c) => !isWalkInPlaceholder(c.name, c.phone));
+  return collapseDirectoryCustomers(raw);
 }
 
 // ---------- employees (salespeople) + sales attribution (0037) ----------
@@ -424,7 +478,7 @@ export async function getEmployeePerformance(range?: { from?: string; to?: strin
   const { data } = await q;
   const agg = new Map<string, { orders: number; sales: number; collected: number }>();
   for (const o of ((data as any[]) ?? [])) {
-    if (o.status === "cancelled" || o.status === "refunded") continue;
+    if (!isLiveSale(o)) continue;
     const cur = agg.get(o.sales_employee_id) ?? { orders: 0, sales: 0, collected: 0 };
     cur.orders += 1; cur.sales += (o.total ?? 0); cur.collected += (o.amount_paid ?? 0);
     agg.set(o.sales_employee_id, cur);
@@ -448,7 +502,7 @@ export async function getEmployeeSalesLedger(range?: { from?: string; to?: strin
   if (range?.from) q = q.gte("created_at", range.from);
   if (range?.to) q = q.lte("created_at", range.to);
   const { data } = await q;
-  return ((data as any[]) ?? []).filter((o) => o.status !== "cancelled" && o.status !== "refunded").map((o) => ({
+  return ((data as any[]) ?? []).filter((o) => !isCancelledSale(o.status)).map((o) => ({
     id: o.id as string,
     invoice_no: (o.invoice_no ?? null) as string | null,
     employee: (nameById.get(o.sales_employee_id) ?? "—") as string,
@@ -474,7 +528,7 @@ export async function getCustomerSpend(range?: { from?: string; to?: string }): 
   const { data } = await q;
   const m = new Map<string, { spend: number; orders: number; last: string | null }>();
   for (const o of ((data as any[]) ?? [])) {
-    if (o.status === "cancelled" || o.status === "refunded") continue;
+    if (!isLiveSale(o)) continue;
     const t = o.total ?? 0;
     // Inclusive GST bills already contain the tax in `total` — don't add 3% again (matches the bill).
     const grand = o.bill_type === "cash" || o.gst_mode === "inclusive" ? Math.round(t / 100) * 100 : Math.round((t + Math.round(t * 0.03)) / 100) * 100;
@@ -516,8 +570,8 @@ export async function returnCreditsByOrder(orderIds: string[]): Promise<Map<stri
  *  Σ bill total − amount paid). Important for wholesale credit tracking. */
 export async function getCreditors(): Promise<{ id: string | null; name: string; phone: string; outstanding: number; bills: number }[]> {
   const sb = supabaseServer();
-  const { data } = await sb.from("orders").select("id,customer_id,customer_name,customer_phone,total,amount_paid,bill_type,gst_mode,status");
-  const rows0 = ((data as any[]) ?? []).filter((o) => o.status !== "cancelled");
+  const { data } = await sb.from("orders").select("id,customer_id,customer_name,customer_phone,total,amount_paid,bill_type,gst_mode,status,is_backorder,cod_hold");
+  const rows0 = ((data as any[]) ?? []).filter((o) => isLiveSale(o));
   const credits = await returnCreditsByOrder(rows0.map((o) => o.id));
   const map = new Map<string, { id: string | null; name: string; phone: string; outstanding: number; bills: number }>();
   for (const o of rows0) {
@@ -695,30 +749,29 @@ export async function getCustomerById(id: string) {
   // Order history: linked customer_id plus any POS sales saved with the same phone.
   // (Two separate queries merged — avoids putting a raw phone into an or() filter.)
   const phone = (c as any).phone;
-  const sel = "id,total,amount_paid,invoice_no,channel,bill_type,gst_mode,payment_mode,status,created_at,customer_id,customer_phone";
+  const sel = "id,total,amount_paid,invoice_no,channel,bill_type,gst_mode,payment_mode,status,created_at,customer_id,customer_phone,is_backorder,cod_hold";
   const byId = await sb.from("orders").select(sel).eq("customer_id", id).order("created_at", { ascending: false }).limit(100);
   const byPhone = phone ? await sb.from("orders").select(sel).eq("customer_phone", phone).order("created_at", { ascending: false }).limit(100) : { data: [] as any[] };
   const seen = new Set<string>();
   const list = [...((byId.data as any[]) ?? []), ...((byPhone.data as any[]) ?? [])]
     .filter((o) => (seen.has(o.id) ? false : (seen.add(o.id), true)))
     .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
-  // Pillar 8 — customer ledger view of "outstanding". Compute it from the actual orders
-  // (sum of bill total - amount paid across non-cancelled orders) so partial payments and
-  // unpaid invoices roll up automatically. The DB column `credit_balance` is now a
-  // *manual override* (advance received, store credit, hand-entered adjustment) — kept as
-  // a fallback so existing data continues to display.
-  const custCredits = await returnCreditsByOrder(list.map((o: any) => o.id));
-  const outstandingFromOrders = list
-    .filter((o: any) => o.status !== "cancelled" && o.status !== "void")
-    .reduce((s: number, o: any) => s + orderReceivable(o, custCredits.get(o.id) ?? 0), 0);
+  const live = list.filter((o: any) => isLiveSale(o));
+  const cancelled = list.filter((o: any) => isCancelledSale(o.status));
+  const custCredits = await returnCreditsByOrder(live.map((o: any) => o.id));
+  const outstandingFromOrders = live.reduce((s: number, o: any) => s + orderReceivable(o, custCredits.get(o.id) ?? 0), 0);
+  const spent = live.reduce((s: number, o: any) => {
+    const t = o.total ?? 0;
+    const grand = o.bill_type === "cash" || o.gst_mode === "inclusive" ? Math.round(t / 100) * 100 : Math.round((t + Math.round(t * 0.03)) / 100) * 100;
+    return s + grand;
+  }, 0);
   return {
     customer: c,
-    orders: list,
-    totalSpent: list.reduce((s, o) => s + (o.total ?? 0), 0),
-    orderCount: list.length,
-    /** Computed: ₹ owed by this customer right now, summed across their unpaid/partially-paid bills. */
+    orders: live,
+    cancelledOrders: cancelled,
+    totalSpent: spent,
+    orderCount: live.length,
     outstanding: outstandingFromOrders,
-    /** Manual override stored on the customers row — used for store credit / advance / adjustments. */
     creditAdjustment: (c as any).credit_balance ?? 0,
   };
 }
@@ -753,6 +806,7 @@ export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?
   query = query.or("is_backorder.is.null,is_backorder.eq.false");
   // Held COD orders aren't sales yet either — they live on /admin/cod until dispatch is confirmed.
   query = query.eq("cod_hold", false);
+  query = query.not("status", "in", "(cancelled,refunded,void)");
   if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.or(`customer_name.ilike.%${s}%,customer_phone.ilike.%${s}%`); }
   if (opts.channel && opts.channel !== "all") query = query.eq("channel", opts.channel);
   if (opts.billType) query = query.eq("bill_type", opts.billType);
@@ -1679,7 +1733,7 @@ export async function getDashboardData(fromISO: string, toISO: string, rule: Inv
   ]);
   // Pending backorders (held, not sold) are already filtered above; also drop cancelled/refunded so
   // the dashboard revenue matches the sales record (owner: "revenue dikha raha hai but no stock movement").
-  const orders = (ordersRes.data ?? []).filter((o: any) => o.status !== "cancelled" && o.status !== "refunded");
+  const orders = (ordersRes.data ?? []).filter((o: any) => !isCancelledSale(o.status));
   const products = (prods as any[]) ?? [];
 
   const revenue = orders.reduce((s, o: any) => s + (o.total ?? 0), 0);
@@ -2015,11 +2069,11 @@ export type Analytics = {
 export async function getDashboardAnalytics(fromISO: string, toISO: string): Promise<Analytics> {
   const sb = supabaseServer();
   const [{ data: orders }, { data: items }] = await Promise.all([
-    sb.from("orders").select("total,channel,created_at").gte("created_at", fromISO).lte("created_at", toISO),
-    sb.from("order_items").select("line_total,qty,order:orders(created_at,channel),product:products(name,category:categories(name))"),
+    sb.from("orders").select("total,channel,created_at,status,is_backorder,cod_hold").gte("created_at", fromISO).lte("created_at", toISO),
+    sb.from("order_items").select("line_total,qty,order:orders(created_at,channel,status,is_backorder,cod_hold),product:products(name,category:categories(name))"),
   ]);
-  const os = (orders as any[]) ?? [];
-  const its = ((items as any[]) ?? []).filter((i) => i.order && i.order.created_at >= fromISO && i.order.created_at <= toISO);
+  const os = ((orders as any[]) ?? []).filter((o) => isLiveSale(o));
+  const its = ((items as any[]) ?? []).filter((i) => i.order && i.order.created_at >= fromISO && i.order.created_at <= toISO && isLiveSale(i.order));
 
   // weekly buckets (8)
   const weeks = 8;
@@ -2062,7 +2116,7 @@ export async function getProductSalesStats(sku: string) {
   const rows = ((data as any[]) ?? []).filter((r) => {
     const o = Array.isArray(r.orders) ? r.orders[0] : r.orders;
     if (!o) return false;
-    return o.status !== "cancelled" && o.status !== "refunded" && !o.is_backorder && !o.cod_hold;
+    return isLiveSale(o);
   });
   return {
     name: (p as any).name, status: (p as any).status, stock: (p as any).qty,
@@ -2076,10 +2130,10 @@ export async function getProductSalesStats(sku: string) {
 export async function getChannelReport(fromISO: string, toISO: string) {
   const sb = supabaseServer();
   const { data } = await sb.from("orders")
-    .select("id,total,channel,customer_name,created_at,bill_type,payment_mode")
+    .select("id,total,channel,customer_name,created_at,bill_type,payment_mode,status,is_backorder,cod_hold")
     .gte("created_at", fromISO).lte("created_at", toISO)
     .order("created_at", { ascending: false }).limit(1000);
-  const rows = (data as any[]) ?? [];
+  const rows = ((data as any[]) ?? []).filter((o) => isLiveSale(o));
   const channels = ["retail", "wholesale", "pos"].map((ch) => {
     const list = rows.filter((r) => r.channel === ch);
     return {
@@ -2491,7 +2545,7 @@ export async function getCustomers() {
     if (isWalkInPlaceholder(name, o.customer_phone)) continue; // walk-in cash placeholders aren't directory customers
     // Not a real sale: a cancelled/refunded bill, or a pending backorder (held, no revenue) — skip so
     // "top customers" doesn't count a cancelled backorder's revenue (owner's report).
-    if (o.status === "cancelled" || o.status === "refunded" || o.is_backorder === true || o.cod_hold === true) continue;
+    if (!isLiveSale(o)) continue;
     const t = o.total ?? 0;
     // Inclusive-GST bills already contain the tax in `total`; only exclusive bills add 3% on top.
     const grand = o.bill_type === "cash" || o.gst_mode === "inclusive" ? Math.round(t / 100) * 100 : Math.round((t + Math.round(t * 0.03)) / 100) * 100;

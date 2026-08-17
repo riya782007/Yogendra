@@ -13,7 +13,7 @@ export const metadata = { title: "Owner Console · Customer" };
 export default async function CustomerDetail({ params }: { params: { id: string } }) {
   const data = await getCustomerById(params.id);
   if (!data) notFound();
-  const { customer: c, orders, totalSpent, orderCount, outstanding, creditAdjustment } = data;
+  const { customer: c, orders, cancelledOrders = [], totalSpent, orderCount, outstanding, creditAdjustment } = data;
   const canManage = can(getSession(), "customers.manage");
   const fld = "rounded-xl border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-emerald w-full";
 
@@ -105,7 +105,7 @@ export default async function CustomerDetail({ params }: { params: { id: string 
         {/* Order history */}
         <div className="bg-white rounded-2xl p-5 shadow-card">
           <h2 className="font-medium text-ink mb-3">Order history</h2>
-          {orders.length === 0 ? <p className="text-sm text-muted">No orders yet for this customer.</p> : (
+          {orders.length === 0 && cancelledOrders.length === 0 ? <p className="text-sm text-muted">No orders yet for this customer.</p> : (
             <div className="overflow-x-auto"><table className="w-full text-sm">
               <thead className="text-muted text-left"><tr><th className="py-1">Order</th><th className="py-1">Date</th><th className="py-1">Type</th><th className="py-1 text-right">Amount</th></tr></thead>
               <tbody>
@@ -115,6 +115,14 @@ export default async function CustomerDetail({ params }: { params: { id: string 
                     <td className="py-1.5 text-muted">{new Date(o.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" })}</td>
                     <td className="py-1.5 text-xs uppercase text-muted">{o.bill_type === "cash" ? "Cash" : "GST"} · {o.channel}</td>
                     <td className="py-1.5 text-right font-medium">{formatPaise(o.total)}</td>
+                  </tr>
+                ))}
+                {cancelledOrders.map((o: any) => (
+                  <tr key={o.id} className="border-t border-sand/50 opacity-60">
+                    <td className="py-1.5"><Link href={`/admin/invoice/${o.id}`} className="text-muted nav-link">{String(o.id).slice(0, 8).toUpperCase()} ↗</Link></td>
+                    <td className="py-1.5 text-muted">{new Date(o.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" })}</td>
+                    <td className="py-1.5 text-xs uppercase text-rose">Cancelled</td>
+                    <td className="py-1.5 text-right text-muted line-through">{formatPaise(o.total)}</td>
                   </tr>
                 ))}
               </tbody>

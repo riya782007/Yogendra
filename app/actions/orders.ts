@@ -1,7 +1,7 @@
 "use server";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
-import { isWalkInPlaceholder } from "@/lib/supabase/queries";
+import { ensureDirectoryCustomer } from "@/lib/supabase/queries";
 import { requirePerm } from "@/lib/auth";
 import { sendPurchase } from "@/lib/ga4";
 import { notifyOrderPlaced, sendWhatsAppText } from "@/lib/whatsapp";
@@ -222,24 +222,12 @@ export async function posSaleAction(input: {
   let customerId: string | null = null;
   const ph = input.customer?.phone?.trim();
   const nm = input.customer?.name?.trim();
-  if (ph && !isWalkInPlaceholder(nm, ph)) {
-    const { data: existing } = await sb.from("customers").select("id").eq("phone", ph).maybeSingle();
-    if (existing) {
-      customerId = (existing as any).id;
-      if (input.buyerGstin?.trim()) await sb.from("customers").update({ gstin: input.buyerGstin.trim() }).eq("id", customerId);
-    } else {
-      const { data: created } = await sb.from("customers")
-        .insert({ name: nm || ph, phone: ph, gstin: input.buyerGstin?.trim() || null, address: input.buyerAddress?.trim() || null, type: "retail" })
-        .select("id").maybeSingle();
-      customerId = (created as any)?.id ?? null;
-    }
-  } else if (nm && !isWalkInPlaceholder(nm, ph)) {
-    // Named customer with no phone the owner deliberately typed — still worth keeping in the directory.
-    const { data: created } = await sb.from("customers")
-      .insert({ name: nm, phone: null, gstin: input.buyerGstin?.trim() || null, address: input.buyerAddress?.trim() || null, type: "retail" })
-      .select("id").maybeSingle();
-    customerId = (created as any)?.id ?? null;
-  }
+  customerId = await ensureDirectoryCustomer(sb, {
+    name: nm, phone: ph,
+    gstin: input.buyerGstin?.trim() || null,
+    address: input.buyerAddress?.trim() || null,
+    type: input.tier === "wholesale" ? "wholesale" : "retail",
+  });
 
   // ---- Tender resolution -----------------------------------------------------------------
   // Centralized Payment Methods (Phase 1) take priority: each line references payment_methods.id.
@@ -369,6 +357,9 @@ export async function posSaleAction(input: {
   // A real counter sale deducts stock now (a backorder holds none), so refresh the storefront so a
   // design that just sold out drops off the shop at once.
   if (!input.backorder) revalidateTag("storefront");
+  revalidateTag("customers");
+  revalidatePath("/admin/customers");
+  revalidatePath("/admin/sales");
   return { ok: true, orderId, total };
 }
 

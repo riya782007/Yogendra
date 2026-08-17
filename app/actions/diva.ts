@@ -11,7 +11,7 @@ import { groqChat, openaiChat, geminiChat, groqConfigured, openaiConfigured, gem
 import { supabaseServer } from "@/lib/supabase/server";
 import {
   getChannelReport, getInventoryClassified, getProductsPage, getDashboardData,
-  getProductBySku, getProductSalesStats, getCustomersDb, getPricingFormula,
+  getProductBySku, getProductSalesStats, getCustomersDb, getPricingFormula, ensureDirectoryCustomer, isLiveSale,
 } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { liveOffer } from "@/lib/offers";
@@ -560,8 +560,8 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
       case "recent_sales": {
         const lim = Math.min(20, Math.max(1, Math.trunc(Number(args.limit) || 8)));
         const sb = supabaseServer();
-        const { data } = await sb.from("orders").select("invoice_no,customer_name,total,bill_type,channel,created_at").order("created_at", { ascending: false }).limit(lim);
-        const rows = (data as any[]) ?? [];
+        const { data } = await sb.from("orders").select("invoice_no,customer_name,total,bill_type,channel,created_at,status,is_backorder,cod_hold").order("created_at", { ascending: false }).limit(lim * 3);
+        const rows = ((data as any[]) ?? []).filter((o) => isLiveSale(o)).slice(0, lim);
         if (!rows.length) return { ok: true, message: "No bills yet." };
         const lists = rows.map((o) => `${o.invoice_no ?? "—"} ${o.customer_name ?? "Walk-in"} ${formatPaise(o.total ?? 0)} (${o.bill_type ?? o.channel})`).join("; ");
         return { ok: true, data: rows, message: `Last ${rows.length} bills: ${lists}.` };
@@ -622,18 +622,13 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         const name = String(args.name ?? "").trim();
         if (!name) return { ok: false, message: "Which customer?" };
         const type = String(args.type ?? "retail") === "wholesale" ? "wholesale" : "retail";
-        const sb = supabaseServer();
-        const { data: existing } = await sb.from("customers").select("id,name,type").ilike("name", name).maybeSingle();
-        if (existing) {
-          await sb.from("customers").update({ type }).eq("id", (existing as any).id);
-          revalidatePath("/admin/customers");
-          return { ok: true, message: `${(existing as any).name} is now a ${type} customer${type === "wholesale" ? " — they'll see wholesale prices." : "."}` };
-        }
         const phone = String(args.phone ?? "").trim() || null;
-        const { error } = await sb.from("customers").insert({ name, type, phone });
-        if (error) return { ok: false, message: error.message };
+        const sb = supabaseServer();
+        const id = await ensureDirectoryCustomer(sb, { name, phone, type });
+        if (!id) return { ok: false, message: "Couldn't save that customer." };
+        await sb.from("customers").update({ type }).eq("id", id);
         revalidatePath("/admin/customers");
-        return { ok: true, message: `Added ${name} as a ${type} customer.` };
+        return { ok: true, message: `${name} is a ${type} customer${type === "wholesale" ? " — they'll see wholesale prices." : "."}` };
       }
       case "create_category": {
         const name = String(args.name ?? "").trim();
@@ -761,8 +756,8 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
           if (cust) {
             const last10 = String(cust.phone ?? "").replace(/\D/g, "").slice(-10);
             const orFilter = [`customer_name.ilike.%${custRef}%`, last10 ? `customer_phone.ilike.%${last10}%` : ""].filter(Boolean).join(",");
-            const { data: ords } = await sb.from("orders").select("invoice_no,total,created_at,channel").or(orFilter).order("created_at", { ascending: false }).limit(5);
-            const list = ((ords as any[]) ?? []);
+            const { data: ords } = await sb.from("orders").select("invoice_no,total,created_at,channel,status,is_backorder,cod_hold").or(orFilter).order("created_at", { ascending: false }).limit(12);
+            const list = ((ords as any[]) ?? []).filter((o) => isLiveSale(o)).slice(0, 5);
             const spent = list.reduce((s, o) => s + (o.total ?? 0), 0);
             ctxLines.push(`Customer: ${cust.name}${cust.type ? ` (${cust.type})` : ""}${cust.city ? `, ${cust.city}` : ""}${cust.phone ? `, ${cust.phone}` : ""}. ${list.length ? `Recent orders: ${list.map((o) => `${o.invoice_no ?? "order"} ${formatPaise(o.total ?? 0)} on ${new Date(o.created_at).toLocaleDateString("en-IN")}`).join("; ")}. Lifetime ~${formatPaise(spent)}.` : "No past orders on record — a fresh customer."}`);
           } else {

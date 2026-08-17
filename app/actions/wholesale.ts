@@ -5,7 +5,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 import { getWholesaleSession } from "@/lib/wholesale";
-import { getPricingFormula } from "@/lib/supabase/queries";
+import { getPricingFormula, ensureDirectoryCustomer } from "@/lib/supabase/queries";
 import { sendWhatsAppText } from "@/lib/whatsapp";
 import { wholesaleShippingPaise, WHOLESALE_COD_FEE_PAISE } from "@/lib/wholesaleShipping";
 import { GST_RATE } from "@/lib/business";
@@ -52,11 +52,11 @@ export async function applyForWholesaleAction(formData: FormData): Promise<{ ok:
     } catch { /* proof is best-effort — never blocks the application */ }
   }
 
-  // Create / refresh the customer as a PENDING wholesale dealer (owner approves next).
   const notes = `Dealer application via website${proofUrl ? ` · Business proof: ${proofUrl}` : " · (no proof uploaded)"}`;
-  const { data: existing } = await sb.from("customers").select("id").ilike("phone", `%${phone.slice(-10)}`).limit(1);
+  // One directory row per dealer (phone last-10, else name) — never mint a second The Opal Factory.
+  const existingId = await ensureDirectoryCustomer(sb, { name, phone, gstin, address, type: "wholesale" });
   const row: any = { name, phone, email, type: "wholesale", gstin, address, city, notes, wholesale_approved: false };
-  if (existing && (existing as any[])[0]) await sb.from("customers").update(row).eq("id", (existing as any[])[0].id);
+  if (existingId) await sb.from("customers").update(row).eq("id", existingId);
   else await sb.from("customers").insert(row);
 
   // Ping the owner (best-effort WhatsApp) — the dashboard "Pending dealer applications" card also lists it.
@@ -234,11 +234,10 @@ export async function placeGuestWholesaleOrderAction(
   const fullAddress = [address, city, pincode].filter(Boolean).join(", ");
 
   const sb = supabaseServer();
-  // Reuse an existing record for this number (so repeat buyers don't duplicate); else create one.
-  const { data: existing } = await sb.from("customers").select("id").ilike("phone", `%${phone.slice(-10)}`).limit(1);
+  const existingId = await ensureDirectoryCustomer(sb, { name, phone, type: "wholesale" });
   let customerId: string;
-  if (existing && (existing as any[])[0]) {
-    customerId = (existing as any[])[0].id;
+  if (existingId) {
+    customerId = existingId;
     await sb.from("customers").update({ name, city, type: "wholesale", wholesale_approved: true }).eq("id", customerId);
   } else {
     const { data: created, error: cErr } = await sb.from("customers")
