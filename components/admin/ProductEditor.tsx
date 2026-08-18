@@ -74,7 +74,7 @@ export function ProductEditor({
   const catName = categories.find((c) => c.id === product.categoryId)?.name || "artificial jewellery";
   const catLc = catName.toLowerCase();
   const deriveDesc = (n: string) =>
-    `Buy ${n.trim()} online at BlytheDIVA — ${catLc} for daily & festive wear at retail & wholesale prices from Sadar Bazar, Delhi. COD available, easy returns.`.slice(0, 180);
+    `Buy ${n.trim()} online at BlytheDIVA — ${catLc} for daily & festive wear at retail & wholesale prices from Sadar Bazar, Delhi. Secure online pay, easy returns.`.slice(0, 180);
   const deriveKeywords = (n: string) => [
     n.trim(), `${n.trim()} online`, `${catLc} for women`, `${catLc} for wedding`,
     "artificial jewellery online India", `BlytheDIVA ${catLc}`,

@@ -16,7 +16,7 @@ import { ReelsSection } from "@/components/site/ReelsSection";
 
 export const metadata = {
   title: "Premium Artificial Jewellery — Kundan, Meena, Temple",
-  description: "Shop handcrafted artificial jewellery from Blythe Diva. Necklaces, earrings, bracelets, anklets & rings with COD and ₹80 flat shipping across India.",
+  description: "Shop handcrafted artificial jewellery from Blythe Diva. Necklaces, earrings, bracelets, anklets & rings with prepaid checkout and ₹80 flat shipping across India.",
 };
 
 // The homepage shows the same catalogue to everyone, yet it was re-running 5 heavy queries

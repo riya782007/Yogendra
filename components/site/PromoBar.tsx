@@ -2,7 +2,7 @@ const MESSAGES = [
   "✦ Flat 20% OFF on everything",
   "✦ Pay online & get a FREE mystery gift 🎁",
   "✦ Flat ₹80 shipping across India",
-  "✦ Cash on Delivery available",
+  "✦ Pay online — UPI, cards, netbanking",
   "✦ Anti-tarnish premium finish",
   "✦ New designs added daily",
 ];

@@ -357,7 +357,7 @@ export function templateContent(p: ProductLike): GeneratedContent {
     tags,
     seo: {
       metaTitle: `${title} | BlytheDIVA`.slice(0, 60),
-      metaDescription: `Buy ${title} — ${descriptorStr || "artificial"} ${catL} at retail & wholesale from BlytheDIVA, Sadar Bazar Delhi. COD, easy returns.`.slice(0, 158),
+      metaDescription: `Buy ${title} — ${descriptorStr || "artificial"} ${catL} at retail & wholesale from BlytheDIVA, Sadar Bazar Delhi. Prepaid checkout, easy returns.`.slice(0, 158),
       keywords,
     },
   };

@@ -8,10 +8,6 @@ import { notifyOrderPlaced, sendWhatsAppText } from "@/lib/whatsapp";
 import { validateVoucher, bumpVoucherUsage } from "@/app/actions/vouchers";
 import { retailShippingPaise } from "@/lib/wholesaleShipping";
 
-/** Cash-on-Delivery is capped at ₹5,000 (high-value COD is risky) — above this, only prepaid.
- *  (Not exported: a "use server" file may only export async functions.) */
-const COD_MAX_PAISE = 500000;
-
 export type PlaceOrderInput = {
   items: { sku: string; qty: number; color?: string }[];
   customer: { name: string; phone: string; address: string; pincode: string; city?: string };
@@ -46,6 +42,10 @@ export async function checkCartStockAction(
 export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: boolean; orderId?: string; total?: number; error?: string }> {
   if (!input.items?.length) return { ok: false, error: "Cart is empty" };
   if (!input.customer?.name || !input.customer?.phone || !input.customer?.address) return { ok: false, error: "Please fill name, phone and address" };
+  // Retail storefront is prepaid only (owner: "Retail se COD hata do. Only wholesale me COD rakho").
+  if (input.payment === "cod") {
+    return { ok: false, error: "Cash on Delivery isn't available on the website. Please pay online (UPI / card). Dealers can still use COD on the trade portal." };
+  }
   const sb = supabaseServer();
   const { data, error } = await sb.rpc("place_order", {
     p_items: input.items,
@@ -76,25 +76,14 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
   }
   const discountedSubtotal = Math.max(0, itemsSubtotal - discount);
 
-  // COD CEILING — Cash on Delivery is risky on high-value orders, so anything above ₹5,000 (goods value,
-  // before fees) must be prepaid. Roll the order back so no stock is held and the shopper pays online.
-  if (input.payment === "cod" && discountedSubtotal > COD_MAX_PAISE) {
-    // A held COD order holds NO stock and posted NO revenue, so there's nothing to unwind — just delete
-    // it (cancel_order would wrongly RE-STOCK goods that were never deducted).
-    await sb.from("order_items").delete().eq("order_id", orderId).then(() => {}, () => {});
-    await sb.from("orders").delete().eq("id", orderId).then(() => {}, () => {});
-    return { ok: false, error: "Cash on Delivery isn't available for orders above ₹5,000. Please choose online (prepaid) payment." };
-  }
-
-  // SHIPPING — the flat retail rate (single source of truth) on every order + a flat ₹120 COD handling
-  // fee, both recorded IN the order total (mirrors the checkout UI) so the bill total is never short.
+  // SHIPPING — the flat retail rate (single source of truth) on every order, recorded IN the order total
+  // (mirrors the checkout UI) so the bill total is never short.
   const ship = retailShippingPaise(discountedSubtotal);
-  const codFee = input.payment === "cod" ? 12000 : 0;
-  total = discountedSubtotal + ship + codFee;
+  total = discountedSubtotal + ship;
   // DELIVERY ADDRESS was collected but never saved — the owner had bills with no address to ship to.
   const addr = [input.customer.address, input.customer.city, input.customer.pincode].filter(Boolean).join(", ");
   const patch: Record<string, unknown> = { total };
-  if (ship + codFee > 0) patch.extra_courier = ship + codFee;
+  if (ship > 0) patch.extra_courier = ship;
   if (addr) patch.buyer_address = addr;
   if (discount > 0 && appliedCode) { patch.voucher_code = appliedCode; patch.discount_paise = discount; }
   await sb.from("orders").update(patch).eq("id", orderId).then(() => {}, () => {});

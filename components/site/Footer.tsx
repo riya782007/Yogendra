@@ -77,7 +77,7 @@ export function Footer({ categories }: { categories: { name: string; slug: strin
         <div className="max-w-7xl mx-auto px-5 py-5 flex flex-col md:flex-row items-center justify-between gap-3 text-xs text-cream/50">
           <span>© 2026 Blythe Diva · Yogendra Industries. All rights reserved.</span>
           <span className="flex gap-2 items-center text-cream/40">
-            Visa · Mastercard · UPI · Paytm · COD
+            Visa · Mastercard · UPI · Paytm
             <Link href="/trade" className="ml-3 text-cream/30 hover:text-cream/60 transition-colors">Wholesale</Link>
             {/* Discreet owner-console link so the shop can always reach the login even if a bookmark is lost. */}
             <Link href="/login" className="ml-2 text-cream/20 hover:text-cream/50 transition-colors">Owner</Link>

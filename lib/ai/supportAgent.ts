@@ -25,7 +25,7 @@ const SYSTEM =
   `customer's language — reply in Hindi, Hinglish or English exactly as they wrote. Use light, tasteful emojis ` +
   `sparingly. Always sound like a real boutique manager, never a robot.\n\n` +
   `WHAT YOU CAN DO: answer order status & sharing the tracking link; help discover products and share shop ` +
-  `links; explain pricing, offers, COD, and shipping (flat ₹80 shipping per order, Cash on Delivery available); ` +
+  `links; explain pricing, offers, and shipping (flat ₹80 shipping per order; website is prepaid only — COD is wholesale/trade portal only); ` +
   `explain the returns/exchange process at a high level; and general pre-sale questions.\n\n` +
   `HARD RULES:\n` +
   `• Use ONLY the CONTEXT provided below. NEVER invent or guess an order, price, discount, stock status, ` +
@@ -67,7 +67,7 @@ export async function runSupportAgent(ctx: AgentContext): Promise<AgentReply> {
     `All designs — ${ctx.siteBase}/shop`,
     cats || `(categories: ${ctx.siteBase}/shop)`,
     ``,
-    `POLICIES: Flat ₹80 shipping on every order. Cash on Delivery available. Premium anti-tarnish artificial jewellery.`,
+    `POLICIES: Flat ₹80 shipping on every order. The website is prepaid only (UPI/card/netbanking). Cash on Delivery is only for wholesale dealers on the trade portal. Premium anti-tarnish artificial jewellery.`,
     hist ? `\nRECENT CONVERSATION:\n${hist}` : ``,
     ``,
     `CUSTOMER'S NEW MESSAGE: "${ctx.message.trim()}"`,
