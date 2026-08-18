@@ -89,7 +89,7 @@ export function RecoverCartView({ items, channel = "retail" }: { items: RItem[];
         <p className="text-[11px] text-muted text-center mt-2">
           {isWholesale
             ? "Wholesale shipping as per slab · Cash on Delivery available · Anti-tarnish premium finish"
-            : "₹80 flat shipping · Cash on Delivery available · Anti-tarnish premium finish"}
+            : "₹80 flat shipping · Pay online · Anti-tarnish premium finish"}
         </p>
       </div>
     </main>

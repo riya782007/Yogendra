@@ -62,7 +62,7 @@ export async function createRazorpayOrderAction(
   customer?: Customer,
   voucher?: string,
 ): Promise<{ ok: boolean; error?: string; orderId?: string; amount?: number; currency?: string; keyId?: string }> {
-  if (!isRazorpayConfigured()) return { ok: false, error: "Online payment isn't set up yet. Please choose Cash on Delivery." };
+  if (!isRazorpayConfigured()) return { ok: false, error: "Online payment isn't set up yet. Please try again in a moment or message us on WhatsApp." };
   if (!items?.length) return { ok: false, error: "Your bag is empty." };
   const itemsTotal = await quoteItemsPaise(items);
   if (itemsTotal <= 0) return { ok: false, error: "Couldn't price your bag — please refresh." };
@@ -76,7 +76,7 @@ export async function createRazorpayOrderAction(
   const discountedSubtotal = Math.max(0, itemsTotal - discount);
   const amount = discountedSubtotal + shippingPaise(discountedSubtotal);
   const order = await createRazorpayOrder(amount, `rcpt_${Date.now()}`);
-  if (!order) return { ok: false, error: "Couldn't start the payment. Please try again or use Cash on Delivery." };
+  if (!order) return { ok: false, error: "Couldn't start the payment. Please try again." };
 
   // Persist the cart + customer against the Razorpay order id so the webhook can finalise
   // the order even if the customer's browser never returns from their UPI app (Pillar 9).

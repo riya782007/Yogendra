@@ -192,7 +192,7 @@ export function PromoUpload({ categories = [] }: { categories?: Cat[] }) {
       <div className="mt-5 pt-4 border-t border-sand">
         <p className="text-[11px] uppercase tracking-wide text-muted mb-2">Live preview</p>
         {type === "strip" ? (
-          <div className="bg-ink text-gold-light/90 text-xs py-2 px-4 rounded-lg overflow-hidden whitespace-nowrap">✦ {headline || "Your announcement message"} &nbsp;&nbsp; ✦ Flat ₹80 shipping &nbsp;&nbsp; ✦ Cash on Delivery</div>
+          <div className="bg-ink text-gold-light/90 text-xs py-2 px-4 rounded-lg overflow-hidden whitespace-nowrap">✦ {headline || "Your announcement message"} &nbsp;&nbsp; ✦ Flat ₹80 shipping &nbsp;&nbsp; ✦ Secure online pay</div>
         ) : type === "popup" ? (
           <div className="mx-auto max-w-[240px] bg-ivory rounded-2xl shadow-luxe overflow-hidden border border-sand">
             <div className="aspect-[4/5] bg-cream">{preview ? (isVideo ? <video src={preview} className="w-full h-full object-cover" muted /> : <img src={preview} alt="" className="w-full h-full object-cover" />) : <div className="w-full h-full grid place-items-center text-[11px] text-muted">creative</div>}</div>

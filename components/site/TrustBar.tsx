@@ -2,7 +2,7 @@ const ITEMS = [
   { icon: "✦", t: "Premium Finish", s: "Anti-tarnish plating" },
   { icon: "⇆", t: "Easy 7-day Returns", s: "No questions asked" },
   { icon: "❤", t: "50,000+ Happy Customers", s: "Across India" },
-  { icon: "₹", t: "COD & Secure Pay", s: "Pay your way" },
+  { icon: "₹", t: "Secure Online Pay", s: "UPI · Cards · Netbanking" },
 ];
 export function TrustBar() {
   return (

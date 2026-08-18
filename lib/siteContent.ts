@@ -25,7 +25,7 @@ export const PAGES: Record<string, Page> = {
     title: "Shipping Policy",
     intro: "Fast, tracked delivery across India.",
     sections: [
-      { h: "Charges", p: "A flat ₹80 shipping charge applies to every order, anywhere in India. Cash on Delivery is available across serviceable pincodes (a small COD handling fee applies)." },
+      { h: "Charges", p: "A flat ₹80 shipping charge applies to every website order, anywhere in India. Payment on the storefront is prepaid (UPI, cards, netbanking). Cash on Delivery is available to approved wholesale dealers on the trade portal." },
       { h: "Dispatch & delivery", p: "Orders are dispatched within 1–2 business days. Delivery typically takes 3–7 business days depending on your location. You'll receive tracking details on WhatsApp once your order ships." },
       { h: "Serviceability", p: "We ship pan-India through our logistics partners. If a pincode is not serviceable, our team will contact you with alternatives." },
     ],
@@ -36,7 +36,7 @@ export const PAGES: Record<string, Page> = {
     sections: [
       { h: "7-day returns", p: "If you're not happy with your purchase, you can request a return within 7 days of delivery. The item must be unused and in its original condition and packaging." },
       { h: "How to return", p: "Message us on WhatsApp with your order number and reason. We'll arrange a pickup or guide you through the process and process your refund once the item is received and inspected." },
-      { h: "Cancellation", p: "Orders can be cancelled before they are dispatched. Once shipped, the return policy applies. Refunds are issued to the original payment method or as store credit for COD orders." },
+      { h: "Cancellation", p: "Orders can be cancelled before they are dispatched. Once shipped, the return policy applies. Refunds are issued to the original payment method." },
     ],
   },
   faq: {
@@ -45,7 +45,7 @@ export const PAGES: Record<string, Page> = {
     sections: [
       { h: "Is the jewellery real gold?", p: "No — Blythe Diva specialises in premium artificial (imitation) jewellery: brass alloy with anti-tarnish gold/silver plating. It looks luxurious, is lightweight, and is a fraction of the cost of fine jewellery." },
       { h: "Will it tarnish or turn my skin green?", p: "Our anti-tarnish plating resists discolouration with normal care. Keep pieces away from water, perfume, and sweat, and store them dry to keep them looking their best for longer." },
-      { h: "Do you offer Cash on Delivery?", p: "Yes, COD is available across serviceable pincodes, alongside online payment options." },
+      { h: "Do you offer Cash on Delivery?", p: "The website is prepaid only (UPI, cards, netbanking). Approved wholesale dealers can still use Cash on Delivery on the trade portal." },
       { h: "Can I order in bulk for my shop?", p: "Absolutely. Apply for a wholesale account on the Wholesale page; once approved by the owner, you'll see factory-direct trade rates and minimum order quantities." },
       { h: "How do I track my order?", p: "You'll receive tracking details on WhatsApp once your order is dispatched." },
     ],
@@ -79,7 +79,7 @@ export const PAGES: Record<string, Page> = {
     sections: [
       { h: "About us", p: "blythediva.com is operated by Yogendra Industries (India), trading as Blythe Diva, GSTIN 07AAIPJ3244P1ZD, 5150-B, Rui Mandi, Sadar Bazar, Delhi-110006, India. Contact: hello@blythediva.in · +91 87000 91298." },
       { h: "Products & pricing", p: "We sell premium artificial (imitation) jewellery. Prices are shown on each product page in Indian Rupees and include applicable GST. We may update prices and product availability at any time; the price applicable to your order is the one shown at checkout." },
-      { h: "Orders & payment", p: "By placing an order you confirm the details are correct. We accept online payment (UPI, cards, netbanking, wallets) and Cash on Delivery on serviceable pincodes. We reserve the right to cancel an order in case of pricing errors, stock issues, or suspected fraud." },
+      { h: "Orders & payment", p: "By placing an order you confirm the details are correct. The website accepts online payment (UPI, cards, netbanking, wallets). Cash on Delivery is available to approved dealers on the wholesale trade portal. We reserve the right to cancel an order in case of pricing errors, stock issues, or suspected fraud." },
       { h: "Shipping, returns & cancellation", p: "Delivery, returns and cancellation are governed by our Shipping Policy and Returns & Cancellation policy, available on this site." },
       { h: "Wholesale", p: "Wholesale/trade pricing is available to approved retailers only, subject to minimum order quantities and the terms shown in the trade portal." },
       { h: "Governing law", p: "These terms are governed by the laws of India and subject to the jurisdiction of the courts of Delhi." },

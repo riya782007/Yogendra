@@ -43,12 +43,11 @@ export function BuyBox({ variants = [], waHref, item }: {
     setAdded(true); setTimeout(() => setAdded(false), 1500);
   };
 
-  // "Buy now": drop this single item in the bag and go straight to checkout with the
-  // payment method preselected (delivery address is still required there for both flows).
-  const buyNow = (method: "online" | "cod") => {
+  // "Buy now": drop this item in the bag and go to prepaid checkout.
+  const buyNow = () => {
     if (outOfStock) return;
     add(cartLine(), qty);
-    router.push(`/checkout?pay=${method}`);
+    router.push("/checkout");
   };
 
   // Notify Me — capture demand when the (selected) item is out of stock.
@@ -99,12 +98,9 @@ export function BuyBox({ variants = [], waHref, item }: {
         </div>
       </div>
       {/* Primary: buy now — straight to a one-step checkout with the method preselected */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <button onClick={() => buyNow("online")} disabled={outOfStock} className="btn-primary py-3.5 text-sm font-semibold disabled:opacity-50">
+      <div className="grid grid-cols-1 gap-3">
+        <button onClick={buyNow} disabled={outOfStock} className="btn-primary py-3.5 text-sm font-semibold disabled:opacity-50">
           {outOfStock ? "Out of stock" : "Buy Now · Pay Online"}
-        </button>
-        <button onClick={() => buyNow("cod")} disabled={outOfStock} className="py-3.5 rounded-full border-2 border-emerald text-emerald text-sm font-semibold transition-colors hover:bg-emerald-mist disabled:opacity-50">
-          Cash on Delivery
         </button>
       </div>
       {/* Secondary: keep building a bag, or order over WhatsApp */}
@@ -131,7 +127,7 @@ export function BuyBox({ variants = [], waHref, item }: {
           )}
         </div>
       )}
-      <p className="text-xs text-muted mt-3 flex flex-wrap items-center gap-x-4 gap-y-1"><span>✓ COD available</span><span>✓ ₹80 flat shipping</span><span>✓ 7-day returns</span></p>
+      <p className="text-xs text-muted mt-3 flex flex-wrap items-center gap-x-4 gap-y-1"><span>✓ Secure online pay</span><span>✓ ₹80 flat shipping</span><span>✓ 7-day returns</span></p>
     </div>
   );
 }

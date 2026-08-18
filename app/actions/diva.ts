@@ -739,7 +739,7 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         const ctxLines: string[] = [];
 
         // Brand facts (so nothing is invented).
-        ctxLines.push(`Brand: ${BUSINESS.brand} (by ${BUSINESS.legalName}) — artificial/imitation jewellery, Sadar Bazar Delhi. Retail store blythediva.com, wholesale trade.blythediva.com, WhatsApp ${BUSINESS.phone}. Retail: Cash on Delivery, ₹80 flat shipping, easy 7-day returns. Wholesale: factory-direct rates, ₹3,000 minimum order.`);
+        ctxLines.push(`Brand: ${BUSINESS.brand} (by ${BUSINESS.legalName}) — artificial/imitation jewellery, Sadar Bazar Delhi. Retail store blythediva.com, wholesale trade.blythediva.com, WhatsApp ${BUSINESS.phone}. Retail: prepaid UPI/card/netbanking only (no COD on the public website), ₹80 flat shipping, easy 7-day returns. Wholesale: factory-direct rates, ₹3,000 minimum order, COD available on the trade portal.`);
 
         // Product context (title/description/image prompt/caption).
         const sku = String(args.sku ?? "").trim().toUpperCase();
