@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+import Link from "next/link";
 import { getAbandonedCarts } from "@/lib/supabase/queries";
 import { supabaseServer } from "@/lib/supabase/server";
 import { formatPaise } from "@/lib/pricing";
@@ -9,9 +10,10 @@ import { BulkWhatsAppButton } from "@/components/admin/BulkWhatsAppButton";
 
 export const metadata = { title: "Owner Console · Abandoned Carts" };
 
-export default async function Abandoned() {
-  const carts = await getAbandonedCarts();
-  const recoverable = carts.reduce((s: number, c: any) => s + (c.total ?? 0), 0);
+export default async function Abandoned({ searchParams }: { searchParams?: { q?: string } }) {
+  const q = (searchParams?.q ?? "").trim();
+  const carts = await getAbandonedCarts({ search: q || undefined });
+  const recoverable = carts.filter((c: any) => !c.recovered).reduce((s: number, c: any) => s + (c.total ?? 0), 0);
 
   // #21: first image + category slug per SKU — powers the thumbnails and the "View product" links.
   const allSkus = Array.from(new Set(
@@ -62,11 +64,28 @@ export default async function Abandoned() {
   return (
     <main className="p-8 bg-cream/40 min-h-screen max-w-4xl">
       <h1 className="font-display text-4xl text-ink mb-1">Abandoned Carts</h1>
-      <p className="text-sm text-muted mb-3">Shoppers who added to bag but didn&apos;t buy. <span className="text-emerald font-medium">{formatPaise(recoverable)}</span> recoverable — nudge them on WhatsApp. Tap a cart to see full product &amp; customer detail. Use <b>✕</b> on any card to remove an irrelevant one.</p>
-      <div className="mb-5 flex flex-wrap items-center gap-3">{carts.length > 0 && <BulkWhatsAppButton carts={carts as any} />}<ClearAnonCartsButton />{carts.length > 0 && <AbandonedCartsPdfButton carts={carts as any} imgMap={imgMap} />}</div>
+      <p className="text-sm text-muted mb-3">Shoppers who added to bag but didn&apos;t buy. <span className="text-emerald font-medium">{formatPaise(recoverable)}</span> recoverable — nudge them on WhatsApp. Search by the <b>last 4 digits</b> of the visitor&apos;s phone (India, Mauritius, US — any country). Tap a cart to see full product &amp; customer detail. Use <b>✕</b> on any card to remove an irrelevant one.</p>
+      <form action="/admin/abandoned" method="get" className="mb-4 flex flex-wrap gap-2">
+        <input
+          name="q"
+          type="search"
+          defaultValue={q}
+          autoComplete="off"
+          placeholder="Last 4 of phone, full number, or name…"
+          className="rounded-xl border border-sand bg-white px-4 py-2 text-sm outline-none focus:border-emerald flex-1 min-w-[220px]"
+        />
+        <button type="submit" className="px-4 py-2 rounded-xl bg-ink text-white text-sm">Find cart</button>
+        {q && <Link href="/admin/abandoned" className="px-3 py-2 text-sm text-muted hover:text-ink">Clear</Link>}
+      </form>
+      {q && (
+        <p className="text-xs text-muted mb-3">
+          {carts.length} cart{carts.length === 1 ? "" : "s"} matching <span className="font-mono text-ink">“{q}”</span>
+        </p>
+      )}
+      <div className="mb-5 flex flex-wrap items-center gap-3">{carts.filter((c: any) => !c.recovered).length > 0 && <BulkWhatsAppButton carts={carts.filter((c: any) => !c.recovered) as any} />}<ClearAnonCartsButton />{carts.length > 0 && <AbandonedCartsPdfButton carts={carts as any} imgMap={imgMap} />}</div>
 
       <div className="space-y-3">
-        {carts.length === 0 && <p className="text-sm text-muted">No abandoned carts.</p>}
+        {carts.length === 0 && <p className="text-sm text-muted">{q ? "No cart for those last digits — they may not have added to bag, or the number is stored differently. Try the full number." : "No abandoned carts."}</p>}
         {carts.map((c: any) => (
           <AbandonedCartCard key={c.id} cart={c} imgMap={imgMap} slugMap={slugMap} />
         ))}

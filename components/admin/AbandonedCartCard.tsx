@@ -10,7 +10,7 @@ import { deleteAbandonedCartAction } from "@/app/actions/abandoned";
 import { openAbandonedCartsPdf } from "@/lib/abandonedCartPdf";
 
 type Item = { sku?: string; name: string; qty: number; price: number };
-type Cart = { id: string; session_id?: string | null; customer_name?: string | null; phone?: string | null; total: number; created_at: string; items: Item[]; channel?: string | null; reached_checkout?: boolean | null };
+type Cart = { id: string; session_id?: string | null; customer_name?: string | null; phone?: string | null; total: number; created_at: string; items: Item[]; channel?: string | null; reached_checkout?: boolean | null; recovered?: boolean | null };
 
 const agoText = (d: string) => {
   const h = Math.round((Date.now() - new Date(d).getTime()) / 3600000);
@@ -71,7 +71,8 @@ export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMa
           {cart.customer_name || "Anonymous visitor"}
           {isWholesale && <span className="ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-wine/10 text-wine align-middle">WHOLESALE</span>}
           {cart.reached_checkout && <span className="ml-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald text-white align-middle">REACHED PAYMENT</span>}
-          <span className="text-xs text-muted"> · {agoText(cart.created_at)} · {totalQty} item{totalQty === 1 ? "" : "s"}</span>
+          {cart.recovered && <span className="ml-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-ink/80 text-white align-middle">ALREADY BILLED</span>}
+          <span className="text-xs text-muted"> · {agoText(cart.created_at)} · {totalQty} item{totalQty === 1 ? "" : "s"}{phone ? ` · …${phone.slice(-4)}` : ""}</span>
         </p>
         <div className="text-right shrink-0 flex items-start gap-2">
           <div>
