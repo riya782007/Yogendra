@@ -4,7 +4,9 @@ import { unstable_cache } from "next/cache";
 import { supabaseServer } from "./server";
 import type { PricingFormula } from "../pricing";
 import { cleanTiers } from "../pricing";
+import { isCodOrder, isPrepaidOrder } from "../orderPayment";
 import { phoneDigits, recordMatchesShopperQuery } from "../phone";
+import { scoreQuery } from "../search";
 
 /**
  * PostgREST caps every select at 1000 rows (the `max-rows` default). With a 4000+ product
@@ -1274,7 +1276,7 @@ export async function getPendingHeldOrders(limit = 60) {
   const sb = supabaseServer();
   const { data } = await sb
     .from("orders")
-    .select("id, invoice_no, customer_name, channel, is_backorder, cod_hold, payment_mode, created_at, order_items(qty, unit_price, variant:variants(color), product:products(sku,name))")
+    .select("id, invoice_no, customer_name, channel, is_backorder, cod_hold, payment_mode, amount_paid, total, created_at, order_items(qty, unit_price, variant:variants(color), product:products(sku,name))")
     // This page is for BACKORDERS and true COD holds only. Prepaid orders are now also held until accepted,
     // but they live in the storefront "pack & ship" box (accepted there) — don't repeat them on the COD page.
     .or("is_backorder.eq.true,and(cod_hold.eq.true,payment_mode.eq.cod)")
@@ -1294,7 +1296,9 @@ export async function getPendingHeldOrders(limit = 60) {
       color: (li.variant?.color as string | null) ?? null, unitPrice: (li.unit_price as number | null) ?? null,
     })),
     qty: ((o.order_items as any[]) ?? []).reduce((s, li) => s + (li.qty ?? 0), 0),
-  })).filter((o) => o.lines.length > 0);
+    _keep: o.is_backorder === true || isCodOrder(o),
+  })).filter((o) => o.lines.length > 0 && o._keep)
+    .map(({ _keep, ...o }) => o);
 }
 
 // ---------- Product Stock Ledger (SAP/Zoho-style per-SKU inventory history) ----------
@@ -1755,9 +1759,10 @@ export async function getStorefrontOrderAlerts(limit = 12): Promise<StorefrontOr
       // are not moving out from here"). A new order has status 'completed' but NO fulfilment set yet.
       !["cancelled", "refunded", "dispatched", "delivered", "shipped"].includes(String(o.status ?? "").toLowerCase())
       && ["", "new", "pending"].includes(String(o.fulfillment ?? "").toLowerCase())
-      // Wholesale PREPAID orders live in their own "Wholesale payments to verify" box (with Accept/Reject),
-      // so don't repeat them here. This box is for orders with no other home: all retail, plus wholesale-COD.
-      && (o.channel === "retail" || String(o.payment_mode ?? "").toLowerCase() === "cod"))
+      // Prepaid only — COD has its own /admin/cod queue. Wholesale PREPAID lives in
+      // "Wholesale payments to verify", so this box is retail prepaid that still needs packing.
+      && isPrepaidOrder(o)
+      && (o.channel === "retail"))
     .slice(0, limit) as StorefrontOrderRow[];
 }
 
@@ -2418,24 +2423,106 @@ export async function getPurchaseById(id: string) {
 // catalogue each time — so searching felt as slow as a cold shop load. The in-stock catalogue is identical
 // for every shopper, so cache it (5 min, refreshed instantly by the "storefront" tag on any stock/price/
 // product edit) and just filter in memory. Search is now near-instant.
+function asSearchList(v: unknown): string[] {
+  if (Array.isArray(v)) return v.map((x) => String(x)).map((s) => s.trim()).filter(Boolean);
+  if (typeof v === "string" && v.trim()) {
+    try {
+      const parsed = JSON.parse(v);
+      if (Array.isArray(parsed)) return asSearchList(parsed);
+    } catch { /* plain string tag */ }
+    return [v.trim()];
+  }
+  return [];
+}
+
+type StoreSearchExtra = {
+  title: string; tags: string[]; keywords: string[];
+  colors: string[]; subcategory: string; style: string;
+};
+
+/** Slim per-product text the matcher needs beyond the storefront card (AI title/tags, colours, sub/style). */
+async function loadStorefrontSearchExtras(): Promise<Record<string, StoreSearchExtra>> {
+  const sb = supabaseServer();
+  const RICH =
+    "id,subcategory_id,style_id,gc_title:generated_content->>title,gc_tags:generated_content->tags,gc_kw:generated_content->seo->keywords";
+  const BASIC = "id,subcategory_id,style_id";
+  const first = await sb.from("products").select(RICH).eq("status", "published").range(0, 999);
+  let rows: any[];
+  const useRich = !first.error;
+  if (!useRich) {
+    rows = await fetchAll((f, t) => sb.from("products").select(BASIC).eq("status", "published").range(f, t));
+  } else {
+    rows = [...((first.data as any[]) ?? [])];
+    for (let from = 1000; rows.length === from; from += 1000) {
+      const nx = await sb.from("products").select(RICH).eq("status", "published").range(from, from + 999);
+      const chunk = (nx.data as any[]) ?? [];
+      rows.push(...chunk);
+      if (chunk.length < 1000) break;
+    }
+  }
+  const [vars, subsRes, stylesRes] = await Promise.all([
+    fetchAll((f, t) => sb.from("variants").select("product_id,color").range(f, t)),
+    sb.from("subcategories").select("id,name"),
+    sb.from("styles").select("id,name"),
+  ]);
+  const subBy = new Map<string, string>(((subsRes.data as any[]) ?? []).map((s) => [s.id, String(s.name ?? "")]));
+  const styleBy = new Map<string, string>((stylesRes.error ? [] : ((stylesRes.data as any[]) ?? [])).map((s) => [s.id, String(s.name ?? "")]));
+  const colorsBy = new Map<string, Set<string>>();
+  for (const v of vars as any[]) {
+    const c = String(v.color ?? "").trim();
+    if (!c) continue;
+    let set = colorsBy.get(v.product_id);
+    if (!set) { set = new Set(); colorsBy.set(v.product_id, set); }
+    set.add(c);
+  }
+  const out: Record<string, StoreSearchExtra> = {};
+  for (const r of rows) {
+    const gc = r.generated_content && typeof r.generated_content === "object" ? r.generated_content : {};
+    out[r.id] = {
+      title: String(r.gc_title ?? gc.title ?? ""),
+      tags: asSearchList(r.gc_tags ?? gc.tags),
+      keywords: asSearchList(r.gc_kw ?? gc.seo?.keywords),
+      colors: [...(colorsBy.get(r.id) ?? [])],
+      subcategory: subBy.get(r.subcategory_id) ?? "",
+      style: styleBy.get(r.style_id) ?? "",
+    };
+  }
+  return out;
+}
+
 const getSearchCatalogue = unstable_cache(
-  () => getStorefront({ onlyInStock: true }),
-  ["search-catalogue-instock"],
+  async () => {
+    const [{ products, formula }, extras] = await Promise.all([
+      getStorefront({ onlyInStock: true }),
+      loadStorefrontSearchExtras(),
+    ]);
+    return { products, formula, extras };
+  },
+  ["search-catalogue-instock-v2"],
   { revalidate: 300, tags: ["storefront"] },
 );
 
 export async function searchProducts(q: string) {
-  const { products, formula } = await getSearchCatalogue();
-  // Match EVERY word the shopper typed, in any order (name + category + sku), so "prisha gold watch"
-  // finds "Prisha Floral Design Gold Watch" — a single contiguous match would miss it.
-  const tokens = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const results = tokens.length
-    ? products.filter((p) => {
-        const hay = (p.name + " " + p.category.name + " " + p.sku).toLowerCase();
-        return tokens.every((t) => hay.includes(t));
-      })
-    : [];
-  return { formula, results };
+  const { products, formula, extras } = await getSearchCatalogue();
+  const needle = q.trim();
+  if (!needle) return { formula, results: [] as typeof products };
+  const scored = products.map((p: any) => {
+    const x = extras?.[p.id] ?? { title: "", tags: [] as string[], keywords: [] as string[], colors: [] as string[], subcategory: "", style: "" };
+    const s = scoreQuery({
+      sku: p.sku,
+      name: p.name,
+      category: p.category?.name ?? "",
+      subcategory: x.subcategory,
+      style: x.style,
+      colors: x.colors,
+      tags: x.tags,
+      keywords: x.keywords,
+      title: x.title,
+    }, needle);
+    return { p, s };
+  }).filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s || String(a.p.name).localeCompare(String(b.p.name)));
+  return { formula, results: scored.map((x) => x.p) };
 }
 
 // ---------- RBAC ----------
