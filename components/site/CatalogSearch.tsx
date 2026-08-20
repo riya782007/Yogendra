@@ -29,10 +29,15 @@ export function CatalogSearch({
   suggestions,
   view,
   initialQuery = "",
+  manage = false,
+  basePath = "/catalog",
 }: {
   suggestions: Suggestions;
   view: "retail" | "wholesale";
   initialQuery?: string;
+  manage?: boolean;
+  /** Where search navigates (public catalogue vs admin composer). */
+  basePath?: string;
 }) {
   const router = useRouter();
   const [term, setTerm] = useState(initialQuery);
@@ -47,7 +52,9 @@ export function CatalogSearch({
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  const viewQ = view === "wholesale" ? "&view=wholesale" : "";
+  const viewQ = view === "wholesale" ? "&view=wholesale" : (basePath.startsWith("/admin") ? "&view=retail" : "");
+  const manageQ = manage ? "&manage=1" : "";
+  const extra = viewQ + manageQ;
 
   const hits = useMemo<Hit[]>(() => {
     const q = term.trim().toLowerCase();
@@ -76,10 +83,10 @@ export function CatalogSearch({
 
   function go(hit: Hit) {
     setOpen(false);
-    if (hit.kind === "product") router.push(`/catalog?skus=${encodeURIComponent(hit.sku)}${viewQ}`);
-    else if (hit.kind === "category") router.push(`/catalog?category=${encodeURIComponent(hit.slug)}${viewQ}`);
-    else if (hit.kind === "colour") router.push(`/catalog?q=${encodeURIComponent(hit.label)}${viewQ}`);
-    else router.push(`/catalog?q=${encodeURIComponent(hit.label)}${viewQ}`);
+    if (hit.kind === "product") router.push(`${basePath}?skus=${encodeURIComponent(hit.sku)}${extra}`);
+    else if (hit.kind === "category") router.push(`${basePath}?category=${encodeURIComponent(hit.slug)}${extra}`);
+    else if (hit.kind === "colour") router.push(`${basePath}?q=${encodeURIComponent(hit.label)}${extra}`);
+    else router.push(`${basePath}?q=${encodeURIComponent(hit.label)}${extra}`);
   }
 
   function onKeyDown(e: React.KeyboardEvent) {
@@ -111,7 +118,7 @@ export function CatalogSearch({
           aria-label="Search the catalogue"
         />
         {term && (
-          <button type="button" onClick={() => { setTerm(""); setOpen(false); router.push(`/catalog${view === "wholesale" ? "?view=wholesale" : ""}`); }} className="text-muted hover:text-ink text-sm" aria-label="Clear search">✕</button>
+          <button type="button" onClick={() => { setTerm(""); setOpen(false); router.push(`${basePath}${extra ? `?${extra.slice(1)}` : ""}`); }} className="text-muted hover:text-ink text-sm" aria-label="Clear search">✕</button>
         )}
       </div>
 

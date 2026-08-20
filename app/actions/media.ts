@@ -55,7 +55,7 @@ export async function uploadStorefrontPhotoAction(formData: FormData): Promise<{
   await sb.from("product_images").insert({ product_id: productId, path: pub.publicUrl, kind: "model", sort: -10 });
   await sb.from("products").update({ status: "published" }).eq("id", productId).eq("status", "draft");
   const slug = (p as any).category?.slug;
-  revalidatePath("/admin/media"); revalidatePath(`/admin/media/${productId}`); revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidateTag("storefront");
+  revalidatePath("/admin/media"); revalidatePath(`/admin/media/${productId}`); revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidatePath("/catalog"); revalidateTag("storefront");
   if (slug) revalidatePath(`/shop/${slug}/${sku}`);
   return { ok: true, url: pub.publicUrl };
 }
@@ -71,7 +71,7 @@ export async function deleteProductImageAction(formData: FormData) {
   if (img && (img as any).product_id && (img as any).path) {
     await sb.from("products").update({ thumbnail_path: null }).eq("id", (img as any).product_id).eq("thumbnail_path", (img as any).path);
   }
-  revalidatePath("/admin/media"); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/admin/catalogue/[sku]", "page");
+  revalidatePath("/admin/media"); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/catalog"); revalidatePath("/admin/catalogue/[sku]", "page");
 }
 
 export async function setHeroImageAction(formData: FormData) {
@@ -81,5 +81,5 @@ export async function setHeroImageAction(formData: FormData) {
   const sb = supabaseServer();
   await sb.from("product_images").update({ sort: 2 }).eq("product_id", productId);
   await sb.from("product_images").update({ sort: -10 }).eq("id", id);
-  revalidatePath("/admin/media"); revalidatePath("/shop"); revalidateTag("storefront");
+  revalidatePath("/admin/media"); revalidatePath("/shop"); revalidatePath("/catalog"); revalidateTag("storefront");
 }

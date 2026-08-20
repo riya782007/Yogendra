@@ -29,7 +29,15 @@ export async function createCategoryAction(formData: FormData) {
 export async function setDefaultVariantAction(productId: string, variantId: string | null): Promise<{ ok: boolean; error?: string }> {
   if (!(await requirePerm("catalog.edit"))) return { ok: false, error: "Your role can't edit the catalogue." };
   const sb = supabaseServer();
-  const { error } = await sb.from("products").update({ default_variant_id: variantId }).eq("id", productId);
+  const patch: Record<string, unknown> = { default_variant_id: variantId };
+  // Starring a colour also pins its lead photo as the catalogue/storefront cover, so Share Catalogue
+  // shows the same picture the owner just chose (previously catalog ignored default_variant_id).
+  if (variantId) {
+    const { data: v } = await sb.from("variants").select("image_paths").eq("id", variantId).eq("product_id", productId).maybeSingle();
+    const img = (Array.isArray((v as any)?.image_paths) ? (v as any).image_paths : []).find((x: string) => typeof x === "string" && x.startsWith("http"));
+    if (img) patch.thumbnail_path = img;
+  }
+  const { error } = await sb.from("products").update(patch).eq("id", productId);
   if (error) return { ok: false, error: /default_variant_id/.test(error.message) ? "One-time setup: run migration 0047 (default_variant_id column)." : error.message };
   revalidatePath("/admin/products/" + productId); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/catalog");
   return { ok: true };
