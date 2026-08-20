@@ -4,6 +4,7 @@ import { unstable_cache } from "next/cache";
 import { supabaseServer } from "./server";
 import type { PricingFormula } from "../pricing";
 import { cleanTiers } from "../pricing";
+import { phoneDigits, recordMatchesShopperQuery } from "../phone";
 import { scoreQuery } from "../search";
 
 /**
@@ -2642,11 +2643,22 @@ export async function getPendingWholesalePayments(): Promise<{
     }),
   }));
 }
-export async function getAbandonedCarts() {
+export async function getAbandonedCarts(opts?: { search?: string }) {
   const sb = supabaseServer();
+  const search = (opts?.search ?? "").trim();
   // Surface carts gone quiet for 20+ min (a shopper still browsing isn't "abandoned" yet) — OR any cart
   // that REACHED CHECKOUT (finalised), which the owner wants to see immediately so he can close it.
   const idleSince = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+
+  if (search) {
+    // Last-4 / name search must see LIVE carts (still on the site) and recovered ones (already billed)
+    // — otherwise typing the number the owner has returns an empty list.
+    const all = await fetchAll((f, t) =>
+      sb.from("abandoned_carts").select("*").order("updated_at", { ascending: false }).range(f, t),
+    );
+    return all.filter((c) => recordMatchesShopperQuery({ phone: c.phone, customer_name: c.customer_name }, search));
+  }
+
   let res = await sb.from("abandoned_carts")
     .select("*").eq("recovered", false).or(`updated_at.lt.${idleSince},reached_checkout.eq.true`)
     .order("updated_at", { ascending: false });
@@ -2658,7 +2670,7 @@ export async function getAbandonedCarts() {
   // Only surface carts the owner can actually ACT on — a cart with no phone is un-contactable and just
   // clutters the list (owner: "no cart without contact — warna iska koi sense nahi"). This is the final
   // guard; the trackers also avoid saving phone-less carts, but this ensures the admin list is always clean.
-  return ((data as any[]) ?? []).filter((c) => String(c?.phone ?? "").replace(/\D/g, "").length >= 7);
+  return ((data as any[]) ?? []).filter((c) => phoneDigits(c?.phone).length >= 7);
 }
 export async function getSitemapData() {
   const sb = supabaseServer();
