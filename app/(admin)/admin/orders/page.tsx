@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 /**
  * Storefront Orders — the owner's dedicated queue for WEBSITE orders (retail + wholesale panel),
  * separate from the POS sales register ("sales me wo samajh nahi ayega"). Every new order shows
- * prepaid/COD, the customer's details + delivery address and the exact items, with one-tap
+ * prepaid/online only (COD has its own queue), the customer's details + delivery address and the exact items, with one-tap
  * ACCEPT (confirms + WhatsApps the customer) or REJECT (cancels properly: restock + revenue
  * reversal + customer notified).
  */
@@ -10,6 +10,7 @@ import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase/server";
 import { formatPaise } from "@/lib/pricing";
 import { acceptStorefrontOrderAction, rejectStorefrontOrderAction, dispatchStorefrontOrderAction, deliverStorefrontOrderAction } from "@/app/actions/orders";
+import { isPrepaidOrder } from "@/lib/orderPayment";
 
 export const metadata = { title: "Owner Console · Storefront Orders" };
 
@@ -33,7 +34,7 @@ export default async function StorefrontOrders({ searchParams }: { searchParams?
       ? await q.is("fulfillment", null).neq("status", "cancelled")
       : await q.not("fulfillment", "is", null);
     if (error && /fulfillment/i.test(error.message ?? "")) migrationMissing = true;
-    rows = (data as any[]) ?? [];
+    rows = ((data as any[]) ?? []).filter((r) => isPrepaidOrder(r));
   }
 
   // Thumbnails per item — the order used to show a cramped comma-line of names ("list with images"
@@ -65,7 +66,7 @@ export default async function StorefrontOrders({ searchParams }: { searchParams?
   return (
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
       <h1 className="font-display text-4xl text-ink mb-1">Storefront Orders</h1>
-      <p className="text-sm text-muted mb-4">Website orders (shop + wholesale panel) — separate from POS sales. Accept to confirm &amp; pack; Reject cancels the bill, restocks and informs the customer.</p>
+      <p className="text-sm text-muted mb-4">Prepaid website orders (shop + wholesale panel) — separate from POS sales and from COD. Cash-on-Delivery lives only under <Link href="/admin/cod" className="text-emerald nav-link">COD Orders</Link>. Accept to confirm &amp; pack; Reject cancels the bill, restocks and informs the customer.</p>
 
       {migrationMissing ? (
         <div className="rounded-2xl border border-gold/40 bg-gold/10 p-5 text-sm text-ink">
@@ -93,8 +94,8 @@ export default async function StorefrontOrders({ searchParams }: { searchParams?
                       <div className="flex flex-wrap items-center gap-2">
                         <Link href={`/admin/invoice/${r.id}`} className="text-emerald nav-link font-medium">{r.invoice_no || String(r.id).slice(0, 8).toUpperCase()} ↗</Link>
                         <span className={`px-2 py-0.5 rounded-full text-xs capitalize ${CH_STYLE[r.channel] ?? "bg-cream text-muted"}`}>{r.channel}</span>
-                        <span className={`px-2 py-0.5 rounded-full text-xs ${prepaid ? "bg-emerald-mist text-emerald-dark" : "bg-gold/15 text-gold-dark"}`}>
-                          {prepaid ? "PREPAID ✓" : r.payment_mode === "cod" ? "COD — collect on delivery" : paid > 0 ? `Part-paid ${formatPaise(paid)}` : "Unpaid"}
+                        <span className={`px-2 py-0.5 rounded-full text-xs ${prepaid ? "bg-emerald-mist text-emerald-dark" : paid > 0 ? "bg-gold/15 text-gold-dark" : "bg-gold/15 text-gold-dark"}`}>
+                          {prepaid ? "PREPAID ✓" : paid > 0 ? `Part-paid ${formatPaise(paid)}` : "Unpaid — prepaid"}
                         </span>
                         {r.payment_ref && <span className="text-[11px] text-muted font-mono">ref {r.payment_ref}</span>}
                         {r.status === "cancelled" && <span className="px-2 py-0.5 rounded-full text-xs bg-rose/10 text-rose">Cancelled</span>}

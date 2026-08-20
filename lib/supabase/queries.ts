@@ -4,6 +4,7 @@ import { unstable_cache } from "next/cache";
 import { supabaseServer } from "./server";
 import type { PricingFormula } from "../pricing";
 import { cleanTiers } from "../pricing";
+import { isCodOrder, isPrepaidOrder } from "../orderPayment";
 
 /**
  * PostgREST caps every select at 1000 rows (the `max-rows` default). With a 4000+ product
@@ -1273,7 +1274,7 @@ export async function getPendingHeldOrders(limit = 60) {
   const sb = supabaseServer();
   const { data } = await sb
     .from("orders")
-    .select("id, invoice_no, customer_name, channel, is_backorder, cod_hold, payment_mode, created_at, order_items(qty, unit_price, variant:variants(color), product:products(sku,name))")
+    .select("id, invoice_no, customer_name, channel, is_backorder, cod_hold, payment_mode, amount_paid, total, created_at, order_items(qty, unit_price, variant:variants(color), product:products(sku,name))")
     // This page is for BACKORDERS and true COD holds only. Prepaid orders are now also held until accepted,
     // but they live in the storefront "pack & ship" box (accepted there) — don't repeat them on the COD page.
     .or("is_backorder.eq.true,and(cod_hold.eq.true,payment_mode.eq.cod)")
@@ -1293,7 +1294,9 @@ export async function getPendingHeldOrders(limit = 60) {
       color: (li.variant?.color as string | null) ?? null, unitPrice: (li.unit_price as number | null) ?? null,
     })),
     qty: ((o.order_items as any[]) ?? []).reduce((s, li) => s + (li.qty ?? 0), 0),
-  })).filter((o) => o.lines.length > 0);
+    _keep: o.is_backorder === true || isCodOrder(o),
+  })).filter((o) => o.lines.length > 0 && o._keep)
+    .map(({ _keep, ...o }) => o);
 }
 
 // ---------- Product Stock Ledger (SAP/Zoho-style per-SKU inventory history) ----------
@@ -1754,9 +1757,10 @@ export async function getStorefrontOrderAlerts(limit = 12): Promise<StorefrontOr
       // are not moving out from here"). A new order has status 'completed' but NO fulfilment set yet.
       !["cancelled", "refunded", "dispatched", "delivered", "shipped"].includes(String(o.status ?? "").toLowerCase())
       && ["", "new", "pending"].includes(String(o.fulfillment ?? "").toLowerCase())
-      // Wholesale PREPAID orders live in their own "Wholesale payments to verify" box (with Accept/Reject),
-      // so don't repeat them here. This box is for orders with no other home: all retail, plus wholesale-COD.
-      && (o.channel === "retail" || String(o.payment_mode ?? "").toLowerCase() === "cod"))
+      // Prepaid only — COD has its own /admin/cod queue. Wholesale PREPAID lives in
+      // "Wholesale payments to verify", so this box is retail prepaid that still needs packing.
+      && isPrepaidOrder(o)
+      && (o.channel === "retail"))
     .slice(0, limit) as StorefrontOrderRow[];
 }
 
