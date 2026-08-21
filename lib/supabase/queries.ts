@@ -4,7 +4,7 @@ import { unstable_cache } from "next/cache";
 import { supabaseServer } from "./server";
 import type { PricingFormula } from "../pricing";
 import { cleanTiers } from "../pricing";
-import { isCodOrder, isPrepaidOrder } from "../orderPayment";
+import { isCodOrder, isPendingCodQueue, isPrepaidOrder } from "../orderPayment";
 import { phoneDigits, recordMatchesShopperQuery } from "../phone";
 import { scoreQuery } from "../search";
 
@@ -1206,6 +1206,18 @@ export async function getStockMovements(opts: { page?: number; pageSize?: number
     const { data: ests } = await sb.from("estimates").select("id,customer_name").in("id", estimateRefs as string[]);
     for (const e of ((ests as any[]) ?? [])) if (e.customer_name) partyBy.set(e.id, e.customer_name);
   }
+  const unresolvedHold = estimateRefs.filter((id) => id && !partyBy.has(id as string));
+  if (unresolvedHold.length) {
+    const { data: ords } = await sb.from("orders").select("id,invoice_no,customer_name").in("id", unresolvedHold as string[]);
+    const byId = new Map(((ords as any[]) ?? []).map((o) => [o.id, o]));
+    for (const r of rows) {
+      if (r.kind !== "reserve" || !r.ref_id) continue;
+      const o = byId.get(r.ref_id);
+      if (!o) continue;
+      r.invoice_no = o.invoice_no ?? r.invoice_no ?? null;
+      if (o.customer_name) partyBy.set(r.ref_id, o.customer_name);
+    }
+  }
   for (const r of rows) r.party = r.ref_id ? (partyBy.get(r.ref_id) ?? null) : null;
 
   // PRICE per movement — the owner checks "what did I sell/buy this at last time" from this very
@@ -1266,20 +1278,17 @@ export async function getOpenEstimateReservations(limit = 50) {
 }
 
 /**
- * PENDING HELD ORDERS — backorders and COD-hold orders are committed to a customer but their stock has
- * NOT been deducted yet (it only moves when the owner fulfils/dispatches). So they never appear as a
- * stock_adjustments row, which confused the owner ("backorder is not visible in stock movement"). This
- * surfaces them as pending stock-OUT holds on the Stock Movement page, exactly like open-estimate
- * reservations — so every future outflow is visible in one place.
+ * PENDING BACKORDERS — still committed to a customer with stock NOT yet deducted (fulfilment is
+ * when it moves). COD holds now reserve for real (kind=reserve), so they already appear in the
+ * movement log — listing them here too would double-count. Backorders stay on this list.
  */
 export async function getPendingHeldOrders(limit = 60) {
   const sb = supabaseServer();
   const { data } = await sb
     .from("orders")
     .select("id, invoice_no, customer_name, channel, is_backorder, cod_hold, payment_mode, amount_paid, total, created_at, order_items(qty, unit_price, variant:variants(color), product:products(sku,name))")
-    // This page is for BACKORDERS and true COD holds only. Prepaid orders are now also held until accepted,
-    // but they live in the storefront "pack & ship" box (accepted there) — don't repeat them on the COD page.
-    .or("is_backorder.eq.true,and(cod_hold.eq.true,payment_mode.eq.cod)")
+    // Backorders only — COD holds now write real reserve movements, so repeating them here double-counts.
+    .eq("is_backorder", true)
     .neq("status", "cancelled")
     .order("created_at", { ascending: false })
     .limit(limit);
@@ -1296,7 +1305,7 @@ export async function getPendingHeldOrders(limit = 60) {
       color: (li.variant?.color as string | null) ?? null, unitPrice: (li.unit_price as number | null) ?? null,
     })),
     qty: ((o.order_items as any[]) ?? []).reduce((s, li) => s + (li.qty ?? 0), 0),
-    _keep: o.is_backorder === true || isCodOrder(o),
+    _keep: o.is_backorder === true,
   })).filter((o) => o.lines.length > 0 && o._keep)
     .map(({ _keep, ...o }) => o);
 }
@@ -1420,13 +1429,24 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   if (purchaseRefs.length) { const { data } = await sb.from("purchases").select("id,bill_no, supplier:suppliers(name)").in("id", purchaseRefs as string[]); for (const o of (data as any[]) ?? []) { billBy.set(o.id, o.bill_no); if (o.supplier?.name) partyBy.set(o.id, o.supplier.name); } }
   const estPartyRefs = [...new Set([...estimateRefs, ...reserveRefs])];
   if (estPartyRefs.length) { const { data } = await sb.from("estimates").select("id,customer_name").in("id", estPartyRefs as string[]); for (const o of (data as any[]) ?? []) { if (o.customer_name) partyBy.set(o.id, o.customer_name); } }
+  const unresolvedReserve = reserveRefs.filter((id) => id && !partyBy.has(id as string));
+  if (unresolvedReserve.length) {
+    const { data } = await sb.from("orders").select("id,invoice_no,customer_name").in("id", unresolvedReserve as string[]);
+    for (const o of (data as any[]) ?? []) {
+      invoiceBy.set(o.id, o.invoice_no);
+      if (o.customer_name) partyBy.set(o.id, o.customer_name);
+    }
+  }
 
   const docFor = (r: any): { href: string; label: string } | null => {
     if (!r.ref_id) return null;
     if (r.kind === "sale") return { href: `/admin/invoice/${r.ref_id}`, label: "Open invoice →" };
     if (r.kind === "purchase") return { href: `/admin/purchase/${r.ref_id}`, label: "Open purchase →" };
     if (r.kind === "estimate") return { href: `/admin/estimate/${r.ref_id}`, label: "Open estimate →" };
-    if (r.kind === "reserve") return { href: `/admin/estimate/${r.ref_id}`, label: "Open held estimate →" };
+    if (r.kind === "reserve") {
+      if (invoiceBy.has(r.ref_id)) return { href: `/admin/invoice/${r.ref_id}`, label: "Open held order →" };
+      return { href: `/admin/estimate/${r.ref_id}`, label: "Open held estimate →" };
+    }
     if (r.kind === "return" || r.kind === "purchase_return") return { href: `/admin/returns`, label: "Open return →" };
     return null;
   };
@@ -1662,8 +1682,36 @@ export type StudioData = NonNullable<Awaited<ReturnType<typeof getStudioData>>>;
 import { classify, type InventoryRule, DEFAULT_RULE } from "../inventory";
 import { computePrices, type PricingFormula as PF } from "../pricing";
 
+export type PendingCodOrder = {
+  id: string; invoice_no: string | null; customer_name: string | null; customer_phone: string | null;
+  total: number; created_at: string; channel: string | null;
+};
+
+/** Unpaid COD still held — the owner dashboard "COD waiting" panel. */
+export async function getPendingCodOrders(limit = 20): Promise<PendingCodOrder[]> {
+  const sb = supabaseServer();
+  const { data } = await sb
+    .from("orders")
+    .select("id,invoice_no,customer_name,customer_phone,total,amount_paid,payment_mode,cod_hold,status,channel,created_at")
+    .eq("cod_hold", true)
+    .order("created_at", { ascending: false })
+    .limit(80);
+  return ((data as any[]) ?? [])
+    .filter((r) => isPendingCodQueue(r))
+    .slice(0, limit)
+    .map((r) => ({
+      id: r.id as string,
+      invoice_no: (r.invoice_no as string | null) ?? null,
+      customer_name: (r.customer_name as string | null) ?? null,
+      customer_phone: (r.customer_phone as string | null) ?? null,
+      total: (r.total as number) ?? 0,
+      created_at: r.created_at as string,
+      channel: (r.channel as string | null) ?? null,
+    }));
+}
+
 export type DashboardData = {
-  revenue: number; orders: number; cod: number; pos: number;
+  revenue: number; orders: number; cod: number; pendingCod: number; pos: number;
   cashCollected: number; bankCollected: number;
   retailers: number; pendingApprovals: number;
   totalProducts: number; newProducts: number; categories: number;
@@ -1675,12 +1723,13 @@ export type DashboardData = {
 export async function getDashboardData(fromISO: string, toISO: string, rule: InventoryRule = DEFAULT_RULE): Promise<DashboardData> {
   const sb = supabaseServer();
   const now = new Date();
-  const [ordersRes, prods, catRes, retRes, apprRes] = await Promise.all([
+  const [ordersRes, prods, catRes, retRes, apprRes, pendingCodRows] = await Promise.all([
     sb.from("orders").select("total,channel,payment_mode,pay_cash,pay_bank,created_at,status,is_backorder").gte("created_at", fromISO).lte("created_at", toISO).or("is_backorder.is.null,is_backorder.eq.false").eq("cod_hold", false),
     fetchAll((f, t) => sb.from("products").select("sku,name,qty,last_movement_at,created_at,category:categories(name)").range(f, t)),
     sb.from("categories").select("id"),
     sb.from("retailers").select("id,approved"),
     sb.from("approvals").select("id,status"),
+    sb.from("orders").select("id,payment_mode,amount_paid,total,status,cod_hold").eq("cod_hold", true).neq("status", "cancelled").limit(300),
   ]);
   // Pending backorders (held, not sold) are already filtered above; also drop cancelled/refunded so
   // the dashboard revenue matches the sales record (owner: "revenue dikha raha hai but no stock movement").
@@ -1700,8 +1749,10 @@ export async function getDashboardData(fromISO: string, toISO: string, rule: Inv
   const healthy = classed.filter((p) => p.cls === "healthy");
   const newProducts = products.filter((p: any) => p.created_at >= fromISO && p.created_at <= toISO).length;
 
+  const pendingCod = ((pendingCodRows.data as any[]) ?? []).filter((o) => isPendingCodQueue(o)).length;
+
   return {
-    revenue, orders: orders.length, cod, pos, cashCollected, bankCollected,
+    revenue, orders: orders.length, cod, pendingCod, pos, cashCollected, bankCollected,
     retailers: (retRes.data ?? []).filter((r: any) => r.approved).length,
     pendingApprovals: (apprRes.data ?? []).filter((a: any) => a.status === "pending").length,
     totalProducts: products.length, newProducts, categories: (catRes.data ?? []).length,
@@ -1726,13 +1777,13 @@ export async function getPendingDealerApplications(limit = 10): Promise<DealerAp
   return ((data as any[]) ?? []) as DealerApplication[];
 }
 
-export type OrderAlertRow = { id: string; invoice_no: string | null; channel: string | null; status: string | null; total: number; amount_paid: number; customer_name: string | null; created_at: string };
+export type OrderAlertRow = { id: string; invoice_no: string | null; channel: string | null; status: string | null; total: number; amount_paid: number; customer_name: string | null; created_at: string; payment_mode?: string | null };
 /** Latest orders + a 24h count — powers the live "New Orders" panel + toast on the dashboard. */
 export async function getOrderAlerts(limit = 8): Promise<{ orders: OrderAlertRow[]; last24h: number }> {
   const sb = supabaseServer();
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const [listRes, cntRes] = await Promise.all([
-    sb.from("orders").select("id,invoice_no,channel,status,total,amount_paid,customer_name,created_at").order("created_at", { ascending: false }).limit(limit),
+    sb.from("orders").select("id,invoice_no,channel,status,total,amount_paid,customer_name,created_at,payment_mode").order("created_at", { ascending: false }).limit(limit),
     sb.from("orders").select("id", { count: "exact", head: true }).gte("created_at", since),
   ]);
   return { orders: ((listRes.data as any[]) ?? []) as OrderAlertRow[], last24h: cntRes.count ?? 0 };

@@ -271,9 +271,8 @@ async function placeWholesaleCore(
   // and hand them to the RPC, which applies the per-line discount as it records the order.
   const formula = await getPricingFormula().catch(() => null);
   const pTiers = (formula?.wholesaleTiers ?? []).map((t) => ({ min_qty: t.minQty, pct_off: t.pctOff }));
-  // HELD until accepted: a dealer's online order (COD or prepaid) must NOT touch stock or post revenue
-  // until the owner accepts it — COD on /admin/cod, prepaid via payment verification. This is the rule
-  // "online order jab tak accept na ho, koi stock movement nahi" — so rejecting one changes nothing.
+  // HELD until accepted: a dealer's online order RESERVES stock (no revenue) until the owner
+  // accepts it — COD on /admin/cod, prepaid via payment verification. Rejecting releases the hold.
   const { data, error } = await sb.rpc("place_wholesale_order", { p_customer: sess.id, p_items: clean, p_allow_oversell: false, p_tiers: pTiers, p_cod_hold: true });
   if (error) return { ok: false, error: error.message };
   const orderId = (data as any)?.order_id as string | undefined;
@@ -299,10 +298,7 @@ async function placeWholesaleCore(
     const itemsGst = Math.round(itemsOnly * (1 + GST_RATE / 100));
     // COD CEILING — high-value COD is risky, so wholesale orders above ₹5,000 must be prepaid.
     if (opts?.cod && itemsGst > 500000) {
-      // The order is held (no stock deducted, no revenue), so cancel_order would OVER-RESTOCK. Just
-      // delete the empty held shell instead.
-      await sb.from("order_items").delete().eq("order_id", orderId).then(() => {}, () => {});
-      await sb.from("orders").delete().eq("id", orderId).then(() => {}, () => {});
+      await sb.rpc("cancel_order", { p_order_id: orderId, p_reason: "Wholesale COD over ₹5,000 ceiling" }).then(() => {}, () => {});
       return { ok: false, error: "Cash on Delivery isn't available for orders above ₹5,000 — please pay online (prepaid)." };
     }
     const ship = wholesaleShippingPaise(itemsGst);
@@ -341,10 +337,8 @@ async function placeWholesaleCore(
     } catch (e) { console.warn("[wholesale] owner notify failed:", (e as any)?.message); }
   }
 
-  revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard");
-  // A PREPAID wholesale order deducts the same shared stock, so a design that just sold out must also
-  // drop off the retail shop. (A COD order is only held — its refresh happens when the owner confirms it.)
-  if (!opts?.cod) revalidateTag("storefront");
+  revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard"); revalidatePath("/admin/cod");
+  revalidateTag("storefront");
   return { ok: true, orderId, total };
 }
 

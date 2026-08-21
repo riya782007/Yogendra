@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useToast } from "@/components/ui/Toast";
 import { formatPaise } from "@/lib/pricing";
 
-type O = { id: string; invoice_no: string | null; channel: string | null; status: string | null; total: number; amount_paid: number; customer_name: string | null; created_at: string };
+type O = { id: string; invoice_no: string | null; channel: string | null; status: string | null; total: number; amount_paid: number; customer_name: string | null; created_at: string; payment_mode?: string | null };
 const CH: Record<string, string> = { retail: "Online", wholesale: "Wholesale", pos: "Counter" };
 const timeAgo = (iso: string) => {
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
@@ -55,6 +55,7 @@ export function OrderNotifications({ initial }: { initial: { orders: O[]; last24
           {last24h > 0 && <span className="text-[11px] font-semibold rounded-full bg-rose text-white px-2 py-0.5">{last24h} in 24h</span>}
           <span className="ml-1 flex items-center gap-1 text-[10px] text-emerald-dark"><span className="h-1.5 w-1.5 rounded-full bg-emerald-light animate-pulse" />live</span>
         </div>
+        <Link href="/admin/cod" className="text-sm text-emerald nav-link mr-3">COD →</Link>
         <Link href="/admin/orders" className="text-sm text-emerald nav-link">View all →</Link>
       </div>
       {orders.length === 0 ? (
@@ -63,11 +64,14 @@ export function OrderNotifications({ initial }: { initial: { orders: O[]; last24
         <ul className="divide-y divide-sand/70">
           {orders.map((o) => {
             const isNew = Date.now() - new Date(o.created_at).getTime() < 6 * 3600 * 1000;
+            const isCod = String(o.payment_mode ?? "").toLowerCase() === "cod" && (o.amount_paid ?? 0) < (o.total ?? 0);
             return (
               <li key={o.id} className="py-2.5 flex items-center gap-3">
                 <span className={`h-2 w-2 rounded-full shrink-0 ${isNew ? "bg-rose animate-pulse" : "bg-sand"}`} />
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm text-ink truncate">{o.customer_name || "Guest"} <span className="text-muted">· {CH[o.channel || ""] || o.channel || "—"}</span></p>
+                  <p className="text-sm text-ink truncate">{o.customer_name || "Guest"} <span className="text-muted">· {CH[o.channel || ""] || o.channel || "—"}</span>
+                    {isCod && <span className="ml-1 text-[10px] font-semibold uppercase tracking-wide text-gold-dark">COD</span>}
+                  </p>
                   <p className="text-[11px] text-muted">{o.invoice_no ? `#${o.invoice_no} · ` : ""}{timeAgo(o.created_at)}{o.status ? ` · ${o.status}` : ""}</p>
                 </div>
                 <div className="text-right shrink-0">

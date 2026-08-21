@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isCodOrder, isCodPaymentMode, isFullyPaid, isPrepaidOrder } from "../lib/orderPayment";
+import { isCodOrder, isCodPaymentMode, isFullyPaid, isPendingCodQueue, isPrepaidOrder } from "../lib/orderPayment";
 
 describe("isCodPaymentMode", () => {
   it("accepts any casing of cod", () => {
@@ -47,5 +47,26 @@ describe("COD vs prepaid queues", () => {
     const o = { payment_mode: "upi", amount_paid: 0, total: 90000 };
     expect(isCodOrder(o)).toBe(false);
     expect(isPrepaidOrder(o)).toBe(true);
+  });
+});
+
+describe("isPendingCodQueue", () => {
+  it("held unpaid COD belongs on the dashboard COD panel", () => {
+    expect(isPendingCodQueue({
+      cod_hold: true, payment_mode: "cod", amount_paid: 0, total: 425160, status: "completed",
+    })).toBe(true);
+  });
+  it("a prepaid hold does not belong on the COD panel", () => {
+    expect(isPendingCodQueue({
+      cod_hold: true, payment_mode: "online", amount_paid: 541550, total: 541550, status: "completed",
+    })).toBe(false);
+  });
+  it("confirmed / cancelled COD drops off the queue", () => {
+    expect(isPendingCodQueue({
+      cod_hold: false, payment_mode: "cod", amount_paid: 0, total: 100, status: "completed",
+    })).toBe(false);
+    expect(isPendingCodQueue({
+      cod_hold: true, payment_mode: "cod", amount_paid: 0, total: 100, status: "cancelled",
+    })).toBe(false);
   });
 });
