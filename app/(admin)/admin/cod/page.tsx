@@ -97,6 +97,7 @@ export default async function CodOrders({ searchParams }: { searchParams?: { err
                     <td className="p-3 text-right font-semibold whitespace-nowrap">{formatPaise(r.total)}</td>
                     <td className="p-3 text-right">
                       <div className="flex flex-col items-end gap-1.5">
+                        <Link href={`/admin/invoice/${r.id}#edit-bill`} className="px-3 py-1.5 rounded-full bg-ink/5 text-ink text-xs font-medium hover:bg-ink/10 whitespace-nowrap">✎ Edit bill</Link>
                         <form action={confirmCodAction}>
                           <input type="hidden" name="id" value={r.id} />
                           <button className="px-3 py-1.5 rounded-full bg-emerald text-white text-xs font-medium hover:bg-emerald-dark whitespace-nowrap" title="Dispatched and customer has received/paid — moves stock, posts the sale, marks it paid (blocked if stock is short)">✓ Confirm dispatched &amp; received</button>
