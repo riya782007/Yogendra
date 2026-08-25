@@ -250,6 +250,8 @@ export type CatalogCard = {
   wholesaleOnly: boolean;
   /** In-stock colour variants this design comes in — shown as chips on the shared-catalogue card. */
   colors: string[];
+  /** In-stock variants only (sold-out colours are omitted from the shareable catalogue). */
+  variants: { sku: string; color: string; image: string | null }[];
 };
 
 export async function getCatalogProducts(opts: { category?: string; subcategory?: string; style?: string; q?: string; skus?: string[]; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean; includeWholesalePricing?: boolean; inStock?: boolean }): Promise<CatalogCard[]> {
@@ -300,8 +302,8 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
   // deployed DB, PostgREST fails the WHOLE query and returns null — which blanks the whole catalogue
   // (the bug). So fall back to a BASIC select (core fields + category + images) that cannot fail.
   // Same resilience pattern as getProductBySku.
-  const RICH = "id,sku,name,qty,base_wholesale,wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,generated_content,thumbnail_path,category:categories(name,slug),subcategory:subcategories(name,slug),images:product_images(path,kind,sort),product_labels(label_id,labels(name))";
-  const BASIC = "id,sku,name,qty,base_wholesale,wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,generated_content,category:categories(name,slug)";
+  const RICH = "id,sku,name,qty,base_wholesale,wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,generated_content,thumbnail_path,default_variant_id,category:categories(name,slug),subcategory:subcategories(name,slug),images:product_images(path,kind,sort),product_labels(label_id,labels(name))";
+  const BASIC = "id,sku,name,qty,base_wholesale,wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,generated_content,thumbnail_path,default_variant_id,category:categories(name,slug)";
 
   // A single category can exceed PostgREST's 1000-row cap, so page through the results.
   const firstRich = await build(RICH).range(0, 999);
@@ -325,31 +327,25 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
     const rows = data as any[];
     const ids = rows.map((p) => (p as any).id);
     if (ids.length) {
-      const imgs = await fetchByIds(ids, (chunk) => sb.from("product_images").select("product_id,path,sort").in("product_id", chunk));
+      const imgs = await fetchByIds(ids, (chunk) => sb.from("product_images").select("product_id,path,sort,kind").in("product_id", chunk));
       const byP = new Map<string, any[]>();
       for (const im of (imgs as any[])) { const a = byP.get(im.product_id) ?? []; a.push(im); byP.set(im.product_id, a); }
       for (const p of rows) (p as any).images = byP.get((p as any).id) ?? [];
     }
   }
-  // Variant-image fallback: a piece may only have per-colour (variant) photos and no product-level
-  // hero — the card should still show an image instead of a blank tile.
+  // Cover follows the admin: pinned thumbnail_path (Photo Studio / ★ default colour) first, then the
+  // in-stock default colour's photo, then a generated product shot, then any in-stock colour photo.
+  // Sold-out colours never appear (no dropdown option, not used as the cover).
   const cardRows = (data as any[]) ?? [];
-  const vImgByP = new Map<string, string>();
-  // Colours a design comes in, IN STOCK only — so the shared catalogue card can show colour chips
-  // (owner: "catalog me variant nahi dikh raha"). Same variant fetch that already resolves cover images.
-  const colorsByP = new Map<string, Set<string>>();
+  const varsByP = new Map<string, { id: string; sku: string; color: string; qty: number; img: string | null; imgs: string[] }[]>();
   const cardIds = cardRows.map((p) => p.id).filter(Boolean);
   if (cardIds.length) {
-    const vimgs = await fetchByIds(cardIds, (chunk) => sb.from("variants").select("product_id,image_paths,color,qty").in("product_id", chunk));
+    const vimgs = await fetchByIds(cardIds, (chunk) => sb.from("variants").select("id,product_id,sku,image_paths,color,qty").in("product_id", chunk));
     for (const v of ((vimgs as any[]) ?? [])) {
-      if (!vImgByP.has(v.product_id) && Array.isArray(v.image_paths)) {
-        const hit = v.image_paths.find((x: string) => typeof x === "string" && x.startsWith("http"));
-        if (hit) vImgByP.set(v.product_id, hit);
-      }
-      const c = String(v.color ?? "").trim();
-      if (c && (v.qty ?? 0) > 0) {
-        let s = colorsByP.get(v.product_id); if (!s) { s = new Set(); colorsByP.set(v.product_id, s); } s.add(c);
-      }
+      const imgs = (Array.isArray(v.image_paths) ? v.image_paths : []).filter((x: string) => typeof x === "string" && x.startsWith("http"));
+      const list = varsByP.get(v.product_id) ?? [];
+      list.push({ id: v.id, sku: String(v.sku ?? ""), color: String(v.color ?? "").trim(), qty: v.qty ?? 0, img: imgs[0] ?? null, imgs });
+      varsByP.set(v.product_id, list);
     }
   }
   return cardRows.map((p): CatalogCard => {
@@ -358,24 +354,36 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
     const set = _resolvePrices(p.base_wholesale, formula, ov);
     const imgs = (p.images ?? []).filter((i: any) => typeof i.path === "string" && i.path.startsWith("http") && isStorefrontImage(i.kind)).sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0));
     const seo = (p.generated_content as any)?.seo ?? {};
-    // Labels come through the join as product_labels[{ label_id, labels: { name } }]; flatten to names.
     const labelNames = ((p.product_labels ?? []) as any[])
       .map((pl) => pl?.labels?.name)
       .filter((n): n is string => typeof n === "string" && n.length > 0);
+    const allVars = varsByP.get(p.id) ?? [];
+    const inStockVars = allVars.filter((v) => v.qty > 0);
+    const dv = p.default_variant_id ? allVars.find((v) => v.id === p.default_variant_id) : undefined;
+    const defImg = (dv && dv.qty > 0 && dv.img) ? dv.img : null;
+    const owned = new Set<string>();
+    for (const im of imgs) owned.add(im.path);
+    for (const v of allVars) for (const u of v.imgs) owned.add(u);
+    const tp = (typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http") && owned.has(p.thumbnail_path)) ? p.thumbnail_path as string : null;
+    const tpIsProductShot = !!tp && imgs.some((im: { path: string }) => im.path === tp);
+    const tpIsOosColour = !!tp && !tpIsProductShot && allVars.some((v) => v.imgs.includes(tp) && v.qty <= 0) && !inStockVars.some((v) => v.imgs.includes(tp));
+    const firstInStockImg = inStockVars.find((v) => v.img)?.img ?? null;
+    const cover = ((tp && !tpIsOosColour) ? tp : null) ?? defImg ?? imgs[0]?.path ?? firstInStockImg ?? null;
     return {
       sku: p.sku, name: p.name,
       category: p.category?.name ?? "", categorySlug: p.category?.slug ?? "all",
       subcategory: p.subcategory?.name ?? null, subcategorySlug: p.subcategory?.slug ?? null,
-      // Trade price is emitted ONLY for authorised callers; omitted from retail JSON entirely.
       ...(opts.includeWholesalePricing ? { wholesale: set.wholesaleRate } : {}),
       qty: p.qty, price: o.price, mrp: o.mrp, offerPct: o.offerPct, hasOffer: o.hasOffer,
-      // Owner-chosen cover wins; else first generated image; else a variant photo.
-      image: (typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http") ? p.thumbnail_path : null) ?? imgs[0]?.path ?? vImgByP.get(p.id) ?? null,
+      image: cover,
       tags: ((p.generated_content as any)?.tags ?? []).slice(0, 6),
       keywords: (seo.keywords ?? []).slice(0, 6),
       labels: labelNames.slice(0, 6),
       wholesaleOnly: !!p.wholesale_only,
-      colors: [...(colorsByP.get(p.id) ?? [])].sort(),
+      colors: [...new Set(inStockVars.map((v) => v.color).filter(Boolean))].sort(),
+      variants: inStockVars
+        .map((v) => ({ sku: v.sku || p.sku, color: v.color || v.sku || "Variant", image: v.img }))
+        .sort((a, b) => a.color.localeCompare(b.color, undefined, { numeric: true })),
     };
   })
   // A shareable catalogue must never show a photo-less design (letter placeholder) — it looks unfinished

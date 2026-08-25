@@ -2,11 +2,11 @@
 /**
  * SelectableCatalog — the shareable catalogue grid (Phase 5).
  *
- * Renders rich cards (image, category › subcategory, name, SKU, prices, stock, tags)
- * and a "select pieces to share" mode that builds a /catalog?skus=… link for just the
- * chosen products — so the owner can send "only these 6 designs" on WhatsApp without
- * exposing the whole inventory. View toggle (retail / wholesale) controls which price
- * is shown, for sharing with shoppers vs wholesale buyers.
+ * Two modes:
+ *   • manage (owner composing a link): retail/wholesale is chosen on the page header; select-to-share
+ *     builds a customer URL that LOCKS that pricing and never includes the toggle.
+ *   • customer (opened from a shared link): prices only, in-stock variants in a dropdown, no
+ *     retail/wholesale toggle or tags.
  */
 import { useMemo, useState } from "react";
 import { formatPaise } from "@/lib/pricing";
@@ -21,9 +21,77 @@ export type CatalogItem = {
   qty: number; wholesale?: number; price: number; mrp: number; offerPct: number; hasOffer: boolean;
   image: string | null; tags: string[]; keywords: string[]; labels: string[]; wholesaleOnly: boolean;
   colors?: string[];
+  variants?: { sku: string; color: string; image: string | null }[];
 };
 
-export function SelectableCatalog({ products, view, brand, phone }: { products: CatalogItem[]; view: "retail" | "wholesale"; brand: string; phone: string }) {
+function CatalogCard({
+  p, picking, on, onToggle, showPrice, showOffer, manage,
+}: {
+  p: CatalogItem; picking: boolean; on: boolean; onToggle: () => void;
+  showPrice: number; showOffer: boolean; manage: boolean;
+}) {
+  const variants = (p.variants ?? []).filter((v) => v.color || v.sku);
+  const [picked, setPicked] = useState<string>("");
+  const active = variants.find((v) => v.sku === picked) ?? null;
+  const img = (active?.image && active.image.startsWith("http") ? active.image : null) ?? p.image;
+  const skuShown = active?.sku || p.sku;
+
+  return (
+    <div
+      onClick={picking ? onToggle : undefined}
+      className={`bg-white rounded-2xl overflow-hidden border shadow-card break-inside-avoid transition-all ${picking ? "cursor-pointer" : ""} ${on ? "border-emerald ring-2 ring-emerald/40" : "border-sand"}`}>
+      <div className="aspect-[3/4] bg-cream relative">
+        <ProductImage src={img} name={p.name} />
+        {picking && (
+          <span className={`absolute top-2 left-2 h-6 w-6 rounded-full grid place-items-center text-xs ${on ? "bg-emerald text-white" : "bg-white/80 text-ink border border-sand"}`}>{on ? "✓" : ""}</span>
+        )}
+        {!picking && showOffer && <span className="absolute top-2 left-2 bg-rose text-white text-[10px] px-2 py-0.5 rounded-full">{p.offerPct}% OFF</span>}
+        {manage && p.wholesaleOnly && <span className="absolute bottom-2 left-2 bg-ink/80 text-gold-light text-[10px] px-2 py-0.5 rounded-full">Wholesale only</span>}
+        {p.qty <= 0 && <span className="absolute top-2 right-2 bg-ink/80 text-cream text-[10px] px-2 py-0.5 rounded-full">Out</span>}
+        {p.qty > 0 && p.qty <= 3 && <span className="absolute top-2 right-2 bg-gold text-ink text-[10px] px-2 py-0.5 rounded-full">Only {p.qty}</span>}
+      </div>
+      <div className="p-3">
+        <p className="text-[10px] uppercase tracking-wide text-gold-dark">{p.category}{p.subcategory ? ` › ${p.subcategory}` : ""}</p>
+        <p className="text-sm font-medium text-ink leading-tight mt-0.5 line-clamp-2">{p.name}</p>
+        <p className="text-[11px] text-muted font-mono mt-0.5">{skuShown}</p>
+        <div className="flex items-baseline gap-1.5 mt-1">
+          <span className="text-base font-semibold text-ink">{formatPaise(showPrice)}</span>
+          {showOffer ? <span className="text-xs text-muted line-through">{formatPaise(p.mrp)}</span> : null}
+        </div>
+        {variants.length > 1 && (
+          <label className="block mt-2 text-[9px] uppercase tracking-wide text-muted" onClick={(e) => e.stopPropagation()}>
+            Colour
+            <select
+              value={active?.sku ?? ""}
+              onChange={(e) => setPicked(e.target.value)}
+              className="mt-0.5 w-full rounded-lg border border-sand bg-white px-2 py-1.5 text-xs text-ink outline-none focus:border-gold"
+            >
+              <option value="">All colours · {p.sku}</option>
+              {variants.map((v) => (
+                <option key={v.sku} value={v.sku}>{v.color}{v.sku && v.sku !== p.sku ? ` · ${v.sku}` : ""}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        {variants.length === 1 && variants[0].color && (
+          <p className="text-[11px] text-muted mt-1.5">Colour: {variants[0].color}</p>
+        )}
+        {(p.labels ?? []).length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-1.5">
+            {p.labels.slice(0, 3).map((l) => <span key={l} className="text-[9px] px-1.5 py-0.5 rounded-full bg-gold/15 text-gold-dark font-medium">{l}</span>)}
+          </div>
+        )}
+        {([...new Set([...(p.tags ?? []), ...(p.keywords ?? [])])].slice(0, 4)).length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-2">
+            {[...new Set([...(p.tags ?? []), ...(p.keywords ?? [])])].slice(0, 4).map((t) => <span key={t} className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-mist text-emerald-dark">{t}</span>)}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function SelectableCatalog({ products, view, brand, phone, manage = false, shareOrigin }: { products: CatalogItem[]; view: "retail" | "wholesale"; brand: string; phone: string; manage?: boolean; shareOrigin?: string }) {
   const [picking, setPicking] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState(false);
@@ -31,16 +99,28 @@ export function SelectableCatalog({ products, view, brand, phone }: { products: 
   const toggle = (sku: string) =>
     setSel((s) => { const n = new Set(s); n.has(sku) ? n.delete(sku) : n.add(sku); return n; });
 
-  // A shareable link. With a selection → a clean /catalog?skus=… link that shows ONLY those pieces
-  // (never the whole inventory). With nothing selected → the current filtered view.
+  // Customer-facing URL always points at the public /catalog (never /admin, never ?manage=1).
   const shareUrl = useMemo(() => {
-    if (typeof window === "undefined") return "";
-    if (sel.size === 0) return window.location.href;
-    const u = new URL("/catalog", window.location.origin);
-    u.searchParams.set("skus", [...sel].join(","));
+    const origin = (shareOrigin || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
+    if (!origin) return "";
+    const u = new URL("/catalog", origin);
+    if (typeof window !== "undefined") {
+      const cur = new URL(window.location.href);
+      for (const k of ["category", "subcategory", "style", "q"] as const) {
+        const v = cur.searchParams.get(k);
+        if (v) u.searchParams.set(k, v);
+      }
+      if (sel.size > 0) u.searchParams.set("skus", [...sel].join(","));
+      else {
+        const skus = cur.searchParams.get("skus");
+        if (skus) u.searchParams.set("skus", skus);
+      }
+    } else if (sel.size > 0) {
+      u.searchParams.set("skus", [...sel].join(","));
+    }
     if (view === "wholesale") u.searchParams.set("view", "wholesale");
     return u.toString();
-  }, [sel, view]);
+  }, [sel, view, shareOrigin]);
 
   const copy = () => { if (shareUrl) navigator.clipboard?.writeText(shareUrl).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600); }).catch(() => {}); };
   const whatsapp = () => {
@@ -53,24 +133,26 @@ export function SelectableCatalog({ products, view, brand, phone }: { products: 
   const clearAll = () => setSel(new Set());
   const allSelected = products.length > 0 && sel.size === products.length;
 
-  /** Build a clean, print-ready catalogue in a hidden IFRAME and trigger the browser's Save-as-PDF.
-   *  An iframe is used instead of window.open so pop-up blockers can't silently stop the download.
-   *  Uses the selected pieces (or the whole visible catalogue if nothing is selected). */
   function savePdf() {
     const chosen = sel.size ? products.filter((p) => sel.has(p.sku)) : products;
     if (!chosen.length) return;
     const priceOf = (p: CatalogItem) => formatPaise(view === "wholesale" ? (p.wholesale ?? p.price) : p.price);
     const today = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" });
-    const cards = chosen.map((p) => `
+    const cards = chosen.map((p) => {
+      const colours = (p.variants ?? []).map((v) => v.color).filter(Boolean);
+      const colourLine = colours.length ? `<div class="cols">${esc(colours.join(" · "))}</div>` : "";
+      return `
       <div class="card">
         <div class="imgwrap">${p.image ? `<img src="${esc(p.image)}" alt="${esc(p.name)}"/>` : `<div class="ph">No image</div>`}</div>
         <div class="meta">
           <div class="cat">${esc(p.category)}${p.subcategory ? ` › ${esc(p.subcategory)}` : ""}</div>
           <div class="name">${esc(p.name)}</div>
           <div class="sku">${esc(p.sku)}</div>
-          <div class="price">${priceOf(p)}${view === "wholesale" ? ` <span class="wtag">wholesale</span>` : ""}</div>
+          ${colourLine}
+          <div class="price">${priceOf(p)}</div>
         </div>
-      </div>`).join("");
+      </div>`;
+    }).join("");
     const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
 <title>${esc(brand)} — Catalogue</title>
 <style>
@@ -90,8 +172,8 @@ export function SelectableCatalog({ products, view, brand, phone }: { products: 
   .cat { font-size: 8px; letter-spacing: 1px; text-transform: uppercase; color: #a0823c; }
   .name { font-size: 12.5px; font-weight: 600; line-height: 1.25; margin: 2px 0; }
   .sku { font-size: 10px; color: #78716c; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .cols { font-size: 9px; color: #57534e; margin-top: 2px; }
   .price { font-size: 13px; font-weight: 700; margin-top: 4px; }
-  .wtag { font-size: 8px; text-transform: uppercase; letter-spacing: .5px; color: #0f766e; font-weight: 600; }
   .foot { margin-top: 20px; padding-top: 8px; border-top: 1px solid #e7e2d9; font-size: 10px; color: #a8a29e; text-align: center; }
 </style></head>
 <body>
@@ -100,9 +182,8 @@ export function SelectableCatalog({ products, view, brand, phone }: { products: 
     <div class="meta-r">${chosen.length} design${chosen.length === 1 ? "" : "s"}<br/>${esc(today)}${phone ? `<br/>${esc(phone)}` : ""}</div>
   </div>
   <div class="grid">${cards}</div>
-  <div class="foot">${esc(brand)}${phone ? ` · ${esc(phone)}` : ""} — prices ${view === "wholesale" ? "wholesale" : "retail"}, subject to availability.</div>
+  <div class="foot">${esc(brand)}${phone ? ` · ${esc(phone)}` : ""} — prices subject to availability.</div>
 </body></html>`;
-    // Render into a hidden iframe, wait for all images, then print just the iframe.
     const iframe = document.createElement("iframe");
     iframe.setAttribute("aria-hidden", "true");
     iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;";
@@ -121,9 +202,12 @@ export function SelectableCatalog({ products, view, brand, phone }: { products: 
 
   return (
     <div>
-      {/* Toolbar — sharing is selection-aware: with pieces selected, Copy link / WhatsApp / PDF use
-          ONLY those pieces; with nothing selected they use the current filtered view. */}
+      {manage && (
       <div className="no-print flex flex-wrap items-center gap-2 mb-4">
+        <p className="w-full text-[11px] text-muted">
+          Compose here, then use <b>Copy customer link</b> or <b>Share on WhatsApp</b> — not the address bar.
+          Customers get these prices with no Retail/Wholesale toggle.
+        </p>
         <button onClick={() => { setPicking((p) => !p); setSel(new Set()); }}
           className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${picking ? "bg-ink text-white" : "bg-white border border-sand text-ink hover:border-gold"}`}>
           {picking ? "✓ Selecting — tap pieces" : "✷ Select pieces to share"}
@@ -138,7 +222,7 @@ export function SelectableCatalog({ products, view, brand, phone }: { products: 
           </>
         )}
         <button onClick={copy} className="px-4 py-2 rounded-full bg-ink/5 text-ink text-sm hover:bg-ink/10">
-          {copied ? "Link copied ✓" : sel.size ? `🔗 Copy link (${sel.size})` : "🔗 Copy link"}
+          {copied ? "Link copied ✓" : sel.size ? `🔗 Copy customer link (${sel.size})` : "🔗 Copy customer link"}
         </button>
         <button onClick={whatsapp} className="px-4 py-2 rounded-full bg-emerald text-white text-sm hover:bg-emerald-dark">
           {sel.size ? `Share ${sel.size} on WhatsApp` : "Share on WhatsApp"}
@@ -148,60 +232,25 @@ export function SelectableCatalog({ products, view, brand, phone }: { products: 
           ⬇ Save as PDF{sel.size ? ` (${sel.size})` : ""}
         </button>
       </div>
+      )}
 
       {products.length === 0 ? (
         <p className="text-muted text-center py-16">No designs in this catalogue yet.</p>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
           {products.map((p) => {
-            const on = sel.has(p.sku);
             const showPrice = view === "wholesale" ? (p.wholesale ?? p.price) : p.price;
-            const chips = [...new Set([...(p.tags ?? []), ...(p.keywords ?? [])])].slice(0, 4);
             return (
-              <div key={p.sku}
-                onClick={picking ? () => toggle(p.sku) : undefined}
-                className={`bg-white rounded-2xl overflow-hidden border shadow-card break-inside-avoid transition-all ${picking ? "cursor-pointer" : ""} ${on ? "border-emerald ring-2 ring-emerald/40" : "border-sand"}`}>
-                <div className="aspect-[3/4] bg-cream relative">
-                  <ProductImage src={p.image} name={p.name} />
-                  {picking && (
-                    <span className={`absolute top-2 left-2 h-6 w-6 rounded-full grid place-items-center text-xs ${on ? "bg-emerald text-white" : "bg-white/80 text-ink border border-sand"}`}>{on ? "✓" : ""}</span>
-                  )}
-                  {!picking && p.hasOffer && view === "retail" && <span className="absolute top-2 left-2 bg-rose text-white text-[10px] px-2 py-0.5 rounded-full">{p.offerPct}% OFF</span>}
-                  {p.wholesaleOnly && <span className="absolute bottom-2 left-2 bg-ink/80 text-gold-light text-[10px] px-2 py-0.5 rounded-full">Wholesale only</span>}
-                  {p.qty <= 0 && <span className="absolute top-2 right-2 bg-ink/80 text-cream text-[10px] px-2 py-0.5 rounded-full">Out</span>}
-                  {p.qty > 0 && p.qty <= 3 && <span className="absolute top-2 right-2 bg-gold text-ink text-[10px] px-2 py-0.5 rounded-full">Only {p.qty}</span>}
-                </div>
-                <div className="p-3">
-                  <p className="text-[10px] uppercase tracking-wide text-gold-dark">{p.category}{p.subcategory ? ` › ${p.subcategory}` : ""}</p>
-                  <p className="text-sm font-medium text-ink leading-tight mt-0.5 line-clamp-2">{p.name}</p>
-                  <p className="text-[11px] text-muted font-mono mt-0.5">{p.sku}</p>
-                  <div className="flex items-baseline gap-1.5 mt-1">
-                    <span className="text-base font-semibold text-ink">{formatPaise(showPrice)}</span>
-                    {view === "wholesale" ? (
-                      <span className="text-[10px] uppercase tracking-wide text-emerald-dark">wholesale</span>
-                    ) : p.hasOffer ? (
-                      <span className="text-xs text-muted line-through">{formatPaise(p.mrp)}</span>
-                    ) : null}
-                  </div>
-                  {(p.colors?.length ?? 0) > 0 && (
-                    <div className="flex flex-wrap items-center gap-1 mt-1.5" title={p.colors!.join(", ")}>
-                      <span className="text-[9px] uppercase tracking-wide text-muted mr-0.5">Colours</span>
-                      {p.colors!.slice(0, 6).map((c) => <span key={c} className="text-[9px] px-1.5 py-0.5 rounded-full border border-sand text-ink/75">{c}</span>)}
-                      {p.colors!.length > 6 && <span className="text-[9px] text-muted">+{p.colors!.length - 6}</span>}
-                    </div>
-                  )}
-                  {(p.labels ?? []).length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1.5">
-                      {p.labels.slice(0, 3).map((l) => <span key={l} className="text-[9px] px-1.5 py-0.5 rounded-full bg-gold/15 text-gold-dark font-medium">{l}</span>)}
-                    </div>
-                  )}
-                  {chips.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {chips.map((t) => <span key={t} className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-mist text-emerald-dark">{t}</span>)}
-                    </div>
-                  )}
-                </div>
-              </div>
+              <CatalogCard
+                key={p.sku}
+                p={p}
+                picking={picking}
+                on={sel.has(p.sku)}
+                onToggle={() => toggle(p.sku)}
+                showPrice={showPrice}
+                showOffer={!picking && p.hasOffer && view === "retail"}
+                manage={manage}
+              />
             );
           })}
         </div>

@@ -304,7 +304,7 @@ export async function setProductThumbnailAction(input: { productId: string; url:
 
   const { data: prod } = await sb.from("products").select("sku, category:categories(slug)").eq("id", productId).maybeSingle();
   const sku = (prod as any)?.sku; const slug = (prod as any)?.category?.slug ?? "all";
-  revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/admin/catalogue"); revalidatePath(`/admin/media/${productId}`);
+  revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/catalog"); revalidatePath("/admin/catalogue"); revalidatePath(`/admin/media/${productId}`);
   if (sku) revalidatePath(`/shop/${slug}/${sku}`);
   return { ok: true };
 }
