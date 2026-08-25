@@ -16,7 +16,7 @@ import { SeoTitlesButton } from "@/components/admin/SeoTitlesButton";
 export const metadata = { title: "Owner Console · Catalogue" };
 const PAGE_SIZE = 25;
 
-export default async function AdminCatalogue({ searchParams }: { searchParams: { page?: string; q?: string; category?: string; sub?: string; status?: string; stock?: string } }) {
+export default async function AdminCatalogue({ searchParams }: { searchParams: { page?: string; q?: string; category?: string; sub?: string; status?: string; stock?: string; nathFixed?: string; nathTotal?: string; nathErr?: string } }) {
   const page = parseInt(searchParams.page ?? "1", 10) || 1;
   const q = searchParams.q ?? "";
   const category = searchParams.category ?? "all";
@@ -48,7 +48,18 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
   async function genContent(fd: FormData) { "use server"; await generateContentAction(String(fd.get("sku"))); }
   async function genAllContent() { "use server"; await generateAllContentAction(); }
   async function genEmbeddings() { "use server"; await generateEmbeddingsAction(); }
-  async function fixNath() { "use server"; await fixNathListingsAction(); }
+  async function fixNath() {
+    "use server";
+    const { redirect } = await import("next/navigation");
+    const r = await fixNathListingsAction();
+    if (r.error === "not permitted") {
+      redirect("/admin/catalogue?nathErr=" + encodeURIComponent("Your role cannot run AI catalogue fixes (catalog.ai)."));
+    }
+    if (r.error) {
+      redirect("/admin/catalogue?nathErr=" + encodeURIComponent(r.error));
+    }
+    redirect(`/admin/catalogue?nathFixed=${r.fixed}&nathTotal=${r.total}`);
+  }
 
   const Pill = ({ on, label }: { on: boolean; label: string }) => (
     <span className={`text-xs px-2.5 py-1 rounded-full ${on ? "bg-emerald-mist text-emerald-dark" : "bg-cream text-muted"}`}>{on ? "●" : "○"} {label}</span>
@@ -62,7 +73,7 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
           <h1 className="font-display text-4xl text-ink">Catalogue</h1>
           <p className="text-sm text-muted">{total} products · AI-drafted pages, one-tap approve</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <Link href="/catalog" target="_blank" className="px-4 py-2.5 text-sm font-medium rounded-full bg-gold text-ink hover:opacity-90 transition-opacity">📤 Share Catalogue ↗</Link>
           {canAi && <>
             <form action={genAllContent}><button className="btn-primary px-4 py-2.5 text-sm font-medium">✨ Generate all AI pages</button></form>
@@ -72,6 +83,14 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
           <SeoTitlesButton />
         </div>
       </div>
+
+      {(searchParams.nathFixed != null || searchParams.nathErr) && (
+        <div className={`mb-4 rounded-xl px-4 py-3 text-sm ${searchParams.nathErr ? "bg-rose/10 text-rose border border-rose/30" : "bg-emerald/10 text-emerald-dark border border-emerald/30"}`}>
+          {searchParams.nathErr
+            ? <>Fix nath failed: {searchParams.nathErr}</>
+            : <>Fixed <b>{searchParams.nathFixed ?? "0"}</b> nath listing(s){searchParams.nathTotal ? <> (matched {searchParams.nathTotal})</> : null}. Specs set to Nose Pin / One nose pin.</>}
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-2 mb-4 items-center">
         <span className="text-xs text-muted mr-1">AI workforce:</span>
