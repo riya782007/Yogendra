@@ -88,7 +88,7 @@ export function includedPieces(keywords?: string[]): string[] {
   if (/finger ?ring|\bring\b/.test(t)) out.push("Finger Ring");
   if (/ear ?ring|jhumk|jhumka|danglers|studs/.test(t)) out.push("Earrings");
   if (/bracelet|kada|kada|bangle/.test(t)) out.push("Bracelet");
-  if (/nose ?pin|nath/.test(t)) out.push("Nose Pin");
+  if (/nose ?pin|nath|nathni|nosepin/.test(t)) out.push("Nose Pin");
   if (/haathphool|hathphool|hand ?harness/.test(t)) out.push("Haathphool");
   return out;
 }
@@ -146,7 +146,7 @@ const BRIDAL_RE = /kundan|polki|temple|meenakari|choker|maang|tikka|rani ?haar|m
 
 // ---- Spec-keyword parsing so the title mirrors what the owner typed, cleanly ordered ----
 // Jewellery TYPE words (removed from descriptors — the type is appended once at the end).
-const TYPE_WORD_RE = /\b(necklaces?|chokers?|earrings?|jhumkas?|jhumki|danglers?|studs?|rings?|bracelets?|kada|bangles?|pendants?|maang ?tikka|mangtikka|nose ?pins?|nath|haathphool|sets?|jewellery|jewelry|collection)\b/gi;
+const TYPE_WORD_RE = /\b(necklaces?|chokers?|earrings?|jhumkas?|jhumki|danglers?|studs?|rings?|bracelets?|kada|bangles?|pendants?|maang ?tikka|mangtikka|nose ?pins?|nath|nathni|haathphool|sets?|jewellery|jewelry|collection)\b/gi;
 // Pure "vibe" filler that clutters a title — dropped (BlytheDIVA titles don't carry these).
 const FILLER_WORDS = new Set(["ethnic","elegant","royal","beautiful","designer","fancy","latest","new","gorgeous","stylish","premium","trendy","classic","piece","women","womens","women's","girls","ladies","the","a","an","for","with","and","in","of","style","look","wear","artificial","imitation"]);
 // A phrase mentioning any of these is a MATERIAL/STONE (goes after the style adjectives).
@@ -196,16 +196,19 @@ export function templateContent(p: ProductLike): GeneratedContent {
   const wStyles = westernHints(`${p.name} ${extra}`, p.keywords);
   const pieces = includedPieces(p.keywords);
   const isSet = pieces.length > 0 || /set/i.test(p.name) || /set/i.test(sub) || /set/i.test(style);
-  // Prefer the REAL piece type from the name/subcategory (pendant, choker, mangalsutra…) over the broad
-  // parent category — so a pendant is a "Pendant Set", not a "Necklace Set" or an "Other Accessorie".
-  const typeHint = (p.name + " " + sub).toLowerCase();
+  // Prefer the REAL piece type from the name/subcategory (pendant, choker, mangalsutra, nath…) over the broad
+  // parent category — so a pendant is a "Pendant Set", not a "Necklace Set" or an "Other Accessorie",
+  // and a nath is always "Nose Pin" / "Nath", never "Pendant Chain".
+  const typeHint = (p.name + " " + sub + " " + (p.keywords ?? []).join(" ")).toLowerCase();
   let baseType = cat.replace(/s$/i, "");
-  if (/pendant/.test(typeHint)) baseType = "Pendant";
+  // Nath / nose pin MUST win over vague "Other Accessories" or any accidental "pendant" word in keywords.
+  if (/\bnath\b|nathni|nose ?pin|nosepin/.test(typeHint)) baseType = "Nose Pin";
+  else if (/pendant/.test(typeHint)) baseType = "Pendant";
   else if (/mangalsutra/.test(typeHint)) baseType = "Mangalsutra";
   else if (/\bchoker\b/.test(typeHint)) baseType = "Choker";
   else if (/maang ?tikka|tikka/.test(typeHint) && !/set/i.test(typeHint)) baseType = "Maang Tikka";
   else if (/other accessor/i.test(baseType)) baseType = "Accessory";
-  const type = isSet && !/set/i.test(baseType) ? `${baseType} Set` : (baseType || "Jewellery");
+  const type = isSet && !/set/i.test(baseType) && !/nose pin/i.test(baseType) ? `${baseType} Set` : (baseType || "Jewellery");
   const catL = type.toLowerCase();
   const name = pickDivaName(p.sku || p.name);
   const withPieces = pieces.length ? ` with ${joinAnd(pieces)}` : "";
@@ -256,27 +259,32 @@ export function templateContent(p: ProductLike): GeneratedContent {
   //            materials) vary per product; BRAND / CARE / DISCLAIMER are fixed. ----------
   const nblob = `${p.name} ${blob}`.toLowerCase();
   const isEarringType = /earring|jhumka|chandbali|stud|dangler|\bbali\b/i.test(type);
+  const isNathType = /nose pin|nath/i.test(baseType) || /\bnath\b|nathni|nose ?pin|nosepin/.test(nblob);
 
   // BOX CONTAINING — main piece, then only the extras the piece actually has, e.g.
-  // "One necklace with a pair of earrings and a maang tikka."
-  const boxMain = isEarringType ? "a pair of earrings" : `one ${baseType.toLowerCase()}`;
+  // "One necklace with a pair of earrings and a maang tikka." / "One nose pin."
+  const boxMain = isEarringType
+    ? "a pair of earrings"
+    : isNathType
+      ? "one nose pin"
+      : `one ${baseType.toLowerCase()}`;
   const extras: string[] = [];
   const hasExtra = (re: RegExp) => extras.some((e) => re.test(e));
   // A "Set" in the NAME is NOT proof of earrings (a "Pendant Set" can be a single pendant). Only add
   // earrings when the name/keywords LITERALLY say so — never infer a piece that isn't named
   // (owner: "sabme earrings chipka diya" — do not stick earrings onto everything).
-  if (!isEarringType && /\bearrings?\b|jhumka|jhumki|\bdanglers?\b/.test(nblob) && !hasExtra(/earring/)) extras.push("a pair of earrings");
+  if (!isEarringType && !isNathType && /\bearrings?\b|jhumka|jhumki|\bdanglers?\b/.test(nblob) && !hasExtra(/earring/)) extras.push("a pair of earrings");
   for (const pc of pieces.map((x) => x.toLowerCase())) {
-    if (/earring|jhumka|\bbali\b|dangler/.test(pc)) { if (!isEarringType && !hasExtra(/earring/)) extras.push("a pair of earrings"); }
+    if (/earring|jhumka|\bbali\b|dangler/.test(pc)) { if (!isEarringType && !isNathType && !hasExtra(/earring/)) extras.push("a pair of earrings"); }
     else if (/tikka/.test(pc)) { if (!hasExtra(/tikka/)) extras.push("a maang tikka"); }
-    else if (/ring/.test(pc)) { if (!hasExtra(/ring/)) extras.push("a finger ring"); }
+    else if (/ring/.test(pc) && !/nose/.test(pc)) { if (!hasExtra(/ring/)) extras.push("a finger ring"); }
     else if (/bracelet|kada|kangan|bangle/.test(pc)) { if (!hasExtra(/bracelet/)) extras.push("a bracelet"); }
-    else if (/nose|nath/.test(pc)) { if (!hasExtra(/nose/)) extras.push("a nose pin"); }
+    else if (/nose|nath/.test(pc)) { if (!isNathType && !hasExtra(/nose/)) extras.push("a nose pin"); }
     else if (/haathphool/.test(pc)) { if (!hasExtra(/haathphool/)) extras.push("a haathphool"); }
     else if (/bajuband|armlet/.test(pc)) { if (!hasExtra(/bajuband/)) extras.push("a bajuband"); }
   }
   if (/maang ?tikka|\btikka\b/.test(nblob) && !hasExtra(/tikka/)) extras.push("a maang tikka");
-  if (/finger ring|with ring/.test(nblob) && !isEarringType && !hasExtra(/ring/)) extras.push("a finger ring");
+  if (/finger ring|with ring/.test(nblob) && !isEarringType && !isNathType && !hasExtra(/ring/)) extras.push("a finger ring");
   const boxPhrase = boxMain + (extras.length ? ` with ${joinAnd(extras)}` : "");
   const box = boxPhrase.charAt(0).toUpperCase() + boxPhrase.slice(1) + ".";
 
@@ -297,7 +305,7 @@ export function templateContent(p: ProductLike): GeneratedContent {
   addM(/coloured stone|colored stone|\bstones?\b/, "Stones");
   if (mFound.length === 0 && material) mFound.push(titleCasePhrase(material));
   const materialsList = mFound.length ? joinAnd(mFound) : "premium quality materials";
-  const itemNoun = isEarringType ? "these earrings" : `this ${baseType.toLowerCase()}`;
+  const itemNoun = isEarringType ? "these earrings" : isNathType ? "this nose pin" : `this ${baseType.toLowerCase()}`;
   const materialLine = `Finest quality ${materialsList} with environment-friendly non-precious metals are used to make ${itemNoun}. It is safe to wear for long hours.`;
 
   // Specs-table values (occasion follows register; material = exactly what we detected).
@@ -312,12 +320,12 @@ export function templateContent(p: ProductLike): GeneratedContent {
   const matPhrase = materialsList !== "premium quality materials" ? materialsList.toLowerCase() : "";
   // Mention extra pieces ONLY when they are real; call it a "set" only when it genuinely has >1 piece.
   const setNote = extras.length ? ` It comes with ${joinAnd(extras)} to complete the look.` : "";
-  const descNoun = extras.length ? catL : baseType.toLowerCase();
+  const descNoun = extras.length ? catL : (isNathType ? "nose pin" : baseType.toLowerCase());
   const description = western
     ? `Add an effortless touch to your everyday style with this ${finish ? finish + " " : ""}${descNoun}${matPhrase ? ` featuring ${matPhrase}` : ""}. `
       + `Lightweight and comfortable for all-day wear, it pairs beautifully with dresses, kurtis, co-ords and western outfits — an easy pick for the office, college, parties and casual outings.${setNote} `
       + `Crafted from high-quality, skin-friendly materials with a refined finish, it offers durability and a clean, modern look. `
-      + `Whether you are a retailer, reseller or wholesale buyer, this trendy ${baseType.toLowerCase()} is a must-have addition to your collection. `
+      + `Whether you are a retailer, reseller or wholesale buyer, this trendy ${isNathType ? "nose pin" : baseType.toLowerCase()} is a must-have addition to your collection. `
       + `Shop premium fashion jewellery online from BlytheDIVA for the latest wholesale and retail designs at competitive prices.`
     : `Elevate your jewellery collection with this ${finish ? finish + " " : ""}${descNoun}${matPhrase ? ` featuring ${matPhrase}` : ""}. `
       + `Designed to complement ethnic, Indo-western and modern outfits, it is perfect for weddings, festive celebrations, parties and special occasions.${setNote} `
@@ -327,26 +335,35 @@ export function templateContent(p: ProductLike): GeneratedContent {
 
   const descriptorStr = titleDescriptors;
   const allStyles = western ? wStyles : styles;
+  // Work/Style for nath must never become "Pendant Chain". Prefer real style words, else "Nose Pin".
+  const workStyle = isNathType
+    ? (allStyles.length ? allStyles.join(", ") : "Nose Pin / Nath")
+    : (allStyles.length ? allStyles.join(", ") : "Handcrafted");
   const specs: Record<string, string> = {
-    Category: cat,
+    Category: isNathType ? "Nose Pin" : cat,
     "Box Containing": box.replace(/\.$/, ""),
     Material: specMaterial,
-    "Work / Style": allStyles.length ? allStyles.join(", ") : "Handcrafted",
+    "Work / Style": workStyle,
     Occasion: specOccasion,
     Care: "Wipe with a soft cloth; keep away from water, sprays & perfume; store in a box",
   };
+  if ((p.colors ?? []).length) specs["Colours"] = (p.colors ?? []).join(", ").toUpperCase();
 
   const tags = Array.from(new Set([
-    type, "artificial jewellery", "imitation jewellery",
+    type,
+    ...(isNathType ? ["nath", "nose pin", "nose ring", "nathni"] : []),
+    "artificial jewellery", "imitation jewellery",
     ...(western ? ["western jewellery", "daily wear jewellery", "anti tarnish jewellery", "minimal jewellery"] : ["bridal jewellery", "ethnic jewellery", ...OCCASIONS.slice(0, 3)]),
     ...allStyles, ...pieces, ...(p.keywords ?? []), ...(p.colors ?? []),
   ])).filter(Boolean).slice(0, 14);
 
   const keywords = Array.from(new Set([
     `${descriptorStr} ${catL}`.trim(),
-    ...(western
-      ? [`${catL} for daily wear`, `western ${catL}`, `anti tarnish ${catL}`, "western jewellery online India"]
-      : [`${catL} for wedding`, `${catL} for festive wear`, "artificial jewellery online India", "bridal jewellery Delhi"]),
+    ...(isNathType
+      ? ["nath for women", "nose pin artificial", "nathni jewellery", "nose ring online India"]
+      : western
+        ? [`${catL} for daily wear`, `western ${catL}`, `anti tarnish ${catL}`, "western jewellery online India"]
+        : [`${catL} for wedding`, `${catL} for festive wear`, "artificial jewellery online India", "bridal jewellery Delhi"]),
     ...(p.keywords ?? []), ...LOCATION,
   ])).filter(Boolean).slice(0, 12);
 
