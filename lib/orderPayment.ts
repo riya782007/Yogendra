@@ -10,6 +10,9 @@
  * A real COD order is payment_mode=cod AND not already paid in full.
  * A prepaid order is everything else (online/upi/razorpay, or a leftover mode=cod that
  * was actually paid).
+ *
+ * ALWAYS use isCodOrder / isPrepaidOrder / paymentLabel for UI labels and queue filters —
+ * never infer from cod_hold alone. This prevents COD↔prepaid mix-ups.
  */
 
 export function isCodPaymentMode(mode?: string | null): boolean {
@@ -37,4 +40,26 @@ export function isPrepaidOrder(o: {
   total?: number | null;
 }): boolean {
   return !isCodOrder(o);
+}
+
+/** Short owner-facing label — use everywhere (dashboard, orders list, notifications, PDF). */
+export function paymentLabel(o: {
+  payment_mode?: string | null;
+  amount_paid?: number | null;
+  total?: number | null;
+}): "COD" | "PREPAID" {
+  return isCodOrder(o) ? "COD" : "PREPAID";
+}
+
+/** Longer label for badges / packing slips. */
+export function paymentLabelLong(o: {
+  payment_mode?: string | null;
+  amount_paid?: number | null;
+  total?: number | null;
+}): string {
+  if (isCodOrder(o)) return "Cash on Delivery";
+  if (isFullyPaid(o.amount_paid, o.total)) return "PREPAID ✓";
+  const paid = Number(o.amount_paid ?? 0);
+  if (paid > 0) return "Part-paid (prepaid)";
+  return "PREPAID (unpaid / pending verify)";
 }
