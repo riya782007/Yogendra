@@ -178,4 +178,7 @@ export async function generateAllContentAction(): Promise<{ total: number; ok: n
 }
 
 /** Implementation moved to fixNath.ts (broader match). */
-export { fixNathListingsAction } from "@/app/actions/fixNath";
+export async function fixNathListingsAction() {
+  const { fixNathListingsAction: run } = await import("@/app/actions/fixNath");
+  return run();
+}
