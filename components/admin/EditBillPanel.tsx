@@ -6,8 +6,8 @@ import {
   fetchOrderForEditAction,
   editOrderLineAction,
   addOrderLineAction,
-  editOrderChargesAction,
 } from "@/app/actions/billing";
+import { editOrderChargesAction, fetchOrderChargesAction } from "@/app/actions/orderCharges";
 
 type EditableBill = {
   id: string; invoice_no: string | null; total: number; amount_paid: number;
@@ -49,9 +49,25 @@ export function EditBillPanel({ orderId }: { orderId: string }) {
     setAdjustment(paiseToInput(fresh.extra_adjustment ?? 0));
   }
 
+  async function loadChargesOnto(bill: EditableBill) {
+    const ch = await fetchOrderChargesAction(orderId);
+    if (ch.ok) {
+      bill.extra_packing = ch.packing ?? 0;
+      bill.extra_courier = ch.courier ?? 0;
+      bill.extra_adjustment = ch.adjustment ?? 0;
+    }
+    return bill;
+  }
+
   async function reload() {
     const fresh = await fetchOrderForEditAction(orderId);
-    if (fresh.ok && fresh.bill) applyBill(fresh.bill as EditableBill);
+    if (fresh.ok && fresh.bill) {
+      const b = await loadChargesOnto({
+        ...(fresh.bill as EditableBill),
+        extra_packing: 0, extra_courier: 0, extra_adjustment: 0,
+      });
+      applyBill(b);
+    }
     router.refresh();
   }
 
@@ -60,7 +76,11 @@ export function EditBillPanel({ orderId }: { orderId: string }) {
     const r = await fetchOrderForEditAction(orderId);
     setBusy(false);
     if (r.ok && r.bill) {
-      applyBill(r.bill as EditableBill);
+      const b = await loadChargesOnto({
+        ...(r.bill as EditableBill),
+        extra_packing: 0, extra_courier: 0, extra_adjustment: 0,
+      });
+      applyBill(b);
       setOpen(true);
     } else {
       setMsg({ text: r.error ?? "Could not load bill.", ok: false });
