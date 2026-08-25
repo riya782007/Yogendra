@@ -9,15 +9,12 @@ import { requirePerm } from "@/lib/auth";
 export type ContentResult = { ok: boolean; sku: string; provider?: string; fallbackUsed?: boolean; title?: string; error?: string };
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-/** The name to hand the AI: strip the SKU; if only a bare code remains, return "" so the AI builds the
- *  title purely from category / sub-category / style / polish (never echoes "WN111" into the title). */
 function nameForAi(name: string | null | undefined, sku: string): string {
   let n = (name ?? "").replace(/\s*\([^)]*\)\s*$/, "");
   if (sku) n = n.replace(new RegExp(`\\b${esc(sku)}\\b`, "ig"), " ");
   n = n.replace(/\s+/g, " ").trim();
   return /^[A-Za-z]{1,4}[-\s]?\d{1,6}[A-Za-z]?$/.test(n) ? "" : n;
 }
-/** Safety net: strip the SKU and any leaked product-code token (e.g. "WN111") out of a generated title. */
 function stripCode(title: string | undefined, sku: string): string {
   let t = title ?? "";
   if (sku) t = t.replace(new RegExp(`\\b${esc(sku)}\\b`, "ig"), " ");
@@ -25,12 +22,6 @@ function stripCode(title: string | undefined, sku: string): string {
   return t.replace(/\s{2,}/g, " ").replace(/\s+([,.])/g, "$1").replace(/^[\s\-–|]+|[\s\-–|]+$/g, "").trim();
 }
 
-/**
- * Downloads the product's best available photo and returns it as base64 so the AI can
- * SEE the piece while writing the title & description. Prefers the owner's raw/source
- * photo, then the AI model shot, then any http image. Best-effort — returns undefined
- * on any failure so title generation still works without a picture.
- */
 async function fetchProductImage(p: any): Promise<{ imageBase64?: string; imageMime?: string }> {
   try {
     const prodImgs = (p.images ?? []).filter((i: any) => typeof i?.path === "string" && i.path.startsWith("http"));
@@ -184,4 +175,94 @@ export async function generateAllContentAction(): Promise<{ total: number; ok: n
   for (const p of products) results.push(await generateContentAction(p.sku));
   revalidatePath("/admin/catalogue");
   return { total: products.length, ok: results.filter((r) => r.ok).length, results };
+}
+
+/** Bulk-fix EXISTING nath / nose-pin listings with wrong Pendant Chain / Other Accessories specs. */
+export async function fixNathListingsAction(): Promise<{
+  total: number; fixed: number; skipped: number; results: ContentResult[];
+}> {
+  if (!(await requirePerm("catalog.ai"))) {
+    return { total: 0, fixed: 0, skipped: 0, results: [{ ok: false, sku: "", error: "not permitted" }] };
+  }
+  const { templateContent } = await import("@/lib/content");
+  const sb = supabaseServer();
+  const { data, error } = await sb
+    .from("products")
+    .select("id,sku,name,status,generated_content, category:categories(name,slug), subcategory:subcategories(name), style_id")
+    .limit(5000);
+  if (error) {
+    return { total: 0, fixed: 0, skipped: 0, results: [{ ok: false, sku: "", error: error.message }] };
+  }
+
+  const nathRe = /\bnath\b|nathni|nose\s*pin|nosepin/i;
+  const wrongSpecRe = /pendant\s*chain|other\s*accessor|one\s*necklace|necklace\s*with/i;
+  const rows = ((data as any[]) ?? []).filter((p) => {
+    const gc = (p.generated_content as any) ?? {};
+    const specs = gc.specs ?? {};
+    const blob = [
+      p.name, p.sku,
+      gc.title, gc.description,
+      specs.Category, specs["Work/Style"], specs["Box Containing"],
+      ...(Array.isArray(gc.tags) ? gc.tags : []),
+    ].filter(Boolean).join(" ");
+    if (!nathRe.test(blob)) return false;
+    const looksWrong =
+      !gc.title
+      || wrongSpecRe.test(String(specs.Category ?? ""))
+      || wrongSpecRe.test(String(specs["Work/Style"] ?? ""))
+      || wrongSpecRe.test(String(specs["Box Containing"] ?? ""))
+      || wrongSpecRe.test(String(gc.description ?? ""))
+      || !/nose\s*pin|nath/i.test(String(specs.Category ?? ""))
+      || !/nose\s*pin|nath/i.test(String(specs["Box Containing"] ?? "one nose pin"));
+    return looksWrong;
+  });
+
+  const results: ContentResult[] = [];
+  let fixed = 0;
+  for (const p of rows) {
+    try {
+      let styleName: string | undefined;
+      if (p.style_id) {
+        const { data: st } = await sb.from("styles").select("name").eq("id", p.style_id).maybeSingle();
+        styleName = (st as any)?.name;
+      }
+      const content = templateContent({
+        name: nameForAi(p.name, p.sku) || p.name || "Nath",
+        sku: p.sku,
+        categoryName: p.category?.name,
+        subcategoryName: p.subcategory?.name,
+        styleName,
+        keywords: ["nath", "nose pin", "nathni"],
+      });
+      content.title = stripCode(content.title, p.sku) || content.title;
+      content.specs = {
+        ...(content.specs ?? {}),
+        Category: "Nose Pin",
+        "Work/Style": content.specs?.["Work/Style"]?.match(/nath|nose/i)
+          ? content.specs["Work/Style"]
+          : "Nose Pin / Nath",
+        "Box Containing": "One nose pin.",
+      };
+      const { error: updErr } = await sb
+        .from("products")
+        .update({ generated_content: content })
+        .eq("id", p.id);
+      if (updErr) {
+        results.push({ ok: false, sku: p.sku, error: updErr.message });
+        continue;
+      }
+      fixed++;
+      results.push({ ok: true, sku: p.sku, title: content.title, provider: "template-nath-fix" });
+      if (p.category?.slug) revalidatePath(`/shop/${p.category.slug}/${p.sku}`);
+    } catch (e) {
+      results.push({
+        ok: false,
+        sku: p.sku,
+        error: e instanceof Error ? e.message : "fix failed",
+      });
+    }
+  }
+  revalidatePath("/admin/catalogue");
+  revalidatePath("/shop");
+  return { total: rows.length, fixed, skipped: rows.length - fixed, results };
 }
