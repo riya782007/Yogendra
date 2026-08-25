@@ -5,14 +5,15 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { formatPaise } from "@/lib/pricing";
 import { confirmCodAction, cancelCodAction } from "@/app/actions/billing";
 import { isCodOrder } from "@/lib/orderPayment";
+import { EditBillPanel } from "@/components/admin/EditBillPanel";
 
 export const metadata = { title: "Owner Console · COD Orders" };
 
 /**
- * COD ORDERS — Cash-on-Delivery orders placed on the storefront are HELD here: stock is reserved-checked
- * but NOT deducted and they are NOT in the sales record yet. The owner packs & dispatches, and once the
- * customer has received and paid, hits "Confirm dispatched & received" — only then does stock move,
- * revenue post, and the bill join Sales. Refused / no-answer orders can be cancelled (nothing to unwind).
+ * COD ORDERS — Cash-on-Delivery orders placed on the storefront are HELD here: sellable stock is
+ * RESERVED (so it cannot be sold twice) but they are NOT in the sales record yet. The owner packs
+ * & dispatches, and once the customer has received and paid, hits "Confirm dispatched & received"
+ * — only then does the reservation become a sale. Staff can edit quantities while it is held.
  */
 export default async function CodOrders({ searchParams }: { searchParams?: { err?: string; ok?: string; cancelled?: string } }) {
   const sb = supabaseServer();
@@ -41,15 +42,17 @@ export default async function CodOrders({ searchParams }: { searchParams?: { err
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
       <h1 className="font-display text-4xl text-ink mb-1">COD Orders</h1>
       <p className="text-sm text-muted mb-5">
-        Cash-on-Delivery orders from the storefront are held here — inventory is <b>not</b> reduced and they are
+        Cash-on-Delivery orders from the storefront are held here — inventory is <b>reserved</b> for
+        the customer (it will not show as available to anyone else) and they are
         <b> not</b> in the sales record yet. Prepaid (Razorpay/UPI) orders stay under{" "}
         <Link href="/admin/orders" className="text-emerald nav-link">Storefront Orders</Link> only.
         Pack &amp; dispatch, and once the customer has received &amp; paid, hit
-        <b> Confirm dispatched &amp; received</b> — stock then moves, the sale posts, and the bill joins Sales.
+        <b> Confirm dispatched &amp; received</b> — the reservation becomes a sale and the bill joins Sales.
+        Admin can <b>edit</b> a held COD (qty / colour) without the owner OTP.
       </p>
       {searchParams?.err && <div className="rounded-2xl border border-rose/40 bg-rose/10 p-4 text-sm text-ink mb-4"><b>Couldn&apos;t confirm:</b> {searchParams.err}</div>}
-      {searchParams?.ok && <div className="rounded-2xl border border-emerald/40 bg-emerald-mist p-4 text-sm text-emerald-dark mb-4">COD order confirmed — stock moved, sale posted, marked paid.</div>}
-      {searchParams?.cancelled && <div className="rounded-2xl border border-sand bg-white p-4 text-sm text-muted mb-4">COD order cancelled and removed. No stock or revenue was affected.</div>}
+      {searchParams?.ok && <div className="rounded-2xl border border-emerald/40 bg-emerald-mist p-4 text-sm text-emerald-dark mb-4">COD order confirmed — reservation converted to a sale, marked paid.</div>}
+      {searchParams?.cancelled && <div className="rounded-2xl border border-sand bg-white p-4 text-sm text-muted mb-4">COD order cancelled. Reserved stock has been released back to the shelf.</div>}
 
       <div className="flex flex-wrap gap-3 mb-4">
         <div className="rounded-2xl border border-sand bg-white px-4 py-3 shadow-card">
@@ -99,11 +102,12 @@ export default async function CodOrders({ searchParams }: { searchParams?: { err
                       <div className="flex flex-col items-end gap-1.5">
                         <form action={confirmCodAction}>
                           <input type="hidden" name="id" value={r.id} />
-                          <button className="px-3 py-1.5 rounded-full bg-emerald text-white text-xs font-medium hover:bg-emerald-dark whitespace-nowrap" title="Dispatched and customer has received/paid — moves stock, posts the sale, marks it paid (blocked if stock is short)">✓ Confirm dispatched &amp; received</button>
+                          <button className="px-3 py-1.5 rounded-full bg-emerald text-white text-xs font-medium hover:bg-emerald-dark whitespace-nowrap" title="Dispatched and customer has received/paid — converts the reservation into a sale">✓ Confirm dispatched &amp; received</button>
                         </form>
+                        <Link href={`/admin/invoice/${r.id}`} className="px-3 py-1 rounded-full border border-sand text-ink text-[11px] hover:bg-cream whitespace-nowrap">✎ Edit order</Link>
                         <form action={cancelCodAction}>
                           <input type="hidden" name="id" value={r.id} />
-                          <button className="px-3 py-1 rounded-full border border-rose/40 text-rose text-[11px] hover:bg-rose/10 whitespace-nowrap" title="Customer refused / no answer — removes the order (nothing to restock)">Cancel order</button>
+                          <button className="px-3 py-1 rounded-full border border-rose/40 text-rose text-[11px] hover:bg-rose/10 whitespace-nowrap" title="Customer refused / no answer — releases reserved stock">Cancel order</button>
                         </form>
                       </div>
                     </td>
@@ -120,6 +124,9 @@ export default async function CodOrders({ searchParams }: { searchParams?: { err
                           </span>
                         ))}
                       </div>
+                      <div className="mt-3">
+                        <EditBillPanel orderId={r.id} requireOtp={false} />
+                      </div>
                     </td>
                   </tr>
                 </Fragment>
@@ -128,7 +135,7 @@ export default async function CodOrders({ searchParams }: { searchParams?: { err
           </tbody>
         </table>
       </div>
-      <p className="text-[11px] text-muted mt-3">Stock is only deducted when you confirm — so a COD order that never gets delivered never touches your inventory or your sales figures.</p>
+      <p className="text-[11px] text-muted mt-3">Pieces are reserved when the COD is placed, so KR52 cannot be sold twice. Confirming converts the hold into a sale; cancelling puts the pieces back on the shelf.</p>
     </main>
   );
 }

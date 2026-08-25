@@ -10,6 +10,7 @@ import { CancelOrderButton } from "@/components/admin/CancelOrderButton";
 import { EditBillPanel } from "@/components/admin/EditBillPanel";
 import { BUSINESS, HSN_JEWELLERY, GST_RATE, gstSplit, gstSplitExclusive, stateCodeFromGstin, stateNameFromCode, bankHasDetails, amountInWords } from "@/lib/business";
 import { getSession, can } from "@/lib/auth";
+import { isPendingCodQueue } from "@/lib/orderPayment";
 import { recordPaymentAction, setDocTypeAction, saveOrderNoteAction, setBillTypeAction, setGstModeAction } from "@/app/actions/payments";
 
 export const metadata = { title: "Invoice" };
@@ -449,7 +450,7 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                 live (non-cancelled) bill. */}
             {can(session, "billing.sell") && order.status !== "cancelled" && (
               <div className="sm:col-span-2">
-                <EditBillPanel orderId={String(order.id)} />
+                <EditBillPanel orderId={String(order.id)} requireOtp={!isPendingCodQueue(order as any)} />
               </div>
             )}
             {can(session, "billing.sell") && (

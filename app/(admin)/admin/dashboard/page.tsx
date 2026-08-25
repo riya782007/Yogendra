@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
-import { getDashboardData, getDashboardAnalytics, getChannelReport, getOrderAlerts, getStorefrontOrderAlerts, getPendingDealerApplications, getPendingWholesalePayments, getAbandonedCarts } from "@/lib/supabase/queries";
+import { getDashboardData, getDashboardAnalytics, getChannelReport, getOrderAlerts, getStorefrontOrderAlerts, getPendingDealerApplications, getPendingWholesalePayments, getAbandonedCarts, getPendingCodOrders } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
 import { OrderNotifications } from "@/components/admin/OrderNotifications";
 import { AnimatedNumber } from "@/components/admin/AnimatedNumber";
@@ -48,7 +48,7 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
   // owner can see exactly which dates the figures cover — the earlier blank-box confusion.
   const fromDate = searchParams.from ?? from.slice(0, 10);
   const toDate = searchParams.to ?? to.slice(0, 10);
-  const [d, a, report, recent, storefrontOrders, dealerApps, wholesalePays, allCarts] = await Promise.all([getDashboardData(from, to), getDashboardAnalytics(from, to), getChannelReport(from, to), getOrderAlerts(8), getStorefrontOrderAlerts(12).catch(() => []), getPendingDealerApplications(10), getPendingWholesalePayments().catch(() => []), getAbandonedCarts().catch(() => [])]);
+  const [d, a, report, recent, storefrontOrders, dealerApps, wholesalePays, allCarts, pendingCod] = await Promise.all([getDashboardData(from, to), getDashboardAnalytics(from, to), getChannelReport(from, to), getOrderAlerts(8), getStorefrontOrderAlerts(12).catch(() => []), getPendingDealerApplications(10), getPendingWholesalePayments().catch(() => []), getAbandonedCarts().catch(() => []), getPendingCodOrders(12).catch(() => [])]);
   const orderAgo = (iso: string) => { const h = Math.round((Date.now() - new Date(iso).getTime()) / 3600000); return h < 1 ? "just now" : h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`; };
   // Don't show an order in BOTH boxes: a wholesale order still awaiting payment verification already has
   // its own "Wholesale payments to verify" box (with the Accept/Reject buttons). Showing it in the
@@ -99,6 +99,27 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
           </div>
         </div>
       </div>
+
+      {pendingCod.length > 0 && (
+        <div className="mb-6 rounded-2xl border-2 border-gold-dark bg-gold/10 p-4 shadow-luxe">
+          <div className="flex items-center justify-between mb-2">
+            <p className="font-medium text-ink">💵 COD orders — collect on delivery <span className="ml-1 text-xs bg-gold-dark text-white rounded-full px-2 py-0.5">{pendingCod.length}</span></p>
+            <Link href="/admin/cod" className="text-xs text-emerald nav-link">Open COD queue →</Link>
+          </div>
+          <p className="text-[11px] text-muted mb-2">Stock is reserved for these orders. Confirm dispatch on the COD page once the customer has paid.</p>
+          <div className="space-y-1.5">
+            {pendingCod.slice(0, 6).map((o) => (
+              <Link key={o.id} href={`/admin/invoice/${o.id}`} className="flex flex-wrap items-center justify-between gap-2 text-sm bg-white/80 rounded-lg px-3 py-1.5 hover:bg-white transition-colors">
+                <span className="text-ink"><b>{o.customer_name || "Customer"}</b>{o.customer_phone ? ` · ${o.customer_phone}` : ""} · <span className="text-muted">{orderAgo(o.created_at)}</span></span>
+                <span className="flex items-center gap-2">
+                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-gold-dark text-white">COD</span>
+                  <span className="text-ink font-medium">{formatPaise(o.total)}</span>
+                </span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 🛍️ STOREFRONT ORDERS — customer-placed online orders (retail/wholesale), kept SEPARATE from the
           owner's own counter (POS) bills so a real online order is never buried. These need packing & shipping. */}
@@ -204,7 +225,7 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
         <Tile label="Revenue" icon="₹" accent="text-emerald" bar="bg-emerald" sub={`${d.orders} orders`}><span className="sensitive"><AnimatedNumber value={d.revenue / 100} prefix="₹" /></span></Tile>
-        <Tile label="Orders" icon="❑" bar="bg-gold" sub={`${d.pos} POS · ${d.cod} COD`}><AnimatedNumber value={d.orders} /></Tile>
+        <Tile label="Orders" icon="❑" bar="bg-gold" sub={`${d.pos} POS · ${d.cod} COD confirmed${d.pendingCod ? ` · ${d.pendingCod} COD waiting` : ""}`}><AnimatedNumber value={d.orders} /></Tile>
         <Tile label="Approved Retailers" icon="♚" bar="bg-wine" sub={`${d.pendingApprovals} pending`}><AnimatedNumber value={d.retailers} /></Tile>
         <Tile label="Pending Approvals" icon="✓" accent={d.pendingApprovals ? "text-gold-dark" : undefined} bar={d.pendingApprovals ? "bg-gold-dark" : "bg-sand"} sub="needs owner OTP"><AnimatedNumber value={d.pendingApprovals} /></Tile>
       </div>

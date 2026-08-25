@@ -34,8 +34,8 @@ export default async function StockMovements({ searchParams }: { searchParams: {
     // every page (not only page 1) whenever the user is on the All or Estimate tab, so the
     // open-estimate reservations don't disappear as soon as you scroll.
     (kind === "all" || kind === "estimate") ? getOpenEstimateReservations() : Promise.resolve([] as any[]),
-    // Backorders + COD-hold orders are committed stock-OUT that hasn't been deducted yet. Show them
-    // on the All and Sales tabs so a pending outflow is never invisible (owner's request).
+    // Backorders are committed stock-OUT that hasn't been deducted yet. COD holds now reserve for
+    // real (they show as 'reserve' movements). Show backorders on All and Sales tabs.
     (kind === "all" || kind === "sale") ? getPendingHeldOrders() : Promise.resolve([] as any[]),
   ]);
   const reservedTotal = (reservations as any[]).reduce((s, e) => s + e.qty, 0);
@@ -81,7 +81,7 @@ export default async function StockMovements({ searchParams }: { searchParams: {
         <div className="mb-5 rounded-2xl border border-rose/40 bg-rose/5 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
             <h2 className="text-sm font-semibold text-rose">📦 Pending stock-out (held orders) — {heldTotal} pcs across {held.length} order{held.length > 1 ? "s" : ""}</h2>
-            <span className="text-[11px] text-muted">Backorders &amp; COD holds — stock only moves when you dispatch / fulfil.</span>
+            <span className="text-[11px] text-muted">Backorders — stock only moves when you fulfil.</span>
           </div>
           <ul className="divide-y divide-rose/20">
             {(held as any[]).map((o) => {

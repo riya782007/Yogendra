@@ -6,7 +6,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm, getSession } from "@/lib/auth";
 import { getPricingFormula } from "@/lib/supabase/queries";
 import { resolvePrices, overridesOf } from "@/lib/pricing";
-import { isCodOrder } from "@/lib/orderPayment";
+import { isCodOrder, isPendingCodQueue } from "@/lib/orderPayment";
 
 const OWNER_OTP = () => process.env.OWNER_OTP ?? "482913";
 
@@ -523,9 +523,8 @@ export async function fulfillBackorderAction(formData: FormData): Promise<void> 
   redirect("/admin/backorders?ok=1");
 }
 
-/** Confirm a held COD order once it's dispatched AND the customer has received/paid — re-checks stock
- *  (all-or-nothing), moves inventory, posts the sale to the ledger, marks it paid, and releases it from
- *  the COD hold so it joins the sales record. Until this, the COD order holds no stock or revenue. */
+/** Confirm a held COD order once it's dispatched AND the customer has received/paid — converts the
+ *  stock reservation into a sale, posts revenue, marks it paid, and releases it from the COD queue. */
 export async function confirmCodAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("billing.sell"))) return;
   const id = String(formData.get("id") ?? "").trim();
@@ -536,14 +535,14 @@ export async function confirmCodAction(formData: FormData): Promise<void> {
     redirect("/admin/cod?err=" + encodeURIComponent("That order is prepaid — accept or reject it under Storefront Orders, not COD."));
   }
   const { error } = await sb.rpc("confirm_cod_order", { p_order_id: id });
-  revalidatePath("/admin/cod"); revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard");
-  if (!error) revalidateTag("storefront"); // stock finally moves here → refresh the shop so it hides if sold out
+  if (!error) revalidateTag("storefront");
+  revalidatePath("/admin/cod"); revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard"); revalidatePath("/admin/stock-movements");
   if (error) redirect(`/admin/cod?err=${encodeURIComponent(error.message)}`);
   redirect("/admin/cod?ok=1");
 }
 
-/** Cancel a held COD order (customer refused / didn't confirm). It held NO stock and NO revenue, so we
- *  simply delete it — there is nothing to restock or reverse. */
+/** Cancel a held COD order (customer refused / didn't confirm). Releases the reserved stock back
+ *  to the shelf (it was never a sale) and marks the order cancelled. */
 export async function cancelCodAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("billing.sell"))) return;
   const id = String(formData.get("id") ?? "").trim();
@@ -553,9 +552,10 @@ export async function cancelCodAction(formData: FormData): Promise<void> {
   if (!o || (o as any).cod_hold !== true || !isCodOrder(o as any)) {
     redirect("/admin/cod?err=" + encodeURIComponent("That order is prepaid — reject it under Storefront Orders. Do not cancel it from COD."));
   }
-  await sb.from("order_items").delete().eq("order_id", id).then(() => {}, () => {});
-  await sb.from("orders").delete().eq("id", id).then(() => {}, () => {});
-  revalidatePath("/admin/cod"); revalidatePath("/admin/dashboard");
+  const { error } = await sb.rpc("cancel_order", { p_order_id: id, p_reason: "COD cancelled — customer refused / no answer" });
+  if (!error) revalidateTag("storefront");
+  revalidatePath("/admin/cod"); revalidatePath("/admin/dashboard"); revalidatePath("/admin/stock-movements");
+  if (error) redirect(`/admin/cod?err=${encodeURIComponent(error.message)}`);
   redirect("/admin/cod?cancelled=1");
 }
 
@@ -625,17 +625,22 @@ export async function fetchOrderForEditAction(orderId: string): Promise<{ ok: bo
  *  quietly rewrite a completed sale. Set newQty=0 to remove the line. */
 export async function editOrderLineAction(input: { orderId: string; itemId: string; newQty: number; otp: string }): Promise<{ ok: boolean; error?: string; total?: number; removed?: boolean }> {
   if (!(await requirePerm("billing.sell"))) return { ok: false, error: "Your role can't edit bills." };
-  const otp = (input.otp ?? "").trim();
-  if (!otp || otp !== OWNER_OTP()) return { ok: false, error: "Wrong OTP — ask the owner for the code." };
   const orderId = (input.orderId ?? "").trim();
   const itemId = (input.itemId ?? "").trim();
   if (!orderId || !itemId) return { ok: false, error: "Missing bill / line." };
   const newQty = Math.max(0, Math.floor(Number(input.newQty ?? 0)));
+  const otp = (input.otp ?? "").trim();
   const sb = supabaseServer();
+  const { data: heldRow } = await sb.from("orders").select("cod_hold,payment_mode,amount_paid,total,status").eq("id", orderId).maybeSingle();
+  const heldCod = isPendingCodQueue(heldRow as any);
+  if (!heldCod) {
+    if (!otp || otp !== OWNER_OTP()) return { ok: false, error: "Wrong OTP — ask the owner for the code." };
+  }
   const { data, error } = await sb.rpc("edit_order_line", { p_order_id: orderId, p_item_id: itemId, p_new_qty: newQty });
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/admin/invoice/${orderId}`);
-  revalidatePath("/admin/sales"); revalidatePath("/admin/backorders"); revalidatePath("/admin/dashboard");
+  revalidatePath("/admin/sales"); revalidatePath("/admin/backorders"); revalidatePath("/admin/dashboard"); revalidatePath("/admin/cod");
+  revalidateTag("storefront");
   return { ok: true, total: (data as any)?.total, removed: (data as any)?.removed };
 }
 
@@ -649,18 +654,21 @@ export async function editOrderLineAction(input: { orderId: string; itemId: stri
 export async function addOrderLineAction(input: { orderId: string; sku: string; qty: number; priceRupees?: number; otp: string }): Promise<{ ok: boolean; error?: string; total?: number; sku?: string }> {
   if (!(await requirePerm("billing.sell"))) return { ok: false, error: "Your role can't edit bills." };
   const otp = (input.otp ?? "").trim();
-  if (!otp || otp !== OWNER_OTP()) return { ok: false, error: "Wrong OTP — ask the owner for the code." };
   const orderId = (input.orderId ?? "").trim();
   const sku = (input.sku ?? "").trim();
   if (!orderId || !sku) return { ok: false, error: "Enter the SKU to add." };
   const qty = Math.max(1, Math.floor(Number(input.qty ?? 1)));
 
   const sb = supabaseServer();
+  const { data: heldRow } = await sb.from("orders").select("cod_hold,payment_mode,amount_paid,total,status,channel,bill_type").eq("id", orderId).maybeSingle();
+  const heldCod = isPendingCodQueue(heldRow as any);
+  if (!heldCod) {
+    if (!otp || otp !== OWNER_OTP()) return { ok: false, error: "Wrong OTP — ask the owner for the code." };
+  }
   const formula = await getPricingFormula();
 
   // Which tier this bill was raised on, so a corrected line matches the rest of the bill.
-  const { data: ord } = await sb.from("orders").select("channel,bill_type").eq("id", orderId).maybeSingle();
-  const wholesale = String((ord as any)?.channel ?? "").toLowerCase() === "wholesale";
+  const wholesale = String((heldRow as any)?.channel ?? "").toLowerCase() === "wholesale";
 
   // Variant SKU first — that's what the barcode carries.
   const { data: v } = await sb.from("variants")
@@ -694,7 +702,8 @@ export async function addOrderLineAction(input: { orderId: string; sku: string; 
   if (error) return { ok: false, error: error.message };
 
   revalidatePath(`/admin/invoice/${orderId}`);
-  revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard"); revalidatePath("/admin/stock-movements");
+  revalidatePath("/admin/sales"); revalidatePath("/admin/dashboard"); revalidatePath("/admin/stock-movements"); revalidatePath("/admin/cod");
+  revalidateTag("storefront");
   return { ok: true, total: (data as any)?.total, sku: (data as any)?.sku };
 }
 

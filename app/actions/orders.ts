@@ -55,10 +55,9 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
     p_payment: input.payment,
     p_allow_oversell: false, // online retail never oversells
     p_tier: "retail",
-    // EVERY storefront order is now HELD until the owner ACCEPTS it: stock is checked but NOT deducted and
-    // no revenue posts at placement. Accepting deducts the stock (the real sale); rejecting changes NOTHING
-    // — so a rejected order can never add a phantom piece back (owner: "sale hui hi nahi, bill bana hi nahi,
-    // to stock kaise badh gaya — ye na ho"). COD already worked this way; this extends it to prepaid too.
+    // EVERY storefront order is HELD until the owner ACCEPTS it: stock is RESERVED (not a sale) and
+    // no revenue posts at placement. Accepting converts the reservation into a sale; rejecting
+    // releases the pieces back to the shelf — a rejected order can never add a phantom piece.
     p_cod_hold: true,
   });
   if (error) return { ok: false, error: error.message };
@@ -80,10 +79,8 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
   // COD CEILING — Cash on Delivery is risky on high-value orders, so anything above ₹5,000 (goods value,
   // before fees) must be prepaid. Roll the order back so no stock is held and the shopper pays online.
   if (input.payment === "cod" && discountedSubtotal > COD_MAX_PAISE) {
-    // A held COD order holds NO stock and posted NO revenue, so there's nothing to unwind — just delete
-    // it (cancel_order would wrongly RE-STOCK goods that were never deducted).
-    await sb.from("order_items").delete().eq("order_id", orderId).then(() => {}, () => {});
-    await sb.from("orders").delete().eq("id", orderId).then(() => {}, () => {});
+    // Reservation was taken at place — cancel releases it before we tell the shopper to pay online.
+    await sb.rpc("cancel_order", { p_order_id: orderId, p_reason: "COD over ₹5,000 ceiling" }).then(() => {}, () => {});
     return { ok: false, error: "Cash on Delivery isn't available for orders above ₹5,000. Please choose online (prepaid) payment." };
   }
 
@@ -102,8 +99,8 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
   if (discount > 0 && appliedCode) await bumpVoucherUsage(appliedCode);
 
   await sendPurchase({ orderId, valuePaise: total, channel: "retail", items: input.items.map((i) => ({ sku: i.sku, qty: i.qty })) });
-  // The order is HELD — no stock moved at placement — so there's nothing to refresh on the storefront yet.
-  // The storefront cache is busted when the owner ACCEPTS the order (that's when the stock actually leaves).
+  // Reservation just left the shelf — hide a sold-out colour on the shop immediately.
+  revalidateTag("storefront");
   await notifyOrderPlaced({
     orderId, customerName: input.customer.name, customerPhone: input.customer.phone,
     totalPaise: total, payment: input.payment, itemCount: input.items.reduce((n, i) => n + i.qty, 0),
