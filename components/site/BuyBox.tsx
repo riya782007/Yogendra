@@ -27,31 +27,23 @@ export function BuyBox({ variants = [], waHref, item }: {
   const price = sel ? sel.price : item.price;
   const outOfStock = sel ? sel.qty <= 0 : (item.qty != null && item.qty <= 0);
 
-  // The exact line that goes into the cart for this product/variant + chosen qty. IMPORTANT: store the
-  // variant's REAL colour value (e.g. "Gold"), NOT the display label ("Gold · Gold"). place_order matches
-  // the chosen option on the colour column, so a composite label made checkout fail to place the order
-  // even after the customer had paid (money captured, no order). Fall back to the label only if a variant
-  // has no colour value.
+  // Cart line: PRODUCT sku + real colour value (not composite label) for place_order matching.
   const cartLine = () => ({ sku: item.sku, name: item.name, price, category: item.category, color: sel?.value || sel?.label });
 
   const onAdd = () => {
     if (outOfStock) return;
-    // Cart carries the PRODUCT sku (checkout/billing resolves products by sku) plus the
-    // chosen variant as its label, so the order records exactly which option was picked.
     add(cartLine(), qty);
     toast(`${item.name}${sel ? ` (${sel.label})` : ""} added to bag`);
     setAdded(true); setTimeout(() => setAdded(false), 1500);
   };
 
-  // "Buy now": drop this single item in the bag and go straight to checkout with the
-  // payment method preselected (delivery address is still required there for both flows).
-  const buyNow = (method: "online" | "cod") => {
+  // Retail storefront is PREPAID-ONLY — always go to online checkout.
+  const buyNow = () => {
     if (outOfStock) return;
     add(cartLine(), qty);
-    router.push(`/checkout?pay=${method}`);
+    router.push("/checkout?pay=online");
   };
 
-  // Notify Me — capture demand when the (selected) item is out of stock.
   const [nOpen, setNOpen] = useState(false);
   const [nName, setNName] = useState("");
   const [nPhone, setNPhone] = useState("");
@@ -98,16 +90,11 @@ export function BuyBox({ variants = [], waHref, item }: {
           <button onClick={() => setQty((q) => q + 1)} className="px-3 py-1.5 hover:bg-cream transition-colors">+</button>
         </div>
       </div>
-      {/* Primary: buy now — straight to a one-step checkout with the method preselected */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <button onClick={() => buyNow("online")} disabled={outOfStock} className="btn-primary py-3.5 text-sm font-semibold disabled:opacity-50">
+      <div className="grid grid-cols-1 gap-3">
+        <button onClick={buyNow} disabled={outOfStock} className="btn-primary py-3.5 text-sm font-semibold disabled:opacity-50">
           {outOfStock ? "Out of stock" : "Buy Now · Pay Online"}
         </button>
-        <button onClick={() => buyNow("cod")} disabled={outOfStock} className="py-3.5 rounded-full border-2 border-emerald text-emerald text-sm font-semibold transition-colors hover:bg-emerald-mist disabled:opacity-50">
-          Cash on Delivery
-        </button>
       </div>
-      {/* Secondary: keep building a bag, or order over WhatsApp */}
       <div className="flex gap-3 mt-3">
         <button onClick={onAdd} disabled={outOfStock} className="flex-1 py-3 rounded-full border border-sand text-ink text-sm font-medium transition-colors hover:border-gold disabled:opacity-50">
           {added ? "✓ Added to cart" : "Add to cart"}
@@ -117,12 +104,12 @@ export function BuyBox({ variants = [], waHref, item }: {
       {outOfStock && (
         <div className="mt-3 rounded-2xl border border-gold/40 bg-gold/5 p-4">
           {nDone ? (
-            <p className="text-sm text-emerald-dark">✓ Done — we&apos;ll text you on {nPhone} the moment it&apos;s back in stock.</p>
+            <p className="text-sm text-emerald-dark">✓ Done — we'll text you on {nPhone} the moment it's back in stock.</p>
           ) : !nOpen ? (
-            <button onClick={() => setNOpen(true)} className="w-full py-3 rounded-full bg-ink text-white text-sm font-medium">🔔 Notify me when it&apos;s back</button>
+            <button onClick={() => setNOpen(true)} className="w-full py-3 rounded-full bg-ink text-white text-sm font-medium">🔔 Notify me when it's back</button>
           ) : (
             <div className="space-y-2">
-              <p className="text-sm font-medium text-ink">Get a text when it&apos;s restocked</p>
+              <p className="text-sm font-medium text-ink">Get a text when it's restocked</p>
               <input value={nName} onChange={(e) => setNName(e.target.value)} placeholder="Your name (optional)" className="w-full rounded-xl border border-sand px-4 py-2.5 text-sm outline-none focus:border-emerald" />
               <input value={nPhone} onChange={(e) => setNPhone(e.target.value)} placeholder="Phone number" inputMode="tel" className="w-full rounded-xl border border-sand px-4 py-2.5 text-sm outline-none focus:border-emerald" />
               {nErr && <p className="text-xs text-rose">{nErr}</p>}
@@ -131,7 +118,7 @@ export function BuyBox({ variants = [], waHref, item }: {
           )}
         </div>
       )}
-      <p className="text-xs text-muted mt-3 flex flex-wrap items-center gap-x-4 gap-y-1"><span>✓ COD available</span><span>✓ ₹80 flat shipping</span><span>✓ 7-day returns</span></p>
+      <p className="text-xs text-muted mt-3 flex flex-wrap items-center gap-x-4 gap-y-1"><span>✓ Pay online</span><span>✓ ₹80 flat shipping</span><span>✓ 7-day returns</span></p>
     </div>
   );
 }
