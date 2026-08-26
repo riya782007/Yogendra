@@ -1,4 +1,4 @@
-/** Typed Supabase server client (service-role for admin writes). Server-only. */
+﻿/** Typed Supabase server client (service-role for admin writes). Server-only. */
 import { createClient } from "@supabase/supabase-js";
 
 export function supabaseServer() {
@@ -8,8 +8,8 @@ export function supabaseServer() {
   return createClient(url, key, {
     auth: { persistSession: false },
     global: {
-      // Admin/service reads must ALWAYS be live — never served from Next.js's fetch Data Cache.
-      // Without this, a freshly created SKU showed up in Billing only 2–3 hours later: the product
+      // Admin/service reads must ALWAYS be live â€” never served from Next.js's fetch Data Cache.
+      // Without this, a freshly created SKU showed up in Billing only 2â€“3 hours later: the product
       // list read here was cached by Next, and Billing wasn't in any action's revalidate list, so the
       // stale cache lingered until Vercel evicted it. `no-store` guarantees every admin read is fresh.
       // Public shop pages stay fast because they wrap their reads in unstable_cache (result-cached).
@@ -17,3 +17,6 @@ export function supabaseServer() {
     },
   });
 }
+
+export { createClient };
+

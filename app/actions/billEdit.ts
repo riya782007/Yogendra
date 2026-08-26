@@ -14,7 +14,8 @@ export async function updateBillItemsAction(
   updatedItems: BillItemUpdate[],
   paymentMode: string = "CASH"
 ) {
-  const supabase = await createClient();
+  const clientOrPromise = createClient();
+  const supabase = clientOrPromise instanceof Promise ? await clientOrPromise : clientOrPromise;
 
   // 1. Recalculate Subtotal and Grand Total from updated line item rates
   let newSubtotal = 0;
