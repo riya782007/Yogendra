@@ -1,5 +1,4 @@
 ﻿import OpenAI from "openai";
-import { GoogleGenAI } from "@google/genai";
 
 interface TitleGenParams {
   category: string;
@@ -59,22 +58,31 @@ Generate high-converting, elegant product titles following these strict rules:
         };
       }
     } catch (err) {
-      console.error("[TitleGen] OpenAI generation failed, attempting Gemini fallback:", err);
+      console.error("[TitleGen] OpenAI generation failed:", err);
     }
   }
 
-  // 2. Secondary Fallback: Gemini API
+  // 2. Secondary: Direct Gemini REST endpoint if key is present
   if (process.env.GEMINI_API_KEY) {
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const prompt = `Generate a luxury jewellery title for SKU: ${sku}, Category: ${category}, Polish: ${polish || "Gold/Silver"}. Return JSON {"title": "Title", "suggestions": ["Alt 1", "Alt 2"]}`;
-      const res = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
-        contents: prompt
+      const prompt = `You are a jewellery expert. Generate an elegant title and 3 alternatives for SKU: ${sku}, Category: ${category}, Polish: ${polish || "Gold/Silver"}. Return JSON {"title": "...", "suggestions": ["...", "..."]}`;
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseMimeType: "application/json" }
+        })
       });
-      const parsed = JSON.parse(res.text || "{}");
-      if (parsed.title) {
-        return { title: parsed.title, suggestions: parsed.suggestions || [parsed.title] };
+      if (res.ok) {
+        const data = await res.json();
+        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          const parsed = JSON.parse(text);
+          if (parsed.title) {
+            return { title: parsed.title, suggestions: parsed.suggestions || [parsed.title] };
+          }
+        }
       }
     } catch (err) {
       console.error("[TitleGen] Gemini fallback failed:", err);

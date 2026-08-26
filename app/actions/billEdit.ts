@@ -1,4 +1,6 @@
-﻿import { createServerClient } from "@/lib/supabase/server";
+﻿"use server";
+
+import { createClient } from "@/lib/supabase/server";
 
 export interface BillItemUpdate {
   sku: string;
@@ -12,7 +14,7 @@ export async function updateBillItemsAction(
   updatedItems: BillItemUpdate[],
   paymentMode: string = "CASH"
 ) {
-  const supabase = createServerClient();
+  const supabase = await createClient();
 
   // 1. Recalculate Subtotal and Grand Total from updated line item rates
   let newSubtotal = 0;
