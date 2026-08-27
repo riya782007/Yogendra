@@ -855,9 +855,9 @@ export async function getSupplierLedger(id: string) {
   const sb = supabaseServer();
   const { data: supplier } = await sb.from("suppliers").select("*").eq("id", id).maybeSingle();
   if (!supplier) return null;
-  const [{ data: purchases }, { data: pays }] = await Promise.all([
-    sb.from("purchases").select("id,bill_no,total,created_at, items:purchase_items(qty)").eq("supplier_id", id).order("created_at", { ascending: false }),
-    sb.from("supplier_payments").select("id,amount,mode,ref,note,created_at,method_id").eq("supplier_id", id).order("created_at", { ascending: false }),
+  const [purchases, pays] = await Promise.all([
+    fetchAll((f, t) => sb.from("purchases").select("id,bill_no,total,created_at, items:purchase_items(qty)").eq("supplier_id", id).order("created_at", { ascending: false }).range(f, t)),
+    fetchAll((f, t) => sb.from("supplier_payments").select("id,amount,mode,ref,note,created_at,method_id").eq("supplier_id", id).order("created_at", { ascending: false }).range(f, t)),
   ]);
   const list = ((purchases as any[]) ?? []).map((p) => ({
     id: p.id, bill_no: p.bill_no, total: p.total ?? 0, created_at: p.created_at,
@@ -2387,12 +2387,38 @@ export async function getProductsForPurchase() {
     })),
   }));
 }
+export async function getPurchasesPage(opts: { page?: number; pageSize?: number; q?: string; supplierId?: string; from?: string; to?: string }) {
+  const sb = supabaseServer();
+  const pageSize = opts.pageSize ?? 25;
+  const page = Math.max(1, opts.page ?? 1);
+  let query = sb.from("purchases").select("id,bill_no,total,created_at,supplier:suppliers(name,city)", { count: "exact" });
+  if (opts.supplierId && opts.supplierId !== "all") query = query.eq("supplier_id", opts.supplierId);
+  if (opts.from) query = query.gte("created_at", opts.from);
+  if (opts.to) query = query.lte("created_at", opts.to);
+  if (opts.q?.trim()) {
+    const s = escLike(opts.q);
+    if (s) {
+      const { data: sups } = await sb.from("suppliers").select("id").ilike("name", `%${s}%`);
+      const ids = ((sups as any[]) ?? []).map((x) => x.id).filter(Boolean).slice(0, 80);
+      query = ids.length
+        ? query.or(`bill_no.ilike.%${s}%,supplier_id.in.(${ids.join(",")})`)
+        : query.ilike("bill_no", `%${s}%`);
+    }
+  }
+  const fromIdx = (page - 1) * pageSize;
+  const { data, count } = await query.order("created_at", { ascending: false }).range(fromIdx, fromIdx + pageSize - 1);
+  return { rows: (data as any[]) ?? [], total: count ?? 0, page, pageSize };
+}
+
+/** All purchase bills (newest first). Used by the returns picker so an old bill can still be returned against. */
 export async function getRecentPurchases() {
   const sb = supabaseServer();
-  const { data } = await sb.from("purchases")
-    .select("id,bill_no,total,created_at,supplier:suppliers(name,city),purchase_items(qty)")
-    .order("created_at", { ascending: false }).limit(15);
-  return (data as any[]) ?? [];
+  return fetchAll((f, t) =>
+    sb.from("purchases")
+      .select("id,bill_no,total,created_at,supplier:suppliers(name,city)")
+      .order("created_at", { ascending: false })
+      .range(f, t),
+  );
 }
 
 export async function getPurchaseById(id: string) {
