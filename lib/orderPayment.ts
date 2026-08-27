@@ -51,3 +51,12 @@ export function isPendingCodQueue(o: {
   if (o.cod_hold !== true) return false;
   return isCodOrder(o);
 }
+
+/** Short and long labels for storefront order administration. */
+export function paymentLabel(o: { payment_mode?: string | null; amount_paid?: number | null; total?: number | null }): "COD" | "PREPAID" {
+  return isCodOrder(o) ? "COD" : "PREPAID";
+}
+
+export function paymentLabelLong(o: { payment_mode?: string | null; amount_paid?: number | null; total?: number | null }): string {
+  return paymentLabel(o) === "COD" ? "Cash on Delivery" : "Prepaid";
+}
