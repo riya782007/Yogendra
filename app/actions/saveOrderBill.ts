@@ -61,7 +61,7 @@ export async function saveOrderBillAction(input: {
   }
 
   // 2. Update charges (packing/courier/adjustment) if provided
-  const toPaise = (r: number | undefined) => Math.round((Number.isFinite(r) ? r : 0) * 100);
+  const toPaise = (r: number | undefined) => Math.round((typeof r === "number" && Number.isFinite(r) ? r : 0) * 100);
   const packing = Math.max(0, toPaise(input.packingRupees));
   const courier = Math.max(0, toPaise(input.courierRupees));
   const adjustment = toPaise(input.adjustmentRupees);
