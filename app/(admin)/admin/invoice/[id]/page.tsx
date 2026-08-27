@@ -445,11 +445,40 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                 </div>
               </div>
             )}
-            {/* OTP-gated bill editing — fix a wrong qty / mis-scanned line without cancelling. Only on a
-                live (non-cancelled) bill. */}
+            {/* Full bill editor — same layout as creating a bill / editing an estimate (customer,
+                lines, packing, courier, GST, one Save). Replaces the old OTP-per-line panel. */}
             {can(session, "billing.sell") && order.status !== "cancelled" && (
               <div className="sm:col-span-2">
-                <EditBillPanel orderId={String(order.id)} />
+                <EditBillPanel
+                  orderId={String(order.id)}
+                  initialBill={{
+                    id: String(order.id),
+                    invoice_no: (order.invoice_no as string) ?? null,
+                    total: (order.total as number) ?? 0,
+                    amount_paid: (order.amount_paid as number) ?? 0,
+                    is_backorder: !!(order as any).is_backorder,
+                    cod_hold: !!(order as any).cod_hold,
+                    status: String(order.status ?? ""),
+                    channel: (order.channel as string) ?? null,
+                    bill_type: (order.bill_type as string) ?? null,
+                    gst_mode: (order.gst_mode as string) ?? null,
+                    customer_name: (order.customer_name as string) ?? null,
+                    customer_phone: (order.customer_phone as string) ?? null,
+                    buyer_gstin: (order.buyer_gstin as string) ?? null,
+                    buyer_address: (order.buyer_address as string) ?? null,
+                    extra_packing: xPacking,
+                    extra_courier: xCourier,
+                    extra_adjustment: xAdjust,
+                    items: items.map((it: any) => ({
+                      id: String(it.id ?? ""),
+                      sku: (it.variant?.sku ?? it.product?.sku ?? "") as string,
+                      name: `${it.product?.name ?? ""}${it.variant?.color ? " · " + it.variant.color : ""}`,
+                      qty: it.qty ?? 0,
+                      unit_price: it.unit_price ?? 0,
+                      line_total: it.line_total ?? (it.unit_price ?? 0) * (it.qty ?? 0),
+                    })).filter((it: { id: string }) => it.id),
+                  }}
+                />
               </div>
             )}
             {can(session, "billing.sell") && (

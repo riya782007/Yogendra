@@ -40,6 +40,7 @@ export {
   editOrderLineAction,
   addOrderLineAction,
   fetchOrderForReturnAction,
+  saveOrderBillAction,
 } from "./billing_mod_5";
 
 export {
@@ -51,7 +52,3 @@ export {
 export {
   receiveCustomerPaymentAction,
 } from "./billing_mod_7";
-
-export {
-  saveOrderBillAction,
-} from "./saveOrderBill";
