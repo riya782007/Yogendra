@@ -52,3 +52,5 @@ export {
 export {
   receiveCustomerPaymentAction,
 } from "./billing_mod_7";
+
+export type { EditableBill } from "./billing_mod_5";
