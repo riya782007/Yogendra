@@ -2106,8 +2106,8 @@ export async function getOrder(id: string) {
   // Join the VARIANT too (sku + colour) so the printed bill shows exactly what was sold — e.g.
   // "…Necklace Set – Navy Blue" with SKU KN5441-NBlue (the "green not showing" issue). Resilient:
   // if the variant embed can't resolve, fall back to product-only so the invoice never blanks.
-  const RICH = "qty,unit_price,unit_mrp,line_total,product:products(name,sku),variant:variants(sku,color)";
-  const BASIC = "qty,unit_price,unit_mrp,line_total,product:products(name,sku)";
+  const RICH = "id,qty,unit_price,unit_mrp,line_total,product:products(name,sku),variant:variants(sku,color)";
+  const BASIC = "id,qty,unit_price,unit_mrp,line_total,product:products(name,sku)";
   const rich = await sb.from("order_items").select(RICH).eq("order_id", id);
   let items: any[] | null = (rich.data as any) ?? null;
   if (rich.error || items == null) {
