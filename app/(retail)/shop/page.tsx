@@ -34,7 +34,7 @@ const loadShopHome = unstable_cache(
     if (!store.products || store.products.length === 0) throw new Error("shop home: storefront read returned no products — not caching");
     return { products: store.products, formula: store.formula, reviews, reels, promos, tree };
   },
-  ["shop-home-v3-instock"],
+  ["shop-home-v4-instock"],
   { revalidate: 900, tags: ["storefront"] },
 );
 
@@ -63,9 +63,9 @@ export default async function Shop() {
     if (slug && img && !catImg.has(slug)) catImg.set(slug, img);
   }
   const cats = tree.filter((c) => c.name?.trim().toLowerCase() !== "uncategorized").map((c) => ({ name: c.name, slug: c.slug, image: (c as any).imageUrl || catImg.get(c.slug) || null }));
-  // NEW ARRIVALS — genuinely the most recently ADDED pieces (newest first).
-  const createdMs = (p: any) => (p.created_at ? new Date(p.created_at).getTime() : 0);
-  const trending = [...products].sort((a, b) => createdMs(b) - createdMs(a)).slice(0, 8);
+  // NEW ARRIVALS — latest catalogue changes first, matching the trade portal.
+  const touchedMs = (p: any) => new Date(p.updated_at ?? p.created_at ?? 0).getTime();
+  const trending = [...products].sort((a, b) => touchedMs(b) - touchedMs(a)).slice(0, 8);
   // BESTSELLERS — real top sellers once there's sales/review data; until then a curated pick that is
   // ALWAYS distinct from New Arrivals (no product appears in both), so the two rows never look identical.
   const newIds = new Set(trending.map((p) => p.sku));
