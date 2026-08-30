@@ -61,7 +61,7 @@ export function isStorefrontImage(kind?: string | null): boolean {
 export type DbProduct = {
   id: string; category_id: string; sku: string; name: string;
   type: "simple" | "configurable"; base_wholesale: number; qty: number;
-  status: string; generated_content: any; last_movement_at: string | null;
+  status: string; generated_content: any; last_movement_at: string | null; created_at?: string | null; updated_at?: string | null;
   subcategory_id?: string | null;
   wholesale_only?: boolean;
   wholesale_override?: number | null; retail_override?: number | null; mrp_override?: number | null;
@@ -1902,13 +1902,13 @@ export async function getStorefront(
   // is cached and re-parsed on every page render; dropping those two blobs shrinks that cached payload by
   // ~4× so every storefront page (home, category, search) deserializes and renders much faster.
   const STOREFRONT_COLS =
-    "id, category_id, sku, name, type, base_wholesale, qty, status, last_movement_at, created_at, " +
+    "id, category_id, sku, name, type, base_wholesale, qty, status, last_movement_at, created_at, updated_at, " +
     "subcategory_id, wholesale_override, retail_override, mrp_override, wholesale_only, retail_only, " +
     "style_id, thumbnail_path, default_variant_id, hide_oos_variants, in_stock, more_designs, more_designs_note, " +
     "category:categories(id,name,slug)";
   const [prods, revs, pimgs, vimgs, formula] = await Promise.all([
     fetchAll((f, t) => {
-      let q = sb.from("products").select(STOREFRONT_COLS).order("sku");
+      let q = sb.from("products").select(STOREFRONT_COLS).order("updated_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false, nullsFirst: false }).order("sku");
       if (!opts.includeDrafts) q = q.eq("status", "published");
       return q.range(f, t);
     }),

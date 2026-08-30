@@ -14,7 +14,7 @@ const loadCatalogueBase = unstable_cache(
     const [store, allCats, allPromos] = await Promise.all([getStorefront({ onlyInStock: true }), getCategories(), getActivePromotions("retail")]);
     return { products: store.products, formula: store.formula, allCats, allPromos };
   },
-  ["shop-category-base-v2-instock"],
+  ["shop-category-base-v3-instock"],
   { revalidate: 900, tags: ["storefront"] },
 );
 import { supabaseServer } from "@/lib/supabase/server";
