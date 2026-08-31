@@ -31,6 +31,13 @@ export function isCodOrder(o: {
   return isCodPaymentMode(o.payment_mode);
 }
 
+/** Website prepaid queue: payment mode must not be COD, even after a COD order is paid. */
+export function isStorefrontPrepaidOrder(o: {
+  payment_mode?: string | null;
+}): boolean {
+  return !isCodPaymentMode(o.payment_mode);
+}
+
 export function isPrepaidOrder(o: {
   payment_mode?: string | null;
   amount_paid?: number | null;

@@ -6,7 +6,7 @@ import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase/server";
 import { formatPaise } from "@/lib/pricing";
 import { acceptStorefrontOrderAction, rejectStorefrontOrderAction, dispatchStorefrontOrderAction, deliverStorefrontOrderAction } from "@/app/actions/orders";
-import { isPrepaidOrder, paymentLabel, paymentLabelLong } from "@/lib/orderPayment";
+import { isStorefrontPrepaidOrder, paymentLabel, paymentLabelLong } from "@/lib/orderPayment";
 
 export const metadata = { title: "Owner Console · Storefront Orders" };
 
@@ -31,7 +31,7 @@ export default async function StorefrontOrders({ searchParams }: { searchParams?
       : await q.not("fulfillment", "is", null);
     if (error && /fulfillment/i.test(error.message ?? "")) migrationMissing = true;
     // Only prepaid in this queue — COD stays on /admin/cod (isCodOrder = payment_mode=cod AND not fully paid).
-    rows = ((data as any[]) ?? []).filter((r) => isPrepaidOrder(r));
+    rows = ((data as any[]) ?? []).filter((r) => isStorefrontPrepaidOrder(r));
   }
 
   const imgByUpper = new Map<string, string>();

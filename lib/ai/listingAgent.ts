@@ -66,27 +66,25 @@ export function buildGateway(opts?: { visionFirst?: boolean }) {
   const wantVision = !!opts?.visionFirst && (openaiOn || geminiOn);
   const groqPrimary = groqConfigured() && !wantVision;
   const SYSTEM = "You are BlytheDIVA's product copywriter. Return only valid minified JSON.";
-  const visionRun = async (call: any) => {
-    const args = {
-      system: SYSTEM, user: call._prompt, json: true,
-      imageBase64: call._product?.imageBase64, imageMime: call._product?.imageMime,
-    };
-    if (openaiOn) {
-      try { return JSON.parse(await openaiChat(args)); }
-      catch (e) { if (!geminiOn) throw e; }
-    }
-    return JSON.parse(await geminiChat(args));
-  };
+  const visionArgs = (call: any) => ({
+    system: SYSTEM, user: call._prompt, json: true,
+    imageBase64: call._product?.imageBase64, imageMime: call._product?.imageMime,
+  });
+  const openaiRun = async (call: any) => JSON.parse(await openaiChat(visionArgs(call)));
+  const geminiRun = async (call: any) => JSON.parse(await geminiChat(visionArgs(call)));
   const groqRun = async (call: any) => JSON.parse(await groqChat({ system: SYSTEM, user: call._prompt, json: true }));
+  // Keep each provider as an independent gateway hop: a failed OpenAI response now reaches
+  // Gemini and Groq rather than repeating the same provider inside a wrapper.
+  const providers = [
+    ...(groqPrimary ? [{ name: "groq", run: groqRun }] : []),
+    ...(openaiOn ? [{ name: "openai", run: openaiRun }] : []),
+    ...(geminiOn ? [{ name: "gemini", run: geminiRun }] : []),
+    ...(!groqPrimary && groqConfigured() ? [{ name: "groq", run: groqRun }] : []),
+  ];
   return new AiGateway({
-    primary: {
-      name: groqPrimary ? "groq" : (openaiOn ? "openai" : "gemini"),
-      run: async (call: any) => (groqPrimary ? groqRun(call) : visionRun(call)),
-    },
-    secondary: {
-      name: groqPrimary ? (openaiOn ? "openai" : "gemini") : "groq",
-      run: async (call: any) => (groqPrimary ? visionRun(call) : groqRun(call)),
-    },
+    primary: providers[0] ?? { name: "unavailable", run: async () => { throw new Error("no AI provider configured"); } },
+    secondary: providers[1],
+    fallbacks: providers.slice(2),
     deterministic: (call: any) => templateContent(call._product) as GeneratedContent,
     budgetPaise: Number(process.env.AI_BUDGET_PAISE ?? 500000),
     maxRetries: 1,
@@ -168,5 +166,5 @@ export async function generateTitleOptions(p: ProductLike, n = 4): Promise<{ tit
 }
 
 export function aiProvidersStatus() {
-  return { groq: groqConfigured(), openai: openaiConfigured() };
+  return { groq: groqConfigured(), openai: openaiConfigured(), gemini: geminiTextConfigured() };
 }
