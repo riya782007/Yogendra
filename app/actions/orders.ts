@@ -7,7 +7,7 @@ import { sendPurchase } from "@/lib/ga4";
 import { notifyOrderPlaced, sendWhatsAppText } from "@/lib/whatsapp";
 import { validateVoucher, bumpVoucherUsage } from "@/app/actions/vouchers";
 import { retailShippingPaise } from "@/lib/wholesaleShipping";
-import { isCodOrder } from "@/lib/orderPayment";
+import { isCodPaymentMode } from "@/lib/orderPayment";
 
 /** Cash-on-Delivery is capped at ₹5,000 (high-value COD is risky) — above this, only prepaid.
  *  (Not exported: a "use server" file may only export async functions.) */
@@ -385,12 +385,12 @@ export async function acceptStorefrontOrderAction(formData: FormData): Promise<v
   // confirmation on the COD page (they must not be marked paid before delivery), and legacy already-deducted
   // orders are a safe no-op (confirm returns "already"). So only a prepaid HELD order deducts here.
   const { data: o0 } = await sb.from("orders").select("cod_hold,payment_mode,amount_paid,total").eq("id", id).maybeSingle();
-  if (isCodOrder(o0 as any)) {
+  if (isCodPaymentMode((o0 as any)?.payment_mode)) {
     revalidatePath("/admin/orders");
     revalidatePath("/admin/cod");
-    return; // COD is accepted/confirmed only on /admin/cod
+    return; // COD is confirmed only on /admin/cod, even after it is paid.
   }
-  const isPrepaidHeld = (o0 as any)?.cod_hold === true && !isCodOrder(o0 as any);
+  const isPrepaidHeld = (o0 as any)?.cod_hold === true;
   if (isPrepaidHeld) {
     const { error: cErr } = await sb.rpc("confirm_cod_order", { p_order_id: id });
     if (cErr) return; // out of stock now — leave it in the queue; the owner can reject/refund
@@ -416,6 +416,12 @@ export async function rejectStorefrontOrderAction(formData: FormData): Promise<v
   const reason = String(formData.get("reason") ?? "").trim() || "Order rejected by store";
   if (!id) return;
   const sb = supabaseServer();
+  const { data: order } = await sb.from("orders").select("payment_mode").eq("id", id).maybeSingle();
+  if (isCodPaymentMode((order as any)?.payment_mode)) {
+    revalidatePath("/admin/orders");
+    revalidatePath("/admin/cod");
+    return; // COD cancellation is handled by /admin/cod and releases its reservation only.
+  }
   const { error } = await sb.rpc("cancel_order", { p_order_id: id, p_reason: reason });
   if (!error) {
     await sb.from("orders").update({ fulfillment: "rejected" }).eq("id", id).then(() => {}, () => {});

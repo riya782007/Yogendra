@@ -3,7 +3,6 @@ import Link from "next/link";
 import { getProductsPage, getPricingFormula, getCategoryTree } from "@/lib/supabase/queries";
 import { liveOffer } from "@/lib/offers";
 import { formatPaise, resolvePrices, overridesOf } from "@/lib/pricing";
-import { geminiConfigured } from "@/lib/ai/gemini";
 import { aiProvidersStatus } from "@/lib/ai/listingAgent";
 import { generateContentAction, generateAllContentAction } from "@/app/actions/aiContent";
 import { fixNathListingsAction, fixMislabeledJewelleryAction } from "@/app/actions/fixNath";
@@ -39,7 +38,6 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
   if (stock !== "all") retParams.set("stock", stock);
   const ret = `/admin/catalogue${retParams.toString() ? `?${retParams.toString()}` : ""}`;
   const ai = aiProvidersStatus();
-  const imageReady = geminiConfigured();
   const session = getSession();
   const canEdit = can(session, "catalog.edit");
   const canAi = can(session, "catalog.ai");
@@ -78,7 +76,7 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
 
       <div className="flex flex-wrap gap-2 mb-4 items-center">
         <span className="text-xs text-muted mr-1">AI workforce:</span>
-        <Pill on={ai.groq} label="Groq (text)" /><Pill on={ai.openai} label="OpenAI (fallback)" /><Pill on={imageReady} label="Gemini (photos)" />
+        <Pill on={ai.groq} label="Groq" /><Pill on={ai.openai} label="OpenAI" /><Pill on={ai.gemini} label="Gemini" />
       </div>
 
       <MoreDesignsBulk categories={categories.map((c) => ({ id: c.id, name: c.name }))} />

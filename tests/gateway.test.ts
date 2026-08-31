@@ -37,6 +37,20 @@ describe("AiGateway", () => {
     expect(r.provider).toBe("s");
   });
 
+  it("tries additional fallbacks in order before deterministic output", async () => {
+    const third = vi.fn(async () => ({ title: "FROM THIRD" }));
+    const g = new AiGateway({
+      primary: provider("p", async () => { throw new Error("boom"); }),
+      secondary: provider("s", async () => { throw new Error("boom2"); }),
+      fallbacks: [provider("third", third)],
+      deterministic: det,
+    });
+    const r = await g.run(call);
+    expect(r.data.title).toBe("FROM THIRD");
+    expect(r.provider).toBe("third");
+    expect(r.fallbackUsed).toBe(true);
+  });
+
   it("falls back to deterministic when all providers fail", async () => {
     const g = new AiGateway({
       primary: provider("p", async () => { throw new Error("boom"); }),
