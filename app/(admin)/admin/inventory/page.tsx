@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { storeUrl } from "@/lib/siteUrl";
-import { getInventoryClassified } from "@/lib/supabase/queries";
+import { getInventoryClassified, getCategoryTreeCached } from "@/lib/supabase/queries";
 import { Pager } from "@/components/admin/Pager";
 import { StockAdjust } from "@/components/admin/StockAdjust";
 import { BulkStockImport } from "@/components/admin/BulkStockImport";
@@ -28,7 +28,10 @@ export default async function Inventory({ searchParams }: { searchParams: { dead
   const q = (searchParams.q ?? "").toLowerCase().trim();
   const page = Math.max(1, parseInt(searchParams.page ?? "1", 10) || 1);
 
-  const rows = await getInventoryClassified({ deadDays, lowQty });
+  const [rows, categoryTree] = await Promise.all([
+    getInventoryClassified({ deadDays, lowQty }),
+    getCategoryTreeCached(),
+  ]);
   const session = getSession();
   const counts = rows.reduce((a, r) => { a[r.cls] = (a[r.cls] ?? 0) + 1; return a; }, {} as Record<string, number>);
   const filtered = rows.filter((r) => (!cls || r.cls === cls) && (!q || (r.name + r.sku).toLowerCase().includes(q)));
@@ -39,7 +42,7 @@ export default async function Inventory({ searchParams }: { searchParams: { dead
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
       <div className="flex items-start justify-between gap-4 mb-1">
         <h1 className="font-display text-4xl text-ink">Inventory Intelligence</h1>
-        <StockExportButton />
+        <StockExportButton categories={categoryTree} />
       </div>
       <p className="text-sm text-muted mb-5">Rule: <b>Dead</b> = no movement in <b>{deadDays}</b> days · <b>Low</b> = ≤ <b>{lowQty}</b> pcs · <b>Inactive</b> = never sold or moved even once (checked first — an item can only be Dead or Low once it's had at least one movement). Change the numbers below and the classification updates live.</p>
 
