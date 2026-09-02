@@ -7,23 +7,34 @@ import { requirePerm } from "@/lib/auth";
  * One row per variant (its own SKU + colour + qty); simple products (no colours) get their own row.
  * Paged past Supabase's 1000-row cap so the whole catalogue comes through. Read-only.
  */
-export async function exportStockCsvAction(): Promise<{ ok: boolean; csv?: string; count?: number; error?: string }> {
+export async function exportStockCsvAction(filters: { categoryId?: string; subcategoryId?: string } = {}): Promise<{ ok: boolean; csv?: string; count?: number; error?: string }> {
   if (!(await requirePerm("inventory.view"))) return { ok: false, error: "Your role can't export stock." };
   const sb = supabaseServer();
 
   const catName = new Map<string, string>();
-  {
-    const { data } = await sb.from("categories").select("id,name");
-    for (const c of ((data as any[]) ?? [])) catName.set(c.id, c.name ?? "");
+  const { data: categories } = await sb.from("categories").select("id,name");
+  for (const c of ((categories as any[]) ?? [])) catName.set(c.id, c.name ?? "");
+
+  const categoryId = filters.categoryId?.trim() || null;
+  const subcategoryId = filters.subcategoryId?.trim() || null;
+  let subcategoryProductIds: Set<string> | null = null;
+  if (subcategoryId) {
+    const { data: mapped } = await sb.from("product_subcategory_map").select("product_id").eq("subcategory_id", subcategoryId);
+    subcategoryProductIds = new Set(((mapped as any[]) ?? []).map((row) => row.product_id));
   }
 
   // All products (id → sku/name/category/qty), paged.
-  const prod = new Map<string, { sku: string; name: string; cat: string; qty: number; hasVar: boolean }>();
+  const prod = new Map<string, { sku: string; name: string; categoryId: string | null; cat: string; qty: number; hasVar: boolean }>();
   for (let from = 0; ; from += 1000) {
     const { data } = await sb.from("products").select("id,sku,name,category_id,qty").order("sku").range(from, from + 999);
     const arr = (data as any[]) ?? [];
-    for (const p of arr) prod.set(p.id, { sku: p.sku ?? "", name: p.name ?? "", cat: catName.get(p.category_id) ?? "", qty: p.qty ?? 0, hasVar: false });
+    for (const p of arr) prod.set(p.id, { sku: p.sku ?? "", name: p.name ?? "", categoryId: p.category_id ?? null, cat: catName.get(p.category_id) ?? "", qty: p.qty ?? 0, hasVar: false });
     if (arr.length < 1000) break;
+  }
+
+  // Apply category/subcategory membership after paging, preserving complete exports beyond Supabase's row cap.
+  for (const [id, p] of prod) {
+    if ((categoryId && p.categoryId !== categoryId) || (subcategoryProductIds && !subcategoryProductIds.has(id))) prod.delete(id);
   }
 
   // All variants → one row each; mark their parent as "has variants".
@@ -33,8 +44,9 @@ export async function exportStockCsvAction(): Promise<{ ok: boolean; csv?: strin
     const arr = (data as any[]) ?? [];
     for (const v of arr) {
       const p = prod.get(v.product_id);
-      if (p) p.hasVar = true;
-      rows.push({ sku: v.sku ?? "", product: p?.name ?? "", colour: v.color ?? "", cat: p?.cat ?? "", qty: v.qty ?? 0 });
+      if (!p) continue;
+      p.hasVar = true;
+      rows.push({ sku: v.sku ?? "", product: p.name, colour: v.color ?? "", cat: p.cat, qty: v.qty ?? 0 });
     }
     if (arr.length < 1000) break;
   }

@@ -12,7 +12,7 @@ type Row = {
   id: string; product_id: string | null; kind: string | null; delta: number;
   sku: string | null; source: string | null; reason: string | null; ref_id: string | null;
   created_at: string; invoice_no?: string | null; party?: string | null; price?: number | null;
-  product?: { sku: string; name: string } | null; variant?: { color: string; qty?: number | null } | null;
+  product?: { sku: string; name: string; admin_tags?: string[] | null } | null; variant?: { color: string; qty?: number | null } | null;
 };
 
 const rupees = (paise?: number | null) => paise == null ? null : `₹${Math.round(paise / 100).toLocaleString("en-IN")}`;
@@ -71,7 +71,10 @@ export function StockMovementsTable({ rows }: { rows: Row[] }) {
                   <td className="p-3"><span title={r.kind === "reserve" ? "Set aside for a held estimate — release that estimate to return this piece to stock" : undefined} className={`px-2 py-0.5 rounded-full text-xs capitalize ${KIND_STYLE[r.kind ?? ""] ?? "bg-cream text-muted"}`}>{r.kind === "reserve" ? "reserved" : (r.kind ?? "—")}</span></td>
                   <td className={`p-3 text-right font-semibold tabular-nums ${r.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{r.delta > 0 ? "+" : ""}{r.delta}</td>
                   <td className="p-3 text-right tabular-nums text-ink" title={r.kind === "purchase" ? "Unit cost on that purchase" : "Unit rate billed on that document"}>{rupees(r.price) ?? <span className="text-muted">—</span>}</td>
-                  <td className="p-3 text-muted max-w-[260px] truncate">{r.source ?? ""}{r.reason ? ` — ${r.reason}` : ""}</td>
+                  <td className="p-3 max-w-[260px]">
+                    <p className="text-muted truncate">{r.source ?? ""}{r.reason ? ` — ${r.reason}` : ""}</p>
+                    {(r.product?.admin_tags ?? []).length > 0 && <p className="mt-1 text-[11px] text-gold-dark truncate" title={r.product!.admin_tags!.join(" · ")}>Comments: {r.product!.admin_tags!.join(" · ")}</p>}
+                  </td>
                   <td className="p-3" onClick={(e) => e.stopPropagation()}>{doc ? (
                     <div className="whitespace-nowrap">
                       {r.kind === "sale" && <span className="block text-[11px] font-medium text-ink">{r.invoice_no || `INV-${String(r.ref_id).slice(0, 8).toUpperCase()}`}</span>}
