@@ -23,7 +23,7 @@ type Movement = {
 type VariantSummary = { id: string; sku: string; color: string | null; qty: number; purchased: number; sold: number; net: number };
 type Ledger = {
   header: { id: string; sku: string; name: string; image: string | null; category: string | null;
-    supplier: string | null; currentStock: number; reserved: number; available: number;
+    supplier: string | null; currentStock: number; reserved: number; available: number; comments: string[];
     reorderLevel: number | null; avgCost: number | null; lastPurchaseCost: number | null;
     lastSaleDate: string | null; lastPurchaseDate: string | null };
   analytics: { opening: number; purchased: number; sold: number; returned: number; adjusted: number;
@@ -150,6 +150,7 @@ export function StockLedgerDrawer({ productId, onClose }: { productId: string; o
                 <span className="text-muted">Last buy {fmt(h.lastPurchaseCost)}</span>
               </div>
             )}
+            {h && h.comments.length > 0 && <p className="mt-1.5 text-xs text-gold-dark">Comments: {h.comments.join(" · ")}</p>}
           </div>
           <button onClick={onClose} className="text-xl text-muted hover:text-ink leading-none">✕</button>
         </div>

@@ -1173,7 +1173,7 @@ export async function getStockMovements(opts: { page?: number; pageSize?: number
   const pageSize = opts.pageSize ?? 30;
   const page = Math.max(1, opts.page ?? 1);
   let query = sb.from("stock_adjustments")
-    .select("id,product_id,variant_id,delta,kind,source,reason,ref_id,sku,created_at, product:products(sku,name), variant:variants(color,qty)", { count: "exact" });
+    .select("id,product_id,variant_id,delta,kind,source,reason,ref_id,sku,created_at, product:products(sku,name,admin_tags), variant:variants(color,qty)", { count: "exact" });
   if (opts.kind && opts.kind !== "all") query = query.eq("kind", opts.kind);
   if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.ilike("sku", `%${s}%`); }
   if (opts.from) query = query.gte("created_at", opts.from);
@@ -1329,7 +1329,7 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
 
   // --- product header ---
   const { data: p } = await sb.from("products")
-    .select("id,sku,name,qty,reorder_level,last_movement_at, category:categories(name), images:product_images(path,sort)")
+    .select("id,sku,name,qty,reorder_level,last_movement_at,admin_tags, category:categories(name), images:product_images(path,sort)")
     .eq("id", productId).maybeSingle();
   if (!p) return null;
   const prod = p as any;
@@ -1556,8 +1556,8 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   return {
     header: {
       id: prod.id, sku: prod.sku, name: prod.name, image, category: prod.category?.name ?? null,
-      supplier, currentStock, reserved, available, reorderLevel: prod.reorder_level ?? null,
-      avgCost, lastPurchaseCost, lastSaleDate: lastSale, lastPurchaseDate,
+      supplier, currentStock, reserved, available, comments: (prod.admin_tags as string[] | null) ?? [],
+      reorderLevel: prod.reorder_level ?? null, avgCost, lastPurchaseCost, lastSaleDate: lastSale, lastPurchaseDate,
     },
     analytics: { opening, purchased, sold, returned, adjusted, reserved, available, currentStock, daysSinceLastSale, turnover, avgMonthlySales },
     reservations,
