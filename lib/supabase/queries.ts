@@ -284,10 +284,10 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
     let q = sb.from("products").select(sel).eq("status", "published").order("sku");
     if (!opts.includeWholesaleOnly) q = q.eq("wholesale_only", false); // retail hides wholesale-only
     if (opts.excludeRetailOnly) q = q.eq("retail_only", false);        // wholesale hides retail-only
-    // Shareable catalogue never shows sold-out designs — products.qty is the variant-sum (kept in
-    // sync by resyncProductQty), so qty>0 means at least one colour is in stock. Skip this filter when
-    // the owner has hand-picked specific SKUs to share (respect his explicit selection).
-    if (opts.inStock && !(opts.skus && opts.skus.length)) q = q.gt("qty", 0);
+    // Shareable catalogue never shows sold-out designs, including owner-selected share links.
+    // products.qty is the variant-sum (kept in sync by resyncProductQty), so qty > 0 means at least
+    // one variant remains available; the card's colour chips then expose only those in-stock variants.
+    if (opts.inStock) q = q.gt("qty", 0);
     if (catId) q = q.eq("category_id", catId);
     if (subIds) q = q.in("id", subIds);
     if (styleId) q = q.eq("style_id", styleId);
