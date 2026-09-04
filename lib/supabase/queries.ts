@@ -335,17 +335,27 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
   // hero — the card should still show an image instead of a blank tile.
   const cardRows = (data as any[]) ?? [];
   const vImgByP = new Map<string, string>();
+  const vImgInStock = new Map<string, string>();
+  const variantImages = new Map<string, Set<string>>();
+  const inStockVariantImages = new Map<string, Set<string>>();
   // Colours a design comes in, IN STOCK only — so the shared catalogue card can show colour chips
-  // (owner: "catalog me variant nahi dikh raha"). Same variant fetch that already resolves cover images.
+  // (owner: "catalog me variant nahi dikh raha"). Same variant fetch also keeps a sold-out colour
+  // from supplying the card image when another colour remains available.
   const colorsByP = new Map<string, Set<string>>();
   const cardIds = cardRows.map((p) => p.id).filter(Boolean);
   if (cardIds.length) {
     const vimgs = await fetchByIds(cardIds, (chunk) => sb.from("variants").select("product_id,image_paths,color,qty").in("product_id", chunk));
     for (const v of ((vimgs as any[]) ?? [])) {
-      if (!vImgByP.has(v.product_id) && Array.isArray(v.image_paths)) {
-        const hit = v.image_paths.find((x: string) => typeof x === "string" && x.startsWith("http"));
-        if (hit) vImgByP.set(v.product_id, hit);
+      const paths = Array.isArray(v.image_paths) ? v.image_paths.filter((x: unknown): x is string => typeof x === "string" && x.startsWith("http")) : [];
+      for (const image of paths) {
+        let all = variantImages.get(v.product_id); if (!all) { all = new Set(); variantImages.set(v.product_id, all); } all.add(image);
+        if ((v.qty ?? 0) > 0) {
+          let inStock = inStockVariantImages.get(v.product_id); if (!inStock) { inStock = new Set(); inStockVariantImages.set(v.product_id, inStock); } inStock.add(image);
+        }
       }
+      const hit = paths[0];
+      if (hit && !vImgByP.has(v.product_id)) vImgByP.set(v.product_id, hit);
+      if (hit && (v.qty ?? 0) > 0 && !vImgInStock.has(v.product_id)) vImgInStock.set(v.product_id, hit);
       const c = String(v.color ?? "").trim();
       if (c && (v.qty ?? 0) > 0) {
         let s = colorsByP.get(v.product_id); if (!s) { s = new Set(); colorsByP.set(v.product_id, s); } s.add(c);
@@ -369,8 +379,16 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       // Trade price is emitted ONLY for authorised callers; omitted from retail JSON entirely.
       ...(opts.includeWholesalePricing ? { wholesale: set.wholesaleRate } : {}),
       qty: p.qty, price: o.price, mrp: o.mrp, offerPct: o.offerPct, hasOffer: o.hasOffer,
-      // Owner-chosen cover wins; else first generated image; else a variant photo.
-      image: (typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http") ? p.thumbnail_path : null) ?? imgs[0]?.path ?? vImgByP.get(p.id) ?? null,
+      // Keep a pinned product image, but never lead with a sold-out variant photo when another colour is in stock.
+      // This makes the shared watch catalogue show Silver when Gold is sold out.
+      image: (() => {
+        const thumbnail = typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http") ? p.thumbnail_path : null;
+        const thumbnailIsSoldOutVariant = !!thumbnail && (variantImages.get(p.id)?.has(thumbnail) ?? false) && !(inStockVariantImages.get(p.id)?.has(thumbnail) ?? false);
+        const firstEligibleProductImage = imgs.find((image: any) =>
+          !(variantImages.get(p.id)?.has(image.path) ?? false) || (inStockVariantImages.get(p.id)?.has(image.path) ?? false),
+        )?.path ?? null;
+        return (!thumbnailIsSoldOutVariant ? thumbnail : null) ?? firstEligibleProductImage ?? vImgInStock.get(p.id) ?? vImgByP.get(p.id) ?? null;
+      })(),
       tags: ((p.generated_content as any)?.tags ?? []).slice(0, 6),
       keywords: (seo.keywords ?? []).slice(0, 6),
       labels: labelNames.slice(0, 6),
