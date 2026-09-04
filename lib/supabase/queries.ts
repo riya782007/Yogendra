@@ -284,10 +284,8 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
     let q = sb.from("products").select(sel).eq("status", "published").order("sku");
     if (!opts.includeWholesaleOnly) q = q.eq("wholesale_only", false); // retail hides wholesale-only
     if (opts.excludeRetailOnly) q = q.eq("retail_only", false);        // wholesale hides retail-only
-    // Shareable catalogue never shows sold-out designs — products.qty is the variant-sum (kept in
-    // sync by resyncProductQty), so qty>0 means at least one colour is in stock. Skip this filter when
-    // the owner has hand-picked specific SKUs to share (respect his explicit selection).
-    if (opts.inStock && !(opts.skus && opts.skus.length)) q = q.gt("qty", 0);
+    // Stock is resolved after variants load below. Filtering here by the denormalized product.qty
+    // hides a design whose in-stock variant has not yet synchronized its parent total.
     if (catId) q = q.eq("category_id", catId);
     if (subIds) q = q.in("id", subIds);
     if (styleId) q = q.eq("style_id", styleId);
@@ -336,6 +334,8 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
   const cardRows = (data as any[]) ?? [];
   const vImgByP = new Map<string, string>();
   const vImgInStock = new Map<string, string>();
+  const variantStock = new Map<string, number>();
+  const productsWithVariants = new Set<string>();
   const variantImages = new Map<string, Set<string>>();
   const inStockVariantImages = new Map<string, Set<string>>();
   // Colours a design comes in, IN STOCK only — so the shared catalogue card can show colour chips
@@ -346,6 +346,8 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
   if (cardIds.length) {
     const vimgs = await fetchByIds(cardIds, (chunk) => sb.from("variants").select("product_id,image_paths,color,qty").in("product_id", chunk));
     for (const v of ((vimgs as any[]) ?? [])) {
+      productsWithVariants.add(v.product_id);
+      variantStock.set(v.product_id, (variantStock.get(v.product_id) ?? 0) + Math.max(0, v.qty ?? 0));
       const paths = Array.isArray(v.image_paths) ? v.image_paths.filter((x: unknown): x is string => typeof x === "string" && x.startsWith("http")) : [];
       for (const image of paths) {
         let all = variantImages.get(v.product_id); if (!all) { all = new Set(); variantImages.set(v.product_id, all); } all.add(image);
@@ -362,7 +364,10 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       }
     }
   }
-  return cardRows.map((p): CatalogCard => {
+  return cardRows
+  .filter((p) => !opts.inStock || (opts.skus && opts.skus.length) ||
+    (productsWithVariants.has(p.id) ? (variantStock.get(p.id) ?? 0) > 0 : (p.qty ?? 0) > 0))
+  .map((p): CatalogCard => {
     const ov = overridesOf(p);
     const o = _liveOffer(p.base_wholesale, formula, ov);
     const set = _resolvePrices(p.base_wholesale, formula, ov);
@@ -395,10 +400,7 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       wholesaleOnly: !!p.wholesale_only,
       colors: [...(colorsByP.get(p.id) ?? [])].sort(),
     };
-  })
-  // A shareable catalogue must never show a photo-less design (letter placeholder) — it looks unfinished
-  // and drives customers away. Only list products that actually have a real image.
-  .filter((c) => typeof c.image === "string" && c.image.startsWith("http"));
+  });
 }
 
 // ---------- customer directory (real customers table) ----------
