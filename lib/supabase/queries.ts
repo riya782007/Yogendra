@@ -3,7 +3,7 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 import { supabaseServer } from "./server";
 import type { PricingFormula } from "../pricing";
-import { cleanTiers } from "../pricing";
+import { cleanTiers, parseRupeeSearch } from "../pricing";
 import { isCodOrder, isPrepaidOrder } from "../orderPayment";
 import { phoneDigits, recordMatchesShopperQuery } from "../phone";
 import { scoreQuery } from "../search";
@@ -762,7 +762,19 @@ export async function getSupplierCities() {
 // Sortable columns for the sales/invoice register (Pillar 1 — "A–Z order of invoice").
 // Token format is `<field>_<dir>`, e.g. "inv_asc". Default = newest first.
 const ORDERS_SORT: Record<string, string> = { inv: "invoice_no", name: "customer_name", date: "created_at", amount: "total" };
-export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?: string; channel?: string; from?: string; to?: string; sort?: string; billType?: string }) {
+/** PostgREST `.or()` fragments that match a rupee amount on total / amount_paid (stored paise). */
+function salesAmountOr(paise: number): string[] {
+  if (!Number.isFinite(paise) || paise <= 0) return [];
+  if (paise % 100 === 0) {
+    return [
+      `and(total.gte.${paise},total.lt.${paise + 100})`,
+      `and(amount_paid.gte.${paise},amount_paid.lt.${paise + 100})`,
+    ];
+  }
+  return [`total.eq.${paise}`, `amount_paid.eq.${paise}`];
+}
+
+export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?: string; channel?: string; from?: string; to?: string; sort?: string; billType?: string; amount?: string }) {
   const sb = supabaseServer();
   const pageSize = opts.pageSize ?? 25;
   const page = Math.max(1, opts.page ?? 1);
@@ -774,7 +786,27 @@ export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?
   query = query.or("is_backorder.is.null,is_backorder.eq.false");
   // Held COD orders aren't sales yet either — they live on /admin/cod until dispatch is confirmed.
   query = query.eq("cod_hold", false);
-  if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.or(`customer_name.ilike.%${s}%,customer_phone.ilike.%${s}%`); }
+  if (opts.q?.trim()) {
+    const raw = opts.q.trim();
+    const s = escLike(raw);
+    const digits = raw.replace(/\D/g, "");
+    const parts: string[] = [];
+    if (s) {
+      parts.push(`customer_name.ilike.%${s}%`, `customer_phone.ilike.%${s}%`, `invoice_no.ilike.%${s}%`);
+    }
+    if (digits.length >= 4) {
+      parts.push(`customer_phone.ilike.%${digits}%`);
+      parts.push(`customer_phone.ilike.%${digits.slice(-4)}%`);
+    }
+    parts.push(...salesAmountOr(parseRupeeSearch(raw) ?? 0));
+    const or = Array.from(new Set(parts)).filter(Boolean).join(",");
+    if (or) query = query.or(or);
+  }
+  // Dedicated amount box is AND-ed with name/phone/channel so the owner can find "Priya + ₹900".
+  if (opts.amount?.trim()) {
+    const amt = salesAmountOr(parseRupeeSearch(opts.amount) ?? 0).join(",");
+    if (amt) query = query.or(amt);
+  }
   if (opts.channel && opts.channel !== "all") query = query.eq("channel", opts.channel);
   if (opts.billType) query = query.eq("bill_type", opts.billType);
   if (opts.from) query = query.gte("created_at", opts.from);
