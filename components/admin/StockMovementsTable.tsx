@@ -20,7 +20,7 @@ const rupees = (paise?: number | null) => paise == null ? null : `₹${Math.roun
 const KIND_STYLE: Record<string, string> = {
   sale: "bg-gold/15 text-gold-dark", purchase: "bg-emerald-mist text-emerald-dark",
   damage: "bg-rose/10 text-rose", opening: "bg-blue-100 text-blue-700",
-  adjustment: "bg-cream text-muted", estimate: "bg-gold/10 text-gold-dark",
+  adjustment: "bg-cream text-muted", recount: "bg-blue-100 text-blue-700", estimate: "bg-gold/10 text-gold-dark",
   return: "bg-blue-50 text-blue-700", purchase_return: "bg-wine/10 text-wine",
   reserve: "bg-gold/10 text-gold-dark",
 };
