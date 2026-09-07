@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  computePrices, isValidPriceSet, priceProduct, formatPaise,
+  computePrices, isValidPriceSet, priceProduct, formatPaise, parseRupeeSearch,
   DEFAULT_FORMULA, type PricingFormula,
 } from "../lib/pricing";
 
@@ -51,5 +51,22 @@ describe("formatPaise", () => {
   it("formats paise to rupees with Indian grouping", () => {
     expect(formatPaise(150000)).toBe("₹1,500");
     expect(formatPaise(NaN)).toBe("—");
+  });
+});
+
+describe("parseRupeeSearch", () => {
+  it("parses plain rupees, currency prefixes, commas and paise decimals", () => {
+    expect(parseRupeeSearch("900")).toBe(90000);
+    expect(parseRupeeSearch("₹929")).toBe(92900);
+    expect(parseRupeeSearch("Rs 1,200")).toBe(120000);
+    expect(parseRupeeSearch("900.50")).toBe(90050);
+    expect(parseRupeeSearch("900/-")).toBe(90000);
+  });
+  it("rejects names, invoices and phone numbers", () => {
+    expect(parseRupeeSearch("Priya")).toBeNull();
+    expect(parseRupeeSearch("YJI/2026-27/0398")).toBeNull();
+    expect(parseRupeeSearch("9876543210")).toBeNull();
+    expect(parseRupeeSearch("")).toBeNull();
+    expect(parseRupeeSearch("0")).toBeNull();
   });
 });
