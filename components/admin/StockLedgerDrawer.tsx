@@ -47,7 +47,7 @@ const KIND_STYLE: Record<string, string> = {
   sale: "bg-gold/15 text-gold-dark", purchase: "bg-emerald-mist text-emerald-dark",
   damage: "bg-rose/10 text-rose", opening: "bg-blue-100 text-blue-700",
   adjustment: "bg-cream text-muted", estimate: "bg-gold/10 text-gold-dark",
-  return: "bg-violet-50 text-violet-700", correction: "bg-cream text-muted",
+  return: "bg-violet-50 text-violet-700", correction: "bg-cream text-muted", recount: "bg-blue-100 text-blue-700",
   transfer: "bg-sky-50 text-sky-700", reserve: "bg-gold/10 text-gold-dark",
 };
 const FILTERS: { key: string; label: string; kinds: string[] }[] = [
@@ -57,7 +57,7 @@ const FILTERS: { key: string; label: string; kinds: string[] }[] = [
   { key: "estimate", label: "Estimates / Reservations", kinds: ["estimate"] },
   { key: "return", label: "Returns", kinds: ["return", "purchase_return", "replacement"] },
   { key: "adjustment", label: "Manual Adjustments", kinds: ["adjustment", "damage", "correction"] },
-  { key: "audit", label: "Inventory Audits", kinds: ["audit", "inventory_audit"] },
+  { key: "audit", label: "Inventory Audits", kinds: ["audit", "inventory_audit", "recount"] },
   { key: "transfer", label: "Transfers", kinds: ["transfer"] },
   { key: "opening", label: "Opening / Import", kinds: ["opening", "import", "bulk_upload"] },
 ];
