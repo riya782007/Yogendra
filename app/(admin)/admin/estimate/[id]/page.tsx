@@ -1,7 +1,6 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
-import { notFound } from "next/navigation";
-import { getEstimate } from "@/lib/supabase/queries";
+import { getEstimate, getEstimateGhost } from "@/lib/supabase/queries";
 import { supabaseServer } from "@/lib/supabase/server";
 import { formatPaise } from "@/lib/pricing";
 import { EstimatePrint } from "@/components/admin/EstimatePrint";
@@ -18,7 +17,10 @@ export default async function EstimateDetailPage({ params, searchParams }: { par
   // made a stock-blocked bill look like "nothing happened / it won't convert".
   const billError = (searchParams?.billerror ?? "").trim();
   const data = await getEstimate(params.id);
-  if (!data) notFound();
+  if (!data) {
+    const ghost = await getEstimateGhost(params.id);
+    return <MissingEstimatePage rawId={params.id} ghost={ghost} />;
+  }
   const { estimate, items: rawItems } = data;
   // A–Z by SKU (owner: "estimate me save karne pe A-Z chahiye"). Sorting here means the saved estimate,
   // its print/PDF, and the bill it becomes all list items in the same predictable order regardless of the
@@ -302,6 +304,57 @@ export default async function EstimateDetailPage({ params, searchParams }: { par
             }}
           />
         )}
+      </div>
+    </main>
+  );
+}
+
+function MissingEstimatePage({ rawId, ghost }: {
+  rawId: string;
+  ghost: { id: string; items: { qty: number; sku: string | null; name: string | null; color: string | null }[]; movements: { kind: string; delta: number; sku: string | null; reason: string | null; created_at: string }[] };
+}) {
+  const ref = "EST-" + String(ghost.id || rawId).replace(/^EST-/i, "").slice(0, 8).toUpperCase();
+  const search = String(ghost.id || rawId).slice(0, 8);
+  return (
+    <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
+      <div className="max-w-2xl mx-auto">
+        <Link href="/admin/estimates" className="text-sm text-emerald nav-link">← Estimates</Link>
+        <h1 className="font-display text-3xl text-ink mt-3 mb-2">This quote is not in the list</h1>
+        <p className="text-sm text-muted mb-4">
+          Product history can still show a reservation after the quote was billed, denied, or removed.
+          There is no estimate with ref <b className="text-ink">{ref}</b> to open — so this is not a missing page, it is a leftover hold you can check from here.
+        </p>
+        <div className="rounded-2xl border border-sand bg-white p-4 text-sm space-y-3">
+          <p className="text-ink"><b>Reference:</b> {rawId}</p>
+          {ghost.items.length > 0 && (
+            <div>
+              <p className="font-medium text-ink mb-1">Lines still on file</p>
+              <ul className="text-muted space-y-0.5">
+                {ghost.items.map((it, i) => (
+                  <li key={i}>{it.name ?? it.sku ?? "Item"}{it.color ? ` · ${it.color}` : ""}{it.sku ? ` · ${it.sku}` : ""} ×{it.qty}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {ghost.movements.length > 0 && (
+            <div>
+              <p className="font-medium text-ink mb-1">Stock movements still pointing here</p>
+              <ul className="text-muted space-y-0.5">
+                {ghost.movements.map((m, i) => (
+                  <li key={i}>{m.kind} {m.delta > 0 ? "+" : ""}{m.delta}{m.sku ? ` · ${m.sku}` : ""}{m.reason ? ` — ${m.reason}` : ""}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {ghost.items.length === 0 && ghost.movements.length === 0 && (
+            <p className="text-muted">No leftover lines or reserve movements were found for this id either. Check Estimates → To bill and On hold for the live quotes that still reserve stock.</p>
+          )}
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Link href={`/admin/estimates?tab=all&q=${encodeURIComponent(search)}`} className="px-4 py-2 rounded-full bg-ink text-white text-sm">Search Estimates</Link>
+          <Link href="/admin/estimates?tab=held" className="px-4 py-2 rounded-full border border-sand text-sm text-ink">On hold quotes</Link>
+          <Link href="/admin/estimates?tab=open" className="px-4 py-2 rounded-full border border-sand text-sm text-ink">To bill</Link>
+        </div>
       </div>
     </main>
   );
