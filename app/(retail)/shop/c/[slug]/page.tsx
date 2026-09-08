@@ -11,7 +11,7 @@ import { getShopSlice } from "@/lib/catalogSlice";
 // "storefront" tag. Category-specific filter queries below stay live (they're light + scoped).
 async function loadCatalogueBaseSafe(slug: string) {
   const [slice, allCats, allPromos] = await Promise.all([
-    getShopSlice({ categorySlug: slug, order: "sku", limit: 96 }),
+    getShopSlice({ categorySlug: slug, order: "sku" }),
     getCategories().catch(() => [] as any[]),
     getActivePromotions("retail").catch(() => [] as any[]),
   ]);

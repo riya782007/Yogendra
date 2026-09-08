@@ -1,32 +1,90 @@
 /**
- * First-paint catalogue reads. The full 4k+ SKU dump times out on Vercel and 500s the
- * shop/trade pages (blank jewellery + "Just a moment"). These queries load ONE page of
- * products plus images/variants for those ids only.
+ * Full published catalogue for shop + trade. Pages through every 1000-row PostgREST
+ * window so the entire collection is returned (not a 48-row first paint).
  */
 import "server-only";
-import { supabaseServer } from "./supabase/server";
-import { getPricingFormula, isStorefrontImage } from "./supabase/queries";
+import { supabaseReadClients, supabaseServer } from "./supabase/server";
 import { categoryRef } from "./shopCatalog";
 import { GST_RATE } from "./business";
-import { resolvePrices, overridesOf } from "./pricing";
+import { resolvePrices, overridesOf, DEFAULT_FORMULA, cleanTiers } from "./pricing";
 
-const RICH =
-  "id,category_id,sku,name,type,base_wholesale,qty,status,created_at,updated_at," +
-  "wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,thumbnail_path," +
-  "subcategory_id,style_id,more_designs,more_designs_note,default_variant_id," +
-  "category:categories(id,name,slug)";
-const MIN =
-  "id,category_id,sku,name,type,base_wholesale,qty,status,created_at,updated_at," +
-  "wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,thumbnail_path," +
-  "subcategory_id,style_id,more_designs,more_designs_note";
+const STOREFRONT_HIDDEN_IMAGE_KINDS = new Set(["source", "flatlay"]);
+function isStorefrontImage(kind?: string | null): boolean {
+  return !STOREFRONT_HIDDEN_IMAGE_KINDS.has((kind ?? "").toLowerCase());
+}
 
-async function byIds<T>(ids: string[], build: (chunk: string[]) => PromiseLike<{ data: T[] | null }>): Promise<T[]> {
+const COLS = [
+  "id,category_id,sku,name,type,base_wholesale,qty,status,created_at,wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,thumbnail_path,subcategory_id,style_id,more_designs,more_designs_note,default_variant_id,category:categories(id,name,slug)",
+  "id,category_id,sku,name,type,base_wholesale,qty,status,created_at,wholesale_only,retail_only,thumbnail_path,category:categories(id,name,slug)",
+  "id,category_id,sku,name,base_wholesale,qty,status,created_at,wholesale_only,retail_only,thumbnail_path",
+  "id,sku,name,qty,status,base_wholesale,thumbnail_path,category_id",
+  "id,sku,name,qty,status,base_wholesale",
+];
+
+async function byIds<T>(ids: string[], build: (sb: ReturnType<typeof supabaseServer>, chunk: string[]) => PromiseLike<{ data: T[] | null; error?: unknown }>): Promise<T[]> {
+  if (!ids.length) return [];
   const out: T[] = [];
-  for (let i = 0; i < ids.length; i += 200) {
-    const { data } = await build(ids.slice(i, i + 200));
-    out.push(...((data as T[]) ?? []));
+  for (const sb of supabaseReadClients()) {
+    const batch: T[] = [];
+    let failed = false;
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data, error } = await build(sb, ids.slice(i, i + 200));
+      if (error) { failed = true; break; }
+      batch.push(...((data as T[]) ?? []));
+    }
+    if (!failed) { out.push(...batch); if (out.length) return out; }
   }
   return out;
+}
+
+const PAGE = 1000;
+
+function keepRow(p: any, retail: boolean, publishedOnly: boolean) {
+  if (publishedOnly && p.status && p.status !== "published") return false;
+  return retail ? !p.wholesale_only : !p.retail_only;
+}
+
+async function runRange(
+  sb: ReturnType<typeof supabaseServer>,
+  cols: string,
+  opts: { categoryId?: string; order: { col: string; asc: boolean }; publishedOnly: boolean; from: number; to: number },
+) {
+  let q: any = sb.from("products").select(cols);
+  if (opts.publishedOnly) q = q.eq("status", "published");
+  if (opts.categoryId) q = q.eq("category_id", opts.categoryId);
+  return q.order(opts.order.col, { ascending: opts.order.asc }).range(opts.from, opts.to);
+}
+
+/** Every published design (paged past PostgREST's 1000-row cap). Keeps partial pages. */
+async function publishedAll(opts: {
+  categoryId?: string;
+  order: { col: string; asc: boolean };
+  retail: boolean;
+}): Promise<any[]> {
+  const orderTries = [opts.order, { col: "sku", asc: true }];
+  for (const sb of supabaseReadClients()) {
+    for (const cols of COLS) {
+      for (const ord of orderTries) {
+        for (const publishedOnly of [true, false]) {
+          try {
+            const first = await runRange(sb, cols, { ...opts, order: ord, publishedOnly, from: 0, to: PAGE - 1 });
+            if (first.error || !Array.isArray(first.data)) continue;
+            const out = (first.data as any[]).filter((p) => keepRow(p, opts.retail, publishedOnly));
+            let rawLen = (first.data as any[]).length;
+            for (let from = PAGE; rawLen >= PAGE; from += PAGE) {
+              const r = await runRange(sb, cols, { ...opts, order: ord, publishedOnly, from, to: from + PAGE - 1 });
+              if (r.error || !Array.isArray(r.data)) break;
+              const chunk = r.data as any[];
+              out.push(...chunk.filter((p) => keepRow(p, opts.retail, publishedOnly)));
+              rawLen = chunk.length;
+            }
+            if (out.length) return out;
+          } catch { /* next fallback */ }
+        }
+      }
+    }
+  }
+  return [];
 }
 
 async function publishedPage(opts: {
@@ -34,39 +92,42 @@ async function publishedPage(opts: {
   order: { col: string; asc: boolean };
   retail: boolean;
 }): Promise<any[]> {
-  const sb = supabaseServer();
-  const run = async (cols: string) => {
-    let q: any = sb.from("products").select(cols).eq("status", "published");
-    if (opts.categoryId) q = q.eq("category_id", opts.categoryId);
-    const r = await q.order(opts.order.col, { ascending: opts.order.asc }).range(opts.from, opts.to);
-    if (!r.error) return r;
-    let q2: any = sb.from("products").select(cols).eq("status", "published");
-    if (opts.categoryId) q2 = q2.eq("category_id", opts.categoryId);
-    return q2.order("sku").range(opts.from, opts.to);
-  };
-  let res = await run(RICH);
-  if (res.error || res.data == null) res = await run(MIN);
-  const rows = ((res?.data as any[]) ?? []).filter((p) => (opts.retail ? !p.wholesale_only : !p.retail_only));
-  return rows;
+  const orderTries = [opts.order, { col: "sku", asc: true }];
+  for (const sb of supabaseReadClients()) {
+    for (const cols of COLS) {
+      for (const ord of orderTries) {
+        for (const publishedOnly of [true, false]) {
+          try {
+            const r = await runRange(sb, cols, { ...opts, order: ord, publishedOnly, from: opts.from, to: opts.to });
+            const raw = !r.error && Array.isArray(r.data) ? (r.data as any[]) : [];
+            const rows = raw.filter((p) => keepRow(p, opts.retail, publishedOnly));
+            if (rows.length) return rows;
+          } catch { /* next fallback */ }
+        }
+      }
+    }
+  }
+  return [];
 }
 
 async function coversFor(ids: string[]): Promise<Map<string, string>> {
-  const sb = supabaseServer();
   const imgBy = new Map<string, string>();
   if (!ids.length) return imgBy;
-  const imgs = await byIds(ids, (chunk) => sb.from("product_images").select("product_id,path,sort,kind").in("product_id", chunk));
-  const sorted = [...imgs].sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0));
-  for (const r of sorted as any[]) {
-    if (typeof r.path !== "string" || !r.path.startsWith("http")) continue;
-    if (!isStorefrontImage(r.kind)) continue;
-    if (!imgBy.has(r.product_id)) imgBy.set(r.product_id, r.path);
-  }
-  const vimgs = await byIds(ids, (chunk) => sb.from("variants").select("product_id,image_paths,qty").in("product_id", chunk));
-  for (const v of vimgs as any[]) {
-    if (imgBy.has(v.product_id)) continue;
-    const u = ((v.image_paths as string[]) ?? []).find((x) => typeof x === "string" && x.startsWith("http"));
-    if (u) imgBy.set(v.product_id, u);
-  }
+  try {
+    const imgs = await byIds(ids, (sb, chunk) => sb.from("product_images").select("product_id,path,sort,kind").in("product_id", chunk));
+    const sorted = [...imgs].sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0));
+    for (const r of sorted as any[]) {
+      if (typeof r.path !== "string" || !r.path.startsWith("http")) continue;
+      if (!isStorefrontImage(r.kind)) continue;
+      if (!imgBy.has(r.product_id)) imgBy.set(r.product_id, r.path);
+    }
+    const vimgs = await byIds(ids, (sb, chunk) => sb.from("variants").select("product_id,image_paths,qty").in("product_id", chunk));
+    for (const v of vimgs as any[]) {
+      if (imgBy.has(v.product_id)) continue;
+      const u = ((v.image_paths as string[]) ?? []).find((x) => typeof x === "string" && x.startsWith("http"));
+      if (u) imgBy.set(v.product_id, u);
+    }
+  } catch { /* cards still render without photos */ }
   return imgBy;
 }
 
@@ -83,34 +144,85 @@ function asShopCard(p: any, image: string | null) {
   };
 }
 
+async function formulaOf() {
+  try {
+    const { data } = await supabaseServer().from("pricing_settings").select("*").limit(1).maybeSingle();
+    return {
+      wholesaleMarkupPct: Number(data?.wholesale_markup_pct ?? 10),
+      retailMultiplier: Number(data?.retail_multiplier ?? 2.2),
+      mrpMultiplier: Number(data?.mrp_multiplier ?? 2.75),
+      roundToPaise: Number(data?.round_to ?? 100),
+      useBuildup: Boolean(data?.use_buildup ?? false),
+      shippingPct: Number(data?.shipping_pct ?? 10),
+      packingPct: Number(data?.packing_pct ?? 11.36),
+      promotionPct: Number(data?.promotion_pct ?? 10.2),
+      packingFlat: Number(data?.packing_flat ?? 2500),
+      promotionFlat: Number(data?.promotion_flat ?? 2500),
+      resellerPct: Number(data?.reseller_pct ?? 15),
+      customerDiscountPct: Number(data?.customer_discount_pct ?? 5),
+      mrpPct: Number(data?.mrp_pct ?? 25),
+      wholesaleMinOrder: Number(data?.wholesale_min_order ?? 300000),
+      wholesaleTiers: cleanTiers(data?.wholesale_tiers),
+    };
+  } catch {
+    return { ...DEFAULT_FORMULA };
+  }
+}
+
 export async function getShopSlice(opts: {
   categorySlug?: string;
   order?: "new" | "sku" | "qty";
+  /** Omit to return the entire published retail catalogue. */
   limit?: number;
   offset?: number;
 } = {}) {
-  const formula = await getPricingFormula();
-  const limit = opts.limit ?? 48;
+  const formula = await formulaOf();
   const offset = opts.offset ?? 0;
   let categoryId: string | undefined;
   if (opts.categorySlug && opts.categorySlug !== "all") {
-    const sb = supabaseServer();
-    const { data } = await sb.from("categories").select("id,slug").eq("slug", opts.categorySlug).maybeSingle();
-    categoryId = (data as any)?.id;
-    if (!categoryId) {
+    for (const sb of supabaseReadClients()) {
+      const { data } = await sb.from("categories").select("id,slug,name").eq("slug", opts.categorySlug).maybeSingle();
+      categoryId = (data as any)?.id;
+      if (categoryId) break;
       const { data: all } = await sb.from("categories").select("id,slug,name");
       const want = opts.categorySlug.replace(/s$/, "");
       const hit = ((all as any[]) ?? []).find((c) => c.slug === opts.categorySlug || c.slug.replace(/s$/, "") === want || String(c.name || "").toLowerCase().replace(/\s+/g, "-") === opts.categorySlug);
       categoryId = hit?.id;
+      if (categoryId) break;
     }
   }
   const order = opts.order === "sku" ? { col: "sku", asc: true }
     : opts.order === "qty" ? { col: "qty", asc: false }
     : { col: "created_at", asc: false };
-  const rows = await publishedPage({ from: offset, to: offset + limit - 1, categoryId, order, retail: true });
+  let rows = await publishedAll({ categoryId, order, retail: true });
+  if (opts.limit != null) rows = rows.slice(offset, offset + opts.limit);
   const imgBy = await coversFor(rows.map((p) => p.id));
   const products = rows.map((p) => asShopCard(p, imgBy.get(p.id) ?? null));
   return { products, formula, categoryId: categoryId ?? null };
+}
+
+/** One cover photo per category tile so Shop by Category is not letter placeholders. */
+export async function getCategoryCovers(cats: { id: string; slug: string }[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const real = cats.filter((c) => c.id && !String(c.id).startsWith("fallback"));
+  if (!real.length) return out;
+  await Promise.all(real.map(async (c) => {
+    for (const sb of supabaseReadClients()) {
+      const { data, error } = await sb.from("products")
+        .select("id,thumbnail_path")
+        .eq("status", "published")
+        .eq("category_id", c.id)
+        .limit(4);
+      if (error || !data?.length) continue;
+      const rows = data as any[];
+      const pinned = rows.find((p) => typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http"));
+      if (pinned) { out.set(c.slug, pinned.thumbnail_path); return; }
+      const imgBy = await coversFor(rows.map((p) => p.id));
+      const u = rows.map((p) => imgBy.get(p.id)).find(Boolean);
+      if (u) { out.set(c.slug, u); return; }
+    }
+  }));
+  return out;
 }
 
 export type TradeRow = {
@@ -119,16 +231,18 @@ export type TradeRow = {
   moreDesigns?: boolean; moreDesignsNote?: string | null;
 };
 
-export async function getTradeSlice(offset = 0, limit = 48): Promise<{ list: TradeRow[]; hasMore: boolean }> {
-  const formula = await getPricingFormula();
+export async function getTradeSlice(offset = 0, limit?: number): Promise<{ list: TradeRow[]; hasMore: boolean }> {
+  const formula = await formulaOf();
   const gstInc = (paise: number) => Math.round(paise * (1 + GST_RATE / 100));
-  const rows = await publishedPage({ from: offset, to: offset + limit - 1, order: { col: "updated_at", asc: false }, retail: false });
+  const order = { col: "created_at", asc: false };
+  const rows = (limit != null && limit > 0)
+    ? await publishedPage({ from: offset, to: offset + limit - 1, order, retail: false })
+    : await publishedAll({ order, retail: false });
   const ids = rows.map((p) => p.id);
-  const sb = supabaseServer();
   const imgBy = await coversFor(ids);
   const varsBy = new Map<string, any[]>();
   if (ids.length) {
-    const vrows = await byIds(ids, (chunk) => sb.from("variants").select("product_id,sku,color,qty,image_paths").gt("qty", 0).in("product_id", chunk));
+    const vrows = await byIds(ids, (sb, chunk) => sb.from("variants").select("product_id,sku,color,qty,image_paths").gt("qty", 0).in("product_id", chunk));
     for (const v of vrows as any[]) {
       const a = varsBy.get(v.product_id) ?? []; a.push(v); varsBy.set(v.product_id, a);
     }
@@ -137,13 +251,16 @@ export async function getTradeSlice(offset = 0, limit = 48): Promise<{ list: Tra
   const styleIds = [...new Set(rows.map((p) => p.style_id).filter(Boolean))];
   const subName = new Map<string, string>();
   const styleName = new Map<string, string>();
-  if (subIds.length) {
-    const { data } = await sb.from("subcategories").select("id,name").in("id", subIds);
-    for (const s of ((data as any[]) ?? [])) subName.set(s.id, s.name);
-  }
-  if (styleIds.length) {
-    const { data } = await sb.from("styles").select("id,name").in("id", styleIds);
-    for (const s of ((data as any[]) ?? [])) styleName.set(s.id, s.name);
+  for (const sb of supabaseReadClients()) {
+    if (subIds.length && !subName.size) {
+      const { data } = await sb.from("subcategories").select("id,name").in("id", subIds);
+      for (const s of ((data as any[]) ?? [])) subName.set(s.id, s.name);
+    }
+    if (styleIds.length && !styleName.size) {
+      const { data } = await sb.from("styles").select("id,name").in("id", styleIds);
+      for (const s of ((data as any[]) ?? [])) styleName.set(s.id, s.name);
+    }
+    if ((subName.size || !subIds.length) && (styleName.size || !styleIds.length)) break;
   }
   const list: TradeRow[] = [];
   for (const p of rows) {
@@ -174,5 +291,5 @@ export async function getTradeSlice(offset = 0, limit = 48): Promise<{ list: Tra
       });
     }
   }
-  return { list, hasMore: rows.length >= limit };
+  return { list, hasMore: limit != null && limit > 0 && rows.length >= limit };
 }

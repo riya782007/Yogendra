@@ -5,7 +5,7 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { getFeaturedReviews, getShoppableReels, getActivePromotions, getCategoryTreeSafe, getPricingFormula } from "@/lib/supabase/queries";
-import { getShopSlice } from "@/lib/catalogSlice";
+import { getShopSlice, getCategoryCovers } from "@/lib/catalogSlice";
 import { FALLBACK_SHOP_CATEGORIES, pickBestsellers, pickNewArrivals, publicCategories, categoryRef } from "@/lib/shopCatalog";
 import { ProductCard } from "@/components/site/ProductCard";
 import { PromoHero } from "@/components/site/PromoHero";
@@ -27,25 +27,27 @@ export const metadata = {
 async function loadShopHomeSafe() {
   try {
     const [store, reviews, reels, promos, tree] = await Promise.all([
-      getShopSlice({ order: "new", limit: 40 }),
+      getShopSlice({ order: "new" }),
       getFeaturedReviews().catch(() => []),
       getShoppableReels().catch(() => []),
       getActivePromotions("retail").catch(() => []),
       getCategoryTreeSafe(),
     ]);
+    const coverBy = await getCategoryCovers(tree as any).catch(() => new Map<string, string>());
     return {
       products: store.products,
       formula: store.formula ?? await getPricingFormula(),
-      reviews, reels, promos, tree,
+      reviews, reels, promos, tree, coverBy,
     };
   } catch {
     const [formula, tree] = await Promise.all([getPricingFormula(), getCategoryTreeSafe()]);
-    return { products: [] as any[], formula, reviews: [] as any[], reels: [] as any[], promos: [] as any[], tree };
+    const coverBy = await getCategoryCovers(tree as any).catch(() => new Map<string, string>());
+    return { products: [] as any[], formula, reviews: [] as any[], reels: [] as any[], promos: [] as any[], tree, coverBy };
   }
 }
 
 export default async function Shop() {
-  const { products, formula, reviews, reels, promos, tree } = await loadShopHomeSafe();
+  const { products, formula, reviews, reels, promos, tree, coverBy } = await loadShopHomeSafe();
   // Category tiles are driven by the catalogue tree, so they always show — even before
   // any products are published (the storefront starts with everything in draft).
   // Category tiles get a REAL jewellery photo automatically — the first in-stock product image in that
@@ -55,13 +57,13 @@ export default async function Shop() {
     const slug = categoryRef(p).slug; const img = p.image;
     if (slug && slug !== "all" && img && !catImg.has(slug)) catImg.set(slug, img);
   }
-  let cats = publicCategories(tree).map((c) => ({ name: c.name, slug: c.slug, image: (c as any).imageUrl || catImg.get(c.slug) || null }));
+  let cats = publicCategories(tree).map((c) => ({ name: c.name, slug: c.slug, image: (c as any).imageUrl || coverBy.get(c.slug) || catImg.get(c.slug) || null }));
   if (cats.length === 0) {
     const fromProducts = [...catImg.keys()].map((slug) => {
       const p = (products as any[]).find((x) => categoryRef(x).slug === slug);
       return { name: categoryRef(p).name, slug, image: catImg.get(slug) || null };
     });
-    cats = (fromProducts.length ? fromProducts : FALLBACK_SHOP_CATEGORIES).map((c) => ({ name: c.name, slug: c.slug, image: (c as any).image || catImg.get(c.slug) || null }));
+    cats = (fromProducts.length ? fromProducts : FALLBACK_SHOP_CATEGORIES).map((c) => ({ name: c.name, slug: c.slug, image: (c as any).image || coverBy.get(c.slug) || catImg.get(c.slug) || null }));
   }
   const trending = pickNewArrivals(products, 8);
   const newIds = new Set(trending.map((p) => p.sku));
@@ -217,8 +219,8 @@ export default async function Shop() {
       {products.length === 0 && (
         <section className="max-w-3xl mx-auto px-5 py-16 text-center">
           <p className="text-gold-dark tracking-[0.25em] uppercase text-xs">Collection</p>
-          <h2 className="font-display text-4xl text-ink mt-2">Open the full jewellery list</h2>
-          <p className="text-muted mt-3 leading-relaxed">Category tiles above still work. If cards didn’t appear here, use All jewellery — that page loads a small page of designs instead of waiting on the whole catalogue.</p>
+          <h2 className="font-display text-4xl text-ink mt-2">Browse by category</h2>
+          <p className="text-muted mt-3 leading-relaxed">Jewellery is live — open a category or All jewellery to see designs.</p>
           <div className="flex flex-wrap gap-3 justify-center mt-6">
             {cats.map((c) => (
               <Link key={c.slug} href={`/shop/c/${c.slug}`} className="px-5 py-2 rounded-full border border-sand text-ink hover:border-emerald hover:text-emerald transition-colors text-sm">{c.name}</Link>
