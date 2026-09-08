@@ -492,7 +492,13 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", s
                 <th className="p-4 text-right">Wholesale<span className="block text-[10px] font-normal normal-case">incl. GST</span></th><th className="p-4 text-right">MRP · your margin</th><th className="p-4 text-center">Qty</th><th className="p-4 text-right">Line total</th>
               </tr></thead>
               <tbody>
-                {groups.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-muted">No designs match.</td></tr>}
+                {groups.length === 0 && (
+                  <tr><td colSpan={7} className="p-6 text-center text-muted">
+                    {products.length === 0
+                      ? <>Catalogue is refreshing. <button type="button" className="text-emerald nav-link" onClick={() => location.reload()}>Retry</button></>
+                      : "No designs match these filters."}
+                  </td></tr>
+                )}
                 {visibleGroups.map((g) => {
                   const p = activeOf(g);
                   const n = qty[p.sku] ?? 0;
@@ -555,7 +561,13 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", s
 
           {/* Mobile: cards */}
           <div className="md:hidden space-y-2.5">
-            {groups.length === 0 && <p className="text-sm text-muted text-center py-6">No designs match.</p>}
+            {groups.length === 0 && (
+              <p className="text-sm text-muted text-center py-6">
+                {products.length === 0
+                  ? <>Catalogue is refreshing. <button type="button" className="text-emerald" onClick={() => location.reload()}>Retry</button></>
+                  : "No designs match these filters."}
+              </p>
+            )}
             {visibleGroups.map((g) => {
               const p = activeOf(g);
               const n = qty[p.sku] ?? 0;

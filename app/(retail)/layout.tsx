@@ -1,7 +1,7 @@
 import { Header } from "@/components/site/Header";
 import { Footer } from "@/components/site/Footer";
 import { Assistant } from "@/components/site/Assistant";
-import { getCategoryTreeCached, getLivePromosCached } from "@/lib/supabase/queries";
+import { getCategoryTreeSafe, getLivePromosCached } from "@/lib/supabase/queries";
 import { CartProvider } from "@/components/cart/CartContext";
 import { WishlistProvider } from "@/components/wishlist/WishlistContext";
 import { PromoPopup } from "@/components/site/PromoPopup";
@@ -14,7 +14,7 @@ import { WhatsAppFab } from "@/components/site/WhatsAppFab";
 export const revalidate = 300;
 
 export default async function RetailLayout({ children }: { children: React.ReactNode }) {
-  const tree = await getCategoryTreeCached();
+  const tree = await getCategoryTreeSafe();
   const cats = tree.map((c) => ({ name: c.name, slug: c.slug, subcategories: c.subcategories.map((s) => ({ name: s.name, slug: s.slug })) }));
   const [popupList, stripList] = await Promise.all([
     getLivePromosCached("retail", "popup").catch(() => []),

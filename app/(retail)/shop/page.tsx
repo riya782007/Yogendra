@@ -5,7 +5,8 @@
 export const dynamic = "force-dynamic";
 import { unstable_cache } from "next/cache";
 import Link from "next/link";
-import { getStorefront, getFeaturedReviews, getShoppableReels, getActivePromotions, getCategoryTree, getPricingFormula } from "@/lib/supabase/queries";
+import { getStorefrontSafe, getFeaturedReviews, getShoppableReels, getActivePromotions, getCategoryTreeSafe, getPricingFormula } from "@/lib/supabase/queries";
+import { FALLBACK_SHOP_CATEGORIES, pickBestsellers, pickNewArrivals, publicCategories, categoryRef } from "@/lib/shopCatalog";
 import { ProductCard } from "@/components/site/ProductCard";
 import { PromoHero } from "@/components/site/PromoHero";
 import { ProductImage } from "@/components/Placeholder";
@@ -26,7 +27,7 @@ export const metadata = {
 const loadShopHome = unstable_cache(
   async () => {
     const [store, reviews, reels, promos, tree] = await Promise.all([
-      getStorefront({ onlyInStock: true }), getFeaturedReviews(), getShoppableReels(), getActivePromotions("retail"), getCategoryTree(),
+      getStorefrontSafe(), getFeaturedReviews().catch(() => []), getShoppableReels().catch(() => []), getActivePromotions("retail").catch(() => []), getCategoryTreeSafe(),
     ]);
     // Never cache an empty storefront: zero products means the read failed (DB restricted / transient),
     // so throwing keeps the empty result OUT of the cache and the page self-heals on the next request
@@ -34,8 +35,8 @@ const loadShopHome = unstable_cache(
     if (!store.products || store.products.length === 0) throw new Error("shop home: storefront read returned no products — not caching");
     return { products: store.products, formula: store.formula, reviews, reels, promos, tree };
   },
-  ["shop-home-v3-instock"],
-  { revalidate: 900, tags: ["storefront"] },
+  ["shop-home-v4-safe"],
+  { revalidate: 180, tags: ["storefront"] },
 );
 
 // loadShopHome THROWS on an empty read (so it never caches a blank shop). That's right for runtime, but it
@@ -46,8 +47,12 @@ async function loadShopHomeSafe() {
   try {
     return await loadShopHome();
   } catch {
-    const [formula, tree] = await Promise.all([getPricingFormula(), getCategoryTree()]);
-    return { products: [] as any[], formula, reviews: [] as any[], reels: [] as any[], promos: [] as any[], tree };
+    const [store, formula, tree] = await Promise.all([
+      getStorefrontSafe(),
+      getPricingFormula(),
+      getCategoryTreeSafe(),
+    ]);
+    return { products: store.products, formula: store.formula ?? formula, reviews: [] as any[], reels: [] as any[], promos: [] as any[], tree };
   }
 }
 
@@ -59,20 +64,20 @@ export default async function Shop() {
   // category — so the "Shop by Category" row never shows bare letter placeholders (HA / N / E).
   const catImg = new Map<string, string>();
   for (const p of products as any[]) {
-    const slug = p.category?.slug; const img = p.image;
-    if (slug && img && !catImg.has(slug)) catImg.set(slug, img);
+    const slug = categoryRef(p).slug; const img = p.image;
+    if (slug && slug !== "all" && img && !catImg.has(slug)) catImg.set(slug, img);
   }
-  const cats = tree.filter((c) => c.name?.trim().toLowerCase() !== "uncategorized").map((c) => ({ name: c.name, slug: c.slug, image: (c as any).imageUrl || catImg.get(c.slug) || null }));
-  // NEW ARRIVALS — genuinely the most recently ADDED pieces (newest first).
-  const createdMs = (p: any) => (p.created_at ? new Date(p.created_at).getTime() : 0);
-  const trending = [...products].sort((a, b) => createdMs(b) - createdMs(a)).slice(0, 8);
-  // BESTSELLERS — real top sellers once there's sales/review data; until then a curated pick that is
-  // ALWAYS distinct from New Arrivals (no product appears in both), so the two rows never look identical.
+  let cats = publicCategories(tree).map((c) => ({ name: c.name, slug: c.slug, image: (c as any).imageUrl || catImg.get(c.slug) || null }));
+  if (cats.length === 0) {
+    const fromProducts = [...catImg.keys()].map((slug) => {
+      const p = (products as any[]).find((x) => categoryRef(x).slug === slug);
+      return { name: categoryRef(p).name, slug, image: catImg.get(slug) || null };
+    });
+    cats = (fromProducts.length ? fromProducts : FALLBACK_SHOP_CATEGORIES).map((c) => ({ name: c.name, slug: c.slug, image: (c as any).image || catImg.get(c.slug) || null }));
+  }
+  const trending = pickNewArrivals(products, 8);
   const newIds = new Set(trending.map((p) => p.sku));
-  const bestsellers = [...products]
-    .sort((a, b) => (b.reviews - a.reviews) || (b.rating - a.rating) || a.sku.localeCompare(b.sku))
-    .filter((p) => !newIds.has(p.sku))
-    .slice(0, 8);
+  const bestsellers = pickBestsellers(products, newIds, 8);
   // Real product photos for the hero (falls back to curated premium images if the catalogue is empty).
   const heroPics = products.filter((p) => p.image).slice(0, 4);
   const HERO_FALLBACK = "https://imagedelivery.net/mqSJbpqjeuYhRGHhGSzOzw/01e7b55d-7167-4518-e6d7-5ad7c94cdc00/public";
@@ -127,8 +132,8 @@ export default async function Shop() {
               Handcrafted Kundan, Meenakari &amp; Temple jewellery — premium anti-tarnish finish and trend-ready designs, straight from Sadar Bazar, Delhi.
             </p>
             <div className="flex flex-wrap justify-center md:justify-start gap-3 mt-7">
-              <Link href="#bestsellers" className="btn-primary px-7 py-3 text-sm font-medium">Shop the collection</Link>
-              <Link href="#new-arrivals" className="px-7 py-3 text-sm font-medium rounded-full border border-ink/15 text-ink hover:border-gold hover:text-gold-dark transition-colors">New arrivals</Link>
+            <Link href="/shop/all" className="btn-primary px-7 py-3 text-sm font-medium">Shop the collection</Link>
+            <Link href="/shop/new" className="px-7 py-3 text-sm font-medium rounded-full border border-ink/15 text-ink hover:border-gold hover:text-gold-dark transition-colors">New arrivals</Link>
             </div>
             <div className="flex flex-wrap justify-center md:justify-start items-center gap-x-4 gap-y-1.5 mt-8 text-sm text-muted">
               <span className="flex items-center gap-1.5"><span className="text-gold">★</span> 4.9 · 10,000+ happy divas</span>
@@ -210,7 +215,7 @@ export default async function Shop() {
             <p className="text-gold-dark tracking-[0.25em] uppercase text-xs">Loved by thousands</p>
             <h2 className="font-display text-4xl text-ink mt-1">Bestsellers</h2>
           </div>
-          <Link href="/shop" className="nav-link text-sm text-emerald">View all →</Link>
+          <Link href="/shop/all" className="nav-link text-sm text-emerald">View all →</Link>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
           {bestsellers.map((p, i) => (
@@ -230,6 +235,7 @@ export default async function Shop() {
             {cats.map((c) => (
               <Link key={c.slug} href={`/shop/c/${c.slug}`} className="px-5 py-2 rounded-full border border-sand text-ink hover:border-emerald hover:text-emerald transition-colors text-sm">{c.name}</Link>
             ))}
+            <Link href="/shop/all" className="px-5 py-2 rounded-full border border-sand text-ink hover:border-emerald hover:text-emerald transition-colors text-sm">All jewellery</Link>
           </div>
         </section>
       )}
@@ -242,7 +248,7 @@ export default async function Shop() {
             <p className="relative text-gold-light tracking-[0.3em] uppercase text-xs">The Blythe Diva Promise</p>
             <h2 className="relative font-display text-4xl md:text-5xl mt-2">Handcrafted. Anti-tarnish. Made to shine.</h2>
             <p className="relative text-cream/70 mt-3">₹80 flat shipping · Cash on delivery · Easy 7-day returns.</p>
-            <Link href="/shop" className="relative btn-gold inline-block mt-6 px-8 py-3 text-sm font-medium">Explore the collection</Link>
+            <Link href="/shop/all" className="relative btn-gold inline-block mt-6 px-8 py-3 text-sm font-medium">Explore the collection</Link>
           </div>
         </Reveal>
       </section>

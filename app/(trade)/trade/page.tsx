@@ -2,12 +2,13 @@ export const dynamic = "force-dynamic";
 import type { Metadata } from "next";
 import { unstable_cache } from "next/cache";
 import { TradeLeadPopup } from "@/components/site/TradeLeadPopup";
-import { getPricingFormula, getWholesaleOrderHistory, getCategories, getActivePromotions } from "@/lib/supabase/queries";
+import { getPricingFormula, getWholesaleOrderHistory, getCategories, getActivePromotions, getStorefrontSafe } from "@/lib/supabase/queries";
 import { supabaseServer } from "@/lib/supabase/server";
 import { PromoHero } from "@/components/site/PromoHero";
 import { resolvePrices, overridesOf } from "@/lib/pricing";
 import { getWholesaleSession } from "@/lib/wholesale";
 import { GST_RATE } from "@/lib/business";
+import { categoryRef } from "@/lib/shopCatalog";
 import { WholesaleCatalog } from "@/components/site/WholesaleCatalog";
 import { SellForm } from "@/components/site/SellForm";
 
@@ -41,9 +42,10 @@ const loadTradeCatalog = unstable_cache(
     // safe. Published only; hide retail-only lines (wholesale-only designs stay visible for dealers).
     const products: any[] = [];
     for (let from = 0; ; from += 1000) {
-      const { data } = await sb.from("products")
+      const { data, error } = await sb.from("products")
         .select("id,sku,name,qty,base_wholesale,wholesale_override,retail_override,mrp_override,thumbnail_path,default_variant_id,subcategory_id,style_id,updated_at,created_at,more_designs,more_designs_note,retail_only, category:categories(name)")
         .eq("status", "published").order("sku").range(from, from + 999);
+      if (error) throw new Error(error.message);
       const raw = (data as any[]) ?? [];
       products.push(...raw.filter((p) => !p.retail_only));
       if (raw.length < 1000) break;
@@ -100,7 +102,7 @@ const loadTradeCatalog = unstable_cache(
     // Dealer prices are shown GST-INCLUSIVE (imitation jewellery = 3%) — the rate shown is all-in.
     const gstInc = (paise: number) => Math.round(paise * (1 + GST_RATE / 100));
 
-    const list = rotated.flatMap((p) => {
+    const rows = rotated.flatMap((p) => {
       const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));
       const price = gstInc(ps.wholesaleRate);
       const tp = (p as any).thumbnail_path;
@@ -109,6 +111,7 @@ const loadTradeCatalog = unstable_cache(
       const allVs = varsBy.get(pid) ?? [];
       const sub = subName.get((p as any).subcategory_id) ?? null;
       const style = styleName.get((p as any).style_id) ?? null;
+      const catName = (Array.isArray(p.category) ? p.category[0]?.name : p.category?.name) || "Jewellery";
       if (allVs.length > 0) {
         // Only offer colours actually IN STOCK; drop a design when every colour is out.
         const vs = allVs.filter((v) => (v.qty ?? 0) > 0);
@@ -117,7 +120,7 @@ const loadTradeCatalog = unstable_cache(
           // Cap to 3 photos/colour — the card gallery only shows a few, and this keeps the cached payload small.
           const images = (vImgs.length ? vImgs : (parentImg ? [parentImg] : [])).slice(0, 3);
           return {
-            pid, sku: v.sku, name: p.name, category: p.category.name, sub, style, colour: v.color ?? null,
+            pid, sku: v.sku, name: p.name, category: catName, sub, style, colour: v.color ?? null,
             qty: v.qty ?? 0, price, mrp: ps.mrp,
             image: images[0] ?? parentImg, images,
             moreDesigns: moreBy.has(pid), moreDesignsNote: moreBy.get(pid) ?? null,
@@ -125,10 +128,11 @@ const loadTradeCatalog = unstable_cache(
         });
       }
       if ((p.qty ?? 0) <= 0) return [];
-      return [{ pid, sku: p.sku, name: p.name, category: p.category.name, sub, style, colour: null, qty: p.qty, price, mrp: ps.mrp, image: parentImg, images: parentImg ? [parentImg] : [], moreDesigns: moreBy.has(pid), moreDesignsNote: moreBy.get(pid) ?? null }];
-    })
-    // A shareable catalogue must LOOK good — never show a photo-less design.
-    .filter((r) => typeof r.image === "string" && r.image.startsWith("http"));
+      return [{ pid, sku: p.sku, name: p.name, category: catName, sub, style, colour: null, qty: p.qty, price, mrp: ps.mrp, image: parentImg, images: parentImg ? [parentImg] : [], moreDesigns: moreBy.has(pid), moreDesignsNote: moreBy.get(pid) ?? null }];
+    });
+    const withPhotos = rows.filter((r) => typeof r.image === "string" && r.image.startsWith("http"));
+    // Prefer photographed designs, but NEVER blank the whole trade panel if the image read failed.
+    const list = withPhotos.length > 0 ? withPhotos : rows;
 
     // Owner's UPI collection details for direct QR payment.
     const { data: pmRows } = await sb.from("payment_methods").select("name,upi_id,qr_code_url,kind,is_default").eq("active", true);
@@ -139,9 +143,29 @@ const loadTradeCatalog = unstable_cache(
     const wholesaleTiers = formula.wholesaleTiers ?? [];
     return { list, minOrder, minRupees, payInfo, wholesaleTiers };
   },
-  ["trade-catalog-v3-fast"],
-  { revalidate: 300, tags: ["trade-catalog"] },
+  ["trade-catalog-v4-safe"],
+  { revalidate: 180, tags: ["trade-catalog"] },
 );
+
+async function loadTradeCatalogSafe() {
+  try {
+    return await loadTradeCatalog();
+  } catch {
+    const { products, formula } = await getStorefrontSafe({ onlyInStock: false });
+    const gstInc = (paise: number) => Math.round(paise * (1 + GST_RATE / 100));
+    const list = products.filter((p: any) => !p.retail_only).map((p: any) => {
+      const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));
+      const img = p.image ?? null;
+      return {
+        pid: p.id, sku: p.sku, name: p.name, category: categoryRef(p).name,
+        qty: p.qty, price: gstInc(ps.wholesaleRate), mrp: ps.mrp,
+        image: img, images: img ? [img] : [],
+      };
+    });
+    const minOrder = formula.wholesaleMinOrder ?? WHOLESALE_MIN;
+    return { list, minOrder, minRupees: Math.round(minOrder / 100).toLocaleString("en-IN"), payInfo: null, wholesaleTiers: formula.wholesaleTiers ?? [] };
+  }
+}
 
 export default async function TradeDashboard() {
   // OPEN CATALOGUE: guests browse designs + trade rates without an account; ORDERING still needs an
@@ -150,7 +174,7 @@ export default async function TradeDashboard() {
   const guest = !session;
 
   // Heavy shared catalogue — cached (see loadTradeCatalog). Near-instant on repeat opens.
-  const { list, minOrder, minRupees, payInfo, wholesaleTiers } = await loadTradeCatalog();
+  const { list, minOrder, minRupees, payInfo, wholesaleTiers } = await loadTradeCatalogSafe();
 
   // Per-dealer, always live (never cached).
   const history = session ? await getWholesaleOrderHistory(session.id).catch(() => []) : [];

@@ -4,19 +4,32 @@ import type { ReactNode } from "react";
 import { unstable_cache } from "next/cache";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getStorefront, getCategories, getActivePromotions } from "@/lib/supabase/queries";
+import { getStorefrontSafe, getCategories, getActivePromotions } from "@/lib/supabase/queries";
 
 // The full published catalogue is the same for every visitor, so cache it (3 min) instead of re-running
 // the heavy all-products query on every category view. Product edits refresh within the window / via the
 // "storefront" tag. Category-specific filter queries below stay live (they're light + scoped).
 const loadCatalogueBase = unstable_cache(
   async () => {
-    const [store, allCats, allPromos] = await Promise.all([getStorefront({ onlyInStock: true }), getCategories(), getActivePromotions("retail")]);
+    const [store, allCats, allPromos] = await Promise.all([getStorefrontSafe(), getCategories(), getActivePromotions("retail")]);
+    if (!store.products?.length) throw new Error("category catalogue empty — not caching");
     return { products: store.products, formula: store.formula, allCats, allPromos };
   },
-  ["shop-category-base-v2-instock"],
-  { revalidate: 900, tags: ["storefront"] },
+  ["shop-category-base-v3-safe"],
+  { revalidate: 180, tags: ["storefront"] },
 );
+
+async function loadCatalogueBaseSafe() {
+  try { return await loadCatalogueBase(); }
+  catch {
+    const [store, allCats, allPromos] = await Promise.all([
+      getStorefrontSafe(),
+      getCategories().catch(() => [] as any[]),
+      getActivePromotions("retail").catch(() => [] as any[]),
+    ]);
+    return { products: store.products, formula: store.formula, allCats, allPromos };
+  }
+}
 import { supabaseServer } from "@/lib/supabase/server";
 import { ProductCard } from "@/components/site/ProductCard";
 import { PromoHero } from "@/components/site/PromoHero";
@@ -24,6 +37,7 @@ import { Reveal } from "@/components/site/Reveal";
 import { Back } from "@/components/site/Back";
 import { FiltersPanel } from "@/components/site/FiltersPanel";
 import { liveOffer } from "@/lib/offers";
+import { matchesCategorySlug, categoryRef } from "@/lib/shopCatalog";
 
 export async function generateMetadata({ params }: { params: { slug: string } }): Promise<Metadata> {
   const name = params.slug.charAt(0).toUpperCase() + params.slug.slice(1);
@@ -43,10 +57,12 @@ const PAGE_SIZE = 48;
 
 export default async function CategoryPage({ params, searchParams }: { params: { slug: string }; searchParams: SP }) {
   const sb = supabaseServer();
-  const { products, formula, allCats, allPromos } = await loadCatalogueBase();
-  const cat = allCats.find((c) => c.slug === params.slug);
-  const catPromos = (allPromos ?? []).filter((p) => p.category?.slug === params.slug);
-  let items = products.filter((p) => p.category.slug === params.slug);
+  const { products, formula, allCats, allPromos } = await loadCatalogueBaseSafe();
+  const cat = allCats.find((c) => c.slug === params.slug)
+    || allCats.find((c) => c.slug.replace(/s$/, "") === params.slug.replace(/s$/, ""))
+    || allCats.find((c) => (c.name || "").toLowerCase().replace(/\s+/g, "-") === params.slug);
+  const catPromos = (allPromos ?? []).filter((p) => p.category?.slug === params.slug || (cat && p.category?.slug === cat.slug));
+  let items = products.filter((p) => matchesCategorySlug(p, params.slug, cat));
   if (!cat && items.length === 0) notFound();
   const catName = items[0]?.category.name ?? cat?.name ?? params.slug;
   const noneAtAll = items.length === 0;
@@ -259,7 +275,7 @@ export default async function CategoryPage({ params, searchParams }: { params: {
       ) : (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
-            {pageItems.map((p, i) => (<Reveal key={p.sku} delay={(i % 4) * 70}><ProductCard p={{ ...(p as any), colors: [...(colourByProduct.get((p as any).id) ?? [])] }} formula={formula} /></Reveal>))}
+            {pageItems.map((p, i) => (<Reveal key={p.sku} delay={(i % 4) * 70}><ProductCard p={{ ...(p as any), category: categoryRef(p), colors: [...(colourByProduct.get((p as any).id) ?? [])] }} formula={formula} /></Reveal>))}
           </div>
 
           {totalPages > 1 && (
