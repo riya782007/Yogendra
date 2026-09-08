@@ -3,7 +3,7 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 import { supabaseServer } from "./server";
 import type { PricingFormula } from "../pricing";
-import { cleanTiers, parseRupeeSearch } from "../pricing";
+import { cleanTiers, DEFAULT_FORMULA, parseRupeeSearch } from "../pricing";
 import { isCodOrder, isPrepaidOrder } from "../orderPayment";
 import { phoneDigits, recordMatchesShopperQuery } from "../phone";
 import { scoreQuery } from "../search";
@@ -14,13 +14,38 @@ import { scoreQuery } from "../search";
  * in 1000-row windows and returns the complete set. `build(from,to)` must construct a FRESH
  * query each call (query builders are single-use) and apply `.range(from,to)`.
  */
-async function fetchAll<T = any>(build: (from: number, to: number) => PromiseLike<{ data: T[] | null }>): Promise<T[]> {
+async function fetchAll<T = any>(
+  build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error?: { message?: string } | null }>,
+  opts: { required?: boolean } = {},
+): Promise<T[]> {
   const step = 1000; const out: T[] = [];
   for (let from = 0; ; from += step) {
-    const { data } = await build(from, from + step - 1);
-    const rows = (data as T[]) ?? [];
+    let rows: T[] | null = null;
+    let lastErr: { message?: string } | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const res = await build(from, from + step - 1);
+      if (res.error) {
+        lastErr = res.error;
+        await new Promise((r) => setTimeout(r, 120 * (attempt + 1)));
+        continue;
+      }
+      rows = (res.data as T[]) ?? [];
+      lastErr = null;
+      break;
+    }
+    if (rows == null) {
+      // A later page can 416 / time out after earlier pages already succeeded. Throwing here
+      // used to discard thousands of designs and blank the shop + trade panel. Keep what
+      // we have; only fail hard when we truly got nothing.
+      const msg = (lastErr?.message ?? "").toLowerCase();
+      const rangeDone = /range|pgrst103|416|not satisfiable/.test(msg);
+      if (out.length > 0 || rangeDone) break;
+      if (opts.required) throw new Error(`catalogue page ${from} failed: ${lastErr?.message ?? "unknown error"}`);
+      break;
+    }
     out.push(...rows);
     if (rows.length < step) break;
+    if (from > 200_000) break;
   }
   return out;
 }
@@ -68,8 +93,9 @@ export type DbProduct = {
 };
 
 export async function getPricingFormula(): Promise<PricingFormula> {
+  try {
   const sb = supabaseServer();
-  const { data } = await sb.from("pricing_settings").select("*").limit(1).single();
+  const { data } = await sb.from("pricing_settings").select("*").limit(1).maybeSingle();
   return {
     wholesaleMarkupPct: Number(data?.wholesale_markup_pct ?? 10),
     retailMultiplier: Number(data?.retail_multiplier ?? 2.2),
@@ -87,6 +113,9 @@ export async function getPricingFormula(): Promise<PricingFormula> {
     wholesaleMinOrder: Number(data?.wholesale_min_order ?? 300000),
     wholesaleTiers: cleanTiers(data?.wholesale_tiers),
   };
+  } catch {
+    return { ...DEFAULT_FORMULA };
+  }
 }
 
 export async function getCategories(): Promise<DbCategory[]> {
@@ -102,18 +131,26 @@ export type CategoryNode = DbCategory & { sort?: number; subcategories: DbSubcat
 /** Parent categories, each with their ordered subcategories — for the management UI + filters. */
 export async function getCategoryTree(): Promise<CategoryNode[]> {
   const sb = supabaseServer();
-  const [{ data: cats }, { data: subs }] = await Promise.all([
-    sb.from("categories").select("id,name,slug,sort,parent_id").order("sort").order("name"),
-    sb.from("subcategories").select("id,category_id,name,slug,sort,image_style").order("sort").order("name"),
-  ]);
+  let cats: any[] = [];
+  const full = await sb.from("categories").select("id,name,slug,sort,parent_id").order("sort").order("name");
+  if (full.error || full.data == null) {
+    // Older DBs may lack parent_id / sort — never let that blank the whole Shop-by-Category row.
+    const basic = await sb.from("categories").select("id,name,slug").order("name");
+    if (basic.error) return [];
+    cats = (basic.data as any[]) ?? [];
+  } else {
+    cats = (full.data as any[]) ?? [];
+  }
+  const { data: subs } = await sb.from("subcategories").select("id,category_id,name,slug,sort,image_style").order("sort").order("name");
   const subList = (subs as DbSubcategory[]) ?? [];
-  // Only top-level categories (parent_id null) are roots; nested categories are ignored here.
-  return ((cats as any[]) ?? [])
-    .filter((c) => !c.parent_id)
-    .map((c) => ({
-      id: c.id, name: c.name, slug: c.slug, sort: c.sort ?? 0,
-      subcategories: subList.filter((s) => s.category_id === c.id),
-    }));
+  const toNode = (c: any) => ({
+    id: c.id, name: c.name, slug: c.slug, sort: c.sort ?? 0,
+    subcategories: subList.filter((s) => s.category_id === c.id),
+  });
+  // Only top-level categories (parent_id null) are roots — BUT if every row has a parent
+  // (import/hierarchy glitch) showing nothing blanks Shop by Category. Fall back to all rows.
+  const roots = cats.filter((c) => !c.parent_id);
+  return (roots.length ? roots : cats).map(toNode);
 }
 
 /** Flat list of subcategories, optionally scoped to one parent category slug or id. */
@@ -362,7 +399,7 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       }
     }
   }
-  return cardRows.map((p): CatalogCard => {
+  const cards = cardRows.map((p): CatalogCard => {
     const ov = overridesOf(p);
     const o = _liveOffer(p.base_wholesale, formula, ov);
     const set = _resolvePrices(p.base_wholesale, formula, ov);
@@ -395,10 +432,9 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       wholesaleOnly: !!p.wholesale_only,
       colors: [...(colorsByP.get(p.id) ?? [])].sort(),
     };
-  })
-  // A shareable catalogue must never show a photo-less design (letter placeholder) — it looks unfinished
-  // and drives customers away. Only list products that actually have a real image.
-  .filter((c) => typeof c.image === "string" && c.image.startsWith("http"));
+  });
+  const withPhotos = cards.filter((c) => typeof c.image === "string" && c.image.startsWith("http"));
+  return withPhotos.length > 0 ? withPhotos : cards;
 }
 
 // ---------- customer directory (real customers table) ----------
@@ -1929,14 +1965,42 @@ export const getProductsForPurchaseCached = unstable_cache(() => getProductsForP
  *  (header menu + footer + promo strip). They're identical for every visitor and rarely change, so
  *  memoising them removes 3 DB round-trips per page load and makes navigation feel instant. Any catalogue
  *  or promo edit calls revalidateTag("storefront") and refreshes them at once. */
-export const getCategoryTreeCached = unstable_cache(() => getCategoryTree(), ["category-tree"], { tags: ["storefront"], revalidate: 300 });
+export const getCategoryTreeCached = unstable_cache(async () => {
+  const tree = await getCategoryTree();
+  if (!tree.length) throw new Error("category tree empty — not caching");
+  return tree;
+}, ["category-tree-v3"], { tags: ["storefront"], revalidate: 300 });
+
+/** Layout/header must never 500: live-retry, then a small fallback tile set. */
+export async function getCategoryTreeSafe(): Promise<CategoryNode[]> {
+  try { return await getCategoryTreeCached(); }
+  catch {
+    try {
+      const live = await getCategoryTree();
+      if (live.length) return live;
+    } catch { /* fall through */ }
+    const { FALLBACK_SHOP_CATEGORIES } = await import("../shopCatalog");
+    return FALLBACK_SHOP_CATEGORIES.map((c, i) => ({
+      id: `fallback-${c.slug}`, name: c.name, slug: c.slug, sort: i, subcategories: [],
+    }));
+  }
+}
 
 // Shareable catalogue (/catalog) reads were UNCACHED (supabaseServer is no-store), so every share view
 // re-ran the heavy RICH query (all in-stock products + images + labels joins) — slow, and prone to timing
 // out on a big collection. Cache per filter-set (5 min, busted by the "storefront" tag on any edit) so a
 // shared link opens fast for the customer instead of re-querying the whole catalogue each time.
 export const getCatalogProductsCached = (opts: Parameters<typeof getCatalogProducts>[0]) =>
-  unstable_cache(() => getCatalogProducts(opts), ["catalog-products", JSON.stringify(opts)], { tags: ["storefront"], revalidate: 300 })();
+  unstable_cache(async () => {
+    const rows = await getCatalogProducts(opts);
+    const unfiltered = (!opts.category || opts.category === "all")
+      && (!opts.subcategory || opts.subcategory === "all")
+      && (!opts.style || opts.style === "all")
+      && !opts.q
+      && !(opts.skus && opts.skus.length);
+    if (unfiltered && rows.length === 0) throw new Error("shared catalogue empty — not caching");
+    return rows;
+  }, ["catalog-products-v2", JSON.stringify(opts)], { tags: ["storefront"], revalidate: 300 })();
 export const getCatalogSuggestionsCached = unstable_cache(() => getCatalogSuggestions(), ["catalog-suggestions"], { tags: ["storefront"], revalidate: 600 });
 export const getLivePromosCached = (scope: "retail" | "wholesale", placement: "hero" | "popup" | "strip") =>
   unstable_cache(() => getLivePromos(scope, placement), ["live-promos", scope, placement], { tags: ["storefront"], revalidate: 120 })();
@@ -1956,15 +2020,28 @@ export async function getStorefront(
     "subcategory_id, wholesale_override, retail_override, mrp_override, wholesale_only, retail_only, " +
     "style_id, thumbnail_path, default_variant_id, hide_oos_variants, in_stock, more_designs, more_designs_note, " +
     "category:categories(id,name,slug)";
-  const [prods, revs, pimgs, vimgs, formula] = await Promise.all([
-    fetchAll((f, t) => {
-      let q = sb.from("products").select(STOREFRONT_COLS).order("sku");
-      if (!opts.includeDrafts) q = q.eq("status", "published");
-      return q.range(f, t);
-    }),
-    sb.from("reviews").select("product_id, rating").then((r) => r.data ?? []),
-    fetchAll((f, t) => sb.from("product_images").select("product_id, path, sort, kind").order("sort", { ascending: true }).range(f, t)),
-    fetchAll((f, t) => sb.from("variants").select("id, product_id, image_paths, qty").range(f, t)),
+  const STOREFRONT_COLS_BASIC =
+    "id, category_id, sku, name, type, base_wholesale, qty, status, last_movement_at, created_at, " +
+    "subcategory_id, wholesale_override, retail_override, mrp_override, wholesale_only, retail_only, " +
+    "category:categories(id,name,slug)";
+  const productPages = async (cols: string, required = true) => fetchAll((f, t) => {
+    let q = sb.from("products").select(cols).order("sku");
+    if (!opts.includeDrafts) q = q.eq("status", "published");
+    return q.range(f, t);
+  }, { required });
+  const STOREFRONT_COLS_MINIMAL =
+    "id, category_id, sku, name, type, base_wholesale, qty, status, created_at, wholesale_only, retail_only, thumbnail_path";
+  let prods: any[] = [];
+  try {
+    prods = await productPages(STOREFRONT_COLS);
+  } catch {
+    try { prods = await productPages(STOREFRONT_COLS_BASIC); }
+    catch { prods = await productPages(STOREFRONT_COLS_MINIMAL, false); }
+  }
+  const [revs, pimgs, vimgs, formula] = await Promise.all([
+    (async () => { const { data } = await sb.from("reviews").select("product_id, rating").limit(5000); return data ?? []; })().catch(() => [] as any[]),
+    fetchAll((f, t) => sb.from("product_images").select("product_id, path, sort, kind").order("sort", { ascending: true }).range(f, t)).catch(() => [] as any[]),
+    fetchAll((f, t) => sb.from("variants").select("id, product_id, image_paths, qty").range(f, t)).catch(() => [] as any[]),
     getPricingFormula(),
   ]);
   const agg = new Map<string, { sum: number; n: number }>();
@@ -2032,9 +2109,46 @@ export async function getStorefront(
     const varSum = new Map<string, number>();
     const hasVar = new Set<string>();
     for (const v of vlist) { hasVar.add(v.product_id); varSum.set(v.product_id, (varSum.get(v.product_id) ?? 0) + (v.qty ?? 0)); }
-    products = products.filter((p: any) => (hasVar.has(p.id) ? (varSum.get(p.id) ?? 0) : (p.qty ?? 0)) > 0);
+    // If the variants table read failed (empty list) we MUST NOT treat every design as sold-out —
+    // fall back to product.qty / in_stock so a transient variants timeout cannot blank the shop.
+    const filtered = vlist.length === 0
+      ? products.filter((p: any) => (p.qty ?? 0) > 0 || p.in_stock === true)
+      : products.filter((p: any) => (hasVar.has(p.id) ? (varSum.get(p.id) ?? 0) : (p.qty ?? 0)) > 0);
+    products = filtered.length > 0 ? filtered : products;
   }
   return { products, formula };
+}
+
+const getPublishedStorefrontCached = unstable_cache(
+  async () => {
+    const store = await getStorefront({ onlyInStock: true });
+    if (!store.products?.length) throw new Error("storefront read returned no products — not caching");
+    return store;
+  },
+  ["storefront-published-v5"],
+  { revalidate: 180, tags: ["storefront"] },
+);
+
+/** Shop/category/search: never serve a cached empty catalogue; live-retry, then published-all. */
+export async function getStorefrontSafe(
+  opts: { onlyInStock?: boolean } = { onlyInStock: true },
+): Promise<{ products: StoreProduct[]; formula: PF }> {
+  try {
+    if (opts.onlyInStock !== false) return await getPublishedStorefrontCached();
+    const live = await getStorefront(opts);
+    if (live.products?.length) return live;
+    throw new Error("empty");
+  } catch {
+    try {
+      const live = await getStorefront({ onlyInStock: true });
+      if (live.products?.length) return live;
+      const all = await getStorefront({ onlyInStock: false });
+      if (all.products?.length) return all;
+      return { products: [], formula: all.formula };
+    } catch {
+      return { products: [], formula: await getPricingFormula() };
+    }
+  }
 }
 
 export type FeaturedReview = { id: string; author_name: string; rating: number; body: string; image_url: string | null };
@@ -2572,14 +2686,25 @@ const getSearchCatalogue = unstable_cache(
       getStorefront({ onlyInStock: true }),
       loadStorefrontSearchExtras(),
     ]);
+    if (!products?.length) throw new Error("search catalogue empty — not caching");
     return { products, formula, extras };
   },
-  ["search-catalogue-instock-v2"],
+  ["search-catalogue-instock-v3"],
   { revalidate: 300, tags: ["storefront"] },
 );
 
 export async function searchProducts(q: string) {
-  const { products, formula, extras } = await getSearchCatalogue();
+  let catalogue: { products: StoreProduct[]; formula: PF; extras: any };
+  try {
+    catalogue = await getSearchCatalogue();
+  } catch {
+    const [{ products, formula }, extras] = await Promise.all([
+      getStorefrontSafe(),
+      loadStorefrontSearchExtras().catch(() => ({})),
+    ]);
+    catalogue = { products, formula, extras };
+  }
+  const { products, formula, extras } = catalogue;
   const needle = q.trim();
   if (!needle) return { formula, results: [] as typeof products };
   const scored = products.map((p: any) => {

@@ -10,7 +10,7 @@ import type { PricingFormula } from "@/lib/pricing";
 
 export type CardProduct = {
   sku: string; name: string; base_wholesale: number; qty: number;
-  category: { name: string; slug: string };
+  category?: { name: string; slug: string };
   rating: number; reviews: number; isNew?: boolean;
   image?: string | null;
   wholesale_override?: number | null; retail_override?: number | null; mrp_override?: number | null;
@@ -33,8 +33,10 @@ function swatchCss(name: string): string {
 
 export function ProductCard({ p, formula, index = 0 }: { p: CardProduct; formula: PricingFormula; index?: number }) {
   const o = liveOffer(p.base_wholesale, formula, overridesOf(p));
+  const catSlug = p.category?.slug || "all";
+  const catName = p.category?.name ?? "";
   return (
-    <Link href={`/shop/${p.category.slug}/${p.sku}`}
+    <Link href={`/shop/${catSlug}/${p.sku}`}
       className="group relative block rounded-2xl bg-white shadow-card hover:shadow-luxe transition-all duration-300 hover:-translate-y-1 overflow-hidden">
       <div className="relative aspect-[3/4] overflow-hidden bg-cream">
         <div className="card-img h-full w-full"><ProductImage name={p.name} src={p.image} /></div>
@@ -44,16 +46,16 @@ export function ProductCard({ p, formula, index = 0 }: { p: CardProduct; formula
           {p.isNew && <span className="bg-emerald text-white text-[11px] font-semibold px-2 py-1 rounded-full">NEW</span>}
         </div>
 
-        <WishlistButton item={{ sku: p.sku, name: p.name, category: p.category.name, categorySlug: p.category.slug, price: o.price }} className="absolute top-3 right-3 h-9 w-9 grid place-items-center rounded-full backdrop-blur opacity-0 group-hover:opacity-100 translate-y-1 group-hover:translate-y-0 transition-all" />
+        <WishlistButton item={{ sku: p.sku, name: p.name, category: catName, categorySlug: catSlug, price: o.price }} className="absolute top-3 right-3 h-9 w-9 grid place-items-center rounded-full backdrop-blur opacity-0 group-hover:opacity-100 translate-y-1 group-hover:translate-y-0 transition-all" />
 
 
         <div className="absolute inset-x-3 bottom-3 opacity-0 group-hover:opacity-100 translate-y-3 group-hover:translate-y-0 transition-all duration-300">
-          <AddToCart variant="card" item={{ sku: p.sku, name: p.name, price: o.price, category: p.category.slug }} />
+          <AddToCart variant="card" item={{ sku: p.sku, name: p.name, price: o.price, category: catSlug }} />
         </div>
       </div>
 
       <div className="p-4">
-        {p.category.name && p.category.name.toLowerCase() !== "uncategorized" && <p className="text-[10px] uppercase tracking-[0.15em] text-gold-dark">{p.category.name}</p>}
+        {catName && catName.toLowerCase() !== "uncategorized" && <p className="text-[10px] uppercase tracking-[0.15em] text-gold-dark">{catName}</p>}
         <h3 className="text-sm font-medium text-ink leading-snug mt-0.5 line-clamp-1 group-hover:text-emerald transition-colors">{p.name}</h3>
         <div className="mt-1"><Stars rating={p.rating} count={p.reviews} /></div>
         {p.qty > 0 && p.qty <= 5 && <p className="mt-1 text-[11px] font-semibold text-rose">🔥 Only {p.qty} left — order soon</p>}
