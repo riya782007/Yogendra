@@ -1,0 +1,17 @@
+# Netlify build configuration — migrated from Vercel (Sept 2026).
+# Blythe Diva: Next.js 14.2.5 App Router. middleware.ts does host-based rewrites for
+# blythediva.com / trade.blythediva.com / admin-bd.blythediva.com — all three hostnames
+# must stay attached to THIS one Netlify site as domain aliases.
+#
+# The admin VersionWatcher reads VERCEL_GIT_COMMIT_SHA; Netlify's equivalent build
+# variable is COMMIT_REF, so it is mapped in the build command below.
+
+[build]
+  command = "VERCEL_GIT_COMMIT_SHA=$COMMIT_REF npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
