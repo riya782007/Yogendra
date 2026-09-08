@@ -39,8 +39,9 @@ async function byIds<T>(ids: string[], build: (sb: ReturnType<typeof supabaseSer
 
 const PAGE = 1000;
 
-function keepRow(p: any, retail: boolean, publishedOnly: boolean) {
-  if (publishedOnly && p.status && p.status !== "published") return false;
+function keepRow(p: any, retail: boolean) {
+  // Public catalogues must never expose non-published rows when a query fallback is used.
+  if (p.status !== "published") return false;
   return retail ? !p.wholesale_only : !p.retail_only;
 }
 
@@ -65,17 +66,17 @@ async function publishedAll(opts: {
   for (const sb of supabaseReadClients()) {
     for (const cols of COLS) {
       for (const ord of orderTries) {
-        for (const publishedOnly of [true, false]) {
+        for (const publishedOnly of [true]) {
           try {
             const first = await runRange(sb, cols, { ...opts, order: ord, publishedOnly, from: 0, to: PAGE - 1 });
             if (first.error || !Array.isArray(first.data)) continue;
-            const out = (first.data as any[]).filter((p) => keepRow(p, opts.retail, publishedOnly));
+            const out = (first.data as any[]).filter((p) => keepRow(p, opts.retail));
             let rawLen = (first.data as any[]).length;
             for (let from = PAGE; rawLen >= PAGE; from += PAGE) {
               const r = await runRange(sb, cols, { ...opts, order: ord, publishedOnly, from, to: from + PAGE - 1 });
               if (r.error || !Array.isArray(r.data)) break;
               const chunk = r.data as any[];
-              out.push(...chunk.filter((p) => keepRow(p, opts.retail, publishedOnly)));
+              out.push(...chunk.filter((p) => keepRow(p, opts.retail)));
               rawLen = chunk.length;
             }
             if (out.length) return out;
@@ -96,11 +97,11 @@ async function publishedPage(opts: {
   for (const sb of supabaseReadClients()) {
     for (const cols of COLS) {
       for (const ord of orderTries) {
-        for (const publishedOnly of [true, false]) {
+        for (const publishedOnly of [true]) {
           try {
             const r = await runRange(sb, cols, { ...opts, order: ord, publishedOnly, from: opts.from, to: opts.to });
             const raw = !r.error && Array.isArray(r.data) ? (r.data as any[]) : [];
-            const rows = raw.filter((p) => keepRow(p, opts.retail, publishedOnly));
+            const rows = raw.filter((p) => keepRow(p, opts.retail));
             if (rows.length) return rows;
           } catch { /* next fallback */ }
         }
@@ -123,7 +124,7 @@ async function coversFor(ids: string[]): Promise<Map<string, string>> {
     }
     const vimgs = await byIds(ids, (sb, chunk) => sb.from("variants").select("product_id,image_paths,qty").in("product_id", chunk));
     for (const v of vimgs as any[]) {
-      if (imgBy.has(v.product_id)) continue;
+      if (imgBy.has(v.product_id) || (v.qty ?? 0) <= 0) continue;
       const u = ((v.image_paths as string[]) ?? []).find((x) => typeof x === "string" && x.startsWith("http"));
       if (u) imgBy.set(v.product_id, u);
     }
@@ -137,7 +138,8 @@ function asShopCard(p: any, image: string | null) {
   return {
     ...p,
     category: categoryRef(p),
-    image: (typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http") ? p.thumbnail_path : null) || image,
+    // `image` comes from current image rows, so a deleted pinned thumbnail cannot render.
+    image,
     rating: 4.6,
     reviews: 0,
     isNew,
@@ -196,6 +198,16 @@ export async function getShopSlice(opts: {
     : { col: "created_at", asc: false };
   let rows = await publishedAll({ categoryId, order, retail: true });
   if (opts.limit != null) rows = rows.slice(offset, offset + opts.limit);
+  const ids = rows.map((p) => p.id);
+  const variants = await byIds(ids, (sb, chunk) => sb.from("variants").select("product_id,qty").in("product_id", chunk));
+  const variantQty = new Map<string, number>();
+  const hasVariants = new Set<string>();
+  for (const variant of variants as any[]) {
+    hasVariants.add(variant.product_id);
+    variantQty.set(variant.product_id, (variantQty.get(variant.product_id) ?? 0) + (variant.qty ?? 0));
+  }
+  // Variant quantities are authoritative when variants exist; otherwise use product quantity.
+  rows = rows.filter((p) => (hasVariants.has(p.id) ? (variantQty.get(p.id) ?? 0) : (p.qty ?? 0)) > 0);
   const imgBy = await coversFor(rows.map((p) => p.id));
   const products = rows.map((p) => asShopCard(p, imgBy.get(p.id) ?? null));
   return { products, formula, categoryId: categoryId ?? null };
@@ -209,14 +221,14 @@ export async function getCategoryCovers(cats: { id: string; slug: string }[]): P
   await Promise.all(real.map(async (c) => {
     for (const sb of supabaseReadClients()) {
       const { data, error } = await sb.from("products")
-        .select("id,thumbnail_path")
+        .select("id")
         .eq("status", "published")
+        .gt("qty", 0)
         .eq("category_id", c.id)
         .limit(4);
       if (error || !data?.length) continue;
       const rows = data as any[];
-      const pinned = rows.find((p) => typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http"));
-      if (pinned) { out.set(c.slug, pinned.thumbnail_path); return; }
+      // Resolve from current image rows rather than a pinned URL, which may reference a deleted image.
       const imgBy = await coversFor(rows.map((p) => p.id));
       const u = rows.map((p) => imgBy.get(p.id)).find(Boolean);
       if (u) { out.set(c.slug, u); return; }
@@ -266,8 +278,7 @@ export async function getTradeSlice(offset = 0, limit?: number): Promise<{ list:
   for (const p of rows) {
     const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));
     const price = gstInc(ps.wholesaleRate);
-    const tp = p.thumbnail_path;
-    const parentImg = (typeof tp === "string" && tp.startsWith("http")) ? tp : (imgBy.get(p.id) ?? null);
+    const parentImg = imgBy.get(p.id) ?? null;
     const catName = categoryRef(p).name;
     const allVs = varsBy.get(p.id) ?? [];
     const sub = p.subcategory_id ? subName.get(p.subcategory_id) ?? null : null;

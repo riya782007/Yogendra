@@ -51,6 +51,12 @@ export default async function ProductPage({ params }: Params) {
   const data = await loadProductPage(params.sku);
   if (!data) notFound();
   const { p, formula, reviews, related } = data;
+  const variants = (p.variants ?? []) as any[];
+  const availableQty = variants.length
+    ? variants.reduce((total, variant) => total + Math.max(0, variant.qty ?? 0), 0)
+    : Math.max(0, (p as any).qty ?? 0);
+  // Direct public URLs must not reveal unpublished or unavailable products.
+  if ((p as any).status !== "published" || availableQty <= 0) notFound();
 
   // Category should always be present (FK), but never let a missing relation 500 the page.
   const catSlug = p.category?.slug ?? "all";
@@ -72,8 +78,8 @@ export default async function ProductPage({ params }: Params) {
   const orderedVariants = leadId
     ? allVars.sort((a, b) => (a.id === leadId ? -1 : b.id === leadId ? 1 : 0))
     : allVars;
-  // Owner option (per product): hide out-of-stock colourways from the buy selector AND the gallery.
-  const visibleVariants = (orderedVariants as any[]).filter((v: any) => !(p as any).hide_oos_variants || (v.qty ?? 0) > 0);
+  // Public product pages show only purchasable colourways and their images.
+  const visibleVariants = (orderedVariants as any[]).filter((v: any) => (v.qty ?? 0) > 0);
   // Per-variant: its own photo, stock and price (variant override → product override → formula).
   const variantsForBuy = (visibleVariants as any[]).map((v: any) => {
     const vOv = overridesOf(v);
