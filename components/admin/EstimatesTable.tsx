@@ -24,9 +24,9 @@ const STATUS_LABEL: Record<string, string> = {
   open: "Open", held: "On hold", converted: "GST billed", cash_billed: "Cash billed", denied: "Denied", expired: "Expired",
 };
 
-export function EstimatesTable({ estimates }: { estimates: E[] }) {
-  const [tabKey, setTabKey] = useState("open");
-  const [q, setQ] = useState("");
+export function EstimatesTable({ estimates, initialQuery = "", initialTab = "" }: { estimates: E[]; initialQuery?: string; initialTab?: string }) {
+  const [tabKey, setTabKey] = useState(() => TABS.some((t) => t.key === initialTab) ? initialTab : (initialQuery ? "all" : "open"));
+  const [q, setQ] = useState(initialQuery);
   const [sort, setSort] = useState("date_desc");
   const tab = TABS.find((t) => t.key === tabKey) ?? TABS[0];
   const [sortField, sortDir] = sort.split("_");
@@ -35,7 +35,8 @@ export function EstimatesTable({ estimates }: { estimates: E[] }) {
 
   const rows = useMemo(() => {
     const ql = q.toLowerCase().trim();
-    const filtered = estimates.filter((e) => tab.match(e.status) && (!ql || (e.customer_name ?? "").toLowerCase().includes(ql) || String(e.id).toLowerCase().includes(ql)));
+    const idq = ql.replace(/^est-/, "");
+    const filtered = estimates.filter((e) => tab.match(e.status) && (!ql || (e.customer_name ?? "").toLowerCase().includes(ql) || String(e.id).toLowerCase().includes(ql) || String(e.id).toLowerCase().includes(idq) || String(e.id).slice(0, 8).toLowerCase() === idq.slice(0, 8)));
     const dir = sortDir === "asc" ? 1 : -1;
     return [...filtered].sort((a, b) => {
       let c = 0;
@@ -70,6 +71,12 @@ export function EstimatesTable({ estimates }: { estimates: E[] }) {
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search customer / ref…"
           className="ml-auto rounded-full border border-sand px-4 py-1.5 text-sm bg-white outline-none focus:border-emerald w-56" />
       </div>
+      {tab.key === "open" && (counts.held ?? 0) > 0 && (
+        <p className="text-xs text-gold-dark mb-3">
+          {counts.held} quote{counts.held === 1 ? "" : "s"} {counts.held === 1 ? "is" : "are"} <button type="button" className="underline" onClick={() => setTabKey("held")}>On hold</button>
+          {" "}and still reserve stock. Open quotes on this tab are a soft hold until billed or denied.
+        </p>
+      )}
 
       <div className="overflow-x-auto rounded-2xl border border-sand bg-white shadow-card">
         <table className="w-full text-sm">
@@ -82,7 +89,11 @@ export function EstimatesTable({ estimates }: { estimates: E[] }) {
             <th className="p-3 text-right">Actions</th>
           </tr></thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan={6} className="p-4 text-muted">No estimates here.</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={6} className="p-4 text-muted">
+              {tab.key === "open" && (counts.held ?? 0) > 0
+                ? "Nothing waiting to bill. Quotes that reserve stock may be on the On hold tab."
+                : "No estimates here."}
+            </td></tr>}
             {rows.map((e) => (
               <tr key={e.id} className="border-t border-sand/60 align-middle">
                 <td className="p-3 text-muted whitespace-nowrap">{String(e.id).slice(0, 8).toUpperCase()}</td>

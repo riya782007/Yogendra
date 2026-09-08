@@ -1227,7 +1227,8 @@ export async function getProductEstimateReservations(productId: string): Promise
     .select("qty, estimate:estimates(id,customer_name,status,created_at)")
     .eq("product_id", productId);
   return ((data as any[]) ?? [])
-    .filter((r) => r.estimate && r.estimate.status === "open")
+    .map((r) => ({ ...r, estimate: Array.isArray(r.estimate) ? r.estimate[0] : r.estimate }))
+    .filter((r) => r.estimate && r.estimate.status === "open" && r.estimate.id)
     .map((r) => ({ id: r.estimate.id as string, customer: r.estimate.customer_name as string | null, qty: r.qty as number, created_at: r.estimate.created_at as string }))
     .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
 }
@@ -1245,7 +1246,8 @@ export async function getProductEstimates(productId: string): Promise<{ id: stri
     .select("qty,unit_price,line_total, variant:variants(color), estimate:estimates(id,customer_name,status,created_at)")
     .eq("product_id", productId);
   return ((data as any[]) ?? [])
-    .filter((r) => r.estimate)
+    .map((r) => ({ ...r, estimate: Array.isArray(r.estimate) ? r.estimate[0] : r.estimate }))
+    .filter((r) => r.estimate?.id)
     .map((r) => ({
       id: r.estimate.id as string,
       customer: (r.estimate.customer_name as string | null) ?? null,
@@ -1509,17 +1511,31 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   // Party = who the movement was with — the customer on a sale/estimate, the supplier on a purchase.
   // Surfaced on every timeline row so the owner can trace "sold 2 to Riya" without opening the bill.
   const partyBy = new Map<string, string>();
+  const estimateBy = new Map<string, { id: string; customer_name: string | null; status: string }>();
   if (saleRefs.length) { const { data } = await sb.from("orders").select("id,invoice_no,customer_name").in("id", saleRefs as string[]); for (const o of (data as any[]) ?? []) { invoiceBy.set(o.id, o.invoice_no); if (o.customer_name) partyBy.set(o.id, o.customer_name); } }
   if (purchaseRefs.length) { const { data } = await sb.from("purchases").select("id,bill_no, supplier:suppliers(name)").in("id", purchaseRefs as string[]); for (const o of (data as any[]) ?? []) { billBy.set(o.id, o.bill_no); if (o.supplier?.name) partyBy.set(o.id, o.supplier.name); } }
   const estPartyRefs = [...new Set([...estimateRefs, ...reserveRefs])];
-  if (estPartyRefs.length) { const { data } = await sb.from("estimates").select("id,customer_name").in("id", estPartyRefs as string[]); for (const o of (data as any[]) ?? []) { if (o.customer_name) partyBy.set(o.id, o.customer_name); } }
+  if (estPartyRefs.length) {
+    const { data } = await sb.from("estimates").select("id,customer_name,status").in("id", estPartyRefs as string[]);
+    for (const o of (data as any[]) ?? []) {
+      estimateBy.set(o.id, { id: o.id, customer_name: o.customer_name ?? null, status: String(o.status ?? "") });
+      if (o.customer_name) partyBy.set(o.id, o.customer_name);
+    }
+  }
+
+  const estimateShort = (id: string) => `EST-${String(id).slice(0, 8).toUpperCase()}`;
+  const estimateDoc = (refId: string, kind: string): { href: string; label: string } => {
+    const est = estimateBy.get(refId);
+    const held = kind === "reserve" || est?.status === "held";
+    if (!est) return { href: `/admin/estimate/${refId}`, label: "Check this reservation →" };
+    return { href: `/admin/estimate/${refId}`, label: held ? "Open held estimate →" : "Open estimate →" };
+  };
 
   const docFor = (r: any): { href: string; label: string } | null => {
     if (!r.ref_id) return null;
     if (r.kind === "sale") return { href: `/admin/invoice/${r.ref_id}`, label: "Open invoice →" };
     if (r.kind === "purchase") return { href: `/admin/purchase/${r.ref_id}`, label: "Open purchase →" };
-    if (r.kind === "estimate") return { href: `/admin/estimate/${r.ref_id}`, label: "Open estimate →" };
-    if (r.kind === "reserve") return { href: `/admin/estimate/${r.ref_id}`, label: "Open held estimate →" };
+    if (r.kind === "estimate" || r.kind === "reserve") return estimateDoc(r.ref_id, r.kind);
     if (r.kind === "return" || r.kind === "purchase_return") return { href: `/admin/returns`, label: "Open return →" };
     return null;
   };
@@ -1529,7 +1545,10 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   const { data: resv } = await sb.from("estimate_items")
     .select("qty,unit_price,line_total, variant:variants(color), estimate:estimates(id,customer_name,status,created_at)")
     .eq("product_id", productId);
-  const resvRows = ((resv as any[]) ?? []).filter((r) => r.estimate);
+  const resvRows = ((resv as any[]) ?? []).map((r) => ({
+    ...r,
+    estimate: Array.isArray(r.estimate) ? r.estimate[0] : r.estimate,
+  })).filter((r) => r.estimate?.id);
   const reservations = resvRows
     .map((r) => ({
       id: r.estimate.id as string,
@@ -1566,7 +1585,9 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     id: r.id, kind: r.kind ?? "adjustment", delta: r.delta ?? 0, runningBalance: r.runningBalance ?? 0,
     source: r.source ?? null, reason: r.reason ?? null, created_by: r.created_by ?? r.source ?? null,
     ref_id: r.ref_id ?? null, created_at: r.created_at,
-    invoice_no: r.kind === "sale" ? (invoiceBy.get(r.ref_id) ?? null) : r.kind === "purchase" ? (billBy.get(r.ref_id) ?? null) : null,
+    invoice_no: r.kind === "sale" ? (invoiceBy.get(r.ref_id) ?? null)
+      : r.kind === "purchase" ? (billBy.get(r.ref_id) ?? null)
+      : (r.kind === "estimate" || r.kind === "reserve") && r.ref_id ? estimateShort(r.ref_id) : null,
     party: r.ref_id ? (partyBy.get(r.ref_id) ?? null) : null,
     hold: false,
     variant: r.variant_id ? { color: variantById.get(r.variant_id)?.color ?? null, sku: variantById.get(r.variant_id)?.sku ?? null } : null,
@@ -1583,10 +1604,10 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     kind: "estimate", delta: -(r.qty ?? 0), runningBalance: null,
     source: null, reason: `Reserved ${r.qty ?? 0} pcs · estimate ${r.estimate.status ?? ""}`.trim(),
     created_by: null, ref_id: r.estimate.id as string, created_at: r.estimate.created_at as string,
-    invoice_no: null, party: (r.estimate.customer_name as string) ?? null, hold: true,
+    invoice_no: estimateShort(r.estimate.id as string), party: (r.estimate.customer_name as string) ?? null, hold: true,
     variant: (r.variant?.color as string | null) ? { color: r.variant.color as string, sku: null } : null,
     price: (r.unit_price as number) ?? null,
-    doc: { href: `/admin/estimate/${r.estimate.id}`, label: "Open estimate →" },
+    doc: estimateDoc(r.estimate.id as string, "estimate"),
   }));
 
   // HONEST BASELINE: if the real stock (products.qty) differs from the sum of every logged
@@ -2350,27 +2371,158 @@ const ESTIMATES_SORT: Record<string, string> = {
   date: "created_at",
   amount: "total",
 };
+const ESTIMATE_LIST_COLS = [
+  "id,customer_name,customer_phone,total,status,gst,order_id,notes,created_at",
+  "id,customer_name,customer_phone,total,status,order_id,notes,created_at",
+  "id,customer_name,customer_phone,total,status,created_at",
+];
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function parseEstimateKey(id: string): string {
+  let raw = String(id ?? "").trim();
+  try { raw = decodeURIComponent(raw).trim(); } catch { /* already decoded */ }
+  return raw.replace(/^EST-/i, "").trim();
+}
+
+async function hydrateEstimateItems(estimateId: string): Promise<any[]> {
+  const sb = supabaseServer();
+  const RICH = "id,qty,unit_price,line_total,product:products(name,sku),variant:variants(sku,color)";
+  const rich = await sb.from("estimate_items").select(RICH).eq("estimate_id", estimateId);
+  if (!rich.error && rich.data) return (rich.data as any[]) ?? [];
+  const basic = await sb.from("estimate_items").select("id,qty,unit_price,line_total,product_id,variant_id").eq("estimate_id", estimateId);
+  const rows = ((basic.data as any[]) ?? []);
+  if (!rows.length) return [];
+  const pids = [...new Set(rows.map((r) => r.product_id).filter(Boolean))];
+  const vids = [...new Set(rows.map((r) => r.variant_id).filter(Boolean))];
+  const [{ data: products }, { data: variants }] = await Promise.all([
+    pids.length ? sb.from("products").select("id,name,sku").in("id", pids as string[]) : Promise.resolve({ data: [] as any[] }),
+    vids.length ? sb.from("variants").select("id,sku,color").in("id", vids as string[]) : Promise.resolve({ data: [] as any[] }),
+  ]);
+  const pBy = new Map(((products as any[]) ?? []).map((p) => [p.id, p]));
+  const vBy = new Map(((variants as any[]) ?? []).map((v) => [v.id, v]));
+  return rows.map((r) => ({
+    ...r,
+    product: r.product_id ? (pBy.get(r.product_id) ?? null) : null,
+    variant: r.variant_id ? (vBy.get(r.variant_id) ?? null) : null,
+  }));
+}
+
+function sortEstimateItems(items: any[]): any[] {
+  // A–Z by SKU at the source, so EVERY consumer — the estimate view, the editor, the print/PDF, and the
+  // bill it converts into — lists lines in the same predictable order regardless of scan sequence
+  // (owner: "estimate me save karne pe A-Z chahiye"). Numeric-aware so KPKN2 sorts before KPKN10.
+  return [...items].sort((a, b) =>
+    String(a.variant?.sku ?? a.product?.sku ?? "").localeCompare(String(b.variant?.sku ?? b.product?.sku ?? ""), undefined, { numeric: true }));
+}
+
 export async function getEstimates(opts: { sort?: string } = {}) {
   const sb = supabaseServer();
   const [field, dir] = (opts.sort ?? "").split("_");
   const col = ESTIMATES_SORT[field] ?? "created_at";
   const asc = col === "created_at" ? dir === "asc" : dir !== "desc";
-  let q = sb.from("estimates").select("id,customer_name,customer_phone,total,status,gst,order_id,notes,created_at").order(col, { ascending: asc, nullsFirst: false });
-  if (col !== "created_at") q = q.order("created_at", { ascending: false });
-  const { data } = await q.limit(200);
-  return (data as any[]) ?? [];
+
+  let cols = ESTIMATE_LIST_COLS[0];
+  for (const candidate of ESTIMATE_LIST_COLS) {
+    const probe = await sb.from("estimates").select(candidate).limit(1);
+    if (!probe.error) { cols = candidate; break; }
+  }
+
+  // Open + held quotes reserve stock. The old 200-row newest-first cap hid live quotes behind a
+  // pile of billed ones, so the owner saw an empty "To bill" tab while product history still showed
+  // "reserved by open estimates" and 404'd when those links were opened.
+  let live = await fetchAll((f, t) =>
+    sb.from("estimates").select(cols).in("status", ["open", "held"]).order("created_at", { ascending: false }).range(f, t));
+  if (!live.length) {
+    const [openOnly, heldOnly] = await Promise.all([
+      fetchAll((f, t) => sb.from("estimates").select(cols).eq("status", "open").order("created_at", { ascending: false }).range(f, t)),
+      fetchAll((f, t) => sb.from("estimates").select(cols).eq("status", "held").order("created_at", { ascending: false }).range(f, t)),
+    ]);
+    live = [...openOnly, ...heldOnly];
+  }
+  let recentQ = sb.from("estimates").select(cols).order(col as any, { ascending: asc, nullsFirst: false });
+  if (col !== "created_at") recentQ = recentQ.order("created_at", { ascending: false });
+  const recent = await recentQ.limit(400);
+  const byId = new Map<string, any>();
+  for (const e of [...live, ...(((recent.error ? [] : recent.data) as any[]) ?? [])]) {
+    if (e?.id) byId.set(e.id, e);
+  }
+  const list = [...byId.values()];
+  list.sort((a, b) => {
+    let c = 0;
+    if (col === "id") c = String(a.id).localeCompare(String(b.id));
+    else if (col === "customer_name") c = String(a.customer_name ?? "").localeCompare(String(b.customer_name ?? ""));
+    else if (col === "total") c = (Number(a.total) || 0) - (Number(b.total) || 0);
+    else c = String(a.created_at ?? "").localeCompare(String(b.created_at ?? ""));
+    return asc ? c : -c;
+  });
+  return list;
 }
+
 export async function getEstimate(id: string) {
   const sb = supabaseServer();
-  const { data: estimate } = await sb.from("estimates").select("*").eq("id", id).maybeSingle();
+  const key = parseEstimateKey(id);
+  if (!key) return null;
+
+  let estimate: any = null;
+  if (UUID_RE.test(key)) {
+    const { data } = await sb.from("estimates").select("*").eq("id", key).maybeSingle();
+    estimate = data ?? null;
+  }
+  if (!estimate) {
+    // Printed ref is EST- + first 8 of the UUID. Owner may open that short code from a photo or search.
+    const needle = key.replace(/-/g, "").toLowerCase();
+    if (needle.length >= 8) {
+      const { data } = await sb.from("estimates").select("*").order("created_at", { ascending: false }).limit(2000);
+      estimate = ((data as any[]) ?? []).find((e) => {
+        const idHex = String(e.id ?? "").replace(/-/g, "").toLowerCase();
+        return idHex === needle || idHex.startsWith(needle.slice(0, 8)) || String(e.id).slice(0, 8).toLowerCase() === key.slice(0, 8).toLowerCase();
+      }) ?? null;
+    }
+  }
   if (!estimate) return null;
-  const { data: items } = await sb.from("estimate_items").select("id,qty,unit_price,line_total,product:products(name,sku),variant:variants(sku,color)").eq("estimate_id", id);
-  // A–Z by SKU at the source, so EVERY consumer — the estimate view, the editor, the print/PDF, and the
-  // bill it converts into — lists lines in the same predictable order regardless of scan sequence
-  // (owner: "estimate me save karne pe A-Z chahiye"). Numeric-aware so KPKN2 sorts before KPKN10.
-  const sortedItems = ((items as any[]) ?? []).sort((a, b) =>
-    String(a.variant?.sku ?? a.product?.sku ?? "").localeCompare(String(b.variant?.sku ?? b.product?.sku ?? ""), undefined, { numeric: true }));
-  return { estimate, items: sortedItems };
+  const items = sortEstimateItems(await hydrateEstimateItems(estimate.id));
+  return { estimate, items };
+}
+
+/** Leftover estimate_items / reserve movements when the quote row itself is gone. */
+export async function getEstimateGhost(id: string): Promise<{
+  id: string;
+  items: { qty: number; sku: string | null; name: string | null; color: string | null }[];
+  movements: { kind: string; delta: number; sku: string | null; reason: string | null; created_at: string }[];
+}> {
+  const sb = supabaseServer();
+  const key = parseEstimateKey(id);
+  const uuid = UUID_RE.test(key) ? key : "";
+  if (!uuid) return { id: key, items: [], movements: [] };
+  const [{ data: items }, { data: moves }] = await Promise.all([
+    sb.from("estimate_items").select("qty,product_id,variant_id").eq("estimate_id", uuid),
+    sb.from("stock_adjustments").select("kind,delta,sku,reason,created_at").eq("ref_id", uuid).in("kind", ["reserve", "release", "estimate"]).order("created_at", { ascending: false }).limit(40),
+  ]);
+  const rows = ((items as any[]) ?? []);
+  const pids = [...new Set(rows.map((r) => r.product_id).filter(Boolean))];
+  const vids = [...new Set(rows.map((r) => r.variant_id).filter(Boolean))];
+  const [{ data: products }, { data: variants }] = await Promise.all([
+    pids.length ? sb.from("products").select("id,name,sku").in("id", pids as string[]) : Promise.resolve({ data: [] as any[] }),
+    vids.length ? sb.from("variants").select("id,sku,color").in("id", vids as string[]) : Promise.resolve({ data: [] as any[] }),
+  ]);
+  const pBy = new Map(((products as any[]) ?? []).map((p) => [p.id, p]));
+  const vBy = new Map(((variants as any[]) ?? []).map((v) => [v.id, v]));
+  return {
+    id: uuid,
+    items: rows.map((r) => ({
+      qty: r.qty ?? 0,
+      sku: (r.variant_id ? vBy.get(r.variant_id)?.sku : null) ?? (r.product_id ? pBy.get(r.product_id)?.sku : null) ?? null,
+      name: r.product_id ? (pBy.get(r.product_id)?.name ?? null) : null,
+      color: r.variant_id ? (vBy.get(r.variant_id)?.color ?? null) : null,
+    })),
+    movements: ((moves as any[]) ?? []).map((m) => ({
+      kind: String(m.kind ?? ""),
+      delta: Number(m.delta) || 0,
+      sku: m.sku ?? null,
+      reason: m.reason ?? null,
+      created_at: m.created_at as string,
+    })),
+  };
 }
 export async function getRecentOrders(limit = 12) {
   const sb = supabaseServer();
