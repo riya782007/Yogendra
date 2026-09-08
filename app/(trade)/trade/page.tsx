@@ -42,10 +42,19 @@ const loadTradeCatalog = unstable_cache(
     // safe. Published only; hide retail-only lines (wholesale-only designs stay visible for dealers).
     const products: any[] = [];
     for (let from = 0; ; from += 1000) {
-      const { data, error } = await sb.from("products")
-        .select("id,sku,name,qty,base_wholesale,wholesale_override,retail_override,mrp_override,thumbnail_path,default_variant_id,subcategory_id,style_id,updated_at,created_at,more_designs,more_designs_note,retail_only, category:categories(name)")
-        .eq("status", "published").order("sku").range(from, from + 999);
-      if (error) throw new Error(error.message);
+      const sel = "id,sku,name,qty,base_wholesale,wholesale_override,retail_override,mrp_override,thumbnail_path,default_variant_id,subcategory_id,style_id,updated_at,created_at,more_designs,more_designs_note,retail_only, category:categories(name)";
+      const { data, error } = await sb.from("products").select(sel).eq("status", "published").order("sku").range(from, from + 999);
+      if (error) {
+        if (products.length > 0) break;
+        const { data: d2, error: e2 } = await sb.from("products")
+          .select("id,sku,name,qty,base_wholesale,wholesale_override,retail_override,mrp_override,thumbnail_path,default_variant_id,subcategory_id,style_id,updated_at,created_at,more_designs,more_designs_note,retail_only")
+          .eq("status", "published").order("sku").range(from, from + 999);
+        if (e2) throw new Error(e2.message);
+        const raw2 = (d2 as any[]) ?? [];
+        products.push(...raw2.filter((p) => !p.retail_only));
+        if (raw2.length < 1000) break;
+        continue;
+      }
       const raw = (data as any[]) ?? [];
       products.push(...raw.filter((p) => !p.retail_only));
       if (raw.length < 1000) break;
@@ -143,7 +152,7 @@ const loadTradeCatalog = unstable_cache(
     const wholesaleTiers = formula.wholesaleTiers ?? [];
     return { list, minOrder, minRupees, payInfo, wholesaleTiers };
   },
-  ["trade-catalog-v4-safe"],
+  ["trade-catalog-v5-safe"],
   { revalidate: 180, tags: ["trade-catalog"] },
 );
 
@@ -174,7 +183,13 @@ export default async function TradeDashboard() {
   const guest = !session;
 
   // Heavy shared catalogue — cached (see loadTradeCatalog). Near-instant on repeat opens.
-  const { list, minOrder, minRupees, payInfo, wholesaleTiers } = await loadTradeCatalogSafe();
+  let packed: { list: any[]; minOrder: number; minRupees: string; payInfo: any; wholesaleTiers: any[] };
+  try {
+    packed = await loadTradeCatalogSafe();
+  } catch {
+    packed = { list: [], minOrder: WHOLESALE_MIN, minRupees: "3,000", payInfo: null, wholesaleTiers: [] };
+  }
+  const { list, minOrder, minRupees, payInfo, wholesaleTiers } = packed;
 
   // Per-dealer, always live (never cached).
   const history = session ? await getWholesaleOrderHistory(session.id).catch(() => []) : [];

@@ -14,14 +14,19 @@ import { WhatsAppFab } from "@/components/site/WhatsAppFab";
 export const revalidate = 300;
 
 export default async function RetailLayout({ children }: { children: React.ReactNode }) {
-  const tree = await getCategoryTreeSafe();
-  const cats = tree.map((c) => ({ name: c.name, slug: c.slug, subcategories: c.subcategories.map((s) => ({ name: s.name, slug: s.slug })) }));
-  const [popupList, stripList] = await Promise.all([
-    getLivePromosCached("retail", "popup").catch(() => []),
-    getLivePromosCached("retail", "strip").catch(() => []),
-  ]);
-  const popup = popupList[0] ?? null;
-  const promoMessages = stripList.map((s: any) => (s.headline || s.title || "").trim()).filter(Boolean);
+  let cats: { name: string; slug: string; subcategories: { name: string; slug: string }[] }[] = [];
+  let popup: any = null;
+  let promoMessages: string[] = [];
+  try {
+    const tree = await getCategoryTreeSafe();
+    cats = tree.map((c) => ({ name: c.name, slug: c.slug, subcategories: (c.subcategories ?? []).map((s) => ({ name: s.name, slug: s.slug })) }));
+    const [popupList, stripList] = await Promise.all([
+      getLivePromosCached("retail", "popup").catch(() => []),
+      getLivePromosCached("retail", "strip").catch(() => []),
+    ]);
+    popup = popupList[0] ?? null;
+    promoMessages = stripList.map((s: any) => (s.headline || s.title || "").trim()).filter(Boolean);
+  } catch { /* never take down the storefront shell */ }
   return (
     <CartProvider><WishlistProvider><div className="min-h-screen flex flex-col bg-ivory">
       <Header categories={cats} promoMessages={promoMessages} />

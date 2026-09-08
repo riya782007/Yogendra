@@ -34,9 +34,12 @@ async function fetchAll<T = any>(
       break;
     }
     if (rows == null) {
-      // A failed page used to be treated as "0 rows" which STOPPED paging and returned an
-      // empty/partial catalogue — that empty result then got cached and the shop/trade panel
-      // stayed blank. Required reads throw so callers never cache a poisoned empty set.
+      // A later page can 416 / time out after earlier pages already succeeded. Throwing here
+      // used to discard thousands of designs and blank the shop + trade panel. Keep what
+      // we have; only fail hard when we truly got nothing.
+      const msg = (lastErr?.message ?? "").toLowerCase();
+      const rangeDone = /range|pgrst103|416|not satisfiable/.test(msg);
+      if (out.length > 0 || rangeDone) break;
       if (opts.required) throw new Error(`catalogue page ${from} failed: ${lastErr?.message ?? "unknown error"}`);
       break;
     }
@@ -133,20 +136,21 @@ export async function getCategoryTree(): Promise<CategoryNode[]> {
   if (full.error || full.data == null) {
     // Older DBs may lack parent_id / sort — never let that blank the whole Shop-by-Category row.
     const basic = await sb.from("categories").select("id,name,slug").order("name");
-    if (basic.error) throw new Error(basic.error.message);
+    if (basic.error) return [];
     cats = (basic.data as any[]) ?? [];
   } else {
     cats = (full.data as any[]) ?? [];
   }
   const { data: subs } = await sb.from("subcategories").select("id,category_id,name,slug,sort,image_style").order("sort").order("name");
   const subList = (subs as DbSubcategory[]) ?? [];
-  // Only top-level categories (parent_id null) are roots; nested categories are ignored here.
-  return cats
-    .filter((c) => !c.parent_id)
-    .map((c) => ({
-      id: c.id, name: c.name, slug: c.slug, sort: c.sort ?? 0,
-      subcategories: subList.filter((s) => s.category_id === c.id),
-    }));
+  const toNode = (c: any) => ({
+    id: c.id, name: c.name, slug: c.slug, sort: c.sort ?? 0,
+    subcategories: subList.filter((s) => s.category_id === c.id),
+  });
+  // Only top-level categories (parent_id null) are roots — BUT if every row has a parent
+  // (import/hierarchy glitch) showing nothing blanks Shop by Category. Fall back to all rows.
+  const roots = cats.filter((c) => !c.parent_id);
+  return (roots.length ? roots : cats).map(toNode);
 }
 
 /** Flat list of subcategories, optionally scoped to one parent category slug or id. */
@@ -1965,7 +1969,7 @@ export const getCategoryTreeCached = unstable_cache(async () => {
   const tree = await getCategoryTree();
   if (!tree.length) throw new Error("category tree empty — not caching");
   return tree;
-}, ["category-tree-v2"], { tags: ["storefront"], revalidate: 300 });
+}, ["category-tree-v3"], { tags: ["storefront"], revalidate: 300 });
 
 /** Layout/header must never 500: live-retry, then a small fallback tile set. */
 export async function getCategoryTreeSafe(): Promise<CategoryNode[]> {
@@ -2020,14 +2024,22 @@ export async function getStorefront(
     "id, category_id, sku, name, type, base_wholesale, qty, status, last_movement_at, created_at, " +
     "subcategory_id, wholesale_override, retail_override, mrp_override, wholesale_only, retail_only, " +
     "category:categories(id,name,slug)";
-  const productPages = async (cols: string) => fetchAll((f, t) => {
+  const productPages = async (cols: string, required = true) => fetchAll((f, t) => {
     let q = sb.from("products").select(cols).order("sku");
     if (!opts.includeDrafts) q = q.eq("status", "published");
     return q.range(f, t);
-  }, { required: true });
-  const [prods, revs, pimgs, vimgs, formula] = await Promise.all([
-    productPages(STOREFRONT_COLS).catch(() => productPages(STOREFRONT_COLS_BASIC)),
-    (async () => { const { data } = await sb.from("reviews").select("product_id, rating"); return data ?? []; })().catch(() => [] as any[]),
+  }, { required });
+  const STOREFRONT_COLS_MINIMAL =
+    "id, category_id, sku, name, type, base_wholesale, qty, status, created_at, wholesale_only, retail_only, thumbnail_path";
+  let prods: any[] = [];
+  try {
+    prods = await productPages(STOREFRONT_COLS);
+  } catch {
+    try { prods = await productPages(STOREFRONT_COLS_BASIC); }
+    catch { prods = await productPages(STOREFRONT_COLS_MINIMAL, false); }
+  }
+  const [revs, pimgs, vimgs, formula] = await Promise.all([
+    (async () => { const { data } = await sb.from("reviews").select("product_id, rating").limit(5000); return data ?? []; })().catch(() => [] as any[]),
     fetchAll((f, t) => sb.from("product_images").select("product_id, path, sort, kind").order("sort", { ascending: true }).range(f, t)).catch(() => [] as any[]),
     fetchAll((f, t) => sb.from("variants").select("id, product_id, image_paths, qty").range(f, t)).catch(() => [] as any[]),
     getPricingFormula(),
@@ -2113,7 +2125,7 @@ const getPublishedStorefrontCached = unstable_cache(
     if (!store.products?.length) throw new Error("storefront read returned no products — not caching");
     return store;
   },
-  ["storefront-published-v4"],
+  ["storefront-published-v5"],
   { revalidate: 180, tags: ["storefront"] },
 );
 

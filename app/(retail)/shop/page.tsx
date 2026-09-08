@@ -3,7 +3,6 @@
 // no data — which would fail the build. Speed still comes from the slim catalogue query + the inner
 // loadShopHome cache (15 min, busted instantly by the "storefront" tag on any edit).
 export const dynamic = "force-dynamic";
-import { unstable_cache } from "next/cache";
 import Link from "next/link";
 import { getStorefrontSafe, getFeaturedReviews, getShoppableReels, getActivePromotions, getCategoryTreeSafe, getPricingFormula } from "@/lib/supabase/queries";
 import { FALLBACK_SHOP_CATEGORIES, pickBestsellers, pickNewArrivals, publicCategories, categoryRef } from "@/lib/shopCatalog";
@@ -24,36 +23,19 @@ export const metadata = {
 // (all published products via getStorefront, reviews, reels, promos, category tree) on EVERY render —
 // so each soft navigation / prefetch to /shop took ~9s. Cache the whole bundle for 3 minutes so the
 // page renders instantly; editing a product refreshes it within the window (or via the "storefront" tag).
-const loadShopHome = unstable_cache(
-  async () => {
-    const [store, reviews, reels, promos, tree] = await Promise.all([
-      getStorefrontSafe(), getFeaturedReviews().catch(() => []), getShoppableReels().catch(() => []), getActivePromotions("retail").catch(() => []), getCategoryTreeSafe(),
-    ]);
-    // Never cache an empty storefront: zero products means the read failed (DB restricted / transient),
-    // so throwing keeps the empty result OUT of the cache and the page self-heals on the next request
-    // once the database is reachable — instead of a one-off failure freezing the shop blank for 15 min.
-    if (!store.products || store.products.length === 0) throw new Error("shop home: storefront read returned no products — not caching");
-    return { products: store.products, formula: store.formula, reviews, reels, promos, tree };
-  },
-  ["shop-home-v4-safe"],
-  { revalidate: 180, tags: ["storefront"] },
-);
-
-// loadShopHome THROWS on an empty read (so it never caches a blank shop). That's right for runtime, but it
-// must NOT propagate — a transient empty read (or the build environment, which has no data) would 500 the
-// page / fail the build. Catch it and render a minimal shell (category tiles still show; rails are empty
-// this once) so the shop always renders and self-heals on the next request.
 async function loadShopHomeSafe() {
-  try {
-    return await loadShopHome();
-  } catch {
-    const [store, formula, tree] = await Promise.all([
-      getStorefrontSafe(),
-      getPricingFormula(),
-      getCategoryTreeSafe(),
-    ]);
-    return { products: store.products, formula: store.formula ?? formula, reviews: [] as any[], reels: [] as any[], promos: [] as any[], tree };
-  }
+  const [store, reviews, reels, promos, tree] = await Promise.all([
+    getStorefrontSafe(),
+    getFeaturedReviews().catch(() => []),
+    getShoppableReels().catch(() => []),
+    getActivePromotions("retail").catch(() => []),
+    getCategoryTreeSafe(),
+  ]);
+  return {
+    products: store.products,
+    formula: store.formula ?? await getPricingFormula(),
+    reviews, reels, promos, tree,
+  };
 }
 
 export default async function Shop() {
@@ -219,7 +201,7 @@ export default async function Shop() {
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
           {bestsellers.map((p, i) => (
-            <Reveal key={p.sku} delay={(i % 4) * 80}><ProductCard p={p as any} formula={formula} index={i} /></Reveal>
+            <Reveal key={p.sku} delay={(i % 4) * 80}><ProductCard p={{ ...(p as any), category: categoryRef(p) }} formula={formula} index={i} /></Reveal>
           ))}
         </div>
       </section>
@@ -259,7 +241,7 @@ export default async function Shop() {
         <h2 className="font-display text-4xl text-ink mb-7">New Arrivals</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
           {trending.map((p, i) => (
-            <Reveal key={p.sku} delay={(i % 4) * 80}><ProductCard p={p as any} formula={formula} index={i} /></Reveal>
+            <Reveal key={p.sku} delay={(i % 4) * 80}><ProductCard p={{ ...(p as any), category: categoryRef(p) }} formula={formula} index={i} /></Reveal>
           ))}
         </div>
       </section>

@@ -390,6 +390,14 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", s
         </div>
       )}
 
+      {tab === "order" && products.length === 0 && (
+        <div className="bg-white rounded-2xl border border-sand shadow-card p-8 text-center mb-6">
+          <p className="font-medium text-ink">Designs didn’t load this time</p>
+          <p className="text-sm text-muted mt-1">The wholesale catalogue is still here — reload to see every piece.</p>
+          <button type="button" onClick={() => location.reload()} className="btn-gold mt-4 px-6 py-2.5 text-sm font-medium">Reload catalogue</button>
+        </div>
+      )}
+
       {tab === "history" ? (
         <div className="space-y-3">
           {history.length === 0 && <p className="text-sm text-muted bg-white rounded-2xl border border-sand p-6 text-center">No past orders yet — place your first below.</p>}
@@ -623,6 +631,7 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", s
           )}
 
           {/* Sticky order bar with ₹3,000 minimum progress */}
+          {products.length > 0 && (
           <div className="sticky bottom-4 mt-4 bg-ink text-cream rounded-2xl shadow-luxe px-5 py-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -644,6 +653,7 @@ export function WholesaleCatalog({ products, customerName, customerPhone = "", s
               </div>
             )}
           </div>
+          )}
         </>
       )}
 

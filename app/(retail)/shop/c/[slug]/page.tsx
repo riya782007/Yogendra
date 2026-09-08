@@ -1,7 +1,6 @@
 export const dynamic = "force-dynamic";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { unstable_cache } from "next/cache";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getStorefrontSafe, getCategories, getActivePromotions } from "@/lib/supabase/queries";
@@ -9,26 +8,13 @@ import { getStorefrontSafe, getCategories, getActivePromotions } from "@/lib/sup
 // The full published catalogue is the same for every visitor, so cache it (3 min) instead of re-running
 // the heavy all-products query on every category view. Product edits refresh within the window / via the
 // "storefront" tag. Category-specific filter queries below stay live (they're light + scoped).
-const loadCatalogueBase = unstable_cache(
-  async () => {
-    const [store, allCats, allPromos] = await Promise.all([getStorefrontSafe(), getCategories(), getActivePromotions("retail")]);
-    if (!store.products?.length) throw new Error("category catalogue empty — not caching");
-    return { products: store.products, formula: store.formula, allCats, allPromos };
-  },
-  ["shop-category-base-v3-safe"],
-  { revalidate: 180, tags: ["storefront"] },
-);
-
 async function loadCatalogueBaseSafe() {
-  try { return await loadCatalogueBase(); }
-  catch {
-    const [store, allCats, allPromos] = await Promise.all([
-      getStorefrontSafe(),
-      getCategories().catch(() => [] as any[]),
-      getActivePromotions("retail").catch(() => [] as any[]),
-    ]);
-    return { products: store.products, formula: store.formula, allCats, allPromos };
-  }
+  const [store, allCats, allPromos] = await Promise.all([
+    getStorefrontSafe(),
+    getCategories().catch(() => [] as any[]),
+    getActivePromotions("retail").catch(() => [] as any[]),
+  ]);
+  return { products: store.products, formula: store.formula, allCats, allPromos };
 }
 import { supabaseServer } from "@/lib/supabase/server";
 import { ProductCard } from "@/components/site/ProductCard";
