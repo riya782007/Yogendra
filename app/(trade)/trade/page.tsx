@@ -16,12 +16,12 @@ export const metadata: Metadata = {
 
 const WHOLESALE_MIN = 300000; // ₹3,000 in paise (#27)
 
-/** First paint: one page of published designs (not the full 4k+ dump, which 500s on Vercel). */
+/** Full published wholesale catalogue (paged in the UI so thousands of rows stay scrollable). */
 async function loadTradeCatalogSafe() {
   const formula = await getPricingFormula();
   const minOrder = formula.wholesaleMinOrder ?? WHOLESALE_MIN;
   const minRupees = Math.round(minOrder / 100).toLocaleString("en-IN");
-  const slice = await getTradeSlice(0, 48);
+  const slice = await getTradeSlice();
   let payInfo: { payeeName: string; upiId: string | null; qrUrl: string | null } | null = null;
   try {
     const { data: pmRows } = await supabaseServer().from("payment_methods").select("name,upi_id,qr_code_url,kind,is_default").eq("active", true);
@@ -38,7 +38,7 @@ export default async function TradeDashboard() {
   const session = await getWholesaleSession();
   const guest = !session;
 
-  // One page of designs on first paint — dealers tap “Load more from catalogue” for the rest.
+  // Full wholesale catalogue — the on-screen grid still pages so the panel stays fast.
   let packed: { list: any[]; hasMore?: boolean; minOrder: number; minRupees: string; payInfo: any; wholesaleTiers: any[] };
   try {
     packed = await loadTradeCatalogSafe();

@@ -1,6 +1,6 @@
 /**
- * First-paint catalogue reads. One page of products + images for those ids only.
- * Tries the anon (RLS) client first so a bad service_role key cannot blank the shop.
+ * Full published catalogue for shop + trade. Pages through every 1000-row PostgREST
+ * window so the entire collection is returned (not a 48-row first paint).
  */
 import "server-only";
 import { supabaseReadClients, supabaseServer } from "./supabase/server";
@@ -37,6 +37,56 @@ async function byIds<T>(ids: string[], build: (sb: ReturnType<typeof supabaseSer
   return out;
 }
 
+const PAGE = 1000;
+
+function keepRow(p: any, retail: boolean, publishedOnly: boolean) {
+  if (publishedOnly && p.status && p.status !== "published") return false;
+  return retail ? !p.wholesale_only : !p.retail_only;
+}
+
+async function runRange(
+  sb: ReturnType<typeof supabaseServer>,
+  cols: string,
+  opts: { categoryId?: string; order: { col: string; asc: boolean }; publishedOnly: boolean; from: number; to: number },
+) {
+  let q: any = sb.from("products").select(cols);
+  if (opts.publishedOnly) q = q.eq("status", "published");
+  if (opts.categoryId) q = q.eq("category_id", opts.categoryId);
+  return q.order(opts.order.col, { ascending: opts.order.asc }).range(opts.from, opts.to);
+}
+
+/** Every published design (paged past PostgREST's 1000-row cap). Keeps partial pages. */
+async function publishedAll(opts: {
+  categoryId?: string;
+  order: { col: string; asc: boolean };
+  retail: boolean;
+}): Promise<any[]> {
+  const orderTries = [opts.order, { col: "sku", asc: true }];
+  for (const sb of supabaseReadClients()) {
+    for (const cols of COLS) {
+      for (const ord of orderTries) {
+        for (const publishedOnly of [true, false]) {
+          try {
+            const first = await runRange(sb, cols, { ...opts, order: ord, publishedOnly, from: 0, to: PAGE - 1 });
+            if (first.error || !Array.isArray(first.data)) continue;
+            const out = (first.data as any[]).filter((p) => keepRow(p, opts.retail, publishedOnly));
+            let rawLen = (first.data as any[]).length;
+            for (let from = PAGE; rawLen >= PAGE; from += PAGE) {
+              const r = await runRange(sb, cols, { ...opts, order: ord, publishedOnly, from, to: from + PAGE - 1 });
+              if (r.error || !Array.isArray(r.data)) break;
+              const chunk = r.data as any[];
+              out.push(...chunk.filter((p) => keepRow(p, opts.retail, publishedOnly)));
+              rawLen = chunk.length;
+            }
+            if (out.length) return out;
+          } catch { /* next fallback */ }
+        }
+      }
+    }
+  }
+  return [];
+}
+
 async function publishedPage(opts: {
   from: number; to: number; categoryId?: string;
   order: { col: string; asc: boolean };
@@ -48,15 +98,9 @@ async function publishedPage(opts: {
       for (const ord of orderTries) {
         for (const publishedOnly of [true, false]) {
           try {
-            let q: any = sb.from("products").select(cols);
-            if (publishedOnly) q = q.eq("status", "published");
-            if (opts.categoryId) q = q.eq("category_id", opts.categoryId);
-            const r = await q.order(ord.col, { ascending: ord.asc }).range(opts.from, opts.to);
+            const r = await runRange(sb, cols, { ...opts, order: ord, publishedOnly, from: opts.from, to: opts.to });
             const raw = !r.error && Array.isArray(r.data) ? (r.data as any[]) : [];
-            const rows = raw.filter((p) => {
-              if (publishedOnly && p.status && p.status !== "published") return false;
-              return opts.retail ? !p.wholesale_only : !p.retail_only;
-            });
+            const rows = raw.filter((p) => keepRow(p, opts.retail, publishedOnly));
             if (rows.length) return rows;
           } catch { /* next fallback */ }
         }
@@ -128,11 +172,11 @@ async function formulaOf() {
 export async function getShopSlice(opts: {
   categorySlug?: string;
   order?: "new" | "sku" | "qty";
+  /** Omit to return the entire published retail catalogue. */
   limit?: number;
   offset?: number;
 } = {}) {
   const formula = await formulaOf();
-  const limit = opts.limit ?? 48;
   const offset = opts.offset ?? 0;
   let categoryId: string | undefined;
   if (opts.categorySlug && opts.categorySlug !== "all") {
@@ -150,7 +194,8 @@ export async function getShopSlice(opts: {
   const order = opts.order === "sku" ? { col: "sku", asc: true }
     : opts.order === "qty" ? { col: "qty", asc: false }
     : { col: "created_at", asc: false };
-  const rows = await publishedPage({ from: offset, to: offset + limit - 1, categoryId, order, retail: true });
+  let rows = await publishedAll({ categoryId, order, retail: true });
+  if (opts.limit != null) rows = rows.slice(offset, offset + opts.limit);
   const imgBy = await coversFor(rows.map((p) => p.id));
   const products = rows.map((p) => asShopCard(p, imgBy.get(p.id) ?? null));
   return { products, formula, categoryId: categoryId ?? null };
@@ -186,10 +231,13 @@ export type TradeRow = {
   moreDesigns?: boolean; moreDesignsNote?: string | null;
 };
 
-export async function getTradeSlice(offset = 0, limit = 48): Promise<{ list: TradeRow[]; hasMore: boolean }> {
+export async function getTradeSlice(offset = 0, limit?: number): Promise<{ list: TradeRow[]; hasMore: boolean }> {
   const formula = await formulaOf();
   const gstInc = (paise: number) => Math.round(paise * (1 + GST_RATE / 100));
-  const rows = await publishedPage({ from: offset, to: offset + limit - 1, order: { col: "created_at", asc: false }, retail: false });
+  const order = { col: "created_at", asc: false };
+  const rows = (limit != null && limit > 0)
+    ? await publishedPage({ from: offset, to: offset + limit - 1, order, retail: false })
+    : await publishedAll({ order, retail: false });
   const ids = rows.map((p) => p.id);
   const imgBy = await coversFor(ids);
   const varsBy = new Map<string, any[]>();
@@ -243,5 +291,5 @@ export async function getTradeSlice(offset = 0, limit = 48): Promise<{ list: Tra
       });
     }
   }
-  return { list, hasMore: rows.length >= limit };
+  return { list, hasMore: limit != null && limit > 0 && rows.length >= limit };
 }

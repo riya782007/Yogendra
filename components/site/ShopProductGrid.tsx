@@ -1,9 +1,13 @@
+"use client";
+import { useState } from "react";
 import Link from "next/link";
 import { ProductCard } from "@/components/site/ProductCard";
 import { Reveal } from "@/components/site/Reveal";
 import { Back } from "@/components/site/Back";
 import { categoryRef } from "@/lib/shopCatalog";
 import type { PricingFormula } from "@/lib/pricing";
+
+const PAGE = 48;
 
 export function ShopProductGrid({
   title,
@@ -16,6 +20,8 @@ export function ShopProductGrid({
   products: any[];
   formula: PricingFormula;
 }) {
+  const [shown, setShown] = useState(PAGE);
+  const visible = products.slice(0, shown);
   return (
     <div className="max-w-7xl mx-auto px-5 py-8">
       <div className="flex items-center justify-between gap-4 mb-2">
@@ -33,13 +39,22 @@ export function ShopProductGrid({
           <p className="text-muted text-sm mt-1">Browse by <Link href="/shop" className="text-emerald nav-link">category</Link> or open the <Link href="/shop/all" className="text-emerald nav-link">full collection</Link>.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
-          {products.map((p, i) => (
-            <Reveal key={p.sku} delay={(i % 4) * 70}>
-              <ProductCard p={{ ...(p as any), category: categoryRef(p) }} formula={formula} index={i} />
-            </Reveal>
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
+            {visible.map((p, i) => (
+              <Reveal key={p.sku} delay={(i % 4) * 70}>
+                <ProductCard p={{ ...(p as any), category: categoryRef(p) }} formula={formula} index={i} />
+              </Reveal>
+            ))}
+          </div>
+          {shown < products.length && (
+            <div className="text-center mt-8">
+              <button type="button" onClick={() => setShown((n) => n + PAGE)} className="px-6 py-2.5 rounded-full border border-emerald text-emerald text-sm font-medium hover:bg-emerald-mist">
+                Load more — showing {shown} of {products.length}
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

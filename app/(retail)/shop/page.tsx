@@ -27,7 +27,7 @@ export const metadata = {
 async function loadShopHomeSafe() {
   try {
     const [store, reviews, reels, promos, tree] = await Promise.all([
-      getShopSlice({ order: "new", limit: 40 }),
+      getShopSlice({ order: "new" }),
       getFeaturedReviews().catch(() => []),
       getShoppableReels().catch(() => []),
       getActivePromotions("retail").catch(() => []),

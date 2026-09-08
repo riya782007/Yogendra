@@ -2022,7 +2022,8 @@ export const getLivePromosCached = (scope: "retail" | "wholesale", placement: "h
 export async function getStorefront(
   opts: { includeDrafts?: boolean; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean; onlyInStock?: boolean } = {},
 ): Promise<{ products: StoreProduct[]; formula: PF }> {
-  const sb = supabaseServer();
+  const clients = supabaseReadClients();
+  const sb = clients[0] ?? supabaseServer();
   // D2C-safe defaults: only published, and never wholesale-only items (#1, #23).
   // NOTE: products / images / variants all exceed PostgREST's 1000-row cap — page through them.
   // PERF: select ONLY the columns the storefront actually renders — crucially NOT `generated_content`
@@ -2038,11 +2039,21 @@ export async function getStorefront(
     "id, category_id, sku, name, type, base_wholesale, qty, status, last_movement_at, created_at, " +
     "subcategory_id, wholesale_override, retail_override, mrp_override, wholesale_only, retail_only, " +
     "category:categories(id,name,slug)";
-  const productPages = async (cols: string, required = true) => fetchAll((f, t) => {
-    let q = sb.from("products").select(cols).order("sku");
-    if (!opts.includeDrafts) q = q.eq("status", "published");
-    return q.range(f, t);
-  }, { required });
+  const productPages = async (cols: string, required = true) => {
+    let last: any[] = [];
+    for (const client of clients) {
+      try {
+        const rows = await fetchAll((f, t) => {
+          let q = client.from("products").select(cols).order("sku");
+          if (!opts.includeDrafts) q = q.eq("status", "published");
+          return q.range(f, t);
+        }, { required: required && client === clients[clients.length - 1] });
+        last = rows;
+        if (rows.length) return rows;
+      } catch { /* try next key */ }
+    }
+    return last;
+  };
   const STOREFRONT_COLS_MINIMAL =
     "id, category_id, sku, name, type, base_wholesale, qty, status, created_at, wholesale_only, retail_only, thumbnail_path";
   let prods: any[] = [];
