@@ -3,18 +3,19 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getStorefrontSafe, getCategories, getActivePromotions } from "@/lib/supabase/queries";
+import { getCategories, getActivePromotions } from "@/lib/supabase/queries";
+import { getShopSlice } from "@/lib/catalogSlice";
 
 // The full published catalogue is the same for every visitor, so cache it (3 min) instead of re-running
 // the heavy all-products query on every category view. Product edits refresh within the window / via the
 // "storefront" tag. Category-specific filter queries below stay live (they're light + scoped).
-async function loadCatalogueBaseSafe() {
-  const [store, allCats, allPromos] = await Promise.all([
-    getStorefrontSafe(),
+async function loadCatalogueBaseSafe(slug: string) {
+  const [slice, allCats, allPromos] = await Promise.all([
+    getShopSlice({ categorySlug: slug, order: "sku", limit: 96 }),
     getCategories().catch(() => [] as any[]),
     getActivePromotions("retail").catch(() => [] as any[]),
   ]);
-  return { products: store.products, formula: store.formula, allCats, allPromos };
+  return { products: slice.products, formula: slice.formula, allCats, allPromos };
 }
 import { supabaseServer } from "@/lib/supabase/server";
 import { ProductCard } from "@/components/site/ProductCard";
@@ -43,7 +44,7 @@ const PAGE_SIZE = 48;
 
 export default async function CategoryPage({ params, searchParams }: { params: { slug: string }; searchParams: SP }) {
   const sb = supabaseServer();
-  const { products, formula, allCats, allPromos } = await loadCatalogueBaseSafe();
+  const { products, formula, allCats, allPromos } = await loadCatalogueBaseSafe(params.slug);
   const cat = allCats.find((c) => c.slug === params.slug)
     || allCats.find((c) => c.slug.replace(/s$/, "") === params.slug.replace(/s$/, ""))
     || allCats.find((c) => (c.name || "").toLowerCase().replace(/\s+/g, "-") === params.slug);

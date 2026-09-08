@@ -1,10 +1,10 @@
 export const dynamic = "force-dynamic";
-import { getStorefrontSafe } from "@/lib/supabase/queries";
+import { getShopSlice } from "@/lib/catalogSlice";
 import { ShopProductGrid } from "@/components/site/ShopProductGrid";
 
 export const metadata = { title: "All Jewellery", description: "Shop the full Blythe Diva collection — Kundan, Meenakari, Temple and more." };
 
 export default async function AllJewelleryPage() {
-  const { products, formula } = await getStorefrontSafe();
+  const { products, formula } = await getShopSlice({ order: "sku", limit: 48 });
   return <ShopProductGrid title="All Jewellery" products={products} formula={formula} />;
 }

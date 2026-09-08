@@ -4,7 +4,8 @@
 // loadShopHome cache (15 min, busted instantly by the "storefront" tag on any edit).
 export const dynamic = "force-dynamic";
 import Link from "next/link";
-import { getStorefrontSafe, getFeaturedReviews, getShoppableReels, getActivePromotions, getCategoryTreeSafe, getPricingFormula } from "@/lib/supabase/queries";
+import { getFeaturedReviews, getShoppableReels, getActivePromotions, getCategoryTreeSafe, getPricingFormula } from "@/lib/supabase/queries";
+import { getShopSlice } from "@/lib/catalogSlice";
 import { FALLBACK_SHOP_CATEGORIES, pickBestsellers, pickNewArrivals, publicCategories, categoryRef } from "@/lib/shopCatalog";
 import { ProductCard } from "@/components/site/ProductCard";
 import { PromoHero } from "@/components/site/PromoHero";
@@ -24,18 +25,23 @@ export const metadata = {
 // so each soft navigation / prefetch to /shop took ~9s. Cache the whole bundle for 3 minutes so the
 // page renders instantly; editing a product refreshes it within the window (or via the "storefront" tag).
 async function loadShopHomeSafe() {
-  const [store, reviews, reels, promos, tree] = await Promise.all([
-    getStorefrontSafe(),
-    getFeaturedReviews().catch(() => []),
-    getShoppableReels().catch(() => []),
-    getActivePromotions("retail").catch(() => []),
-    getCategoryTreeSafe(),
-  ]);
-  return {
-    products: store.products,
-    formula: store.formula ?? await getPricingFormula(),
-    reviews, reels, promos, tree,
-  };
+  try {
+    const [store, reviews, reels, promos, tree] = await Promise.all([
+      getShopSlice({ order: "new", limit: 40 }),
+      getFeaturedReviews().catch(() => []),
+      getShoppableReels().catch(() => []),
+      getActivePromotions("retail").catch(() => []),
+      getCategoryTreeSafe(),
+    ]);
+    return {
+      products: store.products,
+      formula: store.formula ?? await getPricingFormula(),
+      reviews, reels, promos, tree,
+    };
+  } catch {
+    const [formula, tree] = await Promise.all([getPricingFormula(), getCategoryTreeSafe()]);
+    return { products: [] as any[], formula, reviews: [] as any[], reels: [] as any[], promos: [] as any[], tree };
+  }
 }
 
 export default async function Shop() {
@@ -210,9 +216,9 @@ export default async function Shop() {
       {/* Curation note — only while the catalogue is still in draft (no products live yet) */}
       {products.length === 0 && (
         <section className="max-w-3xl mx-auto px-5 py-16 text-center">
-          <p className="text-gold-dark tracking-[0.25em] uppercase text-xs">Arriving soon</p>
-          <h2 className="font-display text-4xl text-ink mt-2">Our new collection is being styled</h2>
-          <p className="text-muted mt-3 leading-relaxed">Thousands of handcrafted Kundan, Meenakari, Temple and American-diamond designs are being photographed and readied. Browse by category above — pieces go live daily.</p>
+          <p className="text-gold-dark tracking-[0.25em] uppercase text-xs">Collection</p>
+          <h2 className="font-display text-4xl text-ink mt-2">Open the full jewellery list</h2>
+          <p className="text-muted mt-3 leading-relaxed">Category tiles above still work. If cards didn’t appear here, use All jewellery — that page loads a small page of designs instead of waiting on the whole catalogue.</p>
           <div className="flex flex-wrap gap-3 justify-center mt-6">
             {cats.map((c) => (
               <Link key={c.slug} href={`/shop/c/${c.slug}`} className="px-5 py-2 rounded-full border border-sand text-ink hover:border-emerald hover:text-emerald transition-colors text-sm">{c.name}</Link>
