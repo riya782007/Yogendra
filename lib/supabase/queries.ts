@@ -1,7 +1,7 @@
 /** Server-only data access. Uses the service-role client (bypasses RLS for admin reads). */
 import "server-only";
 import { unstable_cache } from "next/cache";
-import { supabaseServer } from "./server";
+import { supabaseServer, supabaseReadClients } from "./server";
 import type { PricingFormula } from "../pricing";
 import { cleanTiers, DEFAULT_FORMULA, parseRupeeSearch } from "../pricing";
 import { isCodOrder, isPrepaidOrder } from "../orderPayment";
@@ -130,19 +130,21 @@ export type CategoryNode = DbCategory & { sort?: number; subcategories: DbSubcat
 
 /** Parent categories, each with their ordered subcategories — for the management UI + filters. */
 export async function getCategoryTree(): Promise<CategoryNode[]> {
-  const sb = supabaseServer();
   let cats: any[] = [];
-  const full = await sb.from("categories").select("id,name,slug,sort,parent_id").order("sort").order("name");
-  if (full.error || full.data == null) {
-    // Older DBs may lack parent_id / sort — never let that blank the whole Shop-by-Category row.
+  for (const sb of supabaseReadClients()) {
+    const full = await sb.from("categories").select("id,name,slug,sort,parent_id").order("sort").order("name");
+    if (!full.error && (full.data as any[])?.length) { cats = full.data as any[]; break; }
     const basic = await sb.from("categories").select("id,name,slug").order("name");
-    if (basic.error) return [];
-    cats = (basic.data as any[]) ?? [];
-  } else {
-    cats = (full.data as any[]) ?? [];
+    if (!basic.error && (basic.data as any[])?.length) { cats = basic.data as any[]; break; }
   }
-  const { data: subs } = await sb.from("subcategories").select("id,category_id,name,slug,sort,image_style").order("sort").order("name");
-  const subList = (subs as DbSubcategory[]) ?? [];
+  if (!cats.length) return [];
+  let subList: DbSubcategory[] = [];
+  for (const sbc of supabaseReadClients()) {
+    const { data: subs, error } = await sbc.from("subcategories").select("id,category_id,name,slug,sort,image_style").order("sort").order("name");
+    if (!error) { subList = (subs as DbSubcategory[]) ?? []; break; }
+    const basic = await sbc.from("subcategories").select("id,category_id,name,slug,sort").order("name");
+    if (!basic.error) { subList = (basic.data as DbSubcategory[]) ?? []; break; }
+  }
   const toNode = (c: any) => ({
     id: c.id, name: c.name, slug: c.slug, sort: c.sort ?? 0,
     subcategories: subList.filter((s) => s.category_id === c.id),
@@ -1761,17 +1763,21 @@ export type DashboardData = {
 export async function getDashboardData(fromISO: string, toISO: string, rule: InventoryRule = DEFAULT_RULE): Promise<DashboardData> {
   const sb = supabaseServer();
   const now = new Date();
-  const [ordersRes, prods, catRes, retRes, apprRes] = await Promise.all([
-    sb.from("orders").select("total,channel,payment_mode,pay_cash,pay_bank,created_at,status,is_backorder").gte("created_at", fromISO).lte("created_at", toISO).or("is_backorder.is.null,is_backorder.eq.false").eq("cod_hold", false),
-    fetchAll((f, t) => sb.from("products").select("sku,name,qty,last_movement_at,created_at,category:categories(name)").range(f, t)),
+  const orderCols = "total,channel,payment_mode,pay_cash,pay_bank,created_at,status,is_backorder,cod_hold";
+  let ordersRes: any = await sb.from("orders").select(orderCols).gte("created_at", fromISO).lte("created_at", toISO);
+  if (ordersRes.error) {
+    ordersRes = await sb.from("orders").select("total,channel,payment_mode,pay_cash,pay_bank,created_at,status").gte("created_at", fromISO).lte("created_at", toISO);
+  }
+  const [prodsHead, sample, catRes, retRes, dealersRes, apprRes] = await Promise.all([
+    sb.from("products").select("id", { count: "exact", head: true }),
+    sb.from("products").select("sku,name,qty,last_movement_at,created_at").order("sku").limit(400),
     sb.from("categories").select("id"),
     sb.from("retailers").select("id,approved"),
+    sb.from("customers").select("id,wholesale_approved").eq("type", "wholesale"),
     sb.from("approvals").select("id,status"),
   ]);
-  // Pending backorders (held, not sold) are already filtered above; also drop cancelled/refunded so
-  // the dashboard revenue matches the sales record (owner: "revenue dikha raha hai but no stock movement").
-  const orders = (ordersRes.data ?? []).filter((o: any) => o.status !== "cancelled" && o.status !== "refunded");
-  const products = (prods as any[]) ?? [];
+  const orders: any[] = (ordersRes.data ?? []).filter((o: any) => o.status !== "cancelled" && o.status !== "refunded" && o.is_backorder !== true && o.cod_hold !== true);
+  const products = (sample.data as any[]) ?? [];
 
   const revenue = orders.reduce((s, o: any) => s + (o.total ?? 0), 0);
   const cod = orders.filter((o: any) => o.payment_mode === "cod").length;
@@ -1785,12 +1791,14 @@ export async function getDashboardData(fromISO: string, toISO: string, rule: Inv
   const inactive = classed.filter((p) => p.cls === "inactive");
   const healthy = classed.filter((p) => p.cls === "healthy");
   const newProducts = products.filter((p: any) => p.created_at >= fromISO && p.created_at <= toISO).length;
+  const fromRetailers = ((retRes.data as any[]) ?? []).filter((r: any) => r.approved).length;
+  const fromDealers = ((dealersRes.data as any[]) ?? []).filter((r: any) => r.wholesale_approved).length;
 
   return {
     revenue, orders: orders.length, cod, pos, cashCollected, bankCollected,
-    retailers: (retRes.data ?? []).filter((r: any) => r.approved).length,
+    retailers: Math.max(fromRetailers, fromDealers),
     pendingApprovals: (apprRes.data ?? []).filter((a: any) => a.status === "pending").length,
-    totalProducts: products.length, newProducts, categories: (catRes.data ?? []).length,
+    totalProducts: prodsHead.count ?? products.length, newProducts, categories: (catRes.data ?? []).length,
     dead: dead.length, low: low.length, inactive: inactive.length, healthy: healthy.length,
     deadList: dead.slice(0, 8).map((p) => ({ sku: p.sku, name: p.name, qty: p.qty })),
     lowList: low.slice(0, 8).map((p) => ({ sku: p.sku, name: p.name, qty: p.qty })),
@@ -1817,10 +1825,12 @@ export type OrderAlertRow = { id: string; invoice_no: string | null; channel: st
 export async function getOrderAlerts(limit = 8): Promise<{ orders: OrderAlertRow[]; last24h: number }> {
   const sb = supabaseServer();
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const [listRes, cntRes] = await Promise.all([
-    sb.from("orders").select("id,invoice_no,channel,status,total,amount_paid,customer_name,created_at").order("created_at", { ascending: false }).limit(limit),
-    sb.from("orders").select("id", { count: "exact", head: true }).gte("created_at", since),
-  ]);
+  const cols = "id,invoice_no,channel,status,total,amount_paid,customer_name,created_at";
+  let listRes: any = await sb.from("orders").select(cols).order("created_at", { ascending: false }).limit(limit);
+  if (listRes.error) {
+    listRes = await sb.from("orders").select("id,channel,status,total,created_at").order("created_at", { ascending: false }).limit(limit);
+  }
+  const cntRes = await sb.from("orders").select("id", { count: "exact", head: true }).gte("created_at", since);
   return { orders: ((listRes.data as any[]) ?? []) as OrderAlertRow[], last24h: cntRes.count ?? 0 };
 }
 
@@ -1969,7 +1979,7 @@ export const getCategoryTreeCached = unstable_cache(async () => {
   const tree = await getCategoryTree();
   if (!tree.length) throw new Error("category tree empty — not caching");
   return tree;
-}, ["category-tree-v3"], { tags: ["storefront"], revalidate: 300 });
+}, ["category-tree-v4"], { tags: ["storefront"], revalidate: 300 });
 
 /** Layout/header must never 500: live-retry, then a small fallback tile set. */
 export async function getCategoryTreeSafe(): Promise<CategoryNode[]> {
@@ -2001,7 +2011,11 @@ export const getCatalogProductsCached = (opts: Parameters<typeof getCatalogProdu
     if (unfiltered && rows.length === 0) throw new Error("shared catalogue empty — not caching");
     return rows;
   }, ["catalog-products-v2", JSON.stringify(opts)], { tags: ["storefront"], revalidate: 300 })();
-export const getCatalogSuggestionsCached = unstable_cache(() => getCatalogSuggestions(), ["catalog-suggestions"], { tags: ["storefront"], revalidate: 600 });
+export const getCatalogSuggestionsCached = unstable_cache(async () => {
+  const s = await getCatalogSuggestions();
+  if (!s.categories.length && !s.products.length) throw new Error("suggestions empty — not caching");
+  return s;
+}, ["catalog-suggestions-v4"], { tags: ["storefront"], revalidate: 600 });
 export const getLivePromosCached = (scope: "retail" | "wholesale", placement: "hero" | "popup" | "strip") =>
   unstable_cache(() => getLivePromos(scope, placement), ["live-promos", scope, placement], { tags: ["storefront"], revalidate: 120 })();
 
@@ -2736,17 +2750,23 @@ export async function getRoles() {
  *  Returns published product names + SKUs, category names, and the colour master, so the
  *  owner (or a customer) can jump straight to a design / category / colour. Capped + de-duped. */
 export async function getCatalogSuggestions(): Promise<{ products: { name: string; sku: string }[]; categories: { name: string; slug: string }[]; colours: string[] }> {
-  const sb = supabaseServer();
-  const [{ data: prods }, { data: cats }, { data: cols }] = await Promise.all([
-    sb.from("products").select("name,sku,wholesale_only").eq("status", "published").eq("wholesale_only", false).order("name").limit(500),
-    sb.from("categories").select("name,slug").order("name"),
-    sb.from("variant_options").select("value").eq("kind", "color").order("sort").order("value"),
-  ]);
-  return {
-    products: ((prods as any[]) ?? []).map((p) => ({ name: p.name, sku: p.sku })),
-    categories: ((cats as any[]) ?? []).map((c) => ({ name: c.name, slug: c.slug })),
-    colours: ((cols as any[]) ?? []).map((c) => c.value).filter(Boolean),
-  };
+  let products: { name: string; sku: string }[] = [];
+  let categories: { name: string; slug: string }[] = [];
+  let colours: string[] = [];
+  for (const sb of supabaseReadClients()) {
+    const [{ data: prods, error: pe }, { data: cats, error: ce }, { data: cols }] = await Promise.all([
+      sb.from("products").select("name,sku,wholesale_only").eq("status", "published").order("name").limit(500),
+      sb.from("categories").select("name,slug").order("name"),
+      sb.from("variant_options").select("value").eq("kind", "color").order("sort").order("value"),
+    ]);
+    if (!pe && (prods as any[])?.length) {
+      products = ((prods as any[]) ?? []).filter((p) => !p.wholesale_only).map((p) => ({ name: p.name, sku: p.sku }));
+    }
+    if (!ce && (cats as any[])?.length) categories = ((cats as any[]) ?? []).map((c) => ({ name: c.name, slug: c.slug }));
+    colours = ((cols as any[]) ?? []).map((c) => c.value).filter(Boolean);
+    if (products.length || categories.length) break;
+  }
+  return { products, categories, colours };
 }
 
 // ---------- notifications / assignments ----------
