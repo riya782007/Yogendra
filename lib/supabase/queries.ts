@@ -323,10 +323,8 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
     let q = sb.from("products").select(sel).eq("status", "published").order("sku");
     if (!opts.includeWholesaleOnly) q = q.eq("wholesale_only", false); // retail hides wholesale-only
     if (opts.excludeRetailOnly) q = q.eq("retail_only", false);        // wholesale hides retail-only
-    // Shareable catalogue never shows sold-out designs — products.qty is the variant-sum (kept in
-    // sync by resyncProductQty), so qty>0 means at least one colour is in stock. Skip this filter when
-    // the owner has hand-picked specific SKUs to share (respect his explicit selection).
-    if (opts.inStock && !(opts.skus && opts.skus.length)) q = q.gt("qty", 0);
+    // Public catalogue never shows sold-out designs, including hand-picked share links.
+    if (opts.inStock) q = q.gt("qty", 0);
     if (catId) q = q.eq("category_id", catId);
     if (subIds) q = q.in("id", subIds);
     if (styleId) q = q.eq("style_id", styleId);
@@ -373,7 +371,6 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
   // Variant-image fallback: a piece may only have per-colour (variant) photos and no product-level
   // hero — the card should still show an image instead of a blank tile.
   const cardRows = (data as any[]) ?? [];
-  const vImgByP = new Map<string, string>();
   const vImgInStock = new Map<string, string>();
   const variantImages = new Map<string, Set<string>>();
   const inStockVariantImages = new Map<string, Set<string>>();
@@ -381,10 +378,14 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
   // (owner: "catalog me variant nahi dikh raha"). Same variant fetch also keeps a sold-out colour
   // from supplying the card image when another colour remains available.
   const colorsByP = new Map<string, Set<string>>();
+  const variantQtyByP = new Map<string, number>();
+  const hasVariants = new Set<string>();
   const cardIds = cardRows.map((p) => p.id).filter(Boolean);
   if (cardIds.length) {
     const vimgs = await fetchByIds(cardIds, (chunk) => sb.from("variants").select("product_id,image_paths,color,qty").in("product_id", chunk));
     for (const v of ((vimgs as any[]) ?? [])) {
+      hasVariants.add(v.product_id);
+      variantQtyByP.set(v.product_id, (variantQtyByP.get(v.product_id) ?? 0) + (v.qty ?? 0));
       const paths = Array.isArray(v.image_paths) ? v.image_paths.filter((x: unknown): x is string => typeof x === "string" && x.startsWith("http")) : [];
       for (const image of paths) {
         let all = variantImages.get(v.product_id); if (!all) { all = new Set(); variantImages.set(v.product_id, all); } all.add(image);
@@ -393,7 +394,6 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
         }
       }
       const hit = paths[0];
-      if (hit && !vImgByP.has(v.product_id)) vImgByP.set(v.product_id, hit);
       if (hit && (v.qty ?? 0) > 0 && !vImgInStock.has(v.product_id)) vImgInStock.set(v.product_id, hit);
       const c = String(v.color ?? "").trim();
       if (c && (v.qty ?? 0) > 0) {
@@ -401,7 +401,10 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       }
     }
   }
-  const cards = cardRows.map((p): CatalogCard => {
+  const cards = cardRows
+    // Variant quantities are authoritative for products with variants; use product qty for simple designs.
+    .filter((p) => !opts.inStock || (hasVariants.has(p.id) ? (variantQtyByP.get(p.id) ?? 0) : (p.qty ?? 0)) > 0)
+    .map((p): CatalogCard => {
     const ov = overridesOf(p);
     const o = _liveOffer(p.base_wholesale, formula, ov);
     const set = _resolvePrices(p.base_wholesale, formula, ov);
@@ -421,12 +424,14 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       // Keep a pinned product image, but never lead with a sold-out variant photo when another colour is in stock.
       // This makes the shared watch catalogue show Silver when Gold is sold out.
       image: (() => {
-        const thumbnail = typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http") ? p.thumbnail_path : null;
+        const thumbnail = typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http")
+          && ([...(p.images ?? []).map((image: any) => image.path), ...(variantImages.get(p.id) ?? [])].includes(p.thumbnail_path))
+          ? p.thumbnail_path : null;
         const thumbnailIsSoldOutVariant = !!thumbnail && (variantImages.get(p.id)?.has(thumbnail) ?? false) && !(inStockVariantImages.get(p.id)?.has(thumbnail) ?? false);
         const firstEligibleProductImage = imgs.find((image: any) =>
           !(variantImages.get(p.id)?.has(image.path) ?? false) || (inStockVariantImages.get(p.id)?.has(image.path) ?? false),
         )?.path ?? null;
-        return (!thumbnailIsSoldOutVariant ? thumbnail : null) ?? firstEligibleProductImage ?? vImgInStock.get(p.id) ?? vImgByP.get(p.id) ?? null;
+        return (!thumbnailIsSoldOutVariant ? thumbnail : null) ?? firstEligibleProductImage ?? vImgInStock.get(p.id) ?? null;
       })(),
       tags: ((p.generated_content as any)?.tags ?? []).slice(0, 6),
       keywords: (seo.keywords ?? []).slice(0, 6),
