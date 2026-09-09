@@ -50,6 +50,8 @@ export async function cancelOrderAction(orderId: string, reason?: string): Promi
   if (error) return { ok: false, error: error.message };
   revalidatePath("/admin/sales"); revalidatePath("/admin/backorders"); revalidatePath("/admin/dashboard");
   revalidatePath(`/admin/invoice/${orderId}`);
+  revalidatePath("/admin/cod"); revalidatePath("/admin/catalogue"); revalidatePath("/admin/inventory");
+  revalidateTag("storefront");
   return { ok: true, already: !!(data as any)?.already };
 }
 

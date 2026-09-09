@@ -58,7 +58,7 @@ export async function confirmCodAction(formData: FormData): Promise<void> {
   redirect("/admin/cod?ok=1");
 }
 
-/** Cancel a held COD order (customer refused / didn't confirm). */
+/** Cancel a held COD order (customer refused / didn't confirm). Releases the stock reservation. */
 export async function cancelCodAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("billing.sell"))) return;
   const id = String(formData.get("id") ?? "").trim();
@@ -68,9 +68,11 @@ export async function cancelCodAction(formData: FormData): Promise<void> {
   if (!o || (o as any).cod_hold !== true || !isCodOrder(o as any)) {
     redirect("/admin/cod?err=" + encodeURIComponent("That order is prepaid — reject it under Storefront Orders. Do not cancel it from COD."));
   }
-  await sb.from("order_items").delete().eq("order_id", id).then(() => {}, () => {});
-  await sb.from("orders").delete().eq("id", id).then(() => {}, () => {});
-  revalidatePath("/admin/cod"); revalidatePath("/admin/dashboard");
+  const { error } = await sb.rpc("cancel_order", { p_order_id: id, p_reason: "COD cancelled" });
+  revalidatePath("/admin/cod"); revalidatePath("/admin/dashboard"); revalidatePath("/admin/catalogue");
+  revalidatePath("/admin/inventory"); revalidatePath("/admin/stock-movements");
+  if (!error) revalidateTag("storefront");
+  if (error) redirect(`/admin/cod?err=${encodeURIComponent(error.message)}`);
   redirect("/admin/cod?cancelled=1");
 }
 

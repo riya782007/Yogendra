@@ -11,10 +11,8 @@ import type { PdfCodOrder } from "@/lib/codOrdersPdf";
 export const metadata = { title: "Owner Console · COD Orders" };
 
 /**
- * COD ORDERS — Cash-on-Delivery orders placed on the storefront are HELD here: stock is reserved-checked
- * but NOT deducted and they are NOT in the sales record yet. The owner packs & dispatches, and once the
- * customer has received and paid, hits "Confirm dispatched & received" — only then does stock move,
- * revenue post, and the bill join Sales. Refused / no-answer orders can be cancelled (nothing to unwind).
+ * COD ORDERS — held here until dispatch/receipt. Stock is reserved (kind=reserve) while they wait.
+ * Confirm converts the reservation into a sale. Cancel/reject releases it so estimates can convert.
  */
 export default async function CodOrders({ searchParams }: { searchParams?: { err?: string; ok?: string; cancelled?: string } }) {
   const sb = supabaseServer();

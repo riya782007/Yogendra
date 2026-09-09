@@ -1503,16 +1503,23 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   const saleRefs = [...new Set(allRows.filter((r) => (r.kind === "sale" || r.kind === "return") && r.ref_id).map((r) => r.ref_id))];
   const purchaseRefs = [...new Set(allRows.filter((r) => (r.kind === "purchase" || r.kind === "purchase_return") && r.ref_id).map((r) => r.ref_id))];
   const estimateRefs = [...new Set(allRows.filter((r) => r.kind === "estimate" && r.ref_id).map((r) => r.ref_id))];
-  // A "reserve" movement is a HELD estimate physically setting a piece aside for a customer. Its ref_id
-  // is that estimate — resolve it so the row shows WHO it's held for + a link, instead of a bare "−1".
+  // Reserve movements are used for BOTH held estimates AND held COD/storefront orders. Resolve both
+  // so a cancelled COD hold is not labelled EST-… (which made leftover order holds look like quotes).
   const reserveRefs = [...new Set(allRows.filter((r) => r.kind === "reserve" && r.ref_id).map((r) => r.ref_id))];
   const invoiceBy = new Map<string, string>();
   const billBy = new Map<string, string>();
-  // Party = who the movement was with — the customer on a sale/estimate, the supplier on a purchase.
-  // Surfaced on every timeline row so the owner can trace "sold 2 to Riya" without opening the bill.
   const partyBy = new Map<string, string>();
   const estimateBy = new Map<string, { id: string; customer_name: string | null; status: string }>();
+  const orderHoldBy = new Map<string, { invoice_no: string | null; customer_name: string | null }>();
   if (saleRefs.length) { const { data } = await sb.from("orders").select("id,invoice_no,customer_name").in("id", saleRefs as string[]); for (const o of (data as any[]) ?? []) { invoiceBy.set(o.id, o.invoice_no); if (o.customer_name) partyBy.set(o.id, o.customer_name); } }
+  if (reserveRefs.length) {
+    const { data } = await sb.from("orders").select("id,invoice_no,customer_name").in("id", reserveRefs as string[]);
+    for (const o of (data as any[]) ?? []) {
+      orderHoldBy.set(o.id, { invoice_no: o.invoice_no ?? null, customer_name: o.customer_name ?? null });
+      if (o.invoice_no) invoiceBy.set(o.id, o.invoice_no);
+      if (o.customer_name) partyBy.set(o.id, o.customer_name);
+    }
+  }
   if (purchaseRefs.length) { const { data } = await sb.from("purchases").select("id,bill_no, supplier:suppliers(name)").in("id", purchaseRefs as string[]); for (const o of (data as any[]) ?? []) { billBy.set(o.id, o.bill_no); if (o.supplier?.name) partyBy.set(o.id, o.supplier.name); } }
   const estPartyRefs = [...new Set([...estimateRefs, ...reserveRefs])];
   if (estPartyRefs.length) {
@@ -1524,6 +1531,7 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   }
 
   const estimateShort = (id: string) => `EST-${String(id).slice(0, 8).toUpperCase()}`;
+  const orderHoldShort = (id: string) => invoiceBy.get(id) || `ORD-${String(id).slice(0, 8).toUpperCase()}`;
   const estimateDoc = (refId: string, kind: string): { href: string; label: string } => {
     const est = estimateBy.get(refId);
     const held = kind === "reserve" || est?.status === "held";
@@ -1535,6 +1543,7 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     if (!r.ref_id) return null;
     if (r.kind === "sale") return { href: `/admin/invoice/${r.ref_id}`, label: "Open invoice →" };
     if (r.kind === "purchase") return { href: `/admin/purchase/${r.ref_id}`, label: "Open purchase →" };
+    if (r.kind === "reserve" && orderHoldBy.has(r.ref_id)) return { href: `/admin/invoice/${r.ref_id}`, label: "Open order hold →" };
     if (r.kind === "estimate" || r.kind === "reserve") return estimateDoc(r.ref_id, r.kind);
     if (r.kind === "return" || r.kind === "purchase_return") return { href: `/admin/returns`, label: "Open return →" };
     return null;
@@ -1587,6 +1596,7 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     ref_id: r.ref_id ?? null, created_at: r.created_at,
     invoice_no: r.kind === "sale" ? (invoiceBy.get(r.ref_id) ?? null)
       : r.kind === "purchase" ? (billBy.get(r.ref_id) ?? null)
+      : r.kind === "reserve" && r.ref_id && orderHoldBy.has(r.ref_id) ? orderHoldShort(r.ref_id)
       : (r.kind === "estimate" || r.kind === "reserve") && r.ref_id ? estimateShort(r.ref_id) : null,
     party: r.ref_id ? (partyBy.get(r.ref_id) ?? null) : null,
     hold: false,

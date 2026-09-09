@@ -299,8 +299,7 @@ async function placeWholesaleCore(
     const itemsGst = Math.round(itemsOnly * (1 + GST_RATE / 100));
     // COD CEILING — high-value COD is risky, so wholesale orders above ₹5,000 must be prepaid.
     if (opts?.cod && itemsGst > 500000) {
-      // The order is held (no stock deducted, no revenue), so cancel_order would OVER-RESTOCK. Just
-      // delete the empty held shell instead.
+      await sb.rpc("release_held_order_stock", { p_order_id: orderId }).then(() => {}, () => {});
       await sb.from("order_items").delete().eq("order_id", orderId).then(() => {}, () => {});
       await sb.from("orders").delete().eq("id", orderId).then(() => {}, () => {});
       return { ok: false, error: "Cash on Delivery isn't available for orders above ₹5,000 — please pay online (prepaid)." };

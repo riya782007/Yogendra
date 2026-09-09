@@ -35,7 +35,11 @@ function typeLabel(r: any): string {
   return r.kind;
 }
 function typeHint(r: any): string | undefined {
-  if (r.kind === "reserve") return "Set aside for a held estimate — release that estimate to return this piece to stock";
+  if (r.kind === "reserve") {
+    const s = String(r.source ?? "").toLowerCase();
+    if (s.includes("estimate")) return "Set aside for a held estimate — release that estimate to return this piece to stock";
+    return "Set aside for a held order — cancel or reject that order to return this piece to stock";
+  }
   if (r.kind === "return") {
     const s = String(r.source ?? "").toLowerCase();
     if (s.includes("cancel")) return "This order was cancelled/rejected, so the piece it had taken went back to stock";
