@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { formatPaise, tierPctOff, applyTier, type WholesaleTier } from "@/lib/pricing";
 import { ProductImage } from "@/components/Placeholder";
 import { QtyField } from "@/components/admin/QtyField";
@@ -10,6 +10,18 @@ import { wholesaleShippingPaise, WHOLESALE_COD_FEE_PAISE } from "@/lib/wholesale
 import { loadTradeSliceAction } from "@/app/actions/tradeCatalog";
 
 const TRADE_PAGE = 48;
+
+type Facet = { name: string; subs: string[]; styles: string[] };
+type SliceFilter = { category?: string; sub?: string; style?: string; q?: string };
+
+function sliceFilterOf(cat: string, sub: string, styleF: string, q: string): SliceFilter {
+  return {
+    category: cat !== "all" ? cat : undefined,
+    sub: sub !== "all" ? sub : undefined,
+    style: styleF !== "all" ? styleF : undefined,
+    q: q.trim() || undefined,
+  };
+}
 
 type P = { pid: string; sku: string; name: string; category: string; sub?: string | null; style?: string | null; qty: number; price: number; mrp: number; image: string | null; images?: string[]; colour?: string | null;
   /** Owner-flagged: this design has many more colourways than the catalogue can list. */
@@ -27,16 +39,19 @@ type PayInfo = { payeeName: string; upiId: string | null; qrUrl: string | null }
 const shipSlab = wholesaleShippingPaise;
 const COD_FEE = WHOLESALE_COD_FEE_PAISE; // ₹120 per COD order
 
-export function WholesaleCatalog({ products, hasMore: hasMore0 = false, customerName, customerPhone = "", savedAddress = "", savedPincode = "", minOrder = 300000, history = [], payInfo = null, outstanding = 0, tiers = [], guest = false }: {
-  products: P[]; hasMore?: boolean; customerName: string; customerPhone?: string; savedAddress?: string; savedPincode?: string; minOrder?: number; history?: Hist[]; payInfo?: PayInfo | null; outstanding?: number; tiers?: WholesaleTier[];
+export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets = [], customerName, customerPhone = "", savedAddress = "", savedPincode = "", minOrder = 300000, history = [], payInfo = null, outstanding = 0, tiers = [], guest = false }: {
+  products: P[]; hasMore?: boolean; facets?: Facet[]; customerName: string; customerPhone?: string; savedAddress?: string; savedPincode?: string; minOrder?: number; history?: Hist[]; payInfo?: PayInfo | null; outstanding?: number; tiers?: WholesaleTier[];
   /** Browsing without a dealer account: designs + rates are visible, ordering is not. */
   guest?: boolean;
 }) {
   const [extra, setExtra] = useState<P[]>([]);
+  const [remote, setRemote] = useState<P[] | null>(null);
   const [moreLeft, setMore] = useState(hasMore0);
   const [nextOffset, setNextOffset] = useState(TRADE_PAGE);
   const [loadingMore, setLoadingMore] = useState(false);
-  const catalog = useMemo(() => [...products, ...extra], [products, extra]);
+  const [filterBusy, setFilterBusy] = useState(false);
+  const catalog = useMemo(() => remote ?? [...products, ...extra], [remote, products, extra]);
+  const seenRef = useRef<Map<string, P>>(new Map());
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
   const [colour, setColour] = useState("all");
@@ -77,7 +92,12 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, customer
     else setRfqErr(res.error ?? "Could not send your request.");
   }
 
-  const bySku = useMemo(() => new Map(catalog.map((p) => [p.sku.toUpperCase(), p])), [catalog]);
+  const bySku = useMemo(() => {
+    const m = seenRef.current;
+    for (const p of catalog) m.set(p.sku.toUpperCase(), p);
+    for (const p of products) m.set(p.sku.toUpperCase(), p);
+    return new Map(m);
+  }, [catalog, products]);
 
   // RECOVERY: a dealer who tapped a shared wholesale cart-recovery link arrives here with their items
   // stashed in localStorage by RecoverCartView. Restore them into the cart and open the review step so
@@ -99,11 +119,53 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, customer
       if (Object.keys(next).length) { setQty(next); setReviewing(true); }
     } catch { /* ignore — recovery is best-effort */ }
   }, [bySku]);
-  const categories = useMemo(() => Array.from(new Set(catalog.map((p) => p.category).filter(Boolean))).sort(), [catalog]);
+  const categories = useMemo(() => {
+    const names = facets.map((f) => f.name).filter(Boolean);
+    if (names.length) return [...new Set(names)].sort();
+    return Array.from(new Set(catalog.map((p) => p.category).filter(Boolean))).sort();
+  }, [facets, catalog]);
   const [sub, setSub] = useState("all");
   const [styleF, setStyleF] = useState("all");
-  const subs = useMemo(() => Array.from(new Set(catalog.filter((p) => cat === "all" || p.category === cat).map((p) => p.sub).filter((x): x is string => !!x))).sort(), [catalog, cat]);
-  const stylesL = useMemo(() => Array.from(new Set(catalog.filter((p) => cat === "all" || p.category === cat).map((p) => p.style).filter((x): x is string => !!x))).sort(), [catalog, cat]);
+  const facet = cat === "all" ? null : facets.find((f) => f.name === cat) ?? null;
+  const subs = useMemo(() => {
+    const names = new Set<string>(facet?.subs ?? []);
+    for (const p of catalog) {
+      if ((cat === "all" || p.category === cat) && p.sub) names.add(p.sub);
+    }
+    return [...names].sort();
+  }, [catalog, cat, facet]);
+  const stylesL = useMemo(() => {
+    const names = new Set<string>(facet?.styles ?? []);
+    for (const p of catalog) {
+      if ((cat === "all" || p.category === cat) && p.style) names.add(p.style);
+    }
+    return [...names].sort();
+  }, [catalog, cat, facet]);
+  const hasServerFilter = cat !== "all" || sub !== "all" || styleF !== "all" || q.trim().length > 0;
+  const skipFilterFetch = useRef(true);
+  useEffect(() => {
+    if (skipFilterFetch.current) { skipFilterFetch.current = false; return; }
+    const filter = sliceFilterOf(cat, sub, styleF, q);
+    const t = setTimeout(async () => {
+      if (!hasServerFilter) {
+        setRemote(null);
+        setMore(hasMore0);
+        setNextOffset(TRADE_PAGE);
+        return;
+      }
+      setFilterBusy(true);
+      try {
+        const res = await loadTradeSliceAction(0, filter);
+        setRemote(res.list);
+        setExtra([]);
+        setMore(res.hasMore);
+        setNextOffset(TRADE_PAGE);
+      } finally {
+        setFilterBusy(false);
+      }
+    }, 280);
+    return () => clearTimeout(t);
+  }, [cat, sub, styleF, q, hasMore0, hasServerFilter]);
   const colours = useMemo(() => Array.from(new Set(catalog.map((p) => p.colour).filter((c): c is string => !!c))).sort(), [catalog]);
   // Colour of a design that the dealer has picked in its dropdown (pid -> chosen variant SKU).
   const [sel, setSel] = useState<Record<string, string>>({});
@@ -119,24 +181,24 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, customer
       g.variants.push(p);
     }
     let arr = Array.from(byPid.values()).filter((g) =>
-      (cat === "all" || g.category === cat) &&
-      (sub === "all" || g.sub === sub) &&
-      (styleF === "all" || g.style === styleF) &&
+      (remote != null || cat === "all" || g.category === cat) &&
+      (remote != null || sub === "all" || g.sub === sub) &&
+      (remote != null || styleF === "all" || g.style === styleF) &&
+      (remote != null || !s || (g.name + " " + g.category + " " + g.variants.map((v) => v.sku).join(" ")).toLowerCase().includes(s)) &&
       (colour === "all" || g.variants.some((v) => (v.colour ?? "").toLowerCase() === colour.toLowerCase())) &&
       // Price bracket: a design qualifies if ANY of its colours falls inside the band.
       (bracket === "all" || (() => {
         const [lo, hi] = bracket.split("-").map(Number);
         return g.variants.some((v) => v.price >= lo && (hi === 0 || v.price < hi));
       })()) &&
-      (!inStock || g.variants.some((v) => v.qty > 0)) &&
-      (!s || (g.name + " " + g.category + " " + g.variants.map((v) => v.sku).join(" ")).toLowerCase().includes(s)));
+      (!inStock || g.variants.some((v) => v.qty > 0)));
     const lead = (g: Grp) => g.variants[0]?.price ?? 0;
     const leadMargin = (g: Grp) => { const v = g.variants[0]; return v ? v.mrp - v.price : 0; };
     if (sort === "price_asc") arr.sort((a, b) => lead(a) - lead(b));
     else if (sort === "price_desc") arr.sort((a, b) => lead(b) - lead(a));
     else if (sort === "margin") arr.sort((a, b) => leadMargin(b) - leadMargin(a));
     return arr;
-  }, [q, cat, sub, styleF, colour, bracket, inStock, sort, catalog]);
+  }, [q, cat, sub, styleF, colour, bracket, inStock, sort, catalog, remote]);
 
   // PERFORMANCE: paint the designs a page at a time. Filters/search still run over the FULL catalogue,
   // but the browser only renders a slice — so the panel opens fast even with 1,200+ designs instead of
@@ -398,7 +460,7 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, customer
         </div>
       )}
 
-      {tab === "order" && catalog.length === 0 && (
+      {tab === "order" && products.length === 0 && catalog.length === 0 && !filterBusy && (
         <div className="bg-white rounded-2xl border border-sand shadow-card p-8 text-center mb-6">
           <p className="font-medium text-ink">Designs didn’t load this time</p>
           <p className="text-sm text-muted mt-1">The wholesale catalogue is still here — reload to see every piece.</p>
@@ -452,6 +514,7 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, customer
                 {stylesL.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             )}
+            {filterBusy && <span className="text-xs text-muted px-2">Updating list…</span>}
             {colours.length > 0 && (
               <select value={colour} onChange={(e) => setColour(e.target.value)} className="rounded-full border border-sand px-4 py-2 text-sm bg-white outline-none focus:border-emerald">
                 <option value="all">All colours</option>
@@ -511,7 +574,7 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, customer
                 {groups.length === 0 && (
                   <tr><td colSpan={7} className="p-6 text-center text-muted">
                     {catalog.length === 0
-                      ? <>Catalogue is refreshing. <button type="button" className="text-emerald nav-link" onClick={() => location.reload()}>Retry</button></>
+                      ? (filterBusy ? "Loading matching designs…" : hasServerFilter ? "No designs match these filters." : <>Catalogue is refreshing. <button type="button" className="text-emerald nav-link" onClick={() => location.reload()}>Retry</button></>)
                       : "No designs match these filters."}
                   </td></tr>
                 )}
@@ -580,7 +643,7 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, customer
             {groups.length === 0 && (
               <p className="text-sm text-muted text-center py-6">
                 {catalog.length === 0
-                  ? <>Catalogue is refreshing. <button type="button" className="text-emerald" onClick={() => location.reload()}>Retry</button></>
+                  ? (filterBusy ? "Loading matching designs…" : hasServerFilter ? "No designs match these filters." : <>Catalogue is refreshing. <button type="button" className="text-emerald" onClick={() => location.reload()}>Retry</button></>)
                   : "No designs match these filters."}
               </p>
             )}
@@ -639,11 +702,13 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, customer
           )}
           {moreLeft && (
             <div className="text-center mt-3">
-              <button disabled={loadingMore} onClick={async () => {
+              <button disabled={loadingMore || filterBusy} onClick={async () => {
                 setLoadingMore(true);
                 try {
-                  const res = await loadTradeSliceAction(nextOffset);
-                  setExtra((e) => [...e, ...res.list]);
+                  const filter = sliceFilterOf(cat, sub, styleF, q);
+                  const res = await loadTradeSliceAction(nextOffset, filter);
+                  if (remote != null) setRemote((e) => [...(e ?? []), ...res.list]);
+                  else setExtra((e) => [...e, ...res.list]);
                   setNextOffset((o) => o + TRADE_PAGE);
                   setMore(res.hasMore);
                 } finally {
