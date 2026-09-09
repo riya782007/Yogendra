@@ -1,4 +1,4 @@
-export const revalidate = 60;
+export const dynamic = "force-dynamic";
 import { getShopSlice } from "@/lib/catalogSlice";
 import { ShopProductGrid } from "@/components/site/ShopProductGrid";
 
