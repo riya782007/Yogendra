@@ -18,6 +18,8 @@ import { Back } from "@/components/site/Back";
 import { Reveal } from "@/components/site/Reveal";
 import { ProductCard } from "@/components/site/ProductCard";
 
+// Next.js type-checks a page's props and allows ONLY params/searchParams, so `preview` cannot be
+// declared here. It is read off the props object at runtime instead — see ProductPage below.
 type Params = { params: { category: string; sku: string } };
 
 // Cache the product page's data per-SKU (3 min). getRecommendations scans the catalogue, so rendering
@@ -47,7 +49,12 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   return { title: c.seo.metaTitle, description: c.seo.metaDescription, keywords: c.seo.keywords, openGraph: { title: c.seo.metaTitle, description: c.seo.metaDescription } };
 }
 
-export default async function ProductPage({ params }: Params) {
+export default async function ProductPage(props: Params) {
+  const { params } = props;
+  // Set ONLY by the admin preview route (app/(admin)/admin/preview/[sku]/page.tsx), which checks
+  // the staff session first and passes it in code. Next.js never puts `preview` on a page's props,
+  // so a customer typing this URL can never turn it on.
+  const preview = (props as { preview?: boolean }).preview === true;
   const data = await loadProductPage(params.sku);
   if (!data) notFound();
   const { p, formula, reviews, related } = data;
@@ -55,8 +62,14 @@ export default async function ProductPage({ params }: Params) {
   const availableQty = variants.length
     ? variants.reduce((total, variant) => total + Math.max(0, variant.qty ?? 0), 0)
     : Math.max(0, (p as any).qty ?? 0);
+  const publiclyVisible = (p as any).status === "published" && availableQty > 0;
   // Direct public URLs must not reveal unpublished or unavailable products.
-  if ((p as any).status !== "published" || availableQty <= 0) notFound();
+  //
+  // `preview` is set ONLY by the admin-side /admin/preview/<sku> route, which checks the staff
+  // session before rendering. Next.js never passes it, so a customer hitting this URL always gets
+  // the 404 above. Without this the owner's "View ↗" button in the catalogue 404'd on every draft
+  // and every sold-out design — the two cases he most needs to look at.
+  if (!preview && !publiclyVisible) notFound();
 
   // Category should always be present (FK), but never let a missing relation 500 the page.
   const catSlug = p.category?.slug ?? "all";
@@ -120,6 +133,18 @@ export default async function ProductPage({ params }: Params) {
   return (
     <div className="max-w-6xl mx-auto px-5 py-6">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      {preview && !publiclyVisible && (
+        // Staff-only preview of a page customers cannot reach yet. Says exactly WHY it is hidden,
+        // so the owner can see the design and know what to change to make it live.
+        <div className="mb-5 rounded-xl border border-gold/50 bg-gold/10 px-4 py-3">
+          <p className="text-sm font-medium text-ink">Preview — customers cannot see this page yet.</p>
+          <p className="text-xs text-muted mt-0.5">
+            {(p as any).status !== "published"
+              ? `This design is a ${(p as any).status || "draft"}. Publish it to put this page on the store.`
+              : "Every colour is out of stock. Add stock to put this page back on the store."}
+          </p>
+        </div>
+      )}
       <div className="flex items-center justify-between gap-4 mb-5">
         <Back label="Back" />
         <nav className="text-xs text-muted">

@@ -124,7 +124,15 @@ export function CatalogueRow({
                 {canEdit && <Link href={editHref} className="px-3 py-1.5 rounded-full bg-ink/5 text-ink text-xs font-medium hover:bg-ink/10">✎ Edit</Link>}
                 {canEdit && <MoreDesignsToggle sku={p.sku} initial={!!p.moreDesigns} />}
                 <Link href={`/admin/product/${p.sku}`} className="px-3 py-1.5 rounded-full bg-ink/5 text-ink text-xs hover:bg-ink/10">360°</Link>
-                <Link href={storeUrl(`/shop/${p.categorySlug}/${p.sku}`)} target="_blank" className="px-3 py-1.5 rounded-full bg-emerald-mist text-emerald-dark text-xs hover:bg-emerald-mist/70">View ↗</Link>
+                {/* The public page 404s a draft or a fully sold-out design (by design — customers
+                    must not reach either). Those go to the staff preview instead, which renders the
+                    same page with a banner saying why it is hidden. Published + in stock keeps
+                    opening the real customer URL, unchanged. */}
+                {published && p.qty > 0 ? (
+                  <Link href={storeUrl(`/shop/${p.categorySlug}/${p.sku}`)} target="_blank" className="px-3 py-1.5 rounded-full bg-emerald-mist text-emerald-dark text-xs hover:bg-emerald-mist/70">View ↗</Link>
+                ) : (
+                  <Link href={`/admin/preview/${encodeURIComponent(p.sku)}`} target="_blank" className="px-3 py-1.5 rounded-full bg-gold/15 text-gold-dark text-xs hover:bg-gold/25" title={published ? "Out of stock — not on the store right now" : "Not published yet"}>Preview ↗</Link>
+                )}
                 {canAi && (
                   <form action={genContent}>
                     <input type="hidden" name="sku" value={p.sku} />
