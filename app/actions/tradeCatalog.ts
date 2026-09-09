@@ -1,10 +1,14 @@
 "use server";
-import { getTradeSlice } from "@/lib/catalogSlice";
+import { TRADE_PAGE_SIZE, getTradeSlice, getTradeSliceCached } from "@/lib/catalogSlice";
 
 export async function loadTradeSliceAction(offset: number) {
   try {
-    return await getTradeSlice(Math.max(0, offset), 48);
+    return await getTradeSliceCached(Math.max(0, offset), TRADE_PAGE_SIZE);
   } catch {
-    return { list: [] as Awaited<ReturnType<typeof getTradeSlice>>["list"], hasMore: false };
+    try {
+      return await getTradeSlice(Math.max(0, offset), TRADE_PAGE_SIZE);
+    } catch {
+      return { list: [] as Awaited<ReturnType<typeof getTradeSlice>>["list"], hasMore: false };
+    }
   }
 }

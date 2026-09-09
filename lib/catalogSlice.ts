@@ -1,8 +1,10 @@
 /**
- * Full published catalogue for shop + trade. Pages through every 1000-row PostgREST
- * window so the entire collection is returned (not a 48-row first paint).
+ * Catalogue reads for shop + trade. First paint loads ONE page of products plus
+ * images/variants for those ids only — dumping the full 4k+ SKU set times out on
+ * Vercel and leaves trade.blythediva.com on a blank/black screen.
  */
 import "server-only";
+import { unstable_cache } from "next/cache";
 import { supabaseReadClients, supabaseServer } from "./supabase/server";
 import { categoryRef } from "./shopCatalog";
 import { GST_RATE } from "./business";
@@ -237,13 +239,26 @@ export async function getCategoryCovers(cats: { id: string; slug: string }[]): P
   return out;
 }
 
+async function lookupNames(table: "subcategories" | "styles", ids: string[]): Promise<[string, string][]> {
+  if (!ids.length) return [];
+  for (const sb of supabaseReadClients()) {
+    const { data } = await sb.from(table).select("id,name").in("id", ids);
+    const rows = (data as any[]) ?? [];
+    if (rows.length) return rows.map((s) => [s.id as string, s.name as string]);
+  }
+  return [];
+}
+
 export type TradeRow = {
   pid: string; sku: string; name: string; category: string; sub?: string | null; style?: string | null;
   qty: number; price: number; mrp: number; image: string | null; images?: string[]; colour?: string | null;
   moreDesigns?: boolean; moreDesignsNote?: string | null;
 };
 
-export async function getTradeSlice(offset = 0, limit?: number): Promise<{ list: TradeRow[]; hasMore: boolean }> {
+/** Designs fetched on the wholesale portal's first paint (and each "Load more"). */
+export const TRADE_PAGE_SIZE = 48;
+
+export async function getTradeSlice(offset = 0, limit: number = TRADE_PAGE_SIZE): Promise<{ list: TradeRow[]; hasMore: boolean }> {
   const formula = await formulaOf();
   const gstInc = (paise: number) => Math.round(paise * (1 + GST_RATE / 100));
   const order = { col: "created_at", asc: false };
@@ -251,29 +266,22 @@ export async function getTradeSlice(offset = 0, limit?: number): Promise<{ list:
     ? await publishedPage({ from: offset, to: offset + limit - 1, order, retail: false })
     : await publishedAll({ order, retail: false });
   const ids = rows.map((p) => p.id);
-  const imgBy = await coversFor(ids);
-  const varsBy = new Map<string, any[]>();
-  if (ids.length) {
-    const vrows = await byIds(ids, (sb, chunk) => sb.from("variants").select("product_id,sku,color,qty,image_paths").gt("qty", 0).in("product_id", chunk));
-    for (const v of vrows as any[]) {
-      const a = varsBy.get(v.product_id) ?? []; a.push(v); varsBy.set(v.product_id, a);
-    }
-  }
   const subIds = [...new Set(rows.map((p) => p.subcategory_id).filter(Boolean))];
   const styleIds = [...new Set(rows.map((p) => p.style_id).filter(Boolean))];
-  const subName = new Map<string, string>();
-  const styleName = new Map<string, string>();
-  for (const sb of supabaseReadClients()) {
-    if (subIds.length && !subName.size) {
-      const { data } = await sb.from("subcategories").select("id,name").in("id", subIds);
-      for (const s of ((data as any[]) ?? [])) subName.set(s.id, s.name);
-    }
-    if (styleIds.length && !styleName.size) {
-      const { data } = await sb.from("styles").select("id,name").in("id", styleIds);
-      for (const s of ((data as any[]) ?? [])) styleName.set(s.id, s.name);
-    }
-    if ((subName.size || !subIds.length) && (styleName.size || !styleIds.length)) break;
+  const [imgBy, vrows, subPairs, stylePairs] = await Promise.all([
+    coversFor(ids),
+    ids.length
+      ? byIds(ids, (sb, chunk) => sb.from("variants").select("product_id,sku,color,qty,image_paths").gt("qty", 0).in("product_id", chunk))
+      : Promise.resolve([] as any[]),
+    lookupNames("subcategories", subIds),
+    lookupNames("styles", styleIds),
+  ]);
+  const varsBy = new Map<string, any[]>();
+  for (const v of vrows as any[]) {
+    const a = varsBy.get(v.product_id) ?? []; a.push(v); varsBy.set(v.product_id, a);
   }
+  const subName = new Map(subPairs);
+  const styleName = new Map(stylePairs);
   const list: TradeRow[] = [];
   for (const p of rows) {
     const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));
@@ -303,4 +311,21 @@ export async function getTradeSlice(offset = 0, limit?: number): Promise<{ list:
     }
   }
   return { list, hasMore: limit != null && limit > 0 && rows.length >= limit };
+}
+
+/** Cached first-paint / load-more windows. Empty first pages are not stored (avoids a blank portal). */
+export async function getTradeSliceCached(offset = 0, limit: number = TRADE_PAGE_SIZE) {
+  try {
+    return await unstable_cache(
+      async () => {
+        const slice = await getTradeSlice(offset, limit);
+        if (offset === 0 && slice.list.length === 0) throw new Error("trade slice empty — not caching");
+        return slice;
+      },
+      ["trade-slice-v1", String(offset), String(limit)],
+      { tags: ["storefront"], revalidate: 120 },
+    )();
+  } catch {
+    return getTradeSlice(offset, limit);
+  }
 }

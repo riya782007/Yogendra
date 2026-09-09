@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { captureTradeVisitorAction } from "@/app/actions/leads";
+import { shouldOpenTradeLead } from "@/lib/tradeLead";
 
 const K_DONE = "bd_trade_lead_done";
 const K_VID = "bd_trade_visitor_id";
@@ -28,13 +29,13 @@ export function TradeLeadPopup({ totalDesigns = 0 }: { totalDesigns?: number }) 
   const fired = useRef(false);
 
   useEffect(() => {
-    // MANDATORY gate. The owner kept getting "Guest" carts with no contact because the old build only
-    // popped this after ~50s of reading / 12 designs scrolled / an exit-intent — so a dealer who landed
-    // and went straight to the cart never saw it. Now it shows AT ONCE, on load, before anything can be
-    // added to the cart. The only skip is a returning visitor who already submitted their details.
+    // MANDATORY gate once designs are on screen. Do not overlay a failed/empty load — that dark
+    // backdrop on a blank page is the "black empty screen" dealers reported.
     fired.current = true;
     reason.current = "mandatory";
-    try { if (localStorage.getItem(K_DONE) === "1") return; } catch { /* private mode — show it */ }
+    let already = false;
+    try { already = localStorage.getItem(K_DONE) === "1"; } catch { /* private mode — treat as not submitted */ }
+    if (!shouldOpenTradeLead(totalDesigns, already)) { setShow(false); return; }
     setShow(true);
   }, [totalDesigns]);
 
@@ -94,8 +95,14 @@ export function TradeLeadPopup({ totalDesigns = 0 }: { totalDesigns?: number }) 
   // submit/surf nai hogi"). No × and no Esc — the dealer must enter Name + Phone + City and Submit to
   // continue browsing. The backdrop covers the page so nothing behind it is clickable until they submit.
   return (
-    <div className="fixed inset-0 z-[60] bg-ink/60 backdrop-blur-sm grid place-items-center p-4">
-      <div className="rounded-2xl bg-white shadow-luxe border border-gold/50 p-5 w-full max-w-[380px] relative animate-fadeIn">
+    <div
+      className="fixed inset-0 z-[60] bg-ink/60 backdrop-blur-sm grid place-items-center p-4"
+      style={{ background: "rgba(36,27,46,0.55)", display: "grid", placeItems: "center", padding: 16 }}
+    >
+      <div
+        className="rounded-2xl bg-white shadow-luxe border border-gold/50 p-5 w-full max-w-[380px] relative animate-fadeIn"
+        style={{ background: "#fff", borderRadius: 16, padding: 20, width: "100%", maxWidth: 380 }}
+      >
         {inner}
       </div>
     </div>
