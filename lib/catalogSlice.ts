@@ -16,9 +16,9 @@ function isStorefrontImage(kind?: string | null): boolean {
 }
 
 const COLS = [
-  "id,category_id,sku,name,type,base_wholesale,qty,status,created_at,wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,thumbnail_path,subcategory_id,style_id,more_designs,more_designs_note,default_variant_id,category:categories(id,name,slug)",
-  "id,category_id,sku,name,type,base_wholesale,qty,status,created_at,wholesale_only,retail_only,thumbnail_path,category:categories(id,name,slug)",
-  "id,category_id,sku,name,base_wholesale,qty,status,created_at,wholesale_only,retail_only,thumbnail_path",
+  "id,category_id,sku,name,type,base_wholesale,qty,status,created_at,updated_at,wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,thumbnail_path,subcategory_id,style_id,more_designs,more_designs_note,default_variant_id,category:categories(id,name,slug)",
+  "id,category_id,sku,name,type,base_wholesale,qty,status,created_at,updated_at,wholesale_only,retail_only,thumbnail_path,category:categories(id,name,slug)",
+  "id,category_id,sku,name,base_wholesale,qty,status,created_at,updated_at,wholesale_only,retail_only,thumbnail_path",
   "id,sku,name,qty,status,base_wholesale,thumbnail_path,category_id",
   "id,sku,name,qty,status,base_wholesale",
 ];
@@ -50,11 +50,21 @@ function keepRow(p: any, retail: boolean) {
 async function runRange(
   sb: ReturnType<typeof supabaseServer>,
   cols: string,
-  opts: { categoryId?: string; order: { col: string; asc: boolean }; publishedOnly: boolean; from: number; to: number },
+  opts: {
+    categoryId?: string; subcategoryId?: string; styleId?: string; q?: string;
+    order: { col: string; asc: boolean }; publishedOnly: boolean; from: number; to: number;
+  },
 ) {
   let q: any = sb.from("products").select(cols);
   if (opts.publishedOnly) q = q.eq("status", "published");
   if (opts.categoryId) q = q.eq("category_id", opts.categoryId);
+  if (opts.subcategoryId) q = q.eq("subcategory_id", opts.subcategoryId);
+  if (opts.styleId) q = q.eq("style_id", opts.styleId);
+  const needle = (opts.q ?? "").trim().replace(/[%_,]/g, " ").replace(/\s+/g, " ").trim();
+  if (needle) {
+    const t = needle.replace(/"/g, "");
+    q = q.or(`name.ilike.%${t}%,sku.ilike.%${t}%`);
+  }
   return q.order(opts.order.col, { ascending: opts.order.asc }).range(opts.from, opts.to);
 }
 
@@ -64,7 +74,7 @@ async function publishedAll(opts: {
   order: { col: string; asc: boolean };
   retail: boolean;
 }): Promise<any[]> {
-  const orderTries = [opts.order, { col: "sku", asc: true }];
+  const orderTries = [opts.order, { col: "created_at", asc: false }];
   for (const sb of supabaseReadClients()) {
     for (const cols of COLS) {
       for (const ord of orderTries) {
@@ -91,11 +101,11 @@ async function publishedAll(opts: {
 }
 
 async function publishedPage(opts: {
-  from: number; to: number; categoryId?: string;
+  from: number; to: number; categoryId?: string; subcategoryId?: string; styleId?: string; q?: string;
   order: { col: string; asc: boolean };
   retail: boolean;
 }): Promise<any[]> {
-  const orderTries = [opts.order, { col: "sku", asc: true }];
+  const orderTries = [opts.order, { col: "created_at", asc: false }];
   for (const sb of supabaseReadClients()) {
     for (const cols of COLS) {
       for (const ord of orderTries) {
@@ -249,6 +259,74 @@ async function lookupNames(table: "subcategories" | "styles", ids: string[]): Pr
   return [];
 }
 
+async function lookupByName(table: "categories" | "subcategories" | "styles", name: string, categoryId?: string): Promise<string | undefined> {
+  const want = name.trim();
+  if (!want || want === "all") return undefined;
+  const cols = table === "categories" ? "id,name" : "id,name,category_id";
+  const pick = (rows: any[]) => {
+    const exact = rows.find((r) => String(r.name ?? "").trim().toLowerCase() === want.toLowerCase());
+    return (exact?.id ?? rows[0]?.id) as string | undefined;
+  };
+  for (const sb of supabaseReadClients()) {
+    const scoped = categoryId && table !== "categories";
+    if (scoped) {
+      const { data } = await sb.from(table).select(cols).eq("category_id", categoryId).ilike("name", want).limit(8);
+      const id = pick((data as any[]) ?? []);
+      if (id) return id;
+    }
+    const { data } = await sb.from(table).select(cols).ilike("name", want).limit(8);
+    const id = pick((data as any[]) ?? []);
+    if (id) return id;
+  }
+  return undefined;
+}
+
+export type TradeFilter = { category?: string; sub?: string; style?: string; q?: string };
+export type TradeFacet = { name: string; subs: string[]; styles: string[] };
+
+/** Full category / type / style names for trade filters — not derived from the first 48 designs. */
+export async function getTradeFacets(): Promise<TradeFacet[]> {
+  let cats: { id: string; name: string }[] = [];
+  let subs: { category_id: string; name: string }[] = [];
+  let styles: { category_id: string | null; name: string }[] = [];
+  for (const sb of supabaseReadClients()) {
+    const { data, error } = await sb.from("categories").select("id,name").order("name");
+    if (!error && data?.length) { cats = data as any[]; break; }
+  }
+  for (const sb of supabaseReadClients()) {
+    const { data, error } = await sb.from("subcategories").select("category_id,name").order("name");
+    if (!error) { subs = (data as any[]) ?? []; break; }
+  }
+  for (const sb of supabaseReadClients()) {
+    const { data, error } = await sb.from("styles").select("category_id,name").order("name");
+    if (!error) { styles = (data as any[]) ?? []; break; }
+  }
+  return cats
+    .filter((c) => (c.name ?? "").trim().toLowerCase() !== "uncategorized")
+    .map((c) => ({
+      name: c.name,
+      subs: [...new Set(subs.filter((s) => s.category_id === c.id).map((s) => s.name).filter(Boolean))],
+      styles: [...new Set(styles.filter((s) => s.category_id === c.id).map((s) => s.name).filter(Boolean))],
+    }))
+    .filter((c) => c.name);
+}
+
+export async function getTradeFacetsCached(): Promise<TradeFacet[]> {
+  try {
+    return await unstable_cache(
+      async () => {
+        const facets = await getTradeFacets();
+        if (!facets.length) throw new Error("trade facets empty — not caching");
+        return facets;
+      },
+      ["trade-facets-v1"],
+      { tags: ["storefront"], revalidate: 300 },
+    )();
+  } catch {
+    return getTradeFacets();
+  }
+}
+
 export type TradeRow = {
   pid: string; sku: string; name: string; category: string; sub?: string | null; style?: string | null;
   qty: number; price: number; mrp: number; image: string | null; images?: string[]; colour?: string | null;
@@ -258,13 +336,25 @@ export type TradeRow = {
 /** Designs fetched on the wholesale portal's first paint (and each "Load more"). */
 export const TRADE_PAGE_SIZE = 48;
 
-export async function getTradeSlice(offset = 0, limit: number = TRADE_PAGE_SIZE): Promise<{ list: TradeRow[]; hasMore: boolean }> {
+export async function getTradeSlice(offset = 0, limit: number = TRADE_PAGE_SIZE, filter: TradeFilter = {}): Promise<{ list: TradeRow[]; hasMore: boolean }> {
   const formula = await formulaOf();
   const gstInc = (paise: number) => Math.round(paise * (1 + GST_RATE / 100));
-  const order = { col: "created_at", asc: false };
+  // Dealers expect the last-edited design at the top — created_at hid updates after paging.
+  const order = { col: "updated_at", asc: false };
+  const wantCat = (filter.category ?? "").trim();
+  const wantSub = (filter.sub ?? "").trim();
+  const wantStyle = (filter.style ?? "").trim();
+  const categoryId = await lookupByName("categories", wantCat);
+  if (wantCat && wantCat !== "all" && !categoryId) return { list: [], hasMore: false };
+  const subcategoryId = await lookupByName("subcategories", wantSub, categoryId);
+  if (wantSub && wantSub !== "all" && !subcategoryId) return { list: [], hasMore: false };
+  const styleId = await lookupByName("styles", wantStyle, categoryId);
+  if (wantStyle && wantStyle !== "all" && !styleId) return { list: [], hasMore: false };
+  const q = (filter.q ?? "").trim() || undefined;
+  const pageOpts = { categoryId, subcategoryId, styleId, q, order, retail: false as const };
   const rows = (limit != null && limit > 0)
-    ? await publishedPage({ from: offset, to: offset + limit - 1, order, retail: false })
-    : await publishedAll({ order, retail: false });
+    ? await publishedPage({ from: offset, to: offset + limit - 1, ...pageOpts })
+    : await publishedAll({ categoryId, order, retail: false });
   const ids = rows.map((p) => p.id);
   const subIds = [...new Set(rows.map((p) => p.subcategory_id).filter(Boolean))];
   const styleIds = [...new Set(rows.map((p) => p.style_id).filter(Boolean))];
@@ -313,19 +403,25 @@ export async function getTradeSlice(offset = 0, limit: number = TRADE_PAGE_SIZE)
   return { list, hasMore: limit != null && limit > 0 && rows.length >= limit };
 }
 
-/** Cached first-paint / load-more windows. Empty first pages are not stored (avoids a blank portal). */
-export async function getTradeSliceCached(offset = 0, limit: number = TRADE_PAGE_SIZE) {
+/** Cached first-paint / load-more windows. Empty unfiltered first pages are not stored. */
+export async function getTradeSliceCached(offset = 0, limit: number = TRADE_PAGE_SIZE, filter: TradeFilter = {}) {
+  const hasFilter = !!(filter.category && filter.category !== "all")
+    || !!(filter.sub && filter.sub !== "all")
+    || !!(filter.style && filter.style !== "all")
+    || !!(filter.q && filter.q.trim());
   try {
     return await unstable_cache(
       async () => {
-        const slice = await getTradeSlice(offset, limit);
-        if (offset === 0 && slice.list.length === 0) throw new Error("trade slice empty — not caching");
+        const slice = await getTradeSlice(offset, limit, filter);
+        if (offset === 0 && !hasFilter && slice.list.length === 0) throw new Error("trade slice empty — not caching");
         return slice;
       },
-      ["trade-slice-v1", String(offset), String(limit)],
+      ["trade-slice-v3", String(offset), String(limit), JSON.stringify({
+        c: filter.category ?? "", s: filter.sub ?? "", t: filter.style ?? "", q: (filter.q ?? "").trim(),
+      })],
       { tags: ["storefront"], revalidate: 120 },
     )();
   } catch {
-    return getTradeSlice(offset, limit);
+    return getTradeSlice(offset, limit, filter);
   }
 }
