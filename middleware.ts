@@ -81,9 +81,27 @@ export function middleware(req: NextRequest) {
   if (host === ADMIN_HOST && path.startsWith("/trade")) {
     const url = req.nextUrl.clone(); url.pathname = "/admin/dashboard"; url.search = ""; return NextResponse.redirect(url);
   }
+  // ---- CDN caching for the public storefront ---------------------------------------------
+  // These pages are byte-identical for every signed-out visitor, and they are ALREADY kept fresh by
+  // revalidateTag("storefront") — fired both by the server actions and by the Postgres stock trigger
+  // via /api/revalidate. Rendering them per request meant every customer waited on a chain of Supabase
+  // round trips from us-east-1 to ap-southeast-2 (the 12s /shop renders that were timing the function out).
+  // Handing the response to Netlify's CDN lets a shopper in Delhi get HTML from a nearby node, while
+  // stale-while-revalidate refreshes it in the background so nobody ever pays for the cold render.
+  // Anyone carrying an admin or dealer cookie is excluded, so personalised views are never cached.
+  const CACHEABLE_STOREFRONT = /^\/$|^\/(?:shop|catalog)(?:\/|$)/;
+  const anonymous = !req.cookies.get("bd_session")?.value && !req.cookies.get("bd_wholesale")?.value;
+  const withCdnCache = (res: NextResponse) => {
+    if (anonymous && CACHEABLE_STOREFRONT.test(path)) {
+      res.headers.set("Netlify-CDN-Cache-Control", "public, s-maxage=300, stale-while-revalidate=86400, durable");
+      res.headers.set("Netlify-Cache-Tag", "storefront");
+    }
+    return res;
+  };
+
   const pass = () => {
-    if (!rewritten) return NextResponse.next();
-    const u = req.nextUrl.clone(); u.pathname = path; return NextResponse.rewrite(u);
+    if (!rewritten) return withCdnCache(NextResponse.next());
+    const u = req.nextUrl.clone(); u.pathname = path; return withCdnCache(NextResponse.rewrite(u));
   };
 
   // ---- TRADE (wholesale) portal ----------------------------------------------------------
