@@ -31,7 +31,7 @@ export async function holdEstimateAction(formData: FormData) {
 
 /** Release leftover reserve rows for a quote that was billed, denied, or deleted. Idempotent. */
 export async function releaseGhostEstimateHoldAction(formData: FormData) {
-  if (!(await requirePerm("estimates.bill")) && !(await requirePerm("estimates.deny"))) return;
+  if (!(await requirePerm("estimates.bill"))) return;
   const id = String(formData.get("id") ?? "").trim();
   if (!id) return;
   const sb = supabaseServer();
