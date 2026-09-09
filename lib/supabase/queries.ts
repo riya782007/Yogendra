@@ -1986,7 +1986,7 @@ export async function getPromotionsAdmin() {
 
 /** Cached storefront (per-opts). Use on admin POS/estimate pages that don't need to-the-second freshness. */
 export const getStorefrontCached = (opts: { includeDrafts?: boolean; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean } = {}) =>
-  unstable_cache(() => getStorefront(opts), ["storefront-cached", JSON.stringify(opts)], { tags: ["storefront"], revalidate: 30 })();
+  unstable_cache(() => getStorefront(opts), ["storefront-cached", JSON.stringify(opts)], { tags: ["storefront"], revalidate: 300 })();
 
 /** ALL variant SKUs (colour + stock + price overrides) for the billing/estimate counters — 12k+ rows. */
 export const getBillingVariants = unstable_cache(async (): Promise<any[]> => {
