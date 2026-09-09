@@ -57,7 +57,9 @@ export async function createEstimateAction(input: { items: { sku: string; qty: n
 export async function convertEstimateAction(formData: FormData) {
   if (!(await requirePerm("estimates.bill"))) return;
   const id = String(formData.get("id"));
-  await supabaseServer().rpc("convert_estimate", { p_estimate_id: id });
+  const sb = supabaseServer();
+  await sb.rpc("release_estimate_hold", { p_estimate_id: id });
+  await sb.rpc("convert_estimate", { p_estimate_id: id });
   revalidatePath("/admin/estimates"); revalidatePath("/admin/dashboard");
 }
 
@@ -67,8 +69,9 @@ export async function billEstimateAction(formData: FormData) {
   const billType = String(formData.get("bill_type") ?? "gst") === "cash" ? "cash" : "gst";
   const allowOversell = String(formData.get("allow_oversell") ?? "") === "1";
   const sb = supabaseServer();
-  const { data: estRow } = await sb.from("estimates").select("status").eq("id", id).maybeSingle();
-  if ((estRow as any)?.status === "held") await sb.rpc("release_estimate_hold", { p_estimate_id: id });
+  // Always release any leftover reservation first (idempotent). Billing a quote that still had
+  // kind=reserve rows (even if status was not "held") used to leave stock short for the next convert.
+  await sb.rpc("release_estimate_hold", { p_estimate_id: id });
   const { data, error } = await sb.rpc("convert_estimate_v2", { p_estimate_id: id, p_bill_type: billType, p_allow_oversell: allowOversell });
   if (error) redirect(`/admin/estimate/${id}?billerror=${encodeURIComponent(error.message)}`);
   const orderId = (data as any)?.order_id;

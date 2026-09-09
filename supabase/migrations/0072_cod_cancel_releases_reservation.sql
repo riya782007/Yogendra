@@ -100,7 +100,8 @@ begin
     perform public.release_held_order_stock(r.id);
   end loop;
 
-  -- Deleted-order leftovers: reserve/release rows whose ref_id is neither an order nor an estimate.
+  -- Deleted quote/order leftovers: reserve/release rows whose ref_id is neither a live estimate
+  -- nor a live order (the owner lands on "This quote is not in the list").
   for r in
     select sa.ref_id as id
     from stock_adjustments sa
@@ -112,6 +113,18 @@ begin
     having (-sum(sa.delta)) > 0
   loop
     perform public.release_held_order_stock(r.id);
+  end loop;
+
+  -- Quotes that are no longer held (billed/denied/open) but still net a reserve.
+  for r in
+    select e.id
+    from estimates e
+    join stock_adjustments sa on sa.ref_id = e.id and sa.kind in ('reserve','release')
+    where e.status::text <> 'held'
+    group by e.id
+    having (-sum(sa.delta)) > 0
+  loop
+    perform public.release_estimate_hold(r.id);
   end loop;
 end $$;
 

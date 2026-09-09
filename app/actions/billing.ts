@@ -29,6 +29,7 @@ export {
 export {
   reopenEstimateAction,
   holdEstimateAction,
+  releaseGhostEstimateHoldAction,
   fulfillBackorderAction,
   confirmCodAction,
   cancelCodAction,

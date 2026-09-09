@@ -29,6 +29,20 @@ export async function holdEstimateAction(formData: FormData) {
   revalidatePath("/admin/estimates"); revalidatePath("/admin/stock-movements");
 }
 
+/** Release leftover reserve rows for a quote that was billed, denied, or deleted. Idempotent. */
+export async function releaseGhostEstimateHoldAction(formData: FormData) {
+  if (!(await requirePerm("estimates.bill")) && !(await requirePerm("estimates.deny"))) return;
+  const id = String(formData.get("id") ?? "").trim();
+  if (!id) return;
+  const sb = supabaseServer();
+  const { error } = await sb.rpc("release_estimate_hold", { p_estimate_id: id });
+  revalidatePath("/admin/estimates"); revalidatePath(`/admin/estimate/${id}`);
+  revalidatePath("/admin/catalogue"); revalidatePath("/admin/inventory"); revalidatePath("/admin/stock-movements");
+  if (!error) revalidateTag("storefront");
+  if (error) redirect(`/admin/estimate/${id}?billerror=${encodeURIComponent(error.message)}`);
+  redirect(`/admin/estimate/${id}?released=1`);
+}
+
 /** Convert a backorder into a fulfilled sale once stock has arrived. */
 export async function fulfillBackorderAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("billing.sell"))) return;

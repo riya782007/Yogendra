@@ -8,10 +8,11 @@ import { UpiAmountQr } from "@/components/admin/UpiAmountQr";
 import { BUSINESS, HSN_JEWELLERY, GST_RATE, gstSplit, gstSplitExclusive, stateCodeFromGstin, bankHasDetails, amountInWords } from "@/lib/business";
 import { requirePerm } from "@/lib/auth";
 import { EstimateEditor } from "@/components/admin/EstimateEditor";
+import { releaseGhostEstimateHoldAction } from "@/app/actions/billing";
 
 export const metadata = { title: "Estimate / Quotation" };
 
-export default async function EstimateDetailPage({ params, searchParams }: { params: { id: string }; searchParams?: { billerror?: string } }) {
+export default async function EstimateDetailPage({ params, searchParams }: { params: { id: string }; searchParams?: { billerror?: string; released?: string } }) {
   // When "Bill · GST/Cash" fails (e.g. a line is out of stock) billEstimateAction redirects back
   // here with ?billerror=… — surface it loudly instead of silently returning to the estimate, which
   // made a stock-blocked bill look like "nothing happened / it won't convert".
@@ -19,7 +20,7 @@ export default async function EstimateDetailPage({ params, searchParams }: { par
   const data = await getEstimate(params.id);
   if (!data) {
     const ghost = await getEstimateGhost(params.id);
-    return <MissingEstimatePage rawId={params.id} ghost={ghost} />;
+    return <MissingEstimatePage rawId={params.id} ghost={ghost} released={searchParams?.released === "1"} />;
   }
   const { estimate, items: rawItems } = data;
   // A–Z by SKU (owner: "estimate me save karne pe A-Z chahiye"). Sorting here means the saved estimate,
@@ -309,21 +310,30 @@ export default async function EstimateDetailPage({ params, searchParams }: { par
   );
 }
 
-function MissingEstimatePage({ rawId, ghost }: {
+function MissingEstimatePage({ rawId, ghost, released }: {
   rawId: string;
+  released?: boolean;
   ghost: { id: string; items: { qty: number; sku: string | null; name: string | null; color: string | null }[]; movements: { kind: string; delta: number; sku: string | null; reason: string | null; created_at: string }[] };
 }) {
   const ref = "EST-" + String(ghost.id || rawId).replace(/^EST-/i, "").slice(0, 8).toUpperCase();
   const search = String(ghost.id || rawId).slice(0, 8);
+  const stillHeld = ghost.movements
+    .filter((m) => m.kind === "reserve" || m.kind === "release")
+    .reduce((s, m) => s - m.delta, 0);
   return (
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
       <div className="max-w-2xl mx-auto">
         <Link href="/admin/estimates" className="text-sm text-emerald nav-link">← Estimates</Link>
         <h1 className="font-display text-3xl text-ink mt-3 mb-2">This quote is not in the list</h1>
         <p className="text-sm text-muted mb-4">
-          Product history can still show a reservation after the quote was billed, denied, or removed.
-          There is no estimate with ref <b className="text-ink">{ref}</b> to open — so this is not a missing page, it is a leftover hold you can check from here.
+          This quote was billed, denied, or removed, but product history can still show its old reservation.
+          There is no estimate with ref <b className="text-ink">{ref}</b> to open — the leftover hold is listed below so you can put the pieces back into stock.
         </p>
+        {released && stillHeld <= 0 && (
+          <p className="mb-4 rounded-2xl border border-emerald/30 bg-emerald-mist px-4 py-3 text-sm text-emerald-dark">
+            Leftover hold released. Those pieces are sellable again — you can convert the open estimate now.
+          </p>
+        )}
         <div className="rounded-2xl border border-sand bg-white p-4 text-sm space-y-3">
           <p className="text-ink"><b>Reference:</b> {rawId}</p>
           {ghost.items.length > 0 && (
@@ -351,6 +361,12 @@ function MissingEstimatePage({ rawId, ghost }: {
           )}
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
+          {stillHeld > 0 && ghost.id && (
+            <form action={releaseGhostEstimateHoldAction}>
+              <input type="hidden" name="id" value={ghost.id} />
+              <button className="px-4 py-2 rounded-full bg-emerald text-white text-sm font-medium">Release leftover stock ({stillHeld} pcs)</button>
+            </form>
+          )}
           <Link href={`/admin/estimates?tab=all&q=${encodeURIComponent(search)}`} className="px-4 py-2 rounded-full bg-ink text-white text-sm">Search Estimates</Link>
           <Link href="/admin/estimates?tab=held" className="px-4 py-2 rounded-full border border-sand text-sm text-ink">On hold quotes</Link>
           <Link href="/admin/estimates?tab=open" className="px-4 py-2 rounded-full border border-sand text-sm text-ink">To bill</Link>
