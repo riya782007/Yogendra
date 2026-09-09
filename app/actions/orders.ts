@@ -80,8 +80,8 @@ export async function placeOrderAction(input: PlaceOrderInput): Promise<{ ok: bo
   // COD CEILING — Cash on Delivery is risky on high-value orders, so anything above ₹5,000 (goods value,
   // before fees) must be prepaid. Roll the order back so no stock is held and the shopper pays online.
   if (input.payment === "cod" && discountedSubtotal > COD_MAX_PAISE) {
-    // A held COD order holds NO stock and posted NO revenue, so there's nothing to unwind — just delete
-    // it (cancel_order would wrongly RE-STOCK goods that were never deducted).
+    // Roll back the held checkout: release any reservation first, then drop the shell.
+    await sb.rpc("release_held_order_stock", { p_order_id: orderId }).then(() => {}, () => {});
     await sb.from("order_items").delete().eq("order_id", orderId).then(() => {}, () => {});
     await sb.from("orders").delete().eq("id", orderId).then(() => {}, () => {});
     return { ok: false, error: "Cash on Delivery isn't available for orders above ₹5,000. Please choose online (prepaid) payment." };
