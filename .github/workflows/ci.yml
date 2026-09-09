@@ -1,0 +1,52 @@
+name: CI
+
+# Every pull request and every push to main gets checked BEFORE it can reach production. Until
+# this existed nothing ran automatically, which is how files kept landing on main as stubs and
+# deploying: `tsc` rejects a truncated module in seconds, but nothing ever ran `tsc`.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      # Catches a file replaced by a stub instantly: a truncated module breaks every import.
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      # The regression guard: fails if a tracked file vanished, lost its body, or a named
+      # feature contract disappeared. Green on the current tree, so it is a real gate today.
+      - name: Regression guard
+        run: npx vitest run tests/no-regressions.test.ts
+
+      # Last blocking gate: the app must build the way Vercel builds it.
+      - name: Production build
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
+      # The rest of the suite has 7 pre-existing failures that predate this workflow (content,
+      # diva-nlu, imagePrompt, offers, pricing, smoke). They are reported here so they stay
+      # visible, but they do NOT block a merge yet — a permanently red gate is one everyone
+      # learns to ignore, which is how this repo got here. Fix them, then delete the
+      # continue-on-error line below to make the whole suite blocking.
+      - name: Full test suite (reported, not yet blocking)
+        run: npm test
+        continue-on-error: true
