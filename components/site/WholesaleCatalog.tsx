@@ -9,6 +9,8 @@ import { MoreDesignsButton } from "@/components/site/MoreDesignsButton";
 import { wholesaleShippingPaise, WHOLESALE_COD_FEE_PAISE } from "@/lib/wholesaleShipping";
 import { loadTradeSliceAction } from "@/app/actions/tradeCatalog";
 
+const TRADE_PAGE = 48;
+
 type P = { pid: string; sku: string; name: string; category: string; sub?: string | null; style?: string | null; qty: number; price: number; mrp: number; image: string | null; images?: string[]; colour?: string | null;
   /** Owner-flagged: this design has many more colourways than the catalogue can list. */
   moreDesigns?: boolean; moreDesignsNote?: string | null };
@@ -30,7 +32,6 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, customer
   /** Browsing without a dealer account: designs + rates are visible, ordering is not. */
   guest?: boolean;
 }) {
-  const TRADE_PAGE = 48;
   const [extra, setExtra] = useState<P[]>([]);
   const [moreLeft, setMore] = useState(hasMore0);
   const [nextOffset, setNextOffset] = useState(TRADE_PAGE);
