@@ -1669,7 +1669,7 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   const purchased = allRows.filter((r) => r.kind === "purchase").reduce((s, r) => s + Math.max(0, r.delta ?? 0), 0);
   const sold = allRows.filter((r) => r.kind === "sale").reduce((s, r) => s + Math.abs(Math.min(0, r.delta ?? 0)), 0);
   const returned = allRows.filter((r) => ["return", "purchase_return"].includes(r.kind)).reduce((s, r) => s + Math.abs(r.delta ?? 0), 0);
-  const adjusted = allRows.filter((r) => ["adjustment", "damage", "correction"].includes(r.kind)).reduce((s, r) => s + (r.delta ?? 0), 0);
+  const adjusted = allRows.filter((r) => ["adjustment", "damage", "correction", "recount"].includes(r.kind)).reduce((s, r) => s + (r.delta ?? 0), 0);
   const available = currentStock - reserved;
   const daysSinceLastSale = lastSale ? Math.floor((Date.now() - new Date(lastSale).getTime()) / 86400000) : null;
   const firstAt = allRows[0]?.created_at ? new Date(allRows[0].created_at) : null;

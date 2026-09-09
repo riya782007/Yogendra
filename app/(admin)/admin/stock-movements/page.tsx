@@ -13,6 +13,7 @@ const KINDS = [
   { key: "purchase", label: "Purchases (in)" },
   { key: "opening", label: "Opening stock" },
   { key: "adjustment", label: "Adjustments" },
+  { key: "recount", label: "Physical counts" },
   { key: "damage", label: "Damage / loss" },
   { key: "estimate", label: "Estimate reservations" },
   { key: "reserve", label: "On hold — reserved (out)" },

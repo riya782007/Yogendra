@@ -18,6 +18,7 @@ import { requirePerm, getSession, can } from "@/lib/auth";
 import { updateVariantAction, deleteVariantAction } from "@/app/actions/variants";
 import { VariantPhotos } from "@/components/admin/VariantPhotos";
 import { AddVariantForm } from "@/components/admin/AddVariantForm";
+import { AddColourVariantsForm } from "@/components/admin/AddColourVariantsForm";
 import { setProductVisibilityAction, moveProductToSubcategoryAction, moveProductToStyleAction, savePricingAction, setWholesaleOnlyAction, setHideOosVariantsAction, toggleProductLabelAction, setDefaultVariantFormAction } from "@/app/actions/catalog";
 
 const LABEL_CHIP: Record<string, string> = {
@@ -367,6 +368,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
         effWholesale={rs(effective.wholesaleRate)}
         effMrp={rs(effective.mrp)}
       />
+      <AddColourVariantsForm parentSku={p.sku} />
     </div>
   );
 

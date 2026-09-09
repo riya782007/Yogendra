@@ -341,3 +341,64 @@ export async function generateVariantImageAction(variantId: string): Promise<Var
   revalidatePath("/admin/inventory");
   return { ok: true, url };
 }
+
+/** Add several new COLOUR variants to one design in one operation. Existing colours are skipped
+ * rather than duplicated; each inserted colour receives its own barcode SKU and opening-stock
+ * movement, then the product total is rolled up once. */
+export async function addColourVariantsAction(input: {
+  productSku: string;
+  colors: string;
+  qty: number;
+}): Promise<{ ok: boolean; added?: number; skipped?: string[]; error?: string }> {
+  if (!(await requirePerm("catalog.edit"))) return { ok: false, error: "Your role can't edit the catalogue." };
+  const productSku = String(input.productSku ?? "").trim();
+  const colors = String(input.colors ?? "").split(/[\n,]/).map((c) => c.trim()).filter(Boolean);
+  const qty = Math.max(0, Math.floor(Number(input.qty) || 0));
+  if (!productSku || !colors.length) return { ok: false, error: "Add at least one colour." };
+  if (colors.length > 50) return { ok: false, error: "Add up to 50 colours at a time." };
+
+  const unique = [...new Map(colors.map((c) => [c.toLowerCase(), c])).values()];
+  const sb = supabaseServer();
+  const [{ data: product }, codes] = await Promise.all([
+    sb.from("products").select("id,type").ilike("sku", productSku).maybeSingle(),
+    getColorCodeMap(),
+  ]);
+  if (!product) return { ok: false, error: "Product not found." };
+  const { data: current } = await sb.from("variants").select("color").eq("product_id", (product as any).id);
+  const existingColors = new Set(((current as any[]) ?? []).map((v) => String(v.color ?? "").trim().toLowerCase()).filter(Boolean));
+  const toAdd = unique.filter((color) => !existingColors.has(color.toLowerCase()));
+  const skipped = unique.filter((color) => existingColors.has(color.toLowerCase()));
+  if (!toAdd.length) return { ok: false, skipped, error: "These colours already exist on this design." };
+
+  const rows: any[] = [];
+  for (const color of toAdd) {
+    const base = autoSku(productSku, { color }, codes[color.toLowerCase()] ?? null);
+    let vsku = base;
+    for (let n = 2; ; n++) {
+      const { data: clash } = await sb.from("variants").select("id").ilike("sku", vsku).maybeSingle();
+      if (!clash) break;
+      vsku = `${base}-${n}`;
+      if (n > 50) return { ok: false, error: `Could not allocate a unique SKU for ${color}.` };
+    }
+    rows.push({ product_id: (product as any).id, color, sku: vsku, qty });
+  }
+
+  const { data: inserted, error } = await sb.from("variants").insert(rows).select("id,sku,qty");
+  if (error) return { ok: false, error: error.message };
+  const opening = ((inserted as any[]) ?? []).filter((v) => v.qty > 0).map((v) => ({
+    product_id: (product as any).id, variant_id: v.id, sku: v.sku, delta: v.qty,
+    kind: "opening", source: "New colour batch", reason: "Opening stock", created_by: "owner",
+  }));
+  if (opening.length) {
+    const { error: ledgerError } = await sb.from("stock_adjustments").insert(opening);
+    if (ledgerError) {
+      await sb.from("variants").delete().in("id", ((inserted as any[]) ?? []).map((v) => v.id));
+      return { ok: false, error: `Could not record opening stock: ${ledgerError.message}` };
+    }
+  }
+  await sb.from("variant_options").upsert(toAdd.map((value) => ({ kind: "color", value })), { onConflict: "kind,value", ignoreDuplicates: true });
+  if ((product as any).type !== "configurable") await sb.from("products").update({ type: "configurable" }).eq("id", (product as any).id);
+  await resyncProductQty(sb, productSku);
+  reval(productSku);
+  return { ok: true, added: rows.length, skipped };
+}

@@ -22,6 +22,7 @@ const GROUPS: { title: string; links: L[] }[] = [
     { href: "/admin/pricing", label: "Pricing formula", icon: "％", perm: "catalog.price_edit", hidden: true },
     { href: "/admin/inventory", label: "Inventory", icon: "▤", perm: "inventory.view" },
     { href: "/admin/stock-movements", label: "Stock Movement", icon: "⇅", perm: "inventory.view" },
+    { href: "/admin/stock-reconciliation", label: "Stock Count", icon: "✓", perm: "inventory.view" },
     { href: "/admin/barcodes", label: "Barcodes", icon: "▥", perm: "inventory.barcode" },
     { href: "/admin/reorder", label: "AI Reorder", icon: "✨", perm: "inventory.view" },
   ]},
