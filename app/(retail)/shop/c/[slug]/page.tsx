@@ -1,4 +1,4 @@
-export const dynamic = "force-dynamic";
+export const revalidate = 60;
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import Link from "next/link";
