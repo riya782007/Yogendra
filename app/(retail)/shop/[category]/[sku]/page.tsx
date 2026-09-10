@@ -24,15 +24,28 @@ type Params = { params: { category: string; sku: string } };
 
 // Cache the product page's data per-SKU (3 min). getRecommendations scans the catalogue, so rendering
 // this uncached re-ran heavy queries on every product view. Edits refresh within the window / "storefront" tag.
+/**
+ * `skipRelated` — Sept 2026, "preview not working".
+ *
+ * The owner's View ↗ button in the catalogue renders this same page through /admin/preview/<sku>.
+ * getRecommendations has to read the whole catalogue to pick 4 "you may also like" cards, and that
+ * read alone accounts for most of the page's time — enough to put the preview at ~8.5s, over the
+ * host's 10s limit whenever the console is busy, which is the "Couldn't load that page" he sees.
+ *
+ * A staff preview exists to check ONE design's own page. The related rail is not part of that, so
+ * previewing skips it and returns in a fraction of the time. Customer-facing product pages are
+ * unchanged and still get their recommendations. unstable_cache includes the arguments in its key,
+ * so the preview and customer versions are cached separately and never overwrite each other.
+ */
 const loadProductPage = unstable_cache(
-  async (sku: string) => {
+  async (sku: string, skipRelated = false) => {
     const [p, formula] = await Promise.all([getProductBySku(sku), getPricingFormula()]);
     if (!p) return null;
     // Reviews + recommendations are secondary — a failure in either must NEVER take down the
     // whole product page. Degrade gracefully to empty.
     const [reviews, related] = await Promise.all([
       getProductReviews(p.id).catch(() => ({ avg: 4.6, count: 0, list: [] as any[], dist: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 } as Record<number, number> })),
-      getRecommendations(p.sku, 4).catch(() => [] as any[]),
+      skipRelated ? Promise.resolve([] as any[]) : getRecommendations(p.sku, 4).catch(() => [] as any[]),
     ]);
     return { p, formula, reviews, related };
   },
@@ -55,7 +68,8 @@ export default async function ProductPage(props: Params) {
   // the staff session first and passes it in code. Next.js never puts `preview` on a page's props,
   // so a customer typing this URL can never turn it on.
   const preview = (props as { preview?: boolean }).preview === true;
-  const data = await loadProductPage(params.sku);
+  // Staff preview skips the catalogue-wide "you may also like" read — see loadProductPage above.
+  const data = await loadProductPage(params.sku, preview);
   if (!data) notFound();
   const { p, formula, reviews, related } = data;
   const variants = (p.variants ?? []) as any[];
