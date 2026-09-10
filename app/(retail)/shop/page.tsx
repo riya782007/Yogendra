@@ -4,6 +4,7 @@
 // loadShopHome cache (15 min, busted instantly by the "storefront" tag on any edit).
 export const revalidate = 60;
 import Link from "next/link";
+import { unstable_cache } from "next/cache";
 import { getFeaturedReviews, getShoppableReels, getActivePromotions, getCategoryTreeSafe, getPricingFormula } from "@/lib/supabase/queries";
 import { getShopSlice, getCategoryCovers } from "@/lib/catalogSlice";
 import { FALLBACK_SHOP_CATEGORIES, pickBestsellers, pickNewArrivals, publicCategories, categoryRef } from "@/lib/shopCatalog";
@@ -24,10 +25,41 @@ export const metadata = {
 // (all published products via getStorefront, reviews, reels, promos, category tree) on EVERY render —
 // so each soft navigation / prefetch to /shop took ~9s. Cache the whole bundle for 3 minutes so the
 // page renders instantly; editing a product refreshes it within the window (or via the "storefront" tag).
-async function loadShopHomeSafe() {
+//
+// Sept 2026 — the two changes below are what stopped /shop returning the error boundary on Netlify:
+//
+//  1. getShopSlice was called with NO limit, so every single request pulled the ENTIRE published
+//     retail catalogue (4k+ SKUs) plus a variants row and an images row for each — to render 16
+//     cards. That is the same bug that was already fixed for trade (see the header of
+//     lib/catalogSlice.ts); the retail shop never got the fix. SHOP_HOME_LIMIT caps it.
+//  2. Nothing on this page was memoised. trade has getTradeSliceCached / getTradeFacetsCached and
+//     therefore works; retail had no cached equivalent, so all 7 reads ran live on every request.
+//     Every Supabase read goes through supabaseServer()'s `cache: "no-store"` fetch, which also
+//     opts the whole route out of ISR — so `revalidate = 60` above could never take effect.
+//     unstable_cache gives the reads their own cache scope, which both memoises them AND lets this
+//     route be cached again. Freshness is unchanged: any product edit calls
+//     revalidateTag("storefront") and busts this immediately.
+//
+// An empty result is deliberately NOT cached (returning null instead), so a momentary Supabase
+// failure can never pin a blank shop for the full window.
+const SHOP_HOME_LIMIT = 240;
+
+type ShopHomeBundle = {
+  products: any[];
+  formula: any;
+  reviews: any[];
+  reels: any[];
+  promos: any[];
+  tree: any[];
+  // unstable_cache serialises its return value, and a Map does not survive that — so the covers
+  // travel as entries and are rebuilt into a Map on the other side.
+  coverEntries: [string, string][];
+};
+
+async function loadShopHomeUncached(): Promise<ShopHomeBundle> {
   try {
     const [store, reviews, reels, promos, tree] = await Promise.all([
-      getShopSlice({ order: "new" }),
+      getShopSlice({ order: "new", limit: SHOP_HOME_LIMIT }),
       getFeaturedReviews().catch(() => []),
       getShoppableReels().catch(() => []),
       getActivePromotions("retail").catch(() => []),
@@ -37,13 +69,28 @@ async function loadShopHomeSafe() {
     return {
       products: store.products,
       formula: store.formula ?? await getPricingFormula(),
-      reviews, reels, promos, tree, coverBy,
+      reviews, reels, promos, tree,
+      coverEntries: [...coverBy.entries()],
     };
   } catch {
     const [formula, tree] = await Promise.all([getPricingFormula(), getCategoryTreeSafe()]);
     const coverBy = await getCategoryCovers(tree as any).catch(() => new Map<string, string>());
-    return { products: [] as any[], formula, reviews: [] as any[], reels: [] as any[], promos: [] as any[], tree, coverBy };
+    return { products: [] as any[], formula, reviews: [] as any[], reels: [] as any[], promos: [] as any[], tree, coverEntries: [...coverBy.entries()] };
   }
+}
+
+async function loadShopHomeSafe() {
+  const cached = await unstable_cache(
+    async () => {
+      const bundle = await loadShopHomeUncached();
+      // null tells the caller "usable answer not obtained" without caching a blank shop.
+      return bundle.products.length ? bundle : null;
+    },
+    ["shop-home-v1", String(SHOP_HOME_LIMIT)],
+    { tags: ["storefront"], revalidate: 300 },
+  )().catch(() => null);
+  const bundle = cached ?? await loadShopHomeUncached();
+  return { ...bundle, coverBy: new Map<string, string>(bundle.coverEntries) };
 }
 
 export default async function Shop() {

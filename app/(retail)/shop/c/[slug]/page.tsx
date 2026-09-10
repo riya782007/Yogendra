@@ -5,17 +5,35 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getCategories, getActivePromotions } from "@/lib/supabase/queries";
 import { getShopSlice } from "@/lib/catalogSlice";
+import { unstable_cache } from "next/cache";
 
 // The full published catalogue is the same for every visitor, so cache it (3 min) instead of re-running
 // the heavy all-products query on every category view. Product edits refresh within the window / via the
 // "storefront" tag. Category-specific filter queries below stay live (they're light + scoped).
-async function loadCatalogueBaseSafe(slug: string) {
+//
+// Sept 2026 — that caching was described here but never actually applied, so the heavy read ran live on
+// every category view and, like /shop, pushed the render past Netlify's 10s function limit.
+// The cache is keyed by slug only (NOT by searchParams), so filtering and pagination below stay live.
+async function loadCatalogueBaseUncached(slug: string) {
   const [slice, allCats, allPromos] = await Promise.all([
     getShopSlice({ categorySlug: slug, order: "sku" }),
     getCategories().catch(() => [] as any[]),
     getActivePromotions("retail").catch(() => [] as any[]),
   ]);
   return { products: slice.products, formula: slice.formula, allCats, allPromos };
+}
+
+async function loadCatalogueBaseSafe(slug: string) {
+  const cached = await unstable_cache(
+    async () => {
+      const base = await loadCatalogueBaseUncached(slug);
+      // Never pin an empty category for the whole window — fall through to a live read instead.
+      return base.products.length ? base : null;
+    },
+    ["category-base-v1", slug],
+    { tags: ["storefront"], revalidate: 300 },
+  )().catch(() => null);
+  return cached ?? await loadCatalogueBaseUncached(slug);
 }
 import { supabaseServer } from "@/lib/supabase/server";
 import { ProductCard } from "@/components/site/ProductCard";
