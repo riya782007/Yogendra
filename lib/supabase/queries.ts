@@ -1985,7 +1985,7 @@ export async function getPromotionsAdmin() {
 // ============================================================================================
 
 /** Cached storefront (per-opts). Use on admin POS/estimate pages that don't need to-the-second freshness. */
-export const getStorefrontCached = (opts: { includeDrafts?: boolean; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean } = {}) =>
+export const getStorefrontCached = (opts: { includeDrafts?: boolean; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean; onlyInStock?: boolean } = {}) =>
   unstable_cache(() => getStorefront(opts), ["storefront-cached", JSON.stringify(opts)], { tags: ["storefront"], revalidate: 300 })();
 
 /** ALL variant SKUs (colour + stock + price overrides) for the billing/estimate counters — 12k+ rows. */
@@ -3046,6 +3046,15 @@ export async function getPendingWholesalePayments(): Promise<{
     }),
   }));
 }
+/**
+ * Sept 2026 — this returned EVERY un-recovered cart with no cap. /admin/abandoned then resolves a
+ * product photo for every SKU in every cart it gets back, so an ever-growing list turned that page into
+ * a 30+ second render that never finished inside Netlify's function limit — the owner's "abandoned cart
+ * kaam nahi kar raha". The owner works the newest carts first, so cap the list; search still scans the
+ * whole table and just caps what it hands back.
+ */
+const ABANDONED_LIST_LIMIT = 200;
+
 export async function getAbandonedCarts(opts?: { search?: string }) {
   const sb = supabaseServer();
   const search = (opts?.search ?? "").trim();
@@ -3059,15 +3068,17 @@ export async function getAbandonedCarts(opts?: { search?: string }) {
     const all = await fetchAll((f, t) =>
       sb.from("abandoned_carts").select("*").order("updated_at", { ascending: false }).range(f, t),
     );
-    return all.filter((c) => recordMatchesShopperQuery({ phone: c.phone, customer_name: c.customer_name }, search));
+    return all
+      .filter((c) => recordMatchesShopperQuery({ phone: c.phone, customer_name: c.customer_name }, search))
+      .slice(0, ABANDONED_LIST_LIMIT);
   }
 
   let res = await sb.from("abandoned_carts")
     .select("*").eq("recovered", false).or(`updated_at.lt.${idleSince},reached_checkout.eq.true`)
-    .order("updated_at", { ascending: false });
+    .order("updated_at", { ascending: false }).limit(ABANDONED_LIST_LIMIT);
   if (res.error) {
     // `reached_checkout` column may not be deployed yet — fall back to the idle-only rule.
-    res = await sb.from("abandoned_carts").select("*").eq("recovered", false).lt("updated_at", idleSince).order("updated_at", { ascending: false });
+    res = await sb.from("abandoned_carts").select("*").eq("recovered", false).lt("updated_at", idleSince).order("updated_at", { ascending: false }).limit(ABANDONED_LIST_LIMIT);
   }
   const { data } = res;
   // Only surface carts the owner can actually ACT on — a cart with no phone is un-contactable and just
@@ -3113,10 +3124,12 @@ import { cosine as _cosine } from "../ai/embeddings";
  *      but the payload is ~1% of what it was.
  * The candidate grouping also uses Sets instead of nested .some() — that was ~16M comparisons per view.
  */
-const RECO_SHORTLIST = 60;
+const RECO_SHORTLIST = 24;
 
 export async function getRecommendations(sku: string, n = 4): Promise<StoreProduct[]> {
-  const { products } = await getStorefrontCached();
+  // onlyInStock: a "you may also like" rail should never suggest a sold-out design, and it also means
+  // this reads (and deserialises) a much smaller cached catalogue than the full 4.5k-SKU one.
+  const { products } = await getStorefrontCached({ onlyInStock: true });
   const self = products.find((p) => p.sku === sku);
   if (!self) return [];
   const others = products.filter((p) => p.sku !== sku);
