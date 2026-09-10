@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { getSession, can } from "@/lib/auth";
-import { getProductBySku } from "@/lib/supabase/queries";
+import { supabaseServer } from "@/lib/supabase/server";
 import { storeUrl } from "@/lib/siteUrl";
 import ProductPage from "@/app/(retail)/shop/[category]/[sku]/page";
 
@@ -31,8 +31,18 @@ export default async function AdminProductPreview({ params }: { params: { sku: s
   if (!sku) notFound();
   // The category is only used for breadcrumbs on the page; "all" is the documented fallback for a
   // product whose category relation is missing.
-  const p = await getProductBySku(sku).catch(() => null);
-  const category = p?.category?.slug ?? "all";
+  //
+  // Sept 2026: this used to call getProductBySku, which does `select("*")` — the embedding vector, the
+  // generated_content AI blob, every variant and every image — and then ProductPage below immediately
+  // fetches the SAME product again. One slug does not need any of that. The duplicate read put preview
+  // renders at ~8s, and over Netlify's 10s function limit whenever the console was busy, which is the
+  // "Couldn't load that page" the owner hits on View ↗.
+  const { data: catRow } = await supabaseServer()
+    .from("products")
+    .select("category:categories(slug)")
+    .eq("sku", sku)
+    .maybeSingle();
+  const category = (catRow as any)?.category?.slug ?? "all";
 
   return (
     <main className="bg-cream/40 min-h-screen">
