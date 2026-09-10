@@ -3097,36 +3097,65 @@ export async function getReorderCandidates(): Promise<ReorderCandidate[]> {
 }
 
 import { cosine as _cosine } from "../ai/embeddings";
+
+/**
+ * How many candidates get re-ranked semantically. Only these SKUs' embedding vectors are read.
+ *
+ * Sept 2026 — this function used to do two things that made every product page miss Netlify's 10s
+ * function limit and leave the customer on the loading skeleton:
+ *   1. `getStorefront()` UNCACHED — the whole ~4.5k-product catalogue, re-read on every product view.
+ *      getStorefrontCached() is the identical read, memoised for 5 min and busted by the "storefront"
+ *      tag, so an edit still shows up immediately.
+ *   2. `fetchAll(products.select("sku,embedding"))` — it downloaded EVERY product's embedding vector
+ *      (thousands of rows × ~1.5k floats each, tens of MB of JSON) and cosine-scored the entire
+ *      catalogue in JS, to pick 4 "you may also like" cards. Now the cheap inventory-aware shortlist
+ *      is built first and only those rows' embeddings are fetched, so the semantic ranking is kept
+ *      but the payload is ~1% of what it was.
+ * The candidate grouping also uses Sets instead of nested .some() — that was ~16M comparisons per view.
+ */
+const RECO_SHORTLIST = 60;
+
 export async function getRecommendations(sku: string, n = 4): Promise<StoreProduct[]> {
-  const { products } = await getStorefront();
-  const sb = supabaseServer();
-  const embRows = await fetchAll((f, t) => sb.from("products").select("sku,embedding").range(f, t));
-  const embBy = new Map<string, number[]>();
-  for (const r of (embRows as any[]) ?? []) if (Array.isArray(r.embedding)) embBy.set(r.sku, r.embedding);
+  const { products } = await getStorefrontCached();
   const self = products.find((p) => p.sku === sku);
   if (!self) return [];
   const others = products.filter((p) => p.sku !== sku);
-  const selfEmb = embBy.get(sku);
-  let ranked: StoreProduct[];
-  if (selfEmb && others.some((p) => embBy.has(p.sku))) {
-    // Semantic when embeddings exist.
-    ranked = others.filter((p) => embBy.has(p.sku))
-      .map((p) => ({ p, s: _cosine(selfEmb, embBy.get(p.sku)!) }))
-      .sort((a, b) => b.s - a.s).map((x) => x.p);
-  } else {
-    // Inventory-aware fallback (works with zero embeddings): same subcategory → same
-    // category → everything else, preferring in-stock pieces. Never returns empty.
-    const subId = (self as any).subcategory_id;
-    const byStock = (arr: StoreProduct[]) => [...arr].sort((a, b) => (b.qty > 0 ? 1 : 0) - (a.qty > 0 ? 1 : 0));
-    const sameSub = subId ? others.filter((p) => (p as any).subcategory_id === subId) : [];
-    const sameCat = others.filter((p) => p.category?.slug && p.category.slug === self.category?.slug && !sameSub.some((s) => s.sku === p.sku));
-    const rest = others.filter((p) => !sameSub.some((s) => s.sku === p.sku) && !sameCat.some((s) => s.sku === p.sku));
-    ranked = [...byStock(sameSub), ...byStock(sameCat), ...byStock(rest)];
+
+  // Inventory-aware shortlist (works with zero embeddings): same subcategory → same category →
+  // everything else, preferring in-stock pieces. Never returns empty.
+  const subId = (self as any).subcategory_id;
+  const byStock = (arr: StoreProduct[]) => [...arr].sort((a, b) => (b.qty > 0 ? 1 : 0) - (a.qty > 0 ? 1 : 0));
+  const sameSub = subId ? others.filter((p) => (p as any).subcategory_id === subId) : [];
+  const subSkus = new Set(sameSub.map((p) => p.sku));
+  const sameCat = others.filter((p) => p.category?.slug && p.category.slug === self.category?.slug && !subSkus.has(p.sku));
+  const catSkus = new Set(sameCat.map((p) => p.sku));
+  const rest = others.filter((p) => !subSkus.has(p.sku) && !catSkus.has(p.sku));
+  let ranked: StoreProduct[] = [...byStock(sameSub), ...byStock(sameCat), ...byStock(rest)];
+
+  // Semantic re-rank of the shortlist only. Embeddings are an optimisation: if the read fails or the
+  // vectors are missing, the shortlist above still stands and the page renders normally.
+  const shortlist = ranked.slice(0, RECO_SHORTLIST);
+  if (shortlist.length) {
+    try {
+      const sb = supabaseServer();
+      const { data } = await sb.from("products").select("sku,embedding").in("sku", [sku, ...shortlist.map((p) => p.sku)]);
+      const embBy = new Map<string, number[]>();
+      for (const r of (data as any[]) ?? []) if (Array.isArray(r.embedding)) embBy.set(r.sku, r.embedding);
+      const selfEmb = embBy.get(sku);
+      const scored = selfEmb ? shortlist.filter((p) => embBy.has(p.sku)) : [];
+      if (selfEmb && scored.length) {
+        const top = scored
+          .map((p) => ({ p, s: _cosine(selfEmb, embBy.get(p.sku)!) }))
+          .sort((a, b) => b.s - a.s)
+          .map((x) => x.p);
+        const topSkus = new Set(top.map((p) => p.sku));
+        ranked = [...top, ...ranked.filter((p) => !topSkus.has(p.sku))];
+      }
+    } catch {
+      // keep the inventory-aware order
+    }
   }
-  if (ranked.length < n) {
-    const extra = others.filter((p) => !ranked.some((r) => r.sku === p.sku));
-    ranked = [...ranked, ...extra];
-  }
+
   return ranked.slice(0, n);
 }
 
