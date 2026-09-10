@@ -12,14 +12,17 @@ import { loadTradeSliceAction } from "@/app/actions/tradeCatalog";
 const TRADE_PAGE = 48;
 
 type Facet = { name: string; subs: string[]; styles: string[] };
-type SliceFilter = { category?: string; sub?: string; style?: string; q?: string };
+type SliceFilter = { category?: string; sub?: string; style?: string; q?: string; colour?: string };
 
-function sliceFilterOf(cat: string, sub: string, styleF: string, q: string): SliceFilter {
+function sliceFilterOf(cat: string, sub: string, styleF: string, q: string, colour = "all"): SliceFilter {
   return {
     category: cat !== "all" ? cat : undefined,
     sub: sub !== "all" ? sub : undefined,
     style: styleF !== "all" ? styleF : undefined,
     q: q.trim() || undefined,
+    // Colour travels to the server with the rest now, so it searches the whole catalogue instead of
+    // only the designs already on screen.
+    colour: colour !== "all" ? colour : undefined,
   };
 }
 
@@ -39,8 +42,11 @@ type PayInfo = { payeeName: string; upiId: string | null; qrUrl: string | null }
 const shipSlab = wholesaleShippingPaise;
 const COD_FEE = WHOLESALE_COD_FEE_PAISE; // ₹120 per COD order
 
-export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets = [], customerName, customerPhone = "", savedAddress = "", savedPincode = "", minOrder = 300000, history = [], payInfo = null, outstanding = 0, tiers = [], guest = false }: {
-  products: P[]; hasMore?: boolean; facets?: Facet[]; customerName: string; customerPhone?: string; savedAddress?: string; savedPincode?: string; minOrder?: number; history?: Hist[]; payInfo?: PayInfo | null; outstanding?: number; tiers?: WholesaleTier[];
+export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets = [], colourOptions = [], customerName, customerPhone = "", savedAddress = "", savedPincode = "", minOrder = 300000, history = [], payInfo = null, outstanding = 0, tiers = [], guest = false }: {
+  products: P[]; hasMore?: boolean; facets?: Facet[];
+  /** Every in-stock colour in the catalogue — the dropdown must not be limited to the loaded page. */
+  colourOptions?: string[];
+  customerName: string; customerPhone?: string; savedAddress?: string; savedPincode?: string; minOrder?: number; history?: Hist[]; payInfo?: PayInfo | null; outstanding?: number; tiers?: WholesaleTier[];
   /** Browsing without a dealer account: designs + rates are visible, ordering is not. */
   guest?: boolean;
 }) {
@@ -141,11 +147,11 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets =
     }
     return [...names].sort();
   }, [catalog, cat, facet]);
-  const hasServerFilter = cat !== "all" || sub !== "all" || styleF !== "all" || q.trim().length > 0;
+  const hasServerFilter = cat !== "all" || sub !== "all" || styleF !== "all" || colour !== "all" || q.trim().length > 0;
   const skipFilterFetch = useRef(true);
   useEffect(() => {
     if (skipFilterFetch.current) { skipFilterFetch.current = false; return; }
-    const filter = sliceFilterOf(cat, sub, styleF, q);
+    const filter = sliceFilterOf(cat, sub, styleF, q, colour);
     const t = setTimeout(async () => {
       if (!hasServerFilter) {
         setRemote(null);
@@ -165,8 +171,14 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets =
       }
     }, 280);
     return () => clearTimeout(t);
-  }, [cat, sub, styleF, q, hasMore0, hasServerFilter]);
-  const colours = useMemo(() => Array.from(new Set(catalog.map((p) => p.colour).filter((c): c is string => !!c))).sort(), [catalog]);
+  }, [cat, sub, styleF, colour, q, hasMore0, hasServerFilter]);
+  // Colour options come from the CATALOGUE, not from whatever is loaded. Deriving them from the
+  // loaded rows meant a dealer was offered ~23 of the catalogue's colours and could never pick the
+  // rest. Falls back to the derived list if the server list is unavailable.
+  const colours = useMemo(() => {
+    if (colourOptions.length) return colourOptions;
+    return Array.from(new Set(catalog.map((p) => p.colour).filter((c): c is string => !!c))).sort();
+  }, [colourOptions, catalog]);
   // Colour of a design that the dealer has picked in its dropdown (pid -> chosen variant SKU).
   const [sel, setSel] = useState<Record<string, string>>({});
 
@@ -185,7 +197,9 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets =
       (remote != null || sub === "all" || g.sub === sub) &&
       (remote != null || styleF === "all" || g.style === styleF) &&
       (remote != null || !s || (g.name + " " + g.category + " " + g.variants.map((v) => v.sku).join(" ")).toLowerCase().includes(s)) &&
-      (colour === "all" || g.variants.some((v) => (v.colour ?? "").toLowerCase() === colour.toLowerCase())) &&
+      // When `remote` is set the server has already filtered by colour across the whole catalogue —
+      // re-applying it here would drop designs whose matching colour sits outside this page.
+      (remote != null || colour === "all" || g.variants.some((v) => (v.colour ?? "").toLowerCase() === colour.toLowerCase())) &&
       // Price bracket: a design qualifies if ANY of its colours falls inside the band.
       (bracket === "all" || (() => {
         const [lo, hi] = bracket.split("-").map(Number);
@@ -705,7 +719,7 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets =
               <button disabled={loadingMore || filterBusy} onClick={async () => {
                 setLoadingMore(true);
                 try {
-                  const filter = sliceFilterOf(cat, sub, styleF, q);
+                  const filter = sliceFilterOf(cat, sub, styleF, q, colour);
                   const res = await loadTradeSliceAction(nextOffset, filter);
                   if (remote != null) setRemote((e) => [...(e ?? []), ...res.list]);
                   else setExtra((e) => [...e, ...res.list]);

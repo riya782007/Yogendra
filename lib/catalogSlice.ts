@@ -309,7 +309,82 @@ async function lookupByName(table: "categories" | "subcategories" | "styles", na
   return undefined;
 }
 
-export type TradeFilter = { category?: string; sub?: string; style?: string; q?: string };
+export type TradeFilter = { category?: string; sub?: string; style?: string; q?: string; colour?: string };
+
+/**
+ * Sept 2026 — "filter as per colour is not working".
+ *
+ * Category, type and style were filtered ON THE SERVER, but colour never was: it was missing from
+ * TradeFilter entirely, so the dropdown was built from — and the filter applied to — only the ~48
+ * designs the dealer happened to have loaded. Picking "Maroon" searched 48 designs out of 4,000+ and
+ * almost always came back empty, which read as broken.
+ *
+ * Colour lives on VARIANTS, not products, so it cannot be added to the product query as another
+ * .eq(). Instead we resolve the colour to the set of designs that have an in-stock variant in it,
+ * then page through those. This runs only when a colour is actually chosen — with no colour selected
+ * the original query path is untouched.
+ */
+async function productIdsWithColour(colour: string): Promise<string[]> {
+  const want = colour.trim();
+  if (!want || want === "all") return [];
+  const ids = new Set<string>();
+  for (const sb of supabaseReadClients()) {
+    let ok = true;
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await sb
+        .from("variants")
+        .select("product_id")
+        .gt("qty", 0)
+        .ilike("color", want)
+        .order("product_id")
+        .range(from, from + PAGE - 1);
+      if (error) { ok = false; break; }
+      const rows = (data as any[]) ?? [];
+      for (const r of rows) if (r?.product_id) ids.add(String(r.product_id));
+      if (rows.length < PAGE) break;
+    }
+    if (ok) return [...ids];
+  }
+  return [...ids];
+}
+
+/** Every colour in the catalogue that is actually in stock — for the trade colour dropdown. */
+export async function getTradeColours(): Promise<string[]> {
+  const set = new Set<string>();
+  for (const sb of supabaseReadClients()) {
+    let ok = true;
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await sb
+        .from("variants")
+        .select("color")
+        .gt("qty", 0)
+        .order("color")
+        .range(from, from + PAGE - 1);
+      if (error) { ok = false; break; }
+      const rows = (data as any[]) ?? [];
+      for (const r of rows) { const c = String(r?.color ?? "").trim(); if (c) set.add(c); }
+      if (rows.length < PAGE) break;
+    }
+    if (ok) break;
+  }
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+
+export async function getTradeColoursCached(): Promise<string[]> {
+  try {
+    return await unstable_cache(
+      async () => {
+        const list = await getTradeColours();
+        if (!list.length) throw new Error("trade colours empty — not caching");
+        return list;
+      },
+      ["trade-colours-v1"],
+      { tags: ["storefront"], revalidate: 300 },
+    )();
+  } catch {
+    return getTradeColours();
+  }
+}
 export type TradeFacet = { name: string; subs: string[]; styles: string[] };
 
 /** Full category / type / style names for trade filters — not derived from the first 48 designs. */
@@ -379,10 +454,46 @@ export async function getTradeSlice(offset = 0, limit: number = TRADE_PAGE_SIZE,
   const styleId = await lookupByName("styles", wantStyle, categoryId);
   if (wantStyle && wantStyle !== "all" && !styleId) return { list: [], hasMore: false };
   const q = (filter.q ?? "").trim() || undefined;
+  const wantColour = (filter.colour ?? "").trim();
   const pageOpts = { categoryId, subcategoryId, styleId, q, order, retail: false as const };
+
+  // COLOUR PATH — only when a colour is chosen; otherwise the original query below is untouched.
+  // Colour is a property of variants, so we resolve it to the designs that stock it, load those,
+  // apply the remaining filters over that bounded set, and page it. `hasMore` is exact here because
+  // we know the true total, rather than inferring it from a full page.
+  if (wantColour && wantColour !== "all") {
+    const pids = await productIdsWithColour(wantColour);
+    if (!pids.length) return { list: [], hasMore: false };
+    let pool = await byIds<any>(pids, (sb, chunk) => sb.from("products").select(COLS[0]).in("id", chunk));
+    if (!pool.length) pool = await byIds<any>(pids, (sb, chunk) => sb.from("products").select(COLS[2]).in("id", chunk));
+    pool = pool.filter((p) => keepRow(p, false));
+    if (categoryId) pool = pool.filter((p) => p.category_id === categoryId);
+    if (subcategoryId) pool = pool.filter((p) => p.subcategory_id === subcategoryId);
+    if (styleId) pool = pool.filter((p) => p.style_id === styleId);
+    if (q) {
+      const s = q.toLowerCase();
+      pool = pool.filter((p) => `${p.name ?? ""} ${p.sku ?? ""}`.toLowerCase().includes(s));
+    }
+    const stamp = (p: any) => String(p.updated_at ?? p.created_at ?? "");
+    pool.sort((a, b) => stamp(b).localeCompare(stamp(a)));
+    const end = (limit != null && limit > 0) ? offset + limit : pool.length;
+    const windowRows = pool.slice(offset, end);
+    const slice = await tradeRowsFor(windowRows, formula, gstInc);
+    return { list: slice, hasMore: pool.length > end };
+  }
+
   const rows = (limit != null && limit > 0)
     ? await publishedPage({ from: offset, to: offset + limit - 1, ...pageOpts })
     : await publishedAll({ categoryId, order, retail: false });
+  const list = await tradeRowsFor(rows, formula, gstInc);
+  return { list, hasMore: limit != null && limit > 0 && rows.length >= limit };
+}
+
+/**
+ * Turn a page of product rows into the dealer-facing rows (one per in-stock colour, else one for the
+ * design). Shared by both paths above so the colour filter cannot drift from the normal listing.
+ */
+async function tradeRowsFor(rows: any[], formula: any, gstInc: (paise: number) => number): Promise<TradeRow[]> {
   const ids = rows.map((p) => p.id);
   const subIds = [...new Set(rows.map((p) => p.subcategory_id).filter(Boolean))];
   const styleIds = [...new Set(rows.map((p) => p.style_id).filter(Boolean))];
@@ -428,7 +539,7 @@ export async function getTradeSlice(offset = 0, limit: number = TRADE_PAGE_SIZE,
       });
     }
   }
-  return { list, hasMore: limit != null && limit > 0 && rows.length >= limit };
+  return list;
 }
 
 /** Cached first-paint / load-more windows. Empty unfiltered first pages are not stored. */
@@ -436,6 +547,7 @@ export async function getTradeSliceCached(offset = 0, limit: number = TRADE_PAGE
   const hasFilter = !!(filter.category && filter.category !== "all")
     || !!(filter.sub && filter.sub !== "all")
     || !!(filter.style && filter.style !== "all")
+    || !!(filter.colour && filter.colour !== "all")
     || !!(filter.q && filter.q.trim());
   try {
     return await unstable_cache(
@@ -444,8 +556,12 @@ export async function getTradeSliceCached(offset = 0, limit: number = TRADE_PAGE
         if (offset === 0 && !hasFilter && slice.list.length === 0) throw new Error("trade slice empty — not caching");
         return slice;
       },
-      ["trade-slice-v3", String(offset), String(limit), JSON.stringify({
-        c: filter.category ?? "", s: filter.sub ?? "", t: filter.style ?? "", q: (filter.q ?? "").trim(),
+      // The colour MUST be part of the key. Without it every colour would share one cached result and
+      // the filter would look like it did nothing — a worse bug than the one being fixed. Bumped to v4
+      // so existing v3 entries (keyed without colour) are never reused.
+      ["trade-slice-v4", String(offset), String(limit), JSON.stringify({
+        c: filter.category ?? "", s: filter.sub ?? "", t: filter.style ?? "",
+        col: (filter.colour ?? "").trim().toLowerCase(), q: (filter.q ?? "").trim(),
       })],
       { tags: ["storefront"], revalidate: 120 },
     )();

@@ -29,15 +29,18 @@ async function loadPayInfo() {
 
 /** First paint: one page of published designs (not the full 4k+ dump, which 500s on Vercel). */
 async function loadTradeCatalogSafe() {
-  const [formula, slice, payInfo, facets] = await Promise.all([
+  const [formula, slice, payInfo, facets, colourOptions] = await Promise.all([
     getPricingFormula(),
     getTradeSliceCached(0, TRADE_PAGE_SIZE).catch(() => getTradeSlice(0, TRADE_PAGE_SIZE)),
     loadPayInfo(),
     getTradeFacetsCached().catch(() => [] as TradeFacet[]),
+    // Catalogue-wide colours for the filter. Cached and tagged like the facets, and never fatal —
+    // an empty list just falls back to the colours present in the loaded page.
+    getTradeColoursCached().catch(() => [] as string[]),
   ]);
   const minOrder = formula.wholesaleMinOrder ?? WHOLESALE_MIN;
   const minRupees = Math.round(minOrder / 100).toLocaleString("en-IN");
-  return { list: slice.list, hasMore: slice.hasMore, facets, minOrder, minRupees, payInfo, wholesaleTiers: formula.wholesaleTiers ?? [] };
+  return { list: slice.list, hasMore: slice.hasMore, facets, colourOptions, minOrder, minRupees, payInfo, wholesaleTiers: formula.wholesaleTiers ?? [] };
 }
 
 export default async function TradeDashboard() {
@@ -47,7 +50,7 @@ export default async function TradeDashboard() {
   const guest = !session;
 
   const packedP = loadTradeCatalogSafe().catch(() => ({
-    list: [] as any[], hasMore: false, facets: [] as TradeFacet[], minOrder: WHOLESALE_MIN, minRupees: "3,000", payInfo: null as any, wholesaleTiers: [] as any[],
+    list: [] as any[], hasMore: false, facets: [] as TradeFacet[], colourOptions: [] as string[], minOrder: WHOLESALE_MIN, minRupees: "3,000", payInfo: null as any, wholesaleTiers: [] as any[],
   }));
   const historyP = session ? getWholesaleOrderHistory(session.id).catch(() => []) : Promise.resolve([]);
   const promosP = getLivePromosCached("wholesale", "hero").catch(() => []);
@@ -61,7 +64,7 @@ export default async function TradeDashboard() {
   })();
 
   const [packed, history, promos, categories, dealer] = await Promise.all([packedP, historyP, promosP, catsP, dealerP]);
-  const { list, hasMore, facets, minOrder, minRupees, payInfo, wholesaleTiers } = packed;
+  const { list, hasMore, facets, colourOptions, minOrder, minRupees, payInfo, wholesaleTiers } = packed;
   const outstanding = (history as any[]).reduce((s, h) => s + Math.max(0, (h.total ?? 0) - (h.amountPaid ?? 0)), 0);
 
   return (
@@ -69,7 +72,7 @@ export default async function TradeDashboard() {
       {promos.length > 0 && <div className="rounded-2xl overflow-hidden mb-6 shadow-card"><PromoHero promos={promos} /></div>}
       <h1 className="font-display text-4xl text-ink mb-1">Wholesale Catalogue</h1>
       <p className="text-sm text-muted mb-6">Factory-direct trade rates — browse freely and check out directly. ₹{minRupees} minimum order. Your margin vs MRP is shown on every line.</p>
-      <WholesaleCatalog products={list} hasMore={!!hasMore} facets={facets} customerName={session?.name ?? "Guest"} customerPhone={session?.phone ?? ""} savedAddress={dealer?.address ?? ""} savedPincode={dealer?.pincode ?? ""} minOrder={minOrder} history={history} payInfo={payInfo} outstanding={outstanding} tiers={wholesaleTiers} guest={guest} />
+      <WholesaleCatalog products={list} hasMore={!!hasMore} facets={facets} colourOptions={colourOptions} customerName={session?.name ?? "Guest"} customerPhone={session?.phone ?? ""} savedAddress={dealer?.address ?? ""} savedPincode={dealer?.pincode ?? ""} minOrder={minOrder} history={history} payInfo={payInfo} outstanding={outstanding} tiers={wholesaleTiers} guest={guest} />
 
       {guest && <TradeLeadPopup totalDesigns={list.length} />}
 
