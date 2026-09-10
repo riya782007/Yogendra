@@ -183,6 +183,34 @@ async function formulaOf() {
   }
 }
 
+/**
+ * Cached retail slice — the shop's counterpart to getTradeSliceCached below.
+ *
+ * Sept 2026: trade had cached slices and worked; every retail listing page called getShopSlice raw,
+ * so each view re-read the catalogue live (and, with no `limit`, often ALL of it). That is what put
+ * /shop, /shop/new and /shop/bestsellers past Netlify's 10s function limit. Same read, memoised for
+ * 5 minutes and tagged "storefront", so a product edit still refreshes it immediately.
+ * An empty unfiltered result is never stored, so a Supabase hiccup can't pin a blank grid.
+ */
+export async function getShopSliceCached(opts: {
+  categorySlug?: string;
+  order?: "new" | "sku" | "qty";
+  limit?: number;
+  offset?: number;
+} = {}) {
+  const cached = await unstable_cache(
+    async () => {
+      const slice = await getShopSlice(opts);
+      return slice.products.length ? slice : null;
+    },
+    ["shop-slice-v1", JSON.stringify({
+      c: opts.categorySlug ?? "", o: opts.order ?? "new", l: opts.limit ?? 0, f: opts.offset ?? 0,
+    })],
+    { tags: ["storefront"], revalidate: 300 },
+  )().catch(() => null);
+  return cached ?? await getShopSlice(opts);
+}
+
 export async function getShopSlice(opts: {
   categorySlug?: string;
   order?: "new" | "sku" | "qty";
