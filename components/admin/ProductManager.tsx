@@ -199,7 +199,10 @@ export function ProductManager({ data, initialTab }: { data: any; initialTab?: s
             <Toggle name="track_inventory" on={p.track_inventory ?? true}>Track inventory</Toggle>
             <Toggle name="continue_selling_oos" on={p.continue_selling_oos ?? false}>Continue selling when out of stock</Toggle>
             <Toggle name="allow_backorders" on={p.allow_backorders ?? false}>Allow backorders</Toggle>
-            <Toggle name="hide_oos_variants" on={(p as any).hide_oos_variants ?? false}>Hide out-of-stock colours/variants from the store</Toggle>
+            {/* Defaults to ON — same rule as the Catalogue tab and the storefront: only an explicit
+                false shows sold-out colours. `?? false` here would have shown this switch as OFF for
+                every product that has never been touched, contradicting what the store actually does. */}
+            <Toggle name="hide_oos_variants" on={(p as any).hide_oos_variants !== false}>Hide out-of-stock colours/variants from the store</Toggle>
           </div>
           <div className="mt-4 flex justify-end"><button className={saveBtn}>Save inventory</button></div>
         </form>

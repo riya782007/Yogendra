@@ -393,17 +393,24 @@ export default async function ProductPage({ params, searchParams }: { params: { 
             <button className="px-4 py-2 rounded-full bg-wine/10 text-wine text-sm hover:bg-wine/20 whitespace-nowrap">{(p as any).wholesale_only ? "Make available to all" : "Wholesale only"}</button>
           </form>
         </div>
-        {/* Hide out-of-stock colours from the storefront — the owner's requested control, on the page he actually uses. */}
-        {variants.length > 0 && (
-          <div className="flex items-center justify-between gap-3 mt-3 pt-3 border-t border-sand/60">
-            <p className="text-sm text-muted">{(p as any).hide_oos_variants ? "Out-of-stock colours are hidden from customers (shown again automatically when restocked)." : "Out-of-stock colours are shown to customers as “Out of stock”."}</p>
-            <form action={setHideOosVariantsAction}>
-              <input type="hidden" name="sku" value={p.sku} />
-              <input type="hidden" name="hide_oos_variants" value={(p as any).hide_oos_variants ? "0" : "1"} />
-              <button className="px-4 py-2 rounded-full bg-ink/5 text-ink text-sm hover:bg-ink/10 whitespace-nowrap">{(p as any).hide_oos_variants ? "Show out-of-stock colours" : "Hide out-of-stock colours"}</button>
-            </form>
-          </div>
-        )}
+        {/* Hide out-of-stock colours from the storefront — the owner's requested control, on the page he actually uses.
+            DEFAULT IS ON: a design that has never been switched (column null) hides its sold-out colours. Read the
+            flag through this one `hideOos` value everywhere below — the sentence, the button label AND the hidden
+            field that submits the opposite — so a null can never make the wording say one thing and the button do
+            another. The storefront reads it the same way; see app/(retail)/shop/[category]/[sku]/page.tsx. */}
+        {variants.length > 0 && (() => {
+          const hideOos = (p as any).hide_oos_variants !== false;
+          return (
+            <div className="flex items-center justify-between gap-3 mt-3 pt-3 border-t border-sand/60">
+              <p className="text-sm text-muted">{hideOos ? "Out-of-stock colours are hidden from customers (shown again automatically when restocked). This is the default." : "Out-of-stock colours are shown to customers as “Out of stock”."}</p>
+              <form action={setHideOosVariantsAction}>
+                <input type="hidden" name="sku" value={p.sku} />
+                <input type="hidden" name="hide_oos_variants" value={hideOos ? "0" : "1"} />
+                <button className="px-4 py-2 rounded-full bg-ink/5 text-ink text-sm hover:bg-ink/10 whitespace-nowrap">{hideOos ? "Show out-of-stock colours" : "Hide out-of-stock colours"}</button>
+              </form>
+            </div>
+          );
+        })()}
       </div>
 
       <div className={card}>

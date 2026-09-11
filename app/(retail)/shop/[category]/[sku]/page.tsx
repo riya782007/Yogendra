@@ -142,8 +142,21 @@ export default async function ProductPage(props: Params) {
   const orderedVariants = leadId
     ? allVars.sort((a, b) => (a.id === leadId ? -1 : b.id === leadId ? 1 : 0))
     : allVars;
-  // Public product pages show only purchasable colourways and their images.
-  const visibleVariants = (orderedVariants as any[]).filter((v: any) => (v.qty ?? 0) > 0);
+  // "Hide out-of-stock colours" — products.hide_oos_variants, the toggle on the Catalogue tab.
+  //
+  // Sept 2026: that toggle was stored and shown in the console but NOTHING ever read it — this line
+  // filtered sold-out colours unconditionally, so the switch did nothing either way and its "shown
+  // to customers as Out of stock" wording was simply untrue. It is wired up here.
+  //
+  // It DEFAULTS TO ON (owner's request), and "on" is exactly what this page already did, so no
+  // existing design changes behaviour — only an explicit OFF now shows sold-out colours. BuyBox
+  // already handles those correctly: its `outOfStock` state disables Add to cart for the selected
+  // colour. A design with EVERY colour sold out still 404s for customers via the check above, so
+  // turning this off can never put an unbuyable page in front of a shopper.
+  const hideOosColours = (p as any).hide_oos_variants !== false;
+  const visibleVariants = hideOosColours
+    ? (orderedVariants as any[]).filter((v: any) => (v.qty ?? 0) > 0)
+    : (orderedVariants as any[]);
   // Per-variant: its own photo, stock and price (variant override → product override → formula).
   const variantsForBuy = (visibleVariants as any[]).map((v: any) => {
     const vOv = overridesOf(v);
