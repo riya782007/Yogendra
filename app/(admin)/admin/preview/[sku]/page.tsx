@@ -18,6 +18,7 @@ import Link from "next/link";
 import { getSession, can } from "@/lib/auth";
 import { supabaseServer } from "@/lib/supabase/server";
 import { storeUrl } from "@/lib/siteUrl";
+import { CartProvider } from "@/components/cart/CartContext";
 import ProductPage from "@/app/(retail)/shop/[category]/[sku]/page";
 
 export const metadata = { title: "Owner Console · Preview" };
@@ -66,12 +67,30 @@ export default async function AdminProductPreview({ params }: { params: { sku: s
         </div>
       </div>
 
+      {/* CART PROVIDER — why this is here, and why the preview was broken without it.
+          =====================================================================================
+          The storefront product page renders BuyBox, which renders AddToCart, which calls
+          useCart(). That hook does `if (!c) throw new Error("useCart outside provider")`. On the
+          real shop the provider comes from app/(retail)/layout.tsx, which wraps every storefront
+          page in <CartProvider>. This route is under (admin) and gets the ADMIN layout, which has
+          no such provider — so the moment the browser hydrated this page the hook threw, React
+          gave up on the tree (minified error #419), and the console's error boundary showed
+          "Couldn't load that page".
+
+          Note what that means: the SERVER was fine. The HTML rendered and returned 200 in ~1.5s.
+          The page died in the browser, which is why it looked like a loading failure and why
+          making the server faster never fixed it.
+
+          Only the cart provider is needed. useWishlist() returns a default object instead of
+          throwing, so the wishlist works without its provider. */}
       {/* ProductPage's declared props are params-only (Next.js requires that of a page), so the
           preview flag is handed over through this cast. The page reads it at runtime. */}
-      {await (ProductPage as unknown as (p: { params: { category: string; sku: string }; preview: true }) => Promise<JSX.Element>)({
-        params: { category, sku },
-        preview: true,
-      })}
+      <CartProvider>
+        {await (ProductPage as unknown as (p: { params: { category: string; sku: string }; preview: true }) => Promise<JSX.Element>)({
+          params: { category, sku },
+          preview: true,
+        })}
+      </CartProvider>
     </main>
   );
 }
