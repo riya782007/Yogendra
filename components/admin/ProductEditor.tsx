@@ -1,6 +1,5 @@
 "use client";
 import { useState, useEffect } from "react";
-import { storeUrl } from "@/lib/siteUrl";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
@@ -364,8 +363,22 @@ export function ProductEditor({
         <button type="submit" disabled={saving} className="btn-primary px-6 py-2.5 text-sm font-medium disabled:opacity-60">
           {saving ? "Saving…" : "Save changes"}
         </button>
-        <Link href={storeUrl(`/shop/${product.categorySlug}/${product.sku}`)} target="_blank" className="text-sm text-emerald nav-link">
-          View live page ↗
+        {/* This used to link straight to the customer URL, /shop/<category>/<sku>. That URL 404s by
+            design for anything a shopper must not see — a DRAFT, or a design with every colour sold
+            out — which is exactly what the owner is usually looking at when he is in this editor. So
+            the button reliably showed him "404: This page could not be found" on his own product.
+
+            It now opens the staff preview instead, which renders the identical storefront page with
+            the visibility gate lifted, so a draft and a sold-out design both look like what the
+            customer would see. The preview screen carries its own "Open public page ↗" link for the
+            real customer URL, so nothing is lost — the working link simply comes first. */}
+        <Link
+          href={`/admin/preview/${encodeURIComponent(product.sku)}`}
+          target="_blank"
+          className="text-sm text-emerald nav-link"
+          title="Opens this design's page as a customer would see it — works for drafts and sold-out designs too. The real customer link is on that page."
+        >
+          View page ↗
         </Link>
         <Link href="/admin/catalogue" className="text-sm text-muted hover:text-ink ml-auto">← Back to catalogue</Link>
       </div>

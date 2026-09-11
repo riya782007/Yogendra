@@ -68,7 +68,15 @@ export function ProductManager({ data, initialTab }: { data: any; initialTab?: s
         <Link href="/admin/inventory" className="text-sm text-muted hover:text-ink">← Inventory</Link>
         <div className="flex items-center gap-2">
           <span className={`text-xs px-2 py-0.5 rounded-full ${p.status === "published" ? "bg-emerald-mist text-emerald-dark" : "bg-gold/15 text-gold-dark"}`}>{p.status === "published" ? "Published" : "Hidden"}</span>
-          <Link href={storeUrl(`/shop/${p.category?.slug}/${p.sku}`)} target="_blank" className="text-xs text-emerald nav-link">view ↗</Link>
+          {/* Same trap as the editor's "View live page": the customer URL 404s a draft or a design
+              with nothing in stock, which is most of what gets opened from here. Published AND in
+              stock keeps the real customer URL; anything else goes to the staff preview, which
+              renders the same page with the visibility gate lifted. */}
+          {p.status === "published" && (p.qty ?? 0) > 0 ? (
+            <Link href={storeUrl(`/shop/${p.category?.slug}/${p.sku}`)} target="_blank" className="text-xs text-emerald nav-link">view ↗</Link>
+          ) : (
+            <Link href={`/admin/preview/${encodeURIComponent(p.sku)}`} target="_blank" className="text-xs text-emerald nav-link" title={p.status === "published" ? "Out of stock — not on the store right now, so this opens the staff preview" : "Not published yet — this opens the staff preview"}>view ↗</Link>
+          )}
         </div>
       </div>
       <h1 className="font-display text-3xl text-ink">{p.name}</h1>
