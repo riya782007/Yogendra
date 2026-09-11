@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
@@ -97,6 +97,32 @@ export function ProductEditor({
   // what produced vague "Gold Hand Accessorie" titles; a photo yields ChatGPT-level "…Bracelet Watch…").
   const [titlesUsedPhoto, setTitlesUsedPhoto] = useState<boolean | null>(null);
 
+  /**
+   * THE IN-FLIGHT AI WRITE — why this ref exists.
+   * ===========================================================================================
+   * Owner, Sept 2026: "Title suggestion ke baad save krne ka process bhot time consuming h" and
+   * "Save hi nh ho rhe title suggestion ke baad."
+   *
+   * Picking a suggested title sets the name instantly but then fires alignContentToTitleAction to
+   * rewrite the DESCRIPTION, and that is a live LLM call — seconds, sometimes many. Nothing stopped
+   * him pressing "Save changes" while it was still running, and what happened then looked exactly
+   * like a broken save:
+   *
+   *   1. Save posts the OLD description (the new one does not exist yet).
+   *   2. A moment later the AI returns and setDescription() rewrites the box on screen.
+   *   3. He is now looking at text that was never saved. Reload, and it is gone.
+   *
+   * So: Save never failed — it saved the wrong thing, and the screen then lied about it.
+   *
+   * The fix is not to disable the button (that just moves the waiting around). Save now WAITS for
+   * whatever the AI is still writing and submits that. He presses Save once, whenever he likes.
+   *
+   * The promise resolves with the fields themselves rather than relying on the textarea having
+   * re-rendered: React state updates are not synchronous, so reading the DOM straight after the
+   * await could still hand us the stale description. The values go onto the FormData directly.
+   */
+  const pendingAi = useRef<Promise<{ title?: string; description?: string }> | null>(null);
+
   async function suggestTitles() {
     setSuggestingTitles(true); setTitleOptions([]);
     const catName = categories.find((c) => c.id === product.categoryId)?.name;
@@ -117,17 +143,32 @@ export function ProductEditor({
     setTitle(t); setName(t); setTitleOptions([]); setAligning(t);
     const catName = categories.find((c) => c.id === product.categoryId)?.name;
     const keywords = specKeywords.split(/[,\n]/).map((k) => k.trim()).filter(Boolean);
-    const res = await alignContentToTitleAction({ sku: product.sku, name: t, category: catName, title: t, keywords });
-    setAligning("");
-    if (res.ok && res.description) { setDescription(res.description); toast("Title picked — description aligned ✓"); }
-    else toast(res.error ?? "Title set — couldn't auto-write the description; edit it manually.", "error");
+    // Held in the ref so a Save pressed mid-write can await it and submit the real description.
+    const work = (async () => {
+      const res = await alignContentToTitleAction({ sku: product.sku, name: t, category: catName, title: t, keywords });
+      if (res.ok && res.description) { setDescription(res.description); toast("Title picked — description aligned ✓"); return { title: t, description: res.description }; }
+      toast(res.error ?? "Title set — couldn't auto-write the description; edit it manually.", "error");
+      return { title: t };
+    })();
+    pendingAi.current = work;
+    // Swallow here rather than rethrowing into the click handler: the toast above already told him
+    // what happened, and an unhandled rejection would leave the "Writing…" line stuck on screen.
+    try { await work; } catch { toast("Couldn't write the description — the title is set, edit the text yourself.", "error"); }
+    finally { if (pendingAi.current === work) pendingAi.current = null; setAligning(""); }
   }
 
   async function suggestTitle() {
     setSuggesting(true);
     const catName = categories.find((c) => c.id === product.categoryId)?.name;
     const keywords = specKeywords.split(/[,\n]/).map((k) => k.trim()).filter(Boolean);
-    const res = await suggestProductTitleAction({ name, category: catName, keywords, sku: product.sku });
+    // Same race as pickTitle: this writes BOTH title and description after an await, so a Save
+    // pressed while "Writing…" is on screen must wait for it rather than post the old copy.
+    // ONE call, shared — `call` is what we await here AND what Save awaits through the ref.
+    const call = suggestProductTitleAction({ name, category: catName, keywords, sku: product.sku });
+    pendingAi.current = call.then((r) => (r.ok && r.title ? { title: r.title, description: r.description ?? undefined } : {}));
+    const work = pendingAi.current;
+    const res = await call;
+    if (pendingAi.current === work) pendingAi.current = null;
     setSuggesting(false);
     if (res.ok && res.title) {
       setTitle(res.title);
@@ -150,8 +191,21 @@ export function ProductEditor({
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    // Capture the form node BEFORE any await — `e.currentTarget` is only valid during dispatch.
+    const form = e.currentTarget;
     setSaving(true);
-    const fd = new FormData(e.currentTarget);
+    // If the AI is still writing the title/description, wait for it and save THAT, instead of
+    // quietly posting the copy it is about to replace. See the pendingAi note above.
+    let aiFields: { title?: string; description?: string } | null = null;
+    if (pendingAi.current) {
+      toast("Finishing the AI description first — saving as soon as it lands…");
+      try { aiFields = await pendingAi.current; } catch { /* fall through and save what is on screen */ }
+    }
+    const fd = new FormData(form);
+    // Set them on the FormData directly rather than trusting the inputs to have re-rendered: React
+    // state updates are not synchronous, so the textarea can still hold the old text at this point.
+    if (aiFields?.title) { fd.set("title", aiFields.title); if (!String(fd.get("name") ?? "").trim()) fd.set("name", aiFields.title); }
+    if (aiFields?.description) fd.set("description", aiFields.description);
     const res = await updateProductAction(fd);
     setSaving(false);
     if (res.ok) {
@@ -361,7 +415,7 @@ export function ProductEditor({
       {/* ACTIONS */}
       <div className="flex items-center gap-3 sticky bottom-0 bg-cream/80 backdrop-blur py-3">
         <button type="submit" disabled={saving} className="btn-primary px-6 py-2.5 text-sm font-medium disabled:opacity-60">
-          {saving ? "Saving…" : "Save changes"}
+          {saving ? (aligning || suggesting ? "Finishing the description…" : "Saving…") : "Save changes"}
         </button>
         {/* This used to link straight to the customer URL, /shop/<category>/<sku>. That URL 404s by
             design for anything a shopper must not see — a DRAFT, or a design with every colour sold
