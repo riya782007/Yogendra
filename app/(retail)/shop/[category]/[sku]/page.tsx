@@ -25,33 +25,67 @@ type Params = { params: { category: string; sku: string } };
 // Cache the product page's data per-SKU (3 min). getRecommendations scans the catalogue, so rendering
 // this uncached re-ran heavy queries on every product view. Edits refresh within the window / "storefront" tag.
 /**
- * `skipRelated` — Sept 2026, "preview not working".
+ * Sept 2026 — "preview not working", and product pages taking ~9-11s on a first view.
  *
- * The owner's View ↗ button in the catalogue renders this same page through /admin/preview/<sku>.
- * getRecommendations has to read the whole catalogue to pick 4 "you may also like" cards, and that
- * read alone accounts for most of the page's time — enough to put the preview at ~8.5s, over the
- * host's 10s limit whenever the console is busy, which is the "Couldn't load that page" he sees.
+ * MEASURED on the live site: an uncached product page took 8.9s-11.1s; the same page warm took
+ * 0.6s. The whole difference is the "you may also like" rail. getRecommendations calls
+ * getStorefrontCached(), which reads the ENTIRE published catalogue — every product, every
+ * product_image and every variant, paged 1000 rows at a time — and then re-parses that whole blob,
+ * all to choose FOUR cards. The owner's View ↗ button renders this same page through
+ * /admin/preview/<sku>, which is force-dynamic and behind auth, so it pays that cost on a real
+ * request and trips the host's 10s function limit — the "Couldn't load that page" he sees.
  *
- * A staff preview exists to check ONE design's own page. The related rail is not part of that, so
- * previewing skips it and returns in a fraction of the time. Customer-facing product pages are
- * unchanged and still get their recommendations. unstable_cache includes the arguments in its key,
- * so the preview and customer versions are cached separately and never overwrite each other.
+ * Two things were wrong, and they are fixed separately below.
+ *
+ * 1. THE RAIL WAS INSIDE THE PAGE'S CACHE ENTRY, AND IN generateMetadata'S PATH.
+ *    unstable_cache keys on the arguments, so loadProductPage(sku) from generateMetadata and
+ *    loadProductPage(sku, false) from the page body were TWO different entries — one cold customer
+ *    visit ran the whole heavy load twice. The core load is now a single-argument function with no
+ *    recommendations in it at all, so metadata and the page body share one entry, and metadata —
+ *    which only ever needed the title and description — no longer drags the catalogue in behind it.
+ *
+ * 2. THE RAIL COULD TAKE THE PAGE DOWN WITH IT.
+ *    It is decorative. It must never be the reason a product page or a preview fails, so it is
+ *    fetched separately, under its own cache key, behind a time budget (see RELATED_BUDGET_MS).
  */
 const loadProductPage = unstable_cache(
-  async (sku: string, skipRelated = false) => {
+  async (sku: string) => {
     const [p, formula] = await Promise.all([getProductBySku(sku), getPricingFormula()]);
     if (!p) return null;
-    // Reviews + recommendations are secondary — a failure in either must NEVER take down the
-    // whole product page. Degrade gracefully to empty.
-    const [reviews, related] = await Promise.all([
-      getProductReviews(p.id).catch(() => ({ avg: 4.6, count: 0, list: [] as any[], dist: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 } as Record<number, number> })),
-      skipRelated ? Promise.resolve([] as any[]) : getRecommendations(p.sku, 4).catch(() => [] as any[]),
-    ]);
-    return { p, formula, reviews, related };
+    // Reviews are secondary — a failure there must NEVER take down the whole product page.
+    const reviews = await getProductReviews(p.id).catch(() => ({ avg: 4.6, count: 0, list: [] as any[], dist: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 } as Record<number, number> }));
+    return { p, formula, reviews };
   },
-  ["shop-product-page-v1"],
+  ["shop-product-core-v2"],
   { revalidate: 180, tags: ["storefront"] },
 );
+
+/** The "you may also like" rail, cached on its own so a slow or empty rail never sits inside — or
+ *  invalidates — the product's own cached data. */
+const loadRelated = unstable_cache(
+  async (sku: string, n: number) => getRecommendations(sku, n).catch(() => [] as any[]),
+  ["shop-product-related-v1"],
+  { revalidate: 180, tags: ["storefront"] },
+);
+
+/** How long the page will wait for the related rail before rendering without it.
+ *  A cold catalogue read measured 8.9-11.1s and the host kills the request at 10s, so waiting is
+ *  not an option: better a product page with no rail than no product page. Only the WAIT is
+ *  abandoned — the real result still lands in loadRelated's cache, so nothing caches an empty rail.
+ *
+ *  Be honest about what this does and does not fix: it guarantees the page renders, it does not
+ *  make the rail fast. While the shared catalogue cache is cold the rail will simply be absent.
+ *  The real fix is for getRecommendations to stop reading 4,500 products to choose four — it should
+ *  query the same subcategory/category directly — and that is a separate change to
+ *  lib/supabase/queries.ts, deliberately not bundled into this one. */
+const RELATED_BUDGET_MS = 2_500;
+
+function withBudget<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    work,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
   // Reuse the cached per-SKU load (was an extra uncached read that also forced the page to render
@@ -68,10 +102,13 @@ export default async function ProductPage(props: Params) {
   // the staff session first and passes it in code. Next.js never puts `preview` on a page's props,
   // so a customer typing this URL can never turn it on.
   const preview = (props as { preview?: boolean }).preview === true;
-  // Staff preview skips the catalogue-wide "you may also like" read — see loadProductPage above.
-  const data = await loadProductPage(params.sku, preview);
+  const data = await loadProductPage(params.sku);
   if (!data) notFound();
-  const { p, formula, reviews, related } = data;
+  const { p, formula, reviews } = data;
+  // The related rail: skipped entirely for the staff preview (previewing is about checking ONE
+  // design's own page), and time-budgeted for customers so it can never hold the page past the
+  // host's request limit. See RELATED_BUDGET_MS above.
+  const related = preview ? ([] as any[]) : await withBudget(loadRelated(p.sku, 4), RELATED_BUDGET_MS, [] as any[]);
   const variants = (p.variants ?? []) as any[];
   const availableQty = variants.length
     ? variants.reduce((total, variant) => total + Math.max(0, variant.qty ?? 0), 0)
