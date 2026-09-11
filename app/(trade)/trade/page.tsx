@@ -5,7 +5,7 @@ import { getPricingFormula, getWholesaleOrderHistory, getCategories, getLiveProm
 import { supabaseServer } from "@/lib/supabase/server";
 import { PromoHero } from "@/components/site/PromoHero";
 import { getWholesaleSession } from "@/lib/wholesale";
-import { TRADE_PAGE_SIZE, getTradeFacetsCached, getTradeSlice, getTradeSliceCached, type TradeFacet } from "@/lib/catalogSlice";
+import { TRADE_PAGE_SIZE, getTradeFacetsCached, getTradeColoursCached, getTradeSlice, getTradeSliceCached, type TradeFacet } from "@/lib/catalogSlice";
 import { WholesaleCatalog } from "@/components/site/WholesaleCatalog";
 import { SellForm } from "@/components/site/SellForm";
 
