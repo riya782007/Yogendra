@@ -196,10 +196,22 @@ export function ProductEditor({
     setSaving(true);
     // If the AI is still writing the title/description, wait for it and save THAT, instead of
     // quietly posting the copy it is about to replace. See the pendingAi note above.
+    // BOUNDED. Waiting for the AI was right; waiting FOREVER was not — the owner reported the
+    // button stuck on "Saving…", because the server action it was waiting on could outlive the
+    // host's 10s function limit and never return at all (see alignContentToTitleAction).
+    // Save must always complete. If the AI has not landed within this budget we save what is on
+    // screen; the title is already in the field, so nothing he typed or picked is lost.
+    const AI_WAIT_MS = 8_000;
     let aiFields: { title?: string; description?: string } | null = null;
     if (pendingAi.current) {
       toast("Finishing the AI description first — saving as soon as it lands…");
-      try { aiFields = await pendingAi.current; } catch { /* fall through and save what is on screen */ }
+      try {
+        aiFields = await Promise.race([
+          pendingAi.current,
+          new Promise<null>((r) => setTimeout(() => r(null), AI_WAIT_MS)),
+        ]);
+        if (!aiFields) toast("Saving now — the description was still being written, so edit it after if needed.");
+      } catch { /* fall through and save what is on screen */ }
     }
     const fd = new FormData(form);
     // Set them on the FormData directly rather than trusting the inputs to have re-rendered: React

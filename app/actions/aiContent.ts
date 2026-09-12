@@ -35,7 +35,11 @@ async function fetchProductImage(p: any): Promise<{ imageBase64?: string; imageM
       prodImgs.find((i: any) => i.kind === "source" || i.kind === "flatlay") ??
       prodImgs.find((i: any) => i.kind === "model") ??
       imgs[0];
-    const r = await fetch(pick.path, { signal: AbortSignal.timeout(12_000) });
+    // 4s, not 12s. The whole serverless function is killed at 10s, so a 12-second image download
+    // could never finish AND leave time for the model — it just guaranteed the request died with
+    // nothing to show. Failing fast returns {} and the caller writes copy from the fields instead,
+    // which is a worse title but an actual answer. (Applies to every "read the photo" path here.)
+    const r = await fetch(pick.path, { signal: AbortSignal.timeout(4_000) });
     if (!r.ok) return {};
     const imageMime = r.headers.get("content-type") || "image/jpeg";
     const imageBase64 = Buffer.from(await r.arrayBuffer()).toString("base64");
@@ -136,14 +140,48 @@ export async function suggestProductTitlesAction(input: { name: string; category
   }
 }
 
+/**
+ * Rewrite the DESCRIPTION to match a title the owner just picked.
+ *
+ * ROOT CAUSE OF "title pick krne ke baad it too slow / Saving… struck" (Sept 2026)
+ * ============================================================================================
+ * This action used to re-read the product photo and run a VISION model on it. Count the budget it
+ * was given, against the host it runs on:
+ *
+ *     fetchProductImage()                    up to 12,000 ms   (AbortSignal.timeout(12_000))
+ *     vision model call                      up to 30,000 ms   (providers.ts: imageBase64 ? 30_000)
+ *     ------------------------------------------------------------------
+ *     worst case                             ~42 s
+ *     Netlify kills a synchronous function at 10 s.
+ *
+ * So on a slow photo or a slow model this action COULD NOT finish — the function was killed
+ * mid-flight, the server action never returned, and the owner sat watching "Saving…" forever. It
+ * was never a UI bug; the work was configured for a long-running server and deployed onto a
+ * 10-second one.
+ *
+ * TWO CHANGES, both about fitting the host:
+ *
+ * 1. NO VISION HERE. The photo is what "Suggest 3-4 titles" reads, and by this point the owner has
+ *    ALREADY picked the title it produced — the title itself states what the piece is. Re-reading
+ *    the image to write a matching paragraph buys almost nothing and costs the 12s download plus
+ *    the vision premium. This is now a text-only call built from the title, category, sub-category,
+ *    style and polishes.
+ *
+ * 2. A HARD BUDGET. Whatever happens, this returns inside BUDGET_MS — comfortably under the host's
+ *    limit — so the owner always gets an answer instead of a dead request. If the model is slow he
+ *    gets his title with a clear note to write the description himself, which is a normal minute of
+ *    work; before, he got a stuck page and an unsaved product.
+ */
+const ALIGN_BUDGET_MS = 7_000;
+
 export async function alignContentToTitleAction(input: { sku?: string; name?: string; category?: string; title: string; keywords?: string[] }): Promise<{ ok: boolean; title?: string; description?: string; provider?: string; error?: string }> {
   if (!(await requirePerm("catalog.edit"))) return { ok: false, error: "not permitted" };
   const chosen = (input.title ?? "").trim();
   if (!chosen) return { ok: false, error: "No title chosen" };
   const skuStr = (input.sku ?? "").trim();
-  try {
+
+  const work = (async () => {
     let subcategoryName: string | undefined, styleName: string | undefined, polishes: string[] = [];
-    let imageBase64: string | undefined, imageMime: string | undefined;
     if (input.sku) {
       const p = await getProductBySku(input.sku);
       if (p) {
@@ -153,19 +191,30 @@ export async function alignContentToTitleAction(input: { sku?: string; name?: st
           const { data: st } = await supabaseServer().from("styles").select("name").eq("id", (p as any).style_id).maybeSingle();
           styleName = (st as any)?.name;
         }
-        const img = await fetchProductImage(p);
-        imageBase64 = img.imageBase64; imageMime = img.imageMime;
       }
     }
+    // No imageBase64 and no visionFirst — see note above.
     const { content, provider } = await generateProductContent({
       name: nameForAi(input.name ?? chosen, skuStr), sku: input.sku || chosen, categoryName: input.category,
       subcategoryName, styleName, polishes, colors: [],
       keywords: (input.keywords ?? []).map((k) => k.trim()).filter(Boolean),
-      imageBase64, imageMime, lockedTitle: chosen,
-    } as any, { visionFirst: true });
-    return { ok: true, title: chosen, description: content.description, provider };
+      lockedTitle: chosen,
+    } as any);
+    return { ok: true as const, title: chosen, description: content.description, provider };
+  })();
+
+  const timeout = new Promise<{ ok: false; title: string; error: string }>((resolve) =>
+    setTimeout(() => resolve({
+      ok: false,
+      title: chosen,
+      error: "The title is set, but the description took too long to write — please type it yourself and Save.",
+    }), ALIGN_BUDGET_MS),
+  );
+
+  try {
+    return await Promise.race([work, timeout]);
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Could not write the description" };
+    return { ok: false, title: chosen, error: e instanceof Error ? e.message : "Could not write the description" };
   }
 }
 
