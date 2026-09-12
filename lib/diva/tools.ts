@@ -104,7 +104,13 @@ export const DIVA_TOOLS: DivaTool[] = [
   { name: "add_stock_by_name", kind: "mutate", permission: "inventory.add", confirm: true, desc: "Increase stock for the best-matching product by name.", params: [{ name: "query", type: "string", required: true, desc: "name/keywords" }, { name: "qty", type: "number", required: true, desc: "units to add" }, { name: "source", type: "string", desc: "reason/source" }] },
   { name: "remove_stock_by_name", kind: "mutate", permission: "inventory.remove", confirm: true, desc: "Decrease stock for the best-matching product by name.", params: [{ name: "query", type: "string", required: true, desc: "name/keywords" }, { name: "qty", type: "number", required: true, desc: "units to remove" }, { name: "source", type: "string", desc: "reason/source" }] },
   { name: "record_damage", kind: "mutate", permission: "inventory.remove", confirm: true, desc: "Remove damaged/broken pieces from stock (logged as a damage movement).", params: [{ name: "sku", type: "string", desc: "product SKU" }, { name: "query", type: "string", desc: "name if no SKU" }, { name: "qty", type: "number", required: true, desc: "pieces damaged" }, { name: "reason", type: "string", desc: "note" }] },
-  { name: "create_product", kind: "mutate", permission: "catalog.create", confirm: true, desc: "Create a new product (resolves/creates the category).", params: [{ name: "name", type: "string", required: true, desc: "product name" }, { name: "category", type: "string", required: true, desc: "category name" }, { name: "price", type: "number", required: true, desc: "wholesale/base price in ₹" }, { name: "qty", type: "number", desc: "opening stock" }] },
+  { name: "create_product", kind: "mutate", permission: "catalog.create", confirm: true, desc: "Create a new listing (resolves/creates the category). Pass `colours` to make it a colour design — each colour gets its own scannable variant SKU, which is what the counter scans and what the labels print.", params: [
+    { name: "name", type: "string", required: true, desc: "product name" },
+    { name: "category", type: "string", required: true, desc: "category name" },
+    { name: "price", type: "number", required: true, desc: "wholesale/base price in ₹" },
+    { name: "qty", type: "number", desc: "opening stock — PER COLOUR when colours are given" },
+    { name: "colours", type: "string", desc: "colourways, comma separated e.g. 'green, golden, ruby'. Omit for a single-SKU design." },
+  ] },
   { name: "set_price", kind: "mutate", permission: "catalog.price_edit", confirm: true, desc: "Set a product's price. With a tier (wholesale/retail/mrp) it pins that exact price; without one it sets the base wholesale cost and re-derives the rest.", params: [{ name: "sku", type: "string", required: true, desc: "product SKU" }, { name: "price", type: "number", required: true, desc: "price in ₹" }, { name: "tier", type: "string", desc: "wholesale | retail | mrp | base" }] },
   { name: "rename_sku", kind: "mutate", permission: "catalog.edit", confirm: true, desc: "Change a product's SKU to a new unique value.", params: [{ name: "sku", type: "string", required: true, desc: "current SKU" }, { name: "newSku", type: "string", required: true, desc: "new SKU" }] },
   { name: "rename_product", kind: "mutate", permission: "catalog.edit", confirm: true, desc: "Rename a product (change its display name).", params: [{ name: "sku", type: "string", required: true, desc: "product SKU" }, { name: "name", type: "string", required: true, desc: "new product name" }] },
@@ -126,6 +132,16 @@ export const DIVA_TOOLS: DivaTool[] = [
   { name: "product_photos", kind: "read", permission: "catalog.view", desc: "Show how many photos a product has and their links.", params: [{ name: "sku", type: "string", desc: "product SKU" }, { name: "query", type: "string", desc: "name if no SKU" }] },
   { name: "recent_sales", kind: "read", permission: "sales.view", desc: "List the most recent bills/invoices (amount, customer, type, date).", params: [{ name: "limit", type: "number", desc: "how many (default 8)" }] },
   { name: "last_purchase", kind: "read", permission: "purchases.view", desc: "Show the most recent purchase cost & date recorded for a product.", params: [{ name: "sku", type: "string", desc: "product SKU" }, { name: "query", type: "string", desc: "name if no SKU" }] },
+
+  // ---- Labels / barcodes -------------------------------------------------------------------
+  // Resolves the codes itself and opens the Labels page with the sheet ALREADY QUEUED. A design
+  // with colours expands to one label per colour, because that is what scans at the counter.
+  { name: "print_labels", kind: "navigate", permission: "inventory.view", desc: "Print barcode labels: opens the Labels page with these designs already queued. Give a SKU, several SKUs, a product name, or scope 'new' for the designs added most recently (e.g. 'aaj jo add kiye unke labels nikal do').", params: [
+    { name: "sku", type: "string", desc: "one SKU, or several separated by commas/spaces" },
+    { name: "query", type: "string", desc: "product name/keywords if no SKU is given" },
+    { name: "scope", type: "string", desc: "'new' = the most recently created designs" },
+    { name: "limit", type: "number", desc: "how many designs when using scope=new (default 10)" },
+  ] },
   { name: "compose", kind: "read", desc: "WRITE text for the owner: an image/photo prompt, a product title or description, a social caption, a personalised WhatsApp message or reply to a customer (using that customer's own history), or business guidance/ideas. Automatically pulls the relevant product/customer/brand context.", params: [
     { name: "kind", type: "string", required: true, desc: "image_prompt | title | description | caption | message | reply | guide | idea" },
     { name: "about", type: "string", desc: "what to write / the topic or instruction" },
