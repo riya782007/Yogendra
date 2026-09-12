@@ -172,7 +172,7 @@ export async function suggestProductTitlesAction(input: { name: string; category
  *    gets his title with a clear note to write the description himself, which is a normal minute of
  *    work; before, he got a stuck page and an unsaved product.
  */
-const ALIGN_BUDGET_MS = 7_000;
+const ALIGN_BUDGET_MS = 4_000;
 
 export async function alignContentToTitleAction(input: { sku?: string; name?: string; category?: string; title: string; keywords?: string[] }): Promise<{ ok: boolean; title?: string; description?: string; provider?: string; error?: string }> {
   if (!(await requirePerm("catalog.edit"))) return { ok: false, error: "not permitted" };

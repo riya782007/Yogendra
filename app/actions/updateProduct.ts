@@ -81,9 +81,10 @@ export async function updateProductAction(formData: FormData): Promise<UpdateRes
 
   // Merge content (keep anything we don't expose in the form).
   const prev = (existing.generated_content as any) ?? {};
+  const displayTitle = String(formData.get("title") ?? "").trim() || name;
   const generated_content = {
     ...prev,
-    title: String(formData.get("title") ?? "").trim() || name,
+    title: displayTitle,
     description: String(formData.get("description") ?? "").trim(),
     tags: parseList(String(formData.get("tags") ?? "")),
     specs: parseSpecs(String(formData.get("specs") ?? "")),
@@ -95,9 +96,7 @@ export async function updateProductAction(formData: FormData): Promise<UpdateRes
     },
   };
 
-  const { error } = await sb
-    .from("products")
-    .update({
+  const patch: Record<string, any> = {
       name,
       category_id: categoryId,
       type,
@@ -111,8 +110,13 @@ export async function updateProductAction(formData: FormData): Promise<UpdateRes
       ...(baseChanged ? { wholesale_override: null, retail_override: null, mrp_override: null } : {}),
       generated_content,
       last_movement_at: new Date().toISOString(),
-    })
-    .eq("id", existing.id);
+      updated_at: new Date().toISOString(),
+    };
+  let { error } = await sb.from("products").update(patch).eq("id", existing.id);
+  if (error && /updated_at/i.test(error.message)) {
+    delete patch.updated_at;
+    ({ error } = await sb.from("products").update(patch).eq("id", existing.id));
+  }
   if (error) return { ok: false, error: error.message };
 
   // …and clear every colour variant's pinned prices too, so each colour's retail/MRP follows the new
@@ -161,21 +165,52 @@ export async function updateProductAction(formData: FormData): Promise<UpdateRes
     finalSku = newSku;
   }
 
-  // Revalidate everywhere this product appears.
-  const { data: cat } = await sb.from("categories").select("slug").eq("id", categoryId).maybeSingle();
-  const slug = (cat as any)?.slug ?? "all";
-  revalidatePath(`/shop/${slug}/${finalSku}`);
-  revalidatePath(`/shop/${slug}/${sku}`);
-  revalidatePath(`/shop/c/${slug}`);
-  revalidatePath("/shop"); revalidateTag("storefront");
-  revalidatePath("/catalog");
-  revalidatePath("/trade"); revalidateTag("trade-catalog");
-  revalidatePath("/admin/catalogue");
-  // Revalidate the EDITOR page itself (both the new and old SKU) so the owner's single "Save changes"
-  // click reflects immediately — the status badge, "Visible/Hidden" and live-page link update without a
-  // manual browser refresh (previously only the catalogue list was revalidated, not this page).
-  revalidatePath(`/admin/catalogue/${finalSku}`);
-  if (finalSku !== sku) revalidatePath(`/admin/catalogue/${sku}`);
-  revalidatePath("/admin/media");
+  // Revalidate everywhere this product appears. Wrapped: on Netlify a failed ISR
+  // must not turn a successful DB write into a hung "Saving…" request.
+  try {
+    const { data: cat } = await sb.from("categories").select("slug").eq("id", categoryId).maybeSingle();
+    const slug = (cat as any)?.slug ?? "all";
+    revalidatePath(`/shop/${slug}/${finalSku}`);
+    revalidatePath(`/shop/${slug}/${sku}`);
+    revalidatePath(`/shop/c/${slug}`);
+    revalidatePath("/shop"); revalidateTag("storefront");
+    revalidatePath("/catalog");
+    revalidatePath("/trade"); revalidateTag("trade-catalog");
+    revalidatePath("/admin/catalogue");
+    revalidatePath(`/admin/catalogue/${finalSku}`);
+    if (finalSku !== sku) revalidatePath(`/admin/catalogue/${sku}`);
+    revalidatePath("/admin/media");
+  } catch { /* name is already in the database */ }
+  return { ok: true };
+}
+
+/** Instant rename used when the owner picks an AI title — name hits the DB without waiting
+ *  for the description rewrite, so the heading and listings move even if Save is pressed later. */
+export async function persistProductNameAction(sku: string, name: string, title?: string): Promise<UpdateResult> {
+  if (!(await requirePerm("catalog.edit"))) return { ok: false, error: "Your role can't edit products." };
+  const next = name.trim();
+  if (!sku.trim() || !next) return { ok: false, error: "Missing name" };
+  const sb = supabaseServer();
+  const { data: existing } = await sb.from("products").select("id, generated_content").eq("sku", sku.trim()).maybeSingle();
+  if (!existing) return { ok: false, error: "Product not found" };
+  const prev = (existing.generated_content as any) ?? {};
+  const patch: Record<string, any> = {
+    name: next,
+    generated_content: { ...prev, title: (title ?? next).trim() || next },
+    last_movement_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  let { error } = await sb.from("products").update(patch).eq("id", existing.id);
+  if (error && /updated_at/i.test(error.message)) {
+    delete patch.updated_at;
+    ({ error } = await sb.from("products").update(patch).eq("id", existing.id));
+  }
+  if (error) return { ok: false, error: error.message };
+  try {
+    revalidatePath(`/admin/catalogue/${sku.trim()}`);
+    revalidatePath("/admin/catalogue");
+    revalidatePath("/shop"); revalidateTag("storefront");
+    revalidatePath("/trade"); revalidateTag("trade-catalog");
+  } catch { /* name is saved */ }
   return { ok: true };
 }

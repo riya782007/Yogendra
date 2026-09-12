@@ -201,7 +201,11 @@ export function resolveProductContent(p: ProductLike): GeneratedContent {
   if (p.generated_content && p.generated_content.title) {
     const gc = p.generated_content;
     const tpl = templateContent(p);
-    const title = (gc.title && gc.title.trim()) ? gc.title.trim() : (preferredTitle(p) || tpl.title);
+    // Product name is what the owner just saved. Stale generated_content.title (the old
+    // "Ishika …" after a rename to "Sara …") must not keep winning on shop/trade listings.
+    const named = preferredTitle(p);
+    const cached = (gc.title && gc.title.trim()) ? gc.title.trim() : "";
+    const title = named || cached || tpl.title;
     const pick = (s: string | undefined, fallback: string) => (s && s.trim()) ? s : fallback;
     const merged: GeneratedContent = {
       title,

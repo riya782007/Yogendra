@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
-import { updateProductAction } from "@/app/actions/updateProduct";
+import { updateProductAction, persistProductNameAction } from "@/app/actions/updateProduct";
 import { repriceFromFormulaAction } from "@/app/actions/catalog";
 import { suggestProductTitleAction, suggestProductTitlesAction, alignContentToTitleAction } from "@/app/actions/aiContent";
 import { computePrices, type PricingFormula } from "@/lib/pricing";
@@ -55,6 +55,11 @@ export function ProductEditor({
   const [title, setTitle] = useState(product.title);
   const [name, setName] = useState(product.name);
   const [description, setDescription] = useState(product.description);
+  const [titleAuto, setTitleAuto] = useState(!product.title || product.title.trim() === product.name.trim());
+  useEffect(() => { if (titleAuto) setTitle(name); }, [name, titleAuto]);
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("bd-product-name", { detail: name }));
+  }, [name]);
   // SEO meta title should track the product name (owner: "title change ke baad SEO khud update ho, copy-
   // paste na karna pade"). It auto-fills as "<name> | BlytheDIVA" and keeps following the name UNTIL the
   // owner hand-edits it — then we respect their custom text and stop overwriting.
@@ -140,10 +145,12 @@ export function ProductEditor({
   /** Owner picked a suggested title → it becomes the name + display title, and the description is
    *  re-written to match it (aligned to the same photo + keywords). */
   async function pickTitle(t: string) {
-    setTitle(t); setName(t); setTitleOptions([]); setAligning(t);
+    setTitle(t); setName(t); setTitleAuto(true); setTitleOptions([]); setAligning(t);
+    persistProductNameAction(product.sku, t, t).then((r) => {
+      if (!r.ok) toast(r.error ?? "Could not save the new name yet — press Save changes.", "error");
+    }).catch(() => {});
     const catName = categories.find((c) => c.id === product.categoryId)?.name;
     const keywords = specKeywords.split(/[,\n]/).map((k) => k.trim()).filter(Boolean);
-    // Held in the ref so a Save pressed mid-write can await it and submit the real description.
     const work = (async () => {
       const res = await alignContentToTitleAction({ sku: product.sku, name: t, category: catName, title: t, keywords });
       if (res.ok && res.description) { setDescription(res.description); toast("Title picked — description aligned ✓"); return { title: t, description: res.description }; }
@@ -151,8 +158,6 @@ export function ProductEditor({
       return { title: t };
     })();
     pendingAi.current = work;
-    // Swallow here rather than rethrowing into the click handler: the toast above already told him
-    // what happened, and an unhandled rejection would leave the "Writing…" line stuck on screen.
     try { await work; } catch { toast("Couldn't write the description — the title is set, edit the text yourself.", "error"); }
     finally { if (pendingAi.current === work) pendingAi.current = null; setAligning(""); }
   }
@@ -191,40 +196,26 @@ export function ProductEditor({
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    // Capture the form node BEFORE any await — `e.currentTarget` is only valid during dispatch.
     const form = e.currentTarget;
     setSaving(true);
-    // If the AI is still writing the title/description, wait for it and save THAT, instead of
-    // quietly posting the copy it is about to replace. See the pendingAi note above.
-    // BOUNDED. Waiting for the AI was right; waiting FOREVER was not — the owner reported the
-    // button stuck on "Saving…", because the server action it was waiting on could outlive the
-    // host's 10s function limit and never return at all (see alignContentToTitleAction).
-    // Save must always complete. If the AI has not landed within this budget we save what is on
-    // screen; the title is already in the field, so nothing he typed or picked is lost.
-    const AI_WAIT_MS = 8_000;
-    let aiFields: { title?: string; description?: string } | null = null;
-    if (pendingAi.current) {
-      toast("Finishing the AI description first — saving as soon as it lands…");
-      try {
-        aiFields = await Promise.race([
-          pendingAi.current,
-          new Promise<null>((r) => setTimeout(() => r(null), AI_WAIT_MS)),
-        ]);
-        if (!aiFields) toast("Saving now — the description was still being written, so edit it after if needed.");
-      } catch { /* fall through and save what is on screen */ }
-    }
+    // Do NOT wait for the AI description. On Netlify the rewrite can be killed at 10s and
+    // never return — that is what left Save stuck on "Saving…". The name/title are already
+    // in the fields; persist those now. If a description lands later, he can Save again.
     const fd = new FormData(form);
-    // Set them on the FormData directly rather than trusting the inputs to have re-rendered: React
-    // state updates are not synchronous, so the textarea can still hold the old text at this point.
-    if (aiFields?.title) { fd.set("title", aiFields.title); if (!String(fd.get("name") ?? "").trim()) fd.set("name", aiFields.title); }
-    if (aiFields?.description) fd.set("description", aiFields.description);
-    const res = await updateProductAction(fd);
-    setSaving(false);
-    if (res.ok) {
-      toast("Product saved ✓");
-      router.refresh();
-    } else {
-      toast(res.error ?? "Could not save", "error");
+    fd.set("name", name);
+    fd.set("title", title);
+    fd.set("description", description);
+    fd.set("meta_title", metaTitle);
+    fd.set("meta_description", metaDesc);
+    fd.set("keywords", keywords);
+    try {
+      const res = await updateProductAction(fd);
+      if (res.ok) toast("Product saved ✓");
+      else toast(res.error ?? "Could not save", "error");
+    } catch {
+      toast("Save timed out — check the name is stored, then try again.", "error");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -387,7 +378,7 @@ export function ProductEditor({
           </div>
           <div>
             <label className={label}>Display title</label>
-            <input name="title" value={title} onChange={(e) => setTitle(e.target.value)} className={field} />
+            <input name="title" value={title} onChange={(e) => { setTitle(e.target.value); setTitleAuto(false); }} className={field} />
           </div>
           <div>
             <label className={label}>Description</label>

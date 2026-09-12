@@ -8,6 +8,7 @@ import {
   getLastPurchaseCosts,
 } from "@/lib/supabase/queries";
 import { ProductEditor, type EditorProduct } from "@/components/admin/ProductEditor";
+import { LiveProductTitle } from "@/components/admin/LiveProductTitle";
 import { resolveProductContent } from "@/lib/content";
 import { AutosaveForm } from "@/components/admin/AutosaveForm";
 import { ProductWorkspace, type WorkspaceTab, type TabKey } from "@/components/admin/ProductWorkspace";
@@ -538,7 +539,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
         <div className="flex items-start justify-between gap-3 mt-1 flex-wrap">
           <div>
             <div className="flex items-center gap-3 flex-wrap">
-              <h1 className="font-display text-4xl text-ink">{p.name}</h1>
+              <LiveProductTitle initial={p.name} />
               <span className={`text-xs px-2 py-0.5 rounded-full ${published ? "bg-emerald-mist text-emerald-dark" : "bg-gold/15 text-gold-dark"}`}>{published ? "Visible" : "Hidden"}</span>
             </div>
             <p className="text-sm text-muted mt-1">{p.category?.name} · {p.sku} — everything for this product in one place.</p>
