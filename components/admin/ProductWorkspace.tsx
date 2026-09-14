@@ -10,24 +10,27 @@
  * survives a refresh — handy for DIVA links like "open photos for BD1001".
  */
 import { useState, useCallback } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 
 export type TabKey = "basic" | "pricing" | "inventory" | "photos" | "variants" | "catalog" | "history";
 export type WorkspaceTab = { key: TabKey; label: string; icon: string; badge?: string; node: React.ReactNode };
 
 export function ProductWorkspace({ tabs, initial = "basic" }: { tabs: WorkspaceTab[]; initial?: TabKey }) {
   const [active, setActive] = useState<TabKey>(tabs.some((t) => t.key === initial) ? initial : tabs[0]?.key ?? "basic");
-  const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
 
   const select = useCallback((key: TabKey) => {
     setActive(key);
     // Reflect the tab in the URL without a full navigation (shallow, no scroll jump).
+    // Use history.replaceState — Next.js router.replace waits on pending server
+    // actions, which made tabs feel frozen after AI title work.
     const next = new URLSearchParams(params?.toString());
     next.set("tab", key);
-    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
-  }, [params, pathname, router]);
+    if (typeof window !== "undefined") {
+      window.history.replaceState(window.history.state, "", `${pathname}?${next.toString()}`);
+    }
+  }, [params, pathname]);
 
   return (
     <div className="max-w-4xl">

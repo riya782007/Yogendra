@@ -1,4 +1,6 @@
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+export const maxDuration = 30;
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { ProductHistoryLedger } from "@/components/admin/ProductHistoryLedger";

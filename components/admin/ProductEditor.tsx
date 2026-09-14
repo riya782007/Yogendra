@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
 import { updateProductAction } from "@/app/actions/updateProduct";
 import { repriceFromFormulaAction } from "@/app/actions/catalog";
-import { suggestProductTitleAction, suggestProductTitlesAction, alignContentToTitleAction } from "@/app/actions/aiContent";
+import { suggestProductTitleAction, suggestProductTitlesAction } from "@/app/actions/aiContent";
 import { computePrices, type PricingFormula } from "@/lib/pricing";
 
 type Cat = { id: string; name: string; slug: string };
@@ -92,7 +92,6 @@ export function ProductEditor({
   // Image-scanned title OPTIONS the owner picks from (ChatGPT-style). Picking one aligns name+title+desc.
   const [titleOptions, setTitleOptions] = useState<string[]>([]);
   const [suggestingTitles, setSuggestingTitles] = useState(false);
-  const [aligning, setAligning] = useState("");
   // Was the last title suggestion actually built from a PHOTO? null = not run yet. When false we show a
   // clear "add a photo" banner — because without an image the model can only echo the category (that's
   // what produced vague "Gold Hand Accessorie" titles; a photo yields ChatGPT-level "…Bracelet Watch…").
@@ -102,43 +101,53 @@ export function ProductEditor({
     setSuggestingTitles(true); setTitleOptions([]);
     const catName = categories.find((c) => c.id === product.categoryId)?.name;
     const keywords = specKeywords.split(/[,\n]/).map((k) => k.trim()).filter(Boolean);
-    const res = await suggestProductTitlesAction({ name, category: catName, keywords, sku: product.sku, count: 4 });
-    setSuggestingTitles(false);
-    if (res.ok && res.titles?.length) {
-      setTitleOptions(res.titles);
-      setTitlesUsedPhoto(!!res.usedImage);
-      if (res.usedImage) toast(`${res.titles.length} titles suggested — from the photo 📸. Pick the best one.`);
-      else toast("⚠ No photo on this product — titles are only guessed from the category and will be vague. Add a photo (Photos tab) for accurate, ChatGPT-level titles.", "error");
-    } else toast(res.error ?? "Couldn't suggest titles", "error");
+    try {
+      const res = await suggestProductTitlesAction({ name, category: catName, keywords, sku: product.sku, count: 4 });
+      if (res.ok && res.titles?.length) {
+        setTitleOptions(res.titles);
+        setTitlesUsedPhoto(!!res.usedImage);
+        if (res.usedImage) toast(`${res.titles.length} titles suggested — from the photo 📸. Pick the best one.`);
+        else toast("⚠ No photo on this product — titles are only guessed from the category and will be vague. Add a photo (Photos tab) for accurate, ChatGPT-level titles.", "error");
+      } else toast(res.error ?? "Couldn't suggest titles", "error");
+    } catch {
+      toast("Title suggestion timed out. Try again — the page is still usable.", "error");
+    } finally {
+      setSuggestingTitles(false);
+    }
   }
 
-  /** Owner picked a suggested title → it becomes the name + display title, and the description is
-   *  re-written to match it (aligned to the same photo + keywords). */
-  async function pickTitle(t: string) {
-    setTitle(t); setName(t); setTitleOptions([]); setAligning(t);
-    const catName = categories.find((c) => c.id === product.categoryId)?.name;
-    const keywords = specKeywords.split(/[,\n]/).map((k) => k.trim()).filter(Boolean);
-    const res = await alignContentToTitleAction({ sku: product.sku, name: t, category: catName, title: t, keywords });
-    setAligning("");
-    if (res.ok && res.description) { setDescription(res.description); toast("Title picked — description aligned ✓"); }
-    else toast(res.error ?? "Title set — couldn't auto-write the description; edit it manually.", "error");
+  /** Apply the chosen title immediately. Do NOT call a vision server action here —
+   *  Next.js holds the whole page (tabs, Back, field edits) until a pending action
+   *  returns, and Netlify often kills that second AI call so the UI stays frozen. */
+  function pickTitle(t: string) {
+    const next = t.trim();
+    if (!next) return;
+    setTitle(next);
+    setName(next);
+    setTitleOptions([]);
+    toast("Title applied. Edit anything else, then save.");
   }
 
   async function suggestTitle() {
     setSuggesting(true);
     const catName = categories.find((c) => c.id === product.categoryId)?.name;
     const keywords = specKeywords.split(/[,\n]/).map((k) => k.trim()).filter(Boolean);
-    const res = await suggestProductTitleAction({ name, category: catName, keywords, sku: product.sku });
-    setSuggesting(false);
-    if (res.ok && res.title) {
-      setTitle(res.title);
-      if (res.description) setDescription(res.description);
-      // Tell the owner which engine wrote it: "OpenAI" means the API key is live; "offline template"
-      // means it fell back (key missing/invalid on the deployment) so he can fix the env variable.
-      const engine = res.fallbackUsed || res.provider === "deterministic" ? "offline template" : (res.provider === "openai" ? "OpenAI ✨" : res.provider ?? "AI");
-      // When the product photo was fed to the model, let the owner know the copy is based on the image.
-      toast(`Title & description written by ${engine}${res.usedImage ? " — from the product photo 📸" : ""}`);
-    } else toast(res.error ?? "Couldn't suggest a title", "error");
+    try {
+      const res = await suggestProductTitleAction({ name, category: catName, keywords, sku: product.sku });
+      if (res.ok && res.title) {
+        setTitle(res.title);
+        if (res.description) setDescription(res.description);
+        // Tell the owner which engine wrote it: "OpenAI" means the API key is live; "offline template"
+        // means it fell back (key missing/invalid on the deployment) so he can fix the env variable.
+        const engine = res.fallbackUsed || res.provider === "deterministic" ? "offline template" : (res.provider === "openai" ? "OpenAI ✨" : res.provider ?? "AI");
+        // When the product photo was fed to the model, let the owner know the copy is based on the image.
+        toast(`Title & description written by ${engine}${res.usedImage ? " — from the product photo 📸" : ""}`);
+      } else toast(res.error ?? "Couldn't suggest a title", "error");
+    } catch {
+      toast("Auto title timed out. The page is still usable — try again.", "error");
+    } finally {
+      setSuggesting(false);
+    }
   }
 
   const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
@@ -285,7 +294,7 @@ export function ProductEditor({
               placeholder="e.g. necklace set, uncut kundan, earrings, maang tikka"
               className={field} />
             <div className="flex flex-wrap items-center gap-2 mt-2">
-              <button type="button" onClick={suggestTitles} disabled={suggestingTitles || !!aligning}
+              <button type="button" onClick={suggestTitles} disabled={suggestingTitles}
                 className="text-xs px-3 py-1.5 rounded-full bg-ink text-white hover:bg-ink/90 disabled:opacity-50">
                 {suggestingTitles ? "Analysing photo…" : "✨ Suggest 3–4 titles"}
               </button>
@@ -297,7 +306,7 @@ export function ProductEditor({
             </div>
 
             {/* Image-scanned title options — pick one; name + title + description align to it. */}
-            {(titleOptions.length > 0 || aligning) && (
+            {titleOptions.length > 0 && (
               <div className="mt-3 rounded-xl border border-ink/15 bg-white p-3">
                 {titlesUsedPhoto === false && (
                   <div className="mb-2 rounded-lg border border-gold/50 bg-gold/10 px-3 py-2 text-xs text-gold-dark">
@@ -307,16 +316,15 @@ export function ProductEditor({
                 {titlesUsedPhoto === true && (
                   <p className="mb-2 text-[11px] text-emerald-dark">📸 Read from the product photo — like ChatGPT.</p>
                 )}
-                <p className="text-xs font-medium text-ink mb-2">Pick the best title <span className="text-muted font-normal">— it becomes the product name &amp; title, and the description is written to match</span></p>
+                <p className="text-xs font-medium text-ink mb-2">Pick the best title <span className="text-muted font-normal">— it becomes the product name &amp; display title right away. Description is unchanged until you edit it or use Auto title + description.</span></p>
                 <div className="space-y-1.5">
                   {titleOptions.map((t) => (
-                    <button key={t} type="button" onClick={() => pickTitle(t)} disabled={!!aligning}
-                      className="w-full text-left px-3 py-2 rounded-lg border border-sand hover:border-emerald hover:bg-emerald-mist/40 text-sm text-ink disabled:opacity-50 transition-colors">
+                    <button key={t} type="button" onClick={() => pickTitle(t)}
+                      className="w-full text-left px-3 py-2 rounded-lg border border-sand hover:border-emerald hover:bg-emerald-mist/40 text-sm text-ink transition-colors">
                       {t}
                     </button>
                   ))}
                 </div>
-                {aligning && <p className="text-[11px] text-emerald-dark mt-2">Writing the matching description for “{aligning}”…</p>}
               </div>
             )}
           </div>

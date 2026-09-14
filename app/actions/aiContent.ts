@@ -8,6 +8,18 @@ import { requirePerm } from "@/lib/auth";
 
 export type ContentResult = { ok: boolean; sku: string; provider?: string; fallbackUsed?: boolean; title?: string; error?: string };
 
+/** Cap AI work so Netlify does not kill the function with no response (client stays frozen). */
+const AI_ACTION_MS = 18_000;
+function withTimeout<T>(p: Promise<T>, ms = AI_ACTION_MS): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("AI timed out — try again")), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
+  });
+}
+
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** The name to hand the AI: strip the SKU; if only a bare code remains, return "" so the AI builds the
  *  title purely from category / sub-category / style / polish (never echoes "WN111" into the title). */
@@ -71,19 +83,23 @@ export async function generateContentAction(sku: string, keywords?: string[]): P
   const { data: st } = (p as any).style_id ? await sb.from("styles").select("name").eq("id", (p as any).style_id).maybeSingle() : { data: null as any };
   // Look at the ACTUAL product photo (like the owner does in ChatGPT) so the title/description describe
   // the real piece — the text-only path was guessing wrong pieces (e.g. "Mangalsutra") from the category.
-  const img = await fetchProductImage(p);
-  const { content, provider, fallbackUsed } = await generateProductContent({
-    name: nameForAi(p.name, p.sku), sku: p.sku, categoryName: p.category?.name,
-    subcategoryName: (p as any).subcategory?.name, styleName: (st as any)?.name, polishes, colors,
-    keywords: (keywords ?? []).map((k) => k.trim()).filter(Boolean),
-    imageBase64: img.imageBase64, imageMime: img.imageMime,
-  } as any, { visionFirst: true });
-  content.title = stripCode(content.title, p.sku) || content.title; // never let a SKU/code leak into the title
-  const { error } = await sb.from("products").update({ generated_content: content }).eq("id", p.id);
-  if (error) return { ok: false, sku, error: error.message };
-  revalidatePath(`/shop/${p.category.slug}/${sku}`);
-  revalidatePath("/admin/catalogue");
-  return { ok: true, sku, provider, fallbackUsed, title: content.title };
+  try {
+    const img = await fetchProductImage(p);
+    const { content, provider, fallbackUsed } = await withTimeout(generateProductContent({
+      name: nameForAi(p.name, p.sku), sku: p.sku, categoryName: p.category?.name,
+      subcategoryName: (p as any).subcategory?.name, styleName: (st as any)?.name, polishes, colors,
+      keywords: (keywords ?? []).map((k) => k.trim()).filter(Boolean),
+      imageBase64: img.imageBase64, imageMime: img.imageMime,
+    } as any, { visionFirst: true }));
+    content.title = stripCode(content.title, p.sku) || content.title; // never let a SKU/code leak into the title
+    const { error } = await sb.from("products").update({ generated_content: content }).eq("id", p.id);
+    if (error) return { ok: false, sku, error: error.message };
+    revalidatePath(`/shop/${p.category.slug}/${sku}`);
+    revalidatePath("/admin/catalogue");
+    return { ok: true, sku, provider, fallbackUsed, title: content.title };
+  } catch (e) {
+    return { ok: false, sku, error: e instanceof Error ? e.message : "Could not generate content" };
+  }
 }
 
 /** Suggest a polished product title from a name + category (Req 6). Explicit button only. */
@@ -111,12 +127,12 @@ export async function suggestProductTitleAction(input: { name: string; category?
         imageBase64 = img.imageBase64; imageMime = img.imageMime;
       }
     }
-    const { content, provider, fallbackUsed } = await generateProductContent({
+    const { content, provider, fallbackUsed } = await withTimeout(generateProductContent({
       name: nameForAi(name, skuStr), sku: input.sku || name, categoryName: input.category,
       subcategoryName, styleName, polishes, colors: [],
       keywords: (input.keywords ?? []).map((k) => k.trim()).filter(Boolean),
       imageBase64, imageMime,
-    } as any, { visionFirst: true });
+    } as any, { visionFirst: true }));
     const cleanTitle = stripCode(content.title, skuStr) || content.title;
     return { ok: true, title: cleanTitle, description: content.description, provider, fallbackUsed, usedImage: !!imageBase64 };
   } catch (e) {
@@ -145,12 +161,12 @@ export async function suggestProductTitlesAction(input: { name: string; category
         imageBase64 = img.imageBase64; imageMime = img.imageMime;
       }
     }
-    const { titles, provider, usedImage } = await generateTitleOptions({
+    const { titles, provider, usedImage } = await withTimeout(generateTitleOptions({
       name: nameForAi(name, skuStr), sku: input.sku || name, categoryName: input.category,
       subcategoryName, styleName, polishes, colors: [],
       keywords: (input.keywords ?? []).map((k) => k.trim()).filter(Boolean),
       imageBase64, imageMime,
-    } as any, Math.min(4, Math.max(3, input.count ?? 4)));
+    } as any, Math.min(4, Math.max(3, input.count ?? 4))));
     const clean = titles.map((t) => stripCode(t, skuStr) || t).filter(Boolean);
     if (!clean.length) return { ok: false, error: "Couldn't suggest titles — try adding a photo or a keyword." };
     return { ok: true, titles: clean, provider, usedImage };
@@ -182,12 +198,12 @@ export async function alignContentToTitleAction(input: { sku?: string; name?: st
         imageBase64 = img.imageBase64; imageMime = img.imageMime;
       }
     }
-    const { content, provider } = await generateProductContent({
+    const { content, provider } = await withTimeout(generateProductContent({
       name: nameForAi(input.name ?? chosen, skuStr), sku: input.sku || chosen, categoryName: input.category,
       subcategoryName, styleName, polishes, colors: [],
       keywords: (input.keywords ?? []).map((k) => k.trim()).filter(Boolean),
       imageBase64, imageMime, lockedTitle: chosen,
-    } as any, { visionFirst: true });
+    } as any, { visionFirst: true }));
     return { ok: true, title: chosen, description: content.description, provider };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Could not write the description" };
