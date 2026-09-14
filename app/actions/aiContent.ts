@@ -8,28 +8,13 @@ import { requirePerm } from "@/lib/auth";
 
 export type ContentResult = { ok: boolean; sku: string; provider?: string; fallbackUsed?: boolean; title?: string; error?: string };
 
-/** Cap AI work so Netlify does not kill the function with no response (client stays frozen). */
-const AI_ACTION_MS = 18_000;
-function withTimeout<T>(p: Promise<T>, ms = AI_ACTION_MS): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error("AI timed out — try again")), ms);
-    p.then(
-      (v) => { clearTimeout(t); resolve(v); },
-      (e) => { clearTimeout(t); reject(e); },
-    );
-  });
-}
-
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-/** The name to hand the AI: strip the SKU; if only a bare code remains, return "" so the AI builds the
- *  title purely from category / sub-category / style / polish (never echoes "WN111" into the title). */
 function nameForAi(name: string | null | undefined, sku: string): string {
   let n = (name ?? "").replace(/\s*\([^)]*\)\s*$/, "");
   if (sku) n = n.replace(new RegExp(`\\b${esc(sku)}\\b`, "ig"), " ");
   n = n.replace(/\s+/g, " ").trim();
   return /^[A-Za-z]{1,4}[-\s]?\d{1,6}[A-Za-z]?$/.test(n) ? "" : n;
 }
-/** Safety net: strip the SKU and any leaked product-code token (e.g. "WN111") out of a generated title. */
 function stripCode(title: string | undefined, sku: string): string {
   let t = title ?? "";
   if (sku) t = t.replace(new RegExp(`\\b${esc(sku)}\\b`, "ig"), " ");
@@ -37,32 +22,24 @@ function stripCode(title: string | undefined, sku: string): string {
   return t.replace(/\s{2,}/g, " ").replace(/\s+([,.])/g, "$1").replace(/^[\s\-–|]+|[\s\-–|]+$/g, "").trim();
 }
 
-/**
- * Downloads the product's best available photo and returns it as base64 so the AI can
- * SEE the piece while writing the title & description. Prefers the owner's raw/source
- * photo, then the AI model shot, then any http image. Best-effort — returns undefined
- * on any failure so title generation still works without a picture.
- */
 async function fetchProductImage(p: any): Promise<{ imageBase64?: string; imageMime?: string }> {
   try {
     const prodImgs = (p.images ?? []).filter((i: any) => typeof i?.path === "string" && i.path.startsWith("http"));
-    // ALSO look at VARIANT photos. Most designs are shot per-colour, so a product often has no
-    // product-level image at all — its only real photo lives on a variant (image_paths). Ignoring
-    // those meant the title AI got NO image and fell back to guessing from the taxonomy
-    // ("Choker Gold Necklace") even though the owner HAD added a photo.
     const varImgs = ((p.variants ?? []) as any[]).flatMap((v: any) =>
       (((v.image_paths ?? []) as string[]) || [])
         .filter((u) => typeof u === "string" && u.startsWith("http"))
         .map((path) => ({ path, kind: "variant" })));
     const imgs = [...prodImgs, ...varImgs];
     if (!imgs.length) return {};
-    // Prefer the clean product flatlay/source (truest colours for reading the piece), then a model
-    // shot, then whatever exists — including the first variant photo.
     const pick =
       prodImgs.find((i: any) => i.kind === "source" || i.kind === "flatlay") ??
       prodImgs.find((i: any) => i.kind === "model") ??
       imgs[0];
-    const r = await fetch(pick.path, { signal: AbortSignal.timeout(12_000) });
+    // 4s, not 12s. The whole serverless function is killed at 10s, so a 12-second image download
+    // could never finish AND leave time for the model — it just guaranteed the request died with
+    // nothing to show. Failing fast returns {} and the caller writes copy from the fields instead,
+    // which is a worse title but an actual answer. (Applies to every "read the photo" path here.)
+    const r = await fetch(pick.path, { signal: AbortSignal.timeout(4_000) });
     if (!r.ok) return {};
     const imageMime = r.headers.get("content-type") || "image/jpeg";
     const imageBase64 = Buffer.from(await r.arrayBuffer()).toString("base64");
@@ -79,38 +56,27 @@ export async function generateContentAction(sku: string, keywords?: string[]): P
   const sb = supabaseServer();
   const colors = (p.variants ?? []).map((v) => v.color ?? "").filter(Boolean);
   const polishes = (p.variants ?? []).map((v: any) => v.polish ?? "").filter(Boolean);
-  // Pull the STYLE name too so the AI can build the title from category + sub-category + style + polish.
   const { data: st } = (p as any).style_id ? await sb.from("styles").select("name").eq("id", (p as any).style_id).maybeSingle() : { data: null as any };
-  // Look at the ACTUAL product photo (like the owner does in ChatGPT) so the title/description describe
-  // the real piece — the text-only path was guessing wrong pieces (e.g. "Mangalsutra") from the category.
-  try {
-    const img = await fetchProductImage(p);
-    const { content, provider, fallbackUsed } = await withTimeout(generateProductContent({
-      name: nameForAi(p.name, p.sku), sku: p.sku, categoryName: p.category?.name,
-      subcategoryName: (p as any).subcategory?.name, styleName: (st as any)?.name, polishes, colors,
-      keywords: (keywords ?? []).map((k) => k.trim()).filter(Boolean),
-      imageBase64: img.imageBase64, imageMime: img.imageMime,
-    } as any, { visionFirst: true }));
-    content.title = stripCode(content.title, p.sku) || content.title; // never let a SKU/code leak into the title
-    const { error } = await sb.from("products").update({ generated_content: content }).eq("id", p.id);
-    if (error) return { ok: false, sku, error: error.message };
-    revalidatePath(`/shop/${p.category.slug}/${sku}`);
-    revalidatePath("/admin/catalogue");
-    return { ok: true, sku, provider, fallbackUsed, title: content.title };
-  } catch (e) {
-    return { ok: false, sku, error: e instanceof Error ? e.message : "Could not generate content" };
-  }
+  const img = await fetchProductImage(p);
+  const { content, provider, fallbackUsed } = await generateProductContent({
+    name: nameForAi(p.name, p.sku), sku: p.sku, categoryName: p.category?.name,
+    subcategoryName: (p as any).subcategory?.name, styleName: (st as any)?.name, polishes, colors,
+    keywords: (keywords ?? []).map((k) => k.trim()).filter(Boolean),
+    imageBase64: img.imageBase64, imageMime: img.imageMime,
+  } as any, { visionFirst: true });
+  content.title = stripCode(content.title, p.sku) || content.title;
+  const { error } = await sb.from("products").update({ generated_content: content }).eq("id", p.id);
+  if (error) return { ok: false, sku, error: error.message };
+  revalidatePath(`/shop/${p.category.slug}/${sku}`);
+  revalidatePath("/admin/catalogue");
+  return { ok: true, sku, provider, fallbackUsed, title: content.title };
 }
 
-/** Suggest a polished product title from a name + category (Req 6). Explicit button only. */
 export async function suggestProductTitleAction(input: { name: string; category?: string; keywords?: string[]; sku?: string }): Promise<{ ok: boolean; title?: string; description?: string; provider?: string; fallbackUsed?: boolean; usedImage?: boolean; error?: string }> {
   if (!(await requirePerm("catalog.edit"))) return { ok: false, error: "not permitted" };
   const name = (input.name ?? "").trim();
   if (!name) return { ok: false, error: "Enter a product name first" };
   try {
-    // Look at the ACTUAL product photo (exactly like the owner does in ChatGPT — "take reference from the
-    // image") so the title/description describe the real piece. The text-only path was inventing wrong
-    // components (e.g. a "Mangalsutra" that isn't there). Owner-typed keywords still override the photo.
     let subcategoryName: string | undefined, styleName: string | undefined, polishes: string[] = [];
     let imageBase64: string | undefined, imageMime: string | undefined;
     const skuStr = (input.sku ?? "").trim();
@@ -127,12 +93,12 @@ export async function suggestProductTitleAction(input: { name: string; category?
         imageBase64 = img.imageBase64; imageMime = img.imageMime;
       }
     }
-    const { content, provider, fallbackUsed } = await withTimeout(generateProductContent({
+    const { content, provider, fallbackUsed } = await generateProductContent({
       name: nameForAi(name, skuStr), sku: input.sku || name, categoryName: input.category,
       subcategoryName, styleName, polishes, colors: [],
       keywords: (input.keywords ?? []).map((k) => k.trim()).filter(Boolean),
       imageBase64, imageMime,
-    } as any, { visionFirst: true }));
+    } as any, { visionFirst: true });
     const cleanTitle = stripCode(content.title, skuStr) || content.title;
     return { ok: true, title: cleanTitle, description: content.description, provider, fallbackUsed, usedImage: !!imageBase64 };
   } catch (e) {
@@ -140,7 +106,6 @@ export async function suggestProductTitleAction(input: { name: string; category?
   }
 }
 
-/** Suggest 3–4 SEO title OPTIONS by scanning the product photo + its taxonomy (owner picks one). */
 export async function suggestProductTitlesAction(input: { name: string; category?: string; keywords?: string[]; sku?: string; count?: number }): Promise<{ ok: boolean; titles?: string[]; provider?: string; usedImage?: boolean; error?: string }> {
   if (!(await requirePerm("catalog.edit"))) return { ok: false, error: "not permitted" };
   const name = (input.name ?? "").trim();
@@ -161,12 +126,12 @@ export async function suggestProductTitlesAction(input: { name: string; category
         imageBase64 = img.imageBase64; imageMime = img.imageMime;
       }
     }
-    const { titles, provider, usedImage } = await withTimeout(generateTitleOptions({
+    const { titles, provider, usedImage } = await generateTitleOptions({
       name: nameForAi(name, skuStr), sku: input.sku || name, categoryName: input.category,
       subcategoryName, styleName, polishes, colors: [],
       keywords: (input.keywords ?? []).map((k) => k.trim()).filter(Boolean),
       imageBase64, imageMime,
-    } as any, Math.min(4, Math.max(3, input.count ?? 4))));
+    } as any, Math.min(4, Math.max(3, input.count ?? 4)));
     const clean = titles.map((t) => stripCode(t, skuStr) || t).filter(Boolean);
     if (!clean.length) return { ok: false, error: "Couldn't suggest titles — try adding a photo or a keyword." };
     return { ok: true, titles: clean, provider, usedImage };
@@ -175,16 +140,48 @@ export async function suggestProductTitlesAction(input: { name: string; category
   }
 }
 
-/** After the owner PICKS a suggested title, write the matching description/specs/tags/SEO aligned to it
- *  (the chosen title becomes the product's title verbatim). Returns the aligned copy for the editor. */
+/**
+ * Rewrite the DESCRIPTION to match a title the owner just picked.
+ *
+ * ROOT CAUSE OF "title pick krne ke baad it too slow / Saving… struck" (Sept 2026)
+ * ============================================================================================
+ * This action used to re-read the product photo and run a VISION model on it. Count the budget it
+ * was given, against the host it runs on:
+ *
+ *     fetchProductImage()                    up to 12,000 ms   (AbortSignal.timeout(12_000))
+ *     vision model call                      up to 30,000 ms   (providers.ts: imageBase64 ? 30_000)
+ *     ------------------------------------------------------------------
+ *     worst case                             ~42 s
+ *     Netlify kills a synchronous function at 10 s.
+ *
+ * So on a slow photo or a slow model this action COULD NOT finish — the function was killed
+ * mid-flight, the server action never returned, and the owner sat watching "Saving…" forever. It
+ * was never a UI bug; the work was configured for a long-running server and deployed onto a
+ * 10-second one.
+ *
+ * TWO CHANGES, both about fitting the host:
+ *
+ * 1. NO VISION HERE. The photo is what "Suggest 3-4 titles" reads, and by this point the owner has
+ *    ALREADY picked the title it produced — the title itself states what the piece is. Re-reading
+ *    the image to write a matching paragraph buys almost nothing and costs the 12s download plus
+ *    the vision premium. This is now a text-only call built from the title, category, sub-category,
+ *    style and polishes.
+ *
+ * 2. A HARD BUDGET. Whatever happens, this returns inside BUDGET_MS — comfortably under the host's
+ *    limit — so the owner always gets an answer instead of a dead request. If the model is slow he
+ *    gets his title with a clear note to write the description himself, which is a normal minute of
+ *    work; before, he got a stuck page and an unsaved product.
+ */
+const ALIGN_BUDGET_MS = 4_000;
+
 export async function alignContentToTitleAction(input: { sku?: string; name?: string; category?: string; title: string; keywords?: string[] }): Promise<{ ok: boolean; title?: string; description?: string; provider?: string; error?: string }> {
   if (!(await requirePerm("catalog.edit"))) return { ok: false, error: "not permitted" };
   const chosen = (input.title ?? "").trim();
   if (!chosen) return { ok: false, error: "No title chosen" };
   const skuStr = (input.sku ?? "").trim();
-  try {
+
+  const work = (async () => {
     let subcategoryName: string | undefined, styleName: string | undefined, polishes: string[] = [];
-    let imageBase64: string | undefined, imageMime: string | undefined;
     if (input.sku) {
       const p = await getProductBySku(input.sku);
       if (p) {
@@ -194,19 +191,30 @@ export async function alignContentToTitleAction(input: { sku?: string; name?: st
           const { data: st } = await supabaseServer().from("styles").select("name").eq("id", (p as any).style_id).maybeSingle();
           styleName = (st as any)?.name;
         }
-        const img = await fetchProductImage(p);
-        imageBase64 = img.imageBase64; imageMime = img.imageMime;
       }
     }
-    const { content, provider } = await withTimeout(generateProductContent({
+    // No imageBase64 and no visionFirst — see note above.
+    const { content, provider } = await generateProductContent({
       name: nameForAi(input.name ?? chosen, skuStr), sku: input.sku || chosen, categoryName: input.category,
       subcategoryName, styleName, polishes, colors: [],
       keywords: (input.keywords ?? []).map((k) => k.trim()).filter(Boolean),
-      imageBase64, imageMime, lockedTitle: chosen,
-    } as any, { visionFirst: true }));
-    return { ok: true, title: chosen, description: content.description, provider };
+      lockedTitle: chosen,
+    } as any);
+    return { ok: true as const, title: chosen, description: content.description, provider };
+  })();
+
+  const timeout = new Promise<{ ok: false; title: string; error: string }>((resolve) =>
+    setTimeout(() => resolve({
+      ok: false,
+      title: chosen,
+      error: "The title is set, but the description took too long to write — please type it yourself and Save.",
+    }), ALIGN_BUDGET_MS),
+  );
+
+  try {
+    return await Promise.race([work, timeout]);
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Could not write the description" };
+    return { ok: false, title: chosen, error: e instanceof Error ? e.message : "Could not write the description" };
   }
 }
 
@@ -216,4 +224,10 @@ export async function generateAllContentAction(): Promise<{ total: number; ok: n
   for (const p of products) results.push(await generateContentAction(p.sku));
   revalidatePath("/admin/catalogue");
   return { total: products.length, ok: results.filter((r) => r.ok).length, results };
+}
+
+/** Implementation moved to fixNath.ts (broader match). */
+export async function fixNathListingsAction() {
+  const { fixNathListingsAction: run } = await import("@/app/actions/fixNath");
+  return run();
 }

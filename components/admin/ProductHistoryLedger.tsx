@@ -35,7 +35,11 @@ function typeLabel(r: any): string {
   return r.kind;
 }
 function typeHint(r: any): string | undefined {
-  if (r.kind === "reserve") return "Set aside for a held estimate — release that estimate to return this piece to stock";
+  if (r.kind === "reserve") {
+    const s = String(r.source ?? "").toLowerCase();
+    if (s.includes("estimate")) return "Set aside for a held estimate — release that estimate to return this piece to stock";
+    return "Set aside for a held order — cancel or reject that order to return this piece to stock";
+  }
   if (r.kind === "return") {
     const s = String(r.source ?? "").toLowerCase();
     if (s.includes("cancel")) return "This order was cancelled/rejected, so the piece it had taken went back to stock";
@@ -70,12 +74,19 @@ export function ProductHistoryLedger({ productId }: { productId: string }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-medium text-ink">
           Stock, sales &amp; estimate history
-          <span className="text-muted font-normal"> — stock {h?.currentStock ?? "—"}{h?.reserved ? ` · ${h.reserved} reserved by open estimates` : ""}{h?.lastPurchaseCost != null ? ` · last cost ${fmt(h.lastPurchaseCost)}` : ""}</span>
+          <span className="text-muted font-normal"> — stock {h?.currentStock ?? "—"}{h?.reserved ? ` · ${h.reserved} reserved by open quotes` : ""}{h?.lastPurchaseCost != null ? ` · last cost ${fmt(h.lastPurchaseCost)}` : ""}</span>
         </p>
         <button onClick={() => setDrawer(true)} className="text-xs px-3 py-1.5 rounded-full border border-sand text-ink hover:border-emerald">
           Open full ledger →
         </button>
       </div>
+      {Number(h?.reserved) > 0 && (
+        <p className="text-xs text-gold-dark">
+          Those pieces are on an open quote (Estimates → To bill), not a billed invoice. Held quotes are on the On hold tab and show as “reserved” movements. Open the EST- link on a row to inspect it — if the quote was removed you will see what leftover hold is still on file, not a 404.
+          {" "}<Link href="/admin/estimates?tab=open" className="text-emerald nav-link">To bill →</Link>
+          {" · "}<Link href="/admin/estimates?tab=held" className="text-emerald nav-link">On hold →</Link>
+        </p>
+      )}
 
       {rows.length === 0 ? (
         <p className="text-sm text-muted">No stock movements or estimates recorded for this product yet.</p>

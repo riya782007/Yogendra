@@ -1,10 +1,9 @@
 "use client";
 import { useState, useEffect } from "react";
-import { storeUrl } from "@/lib/siteUrl";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
-import { updateProductAction } from "@/app/actions/updateProduct";
+import { updateProductAction, persistProductNameAction } from "@/app/actions/updateProduct";
 import { repriceFromFormulaAction } from "@/app/actions/catalog";
 import { suggestProductTitleAction, suggestProductTitlesAction } from "@/app/actions/aiContent";
 import { computePrices, type PricingFormula } from "@/lib/pricing";
@@ -56,6 +55,11 @@ export function ProductEditor({
   const [title, setTitle] = useState(product.title);
   const [name, setName] = useState(product.name);
   const [description, setDescription] = useState(product.description);
+  const [titleAuto, setTitleAuto] = useState(!product.title || product.title.trim() === product.name.trim());
+  useEffect(() => { if (titleAuto) setTitle(name); }, [name, titleAuto]);
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("bd-product-name", { detail: name }));
+  }, [name]);
   // SEO meta title should track the product name (owner: "title change ke baad SEO khud update ho, copy-
   // paste na karna pade"). It auto-fills as "<name> | BlytheDIVA" and keeps following the name UNTIL the
   // owner hand-edits it — then we respect their custom text and stop overwriting.
@@ -116,15 +120,19 @@ export function ProductEditor({
     }
   }
 
-  /** Apply the chosen title immediately. Do NOT call a vision server action here —
-   *  Next.js holds the whole page (tabs, Back, field edits) until a pending action
-   *  returns, and Netlify often kills that second AI call so the UI stays frozen. */
+  /** Apply the chosen title immediately. Do NOT await a vision server action — Next.js holds
+   *  tabs, Back, and field edits until a pending action returns, and Netlify often never
+   *  responds. Persist the name in the background; description stays until Save / Auto. */
   function pickTitle(t: string) {
     const next = t.trim();
     if (!next) return;
     setTitle(next);
     setName(next);
+    setTitleAuto(true);
     setTitleOptions([]);
+    persistProductNameAction(product.sku, next, next).then((r) => {
+      if (!r.ok) toast(r.error ?? "Could not save the new name yet — press Save changes.", "error");
+    }).catch(() => {});
     toast("Title applied. Edit anything else, then save.");
   }
 
@@ -137,10 +145,7 @@ export function ProductEditor({
       if (res.ok && res.title) {
         setTitle(res.title);
         if (res.description) setDescription(res.description);
-        // Tell the owner which engine wrote it: "OpenAI" means the API key is live; "offline template"
-        // means it fell back (key missing/invalid on the deployment) so he can fix the env variable.
         const engine = res.fallbackUsed || res.provider === "deterministic" ? "offline template" : (res.provider === "openai" ? "OpenAI ✨" : res.provider ?? "AI");
-        // When the product photo was fed to the model, let the owner know the copy is based on the image.
         toast(`Title & description written by ${engine}${res.usedImage ? " — from the product photo 📸" : ""}`);
       } else toast(res.error ?? "Couldn't suggest a title", "error");
     } catch {
@@ -160,15 +165,26 @@ export function ProductEditor({
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    const form = e.currentTarget;
     setSaving(true);
-    const fd = new FormData(e.currentTarget);
-    const res = await updateProductAction(fd);
-    setSaving(false);
-    if (res.ok) {
-      toast("Product saved ✓");
-      router.refresh();
-    } else {
-      toast(res.error ?? "Could not save", "error");
+    // Do NOT wait for the AI description. On Netlify the rewrite can be killed at 10s and
+    // never return — that is what left Save stuck on "Saving…". The name/title are already
+    // in the fields; persist those now. If a description lands later, he can Save again.
+    const fd = new FormData(form);
+    fd.set("name", name);
+    fd.set("title", title);
+    fd.set("description", description);
+    fd.set("meta_title", metaTitle);
+    fd.set("meta_description", metaDesc);
+    fd.set("keywords", keywords);
+    try {
+      const res = await updateProductAction(fd);
+      if (res.ok) toast("Product saved ✓");
+      else toast(res.error ?? "Could not save", "error");
+    } catch {
+      toast("Save timed out — check the name is stored, then try again.", "error");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -330,7 +346,7 @@ export function ProductEditor({
           </div>
           <div>
             <label className={label}>Display title</label>
-            <input name="title" value={title} onChange={(e) => setTitle(e.target.value)} className={field} />
+            <input name="title" value={title} onChange={(e) => { setTitle(e.target.value); setTitleAuto(false); }} className={field} />
           </div>
           <div>
             <label className={label}>Description</label>
@@ -372,8 +388,22 @@ export function ProductEditor({
         <button type="submit" disabled={saving} className="btn-primary px-6 py-2.5 text-sm font-medium disabled:opacity-60">
           {saving ? "Saving…" : "Save changes"}
         </button>
-        <Link href={storeUrl(`/shop/${product.categorySlug}/${product.sku}`)} target="_blank" className="text-sm text-emerald nav-link">
-          View live page ↗
+        {/* This used to link straight to the customer URL, /shop/<category>/<sku>. That URL 404s by
+            design for anything a shopper must not see — a DRAFT, or a design with every colour sold
+            out — which is exactly what the owner is usually looking at when he is in this editor. So
+            the button reliably showed him "404: This page could not be found" on his own product.
+
+            It now opens the staff preview instead, which renders the identical storefront page with
+            the visibility gate lifted, so a draft and a sold-out design both look like what the
+            customer would see. The preview screen carries its own "Open public page ↗" link for the
+            real customer URL, so nothing is lost — the working link simply comes first. */}
+        <Link
+          href={`/admin/preview/${encodeURIComponent(product.sku)}`}
+          target="_blank"
+          className="text-sm text-emerald nav-link"
+          title="Opens this design's page as a customer would see it — works for drafts and sold-out designs too. The real customer link is on that page."
+        >
+          View page ↗
         </Link>
         <Link href="/admin/catalogue" className="text-sm text-muted hover:text-ink ml-auto">← Back to catalogue</Link>
       </div>

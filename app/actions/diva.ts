@@ -401,6 +401,49 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         const cls = p.qty === 0 ? "out of stock" : p.qty <= 2 ? "low" : "healthy";
         return { ok: true, data: p, message: `${p.name} (${p.sku}) has ${p.qty} in stock (${cls}).` };
       }
+      /**
+       * print_labels — "in teeno ke labels nikal do" / "aaj jo add kiye unke barcode".
+       *
+       * DIVA resolves the codes here and hands the owner a Labels page that is ALREADY queued
+       * (/admin/barcodes?skus=…). It deliberately does not print anything itself: the sheet size,
+       * the count per design and the final Print are the owner's call at the printer, and a voice
+       * command should never burn a sheet of stickers on its own.
+       *
+       * Three ways to say it, in the order they are checked:
+       *   sku   — one code, or several ("SMB5885, SMB5884" / "SMB5885 SMB5884")
+       *   scope=new — the designs created most recently, which is the real workflow after a bulk add
+       *   query — a product name, resolved the same way every other tool resolves names
+       */
+      case "print_labels": {
+        const sb = supabaseServer();
+        const raw = String(args.sku ?? "").trim();
+        const scope = String(args.scope ?? "").trim().toLowerCase();
+        let skus: string[] = [];
+        let how = "";
+
+        if (raw) {
+          skus = raw.split(/[,\s]+/).map((s) => s.trim().toUpperCase()).filter(Boolean);
+          how = `${skus.length} code${skus.length === 1 ? "" : "s"}`;
+        } else if (scope === "new" || scope === "recent" || scope === "today") {
+          const limit = Math.min(50, Math.max(1, Math.trunc(Number(args.limit) || 10)));
+          const { data } = await sb.from("products").select("sku,name,created_at").order("created_at", { ascending: false }).limit(limit);
+          skus = ((data as any[]) ?? []).map((r) => String(r.sku).toUpperCase());
+          how = `the ${skus.length} most recently added design${skus.length === 1 ? "" : "s"}`;
+        } else {
+          const p = await resolveProductByName(String(args.query ?? ""));
+          if (!p) return { ok: false, message: `I couldn't match "${args.query ?? ""}" to a product. Give me the SKU, or say "labels for the newest designs".` };
+          skus = [String(p.sku).toUpperCase()];
+          how = `${p.name} (${p.sku})`;
+        }
+
+        if (!skus.length) return { ok: false, message: "I couldn't work out which designs to print labels for." };
+        return {
+          ok: true,
+          data: skus,
+          message: `Opening Labels with ${how} queued — designs with colours print one label per colour. Set the counts and press Print.`,
+          navigate: `/admin/barcodes?skus=${encodeURIComponent(skus.join(","))}`,
+        };
+      }
       case "pending_orders": {
         const sb = supabaseServer();
         const { data } = await sb.from("orders")
@@ -455,10 +498,27 @@ export async function divaRun(toolName: string, args: Record<string, any>): Prom
         let { data: cat } = await sb.from("categories").select("id,name").ilike("name", categoryName).maybeSingle();
         if (!cat) cat = await createCategoryJsonAction(categoryName) as any;
         if (!cat) return { ok: false, message: `Couldn't find or create the "${categoryName}" category.` };
-        const res = await createProductAction({ categoryId: (cat as any).id, name, basePriceRupees: price, qty, type: "simple", colors: [] });
+        // COLOURS. Nearly every design in this catalogue is a configurable product with colourways,
+        // and each colour needs its own variant SKU — that is what the POS scans and what the label
+        // sheet prints. Creating everything as "simple" meant the owner had to reopen each design and
+        // add the colours by hand, so a spoken "Hanita kamarband, kamarband, 520, green golden ruby"
+        // only did half the job. `qty` is the opening stock PER COLOUR here, which is how stock
+        // actually arrives (5 of each), and matches what insertOne does with the colours list.
+        const colours = String(args.colours ?? args.colors ?? "")
+          .split(/[,/]| and |aur /i).map((c) => c.trim()).filter(Boolean);
+        const res = await createProductAction({
+          categoryId: (cat as any).id, name, basePriceRupees: price, qty,
+          type: colours.length ? "configurable" : "simple",
+          colors: colours,
+        });
         if (!res.ok) return { ok: false, message: res.error ?? "Couldn't create the product." };
         revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidateTag("storefront");
-        return { ok: true, message: `Created ${name} (${res.sku}) in ${(cat as any).name} — wholesale ₹${price}, ${qty} pcs. It's saved as a draft; add a photo to publish.` };
+        const colourBit = colours.length ? ` · ${colours.length} colours (${colours.join(", ")}), ${qty} pcs each` : ` · ${qty} pcs`;
+        return {
+          ok: true,
+          data: { sku: res.sku },
+          message: `Created ${name} (${res.sku}) in ${(cat as any).name} — wholesale ₹${price}${colourBit}. Saved as a draft; add a photo to publish. Say "${res.sku} ke labels nikal do" when you want its barcodes.`,
+        };
       }
       case "rename_product": {
         const sku = String(args.sku ?? "").trim().toUpperCase();

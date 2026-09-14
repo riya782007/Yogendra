@@ -68,7 +68,15 @@ export function ProductManager({ data, initialTab }: { data: any; initialTab?: s
         <Link href="/admin/inventory" className="text-sm text-muted hover:text-ink">← Inventory</Link>
         <div className="flex items-center gap-2">
           <span className={`text-xs px-2 py-0.5 rounded-full ${p.status === "published" ? "bg-emerald-mist text-emerald-dark" : "bg-gold/15 text-gold-dark"}`}>{p.status === "published" ? "Published" : "Hidden"}</span>
-          <Link href={storeUrl(`/shop/${p.category?.slug}/${p.sku}`)} target="_blank" className="text-xs text-emerald nav-link">view ↗</Link>
+          {/* Same trap as the editor's "View live page": the customer URL 404s a draft or a design
+              with nothing in stock, which is most of what gets opened from here. Published AND in
+              stock keeps the real customer URL; anything else goes to the staff preview, which
+              renders the same page with the visibility gate lifted. */}
+          {p.status === "published" && (p.qty ?? 0) > 0 ? (
+            <Link href={storeUrl(`/shop/${p.category?.slug}/${p.sku}`)} target="_blank" className="text-xs text-emerald nav-link">view ↗</Link>
+          ) : (
+            <Link href={`/admin/preview/${encodeURIComponent(p.sku)}`} target="_blank" className="text-xs text-emerald nav-link" title={p.status === "published" ? "Out of stock — not on the store right now, so this opens the staff preview" : "Not published yet — this opens the staff preview"}>view ↗</Link>
+          )}
         </div>
       </div>
       <h1 className="font-display text-3xl text-ink">{p.name}</h1>
@@ -191,7 +199,10 @@ export function ProductManager({ data, initialTab }: { data: any; initialTab?: s
             <Toggle name="track_inventory" on={p.track_inventory ?? true}>Track inventory</Toggle>
             <Toggle name="continue_selling_oos" on={p.continue_selling_oos ?? false}>Continue selling when out of stock</Toggle>
             <Toggle name="allow_backorders" on={p.allow_backorders ?? false}>Allow backorders</Toggle>
-            <Toggle name="hide_oos_variants" on={(p as any).hide_oos_variants ?? false}>Hide out-of-stock colours/variants from the store</Toggle>
+            {/* Defaults to ON — same rule as the Catalogue tab and the storefront: only an explicit
+                false shows sold-out colours. `?? false` here would have shown this switch as OFF for
+                every product that has never been touched, contradicting what the store actually does. */}
+            <Toggle name="hide_oos_variants" on={(p as any).hide_oos_variants !== false}>Hide out-of-stock colours/variants from the store</Toggle>
           </div>
           <div className="mt-4 flex justify-end"><button className={saveBtn}>Save inventory</button></div>
         </form>

@@ -54,17 +54,17 @@ export function Header({ categories, promoMessages = [] }: { categories: Cat[]; 
                     ))}
                   </div>
                   <div className="mt-5 pt-3 border-t border-sand/60 flex items-center justify-between">
-                    <Link href="/shop" className="text-sm text-gold-dark font-medium hover:underline">View all designs →</Link>
+                    <Link href="/shop/all" className="text-sm text-gold-dark font-medium hover:underline">View all designs →</Link>
                     <span className="flex items-center gap-4 text-xs text-muted">
-                      <Link href="/shop#new-arrivals" className="hover:text-emerald">New Arrivals</Link>
-                      <Link href="/shop#bestsellers" className="hover:text-emerald">Bestsellers</Link>
+                      <Link href="/shop/new" className="hover:text-emerald">New Arrivals</Link>
+                      <Link href="/shop/bestsellers" className="hover:text-emerald">Bestsellers</Link>
                     </span>
                   </div>
                 </div>
               </div>
             </div>
-            <Link href="/shop#new-arrivals" className="nav-link py-2">New Arrivals</Link>
-            <Link href="/shop#bestsellers" className="nav-link py-2">Bestsellers</Link>
+            <Link href="/shop/new" className="nav-link py-2">New Arrivals</Link>
+            <Link href="/shop/bestsellers" className="nav-link py-2">Bestsellers</Link>
             <Link href="/reels" className="nav-link py-2">Reels</Link>
           </nav>
 

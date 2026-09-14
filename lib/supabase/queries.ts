@@ -1,9 +1,9 @@
 /** Server-only data access. Uses the service-role client (bypasses RLS for admin reads). */
 import "server-only";
 import { unstable_cache } from "next/cache";
-import { supabaseServer } from "./server";
+import { supabaseServer, supabaseReadClients } from "./server";
 import type { PricingFormula } from "../pricing";
-import { cleanTiers } from "../pricing";
+import { cleanTiers, DEFAULT_FORMULA, parseRupeeSearch } from "../pricing";
 import { isCodOrder, isPrepaidOrder } from "../orderPayment";
 import { phoneDigits, recordMatchesShopperQuery } from "../phone";
 import { scoreQuery } from "../search";
@@ -14,13 +14,38 @@ import { scoreQuery } from "../search";
  * in 1000-row windows and returns the complete set. `build(from,to)` must construct a FRESH
  * query each call (query builders are single-use) and apply `.range(from,to)`.
  */
-async function fetchAll<T = any>(build: (from: number, to: number) => PromiseLike<{ data: T[] | null }>): Promise<T[]> {
+async function fetchAll<T = any>(
+  build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error?: { message?: string } | null }>,
+  opts: { required?: boolean } = {},
+): Promise<T[]> {
   const step = 1000; const out: T[] = [];
   for (let from = 0; ; from += step) {
-    const { data } = await build(from, from + step - 1);
-    const rows = (data as T[]) ?? [];
+    let rows: T[] | null = null;
+    let lastErr: { message?: string } | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const res = await build(from, from + step - 1);
+      if (res.error) {
+        lastErr = res.error;
+        await new Promise((r) => setTimeout(r, 120 * (attempt + 1)));
+        continue;
+      }
+      rows = (res.data as T[]) ?? [];
+      lastErr = null;
+      break;
+    }
+    if (rows == null) {
+      // A later page can 416 / time out after earlier pages already succeeded. Throwing here
+      // used to discard thousands of designs and blank the shop + trade panel. Keep what
+      // we have; only fail hard when we truly got nothing.
+      const msg = (lastErr?.message ?? "").toLowerCase();
+      const rangeDone = /range|pgrst103|416|not satisfiable/.test(msg);
+      if (out.length > 0 || rangeDone) break;
+      if (opts.required) throw new Error(`catalogue page ${from} failed: ${lastErr?.message ?? "unknown error"}`);
+      break;
+    }
     out.push(...rows);
     if (rows.length < step) break;
+    if (from > 200_000) break;
   }
   return out;
 }
@@ -68,8 +93,9 @@ export type DbProduct = {
 };
 
 export async function getPricingFormula(): Promise<PricingFormula> {
+  try {
   const sb = supabaseServer();
-  const { data } = await sb.from("pricing_settings").select("*").limit(1).single();
+  const { data } = await sb.from("pricing_settings").select("*").limit(1).maybeSingle();
   return {
     wholesaleMarkupPct: Number(data?.wholesale_markup_pct ?? 10),
     retailMultiplier: Number(data?.retail_multiplier ?? 2.2),
@@ -87,6 +113,9 @@ export async function getPricingFormula(): Promise<PricingFormula> {
     wholesaleMinOrder: Number(data?.wholesale_min_order ?? 300000),
     wholesaleTiers: cleanTiers(data?.wholesale_tiers),
   };
+  } catch {
+    return { ...DEFAULT_FORMULA };
+  }
 }
 
 export async function getCategories(): Promise<DbCategory[]> {
@@ -101,19 +130,29 @@ export type CategoryNode = DbCategory & { sort?: number; subcategories: DbSubcat
 
 /** Parent categories, each with their ordered subcategories — for the management UI + filters. */
 export async function getCategoryTree(): Promise<CategoryNode[]> {
-  const sb = supabaseServer();
-  const [{ data: cats }, { data: subs }] = await Promise.all([
-    sb.from("categories").select("id,name,slug,sort,parent_id").order("sort").order("name"),
-    sb.from("subcategories").select("id,category_id,name,slug,sort,image_style").order("sort").order("name"),
-  ]);
-  const subList = (subs as DbSubcategory[]) ?? [];
-  // Only top-level categories (parent_id null) are roots; nested categories are ignored here.
-  return ((cats as any[]) ?? [])
-    .filter((c) => !c.parent_id)
-    .map((c) => ({
-      id: c.id, name: c.name, slug: c.slug, sort: c.sort ?? 0,
-      subcategories: subList.filter((s) => s.category_id === c.id),
-    }));
+  let cats: any[] = [];
+  for (const sb of supabaseReadClients()) {
+    const full = await sb.from("categories").select("id,name,slug,sort,parent_id").order("sort").order("name");
+    if (!full.error && (full.data as any[])?.length) { cats = full.data as any[]; break; }
+    const basic = await sb.from("categories").select("id,name,slug").order("name");
+    if (!basic.error && (basic.data as any[])?.length) { cats = basic.data as any[]; break; }
+  }
+  if (!cats.length) return [];
+  let subList: DbSubcategory[] = [];
+  for (const sbc of supabaseReadClients()) {
+    const { data: subs, error } = await sbc.from("subcategories").select("id,category_id,name,slug,sort,image_style").order("sort").order("name");
+    if (!error) { subList = (subs as DbSubcategory[]) ?? []; break; }
+    const basic = await sbc.from("subcategories").select("id,category_id,name,slug,sort").order("name");
+    if (!basic.error) { subList = (basic.data as DbSubcategory[]) ?? []; break; }
+  }
+  const toNode = (c: any) => ({
+    id: c.id, name: c.name, slug: c.slug, sort: c.sort ?? 0,
+    subcategories: subList.filter((s) => s.category_id === c.id),
+  });
+  // Only top-level categories (parent_id null) are roots — BUT if every row has a parent
+  // (import/hierarchy glitch) showing nothing blanks Shop by Category. Fall back to all rows.
+  const roots = cats.filter((c) => !c.parent_id);
+  return (roots.length ? roots : cats).map(toNode);
 }
 
 /** Flat list of subcategories, optionally scoped to one parent category slug or id. */
@@ -284,10 +323,8 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
     let q = sb.from("products").select(sel).eq("status", "published").order("sku");
     if (!opts.includeWholesaleOnly) q = q.eq("wholesale_only", false); // retail hides wholesale-only
     if (opts.excludeRetailOnly) q = q.eq("retail_only", false);        // wholesale hides retail-only
-    // Shareable catalogue never shows sold-out designs — products.qty is the variant-sum (kept in
-    // sync by resyncProductQty), so qty>0 means at least one colour is in stock. Skip this filter when
-    // the owner has hand-picked specific SKUs to share (respect his explicit selection).
-    if (opts.inStock && !(opts.skus && opts.skus.length)) q = q.gt("qty", 0);
+    // Public catalogue never shows sold-out designs, including hand-picked share links.
+    if (opts.inStock) q = q.gt("qty", 0);
     if (catId) q = q.eq("category_id", catId);
     if (subIds) q = q.in("id", subIds);
     if (styleId) q = q.eq("style_id", styleId);
@@ -334,25 +371,40 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
   // Variant-image fallback: a piece may only have per-colour (variant) photos and no product-level
   // hero — the card should still show an image instead of a blank tile.
   const cardRows = (data as any[]) ?? [];
-  const vImgByP = new Map<string, string>();
+  const vImgInStock = new Map<string, string>();
+  const variantImages = new Map<string, Set<string>>();
+  const inStockVariantImages = new Map<string, Set<string>>();
   // Colours a design comes in, IN STOCK only — so the shared catalogue card can show colour chips
-  // (owner: "catalog me variant nahi dikh raha"). Same variant fetch that already resolves cover images.
+  // (owner: "catalog me variant nahi dikh raha"). Same variant fetch also keeps a sold-out colour
+  // from supplying the card image when another colour remains available.
   const colorsByP = new Map<string, Set<string>>();
+  const variantQtyByP = new Map<string, number>();
+  const hasVariants = new Set<string>();
   const cardIds = cardRows.map((p) => p.id).filter(Boolean);
   if (cardIds.length) {
     const vimgs = await fetchByIds(cardIds, (chunk) => sb.from("variants").select("product_id,image_paths,color,qty").in("product_id", chunk));
     for (const v of ((vimgs as any[]) ?? [])) {
-      if (!vImgByP.has(v.product_id) && Array.isArray(v.image_paths)) {
-        const hit = v.image_paths.find((x: string) => typeof x === "string" && x.startsWith("http"));
-        if (hit) vImgByP.set(v.product_id, hit);
+      hasVariants.add(v.product_id);
+      variantQtyByP.set(v.product_id, (variantQtyByP.get(v.product_id) ?? 0) + (v.qty ?? 0));
+      const paths = Array.isArray(v.image_paths) ? v.image_paths.filter((x: unknown): x is string => typeof x === "string" && x.startsWith("http")) : [];
+      for (const image of paths) {
+        let all = variantImages.get(v.product_id); if (!all) { all = new Set(); variantImages.set(v.product_id, all); } all.add(image);
+        if ((v.qty ?? 0) > 0) {
+          let inStock = inStockVariantImages.get(v.product_id); if (!inStock) { inStock = new Set(); inStockVariantImages.set(v.product_id, inStock); } inStock.add(image);
+        }
       }
+      const hit = paths[0];
+      if (hit && (v.qty ?? 0) > 0 && !vImgInStock.has(v.product_id)) vImgInStock.set(v.product_id, hit);
       const c = String(v.color ?? "").trim();
       if (c && (v.qty ?? 0) > 0) {
         let s = colorsByP.get(v.product_id); if (!s) { s = new Set(); colorsByP.set(v.product_id, s); } s.add(c);
       }
     }
   }
-  return cardRows.map((p): CatalogCard => {
+  const cards = cardRows
+    // Variant quantities are authoritative for products with variants; use product qty for simple designs.
+    .filter((p) => !opts.inStock || (hasVariants.has(p.id) ? (variantQtyByP.get(p.id) ?? 0) : (p.qty ?? 0)) > 0)
+    .map((p): CatalogCard => {
     const ov = overridesOf(p);
     const o = _liveOffer(p.base_wholesale, formula, ov);
     const set = _resolvePrices(p.base_wholesale, formula, ov);
@@ -369,18 +421,27 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       // Trade price is emitted ONLY for authorised callers; omitted from retail JSON entirely.
       ...(opts.includeWholesalePricing ? { wholesale: set.wholesaleRate } : {}),
       qty: p.qty, price: o.price, mrp: o.mrp, offerPct: o.offerPct, hasOffer: o.hasOffer,
-      // Owner-chosen cover wins; else first generated image; else a variant photo.
-      image: (typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http") ? p.thumbnail_path : null) ?? imgs[0]?.path ?? vImgByP.get(p.id) ?? null,
+      // Keep a pinned product image, but never lead with a sold-out variant photo when another colour is in stock.
+      // This makes the shared watch catalogue show Silver when Gold is sold out.
+      image: (() => {
+        const thumbnail = typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http")
+          && ([...(p.images ?? []).map((image: any) => image.path), ...(variantImages.get(p.id) ?? [])].includes(p.thumbnail_path))
+          ? p.thumbnail_path : null;
+        const thumbnailIsSoldOutVariant = !!thumbnail && (variantImages.get(p.id)?.has(thumbnail) ?? false) && !(inStockVariantImages.get(p.id)?.has(thumbnail) ?? false);
+        const firstEligibleProductImage = imgs.find((image: any) =>
+          !(variantImages.get(p.id)?.has(image.path) ?? false) || (inStockVariantImages.get(p.id)?.has(image.path) ?? false),
+        )?.path ?? null;
+        return (!thumbnailIsSoldOutVariant ? thumbnail : null) ?? firstEligibleProductImage ?? vImgInStock.get(p.id) ?? null;
+      })(),
       tags: ((p.generated_content as any)?.tags ?? []).slice(0, 6),
       keywords: (seo.keywords ?? []).slice(0, 6),
       labels: labelNames.slice(0, 6),
       wholesaleOnly: !!p.wholesale_only,
       colors: [...(colorsByP.get(p.id) ?? [])].sort(),
     };
-  })
-  // A shareable catalogue must never show a photo-less design (letter placeholder) — it looks unfinished
-  // and drives customers away. Only list products that actually have a real image.
-  .filter((c) => typeof c.image === "string" && c.image.startsWith("http"));
+  });
+  const withPhotos = cards.filter((c) => typeof c.image === "string" && c.image.startsWith("http"));
+  return withPhotos.length > 0 ? withPhotos : cards;
 }
 
 // ---------- customer directory (real customers table) ----------
@@ -744,7 +805,19 @@ export async function getSupplierCities() {
 // Sortable columns for the sales/invoice register (Pillar 1 — "A–Z order of invoice").
 // Token format is `<field>_<dir>`, e.g. "inv_asc". Default = newest first.
 const ORDERS_SORT: Record<string, string> = { inv: "invoice_no", name: "customer_name", date: "created_at", amount: "total" };
-export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?: string; channel?: string; from?: string; to?: string; sort?: string; billType?: string }) {
+/** PostgREST `.or()` fragments that match a rupee amount on total / amount_paid (stored paise). */
+function salesAmountOr(paise: number): string[] {
+  if (!Number.isFinite(paise) || paise <= 0) return [];
+  if (paise % 100 === 0) {
+    return [
+      `and(total.gte.${paise},total.lt.${paise + 100})`,
+      `and(amount_paid.gte.${paise},amount_paid.lt.${paise + 100})`,
+    ];
+  }
+  return [`total.eq.${paise}`, `amount_paid.eq.${paise}`];
+}
+
+export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?: string; channel?: string; from?: string; to?: string; sort?: string; billType?: string; amount?: string }) {
   const sb = supabaseServer();
   const pageSize = opts.pageSize ?? 25;
   const page = Math.max(1, opts.page ?? 1);
@@ -756,7 +829,27 @@ export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?
   query = query.or("is_backorder.is.null,is_backorder.eq.false");
   // Held COD orders aren't sales yet either — they live on /admin/cod until dispatch is confirmed.
   query = query.eq("cod_hold", false);
-  if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.or(`customer_name.ilike.%${s}%,customer_phone.ilike.%${s}%`); }
+  if (opts.q?.trim()) {
+    const raw = opts.q.trim();
+    const s = escLike(raw);
+    const digits = raw.replace(/\D/g, "");
+    const parts: string[] = [];
+    if (s) {
+      parts.push(`customer_name.ilike.%${s}%`, `customer_phone.ilike.%${s}%`, `invoice_no.ilike.%${s}%`);
+    }
+    if (digits.length >= 4) {
+      parts.push(`customer_phone.ilike.%${digits}%`);
+      parts.push(`customer_phone.ilike.%${digits.slice(-4)}%`);
+    }
+    parts.push(...salesAmountOr(parseRupeeSearch(raw) ?? 0));
+    const or = Array.from(new Set(parts)).filter(Boolean).join(",");
+    if (or) query = query.or(or);
+  }
+  // Dedicated amount box is AND-ed with name/phone/channel so the owner can find "Priya + ₹900".
+  if (opts.amount?.trim()) {
+    const amt = salesAmountOr(parseRupeeSearch(opts.amount) ?? 0).join(",");
+    if (amt) query = query.or(amt);
+  }
   if (opts.channel && opts.channel !== "all") query = query.eq("channel", opts.channel);
   if (opts.billType) query = query.eq("bill_type", opts.billType);
   if (opts.from) query = query.gte("created_at", opts.from);
@@ -1134,7 +1227,8 @@ export async function getProductEstimateReservations(productId: string): Promise
     .select("qty, estimate:estimates(id,customer_name,status,created_at)")
     .eq("product_id", productId);
   return ((data as any[]) ?? [])
-    .filter((r) => r.estimate && r.estimate.status === "open")
+    .map((r) => ({ ...r, estimate: Array.isArray(r.estimate) ? r.estimate[0] : r.estimate }))
+    .filter((r) => r.estimate && r.estimate.status === "open" && r.estimate.id)
     .map((r) => ({ id: r.estimate.id as string, customer: r.estimate.customer_name as string | null, qty: r.qty as number, created_at: r.estimate.created_at as string }))
     .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
 }
@@ -1152,7 +1246,8 @@ export async function getProductEstimates(productId: string): Promise<{ id: stri
     .select("qty,unit_price,line_total, variant:variants(color), estimate:estimates(id,customer_name,status,created_at)")
     .eq("product_id", productId);
   return ((data as any[]) ?? [])
-    .filter((r) => r.estimate)
+    .map((r) => ({ ...r, estimate: Array.isArray(r.estimate) ? r.estimate[0] : r.estimate }))
+    .filter((r) => r.estimate?.id)
     .map((r) => ({
       id: r.estimate.id as string,
       customer: (r.estimate.customer_name as string | null) ?? null,
@@ -1408,25 +1503,48 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   const saleRefs = [...new Set(allRows.filter((r) => (r.kind === "sale" || r.kind === "return") && r.ref_id).map((r) => r.ref_id))];
   const purchaseRefs = [...new Set(allRows.filter((r) => (r.kind === "purchase" || r.kind === "purchase_return") && r.ref_id).map((r) => r.ref_id))];
   const estimateRefs = [...new Set(allRows.filter((r) => r.kind === "estimate" && r.ref_id).map((r) => r.ref_id))];
-  // A "reserve" movement is a HELD estimate physically setting a piece aside for a customer. Its ref_id
-  // is that estimate — resolve it so the row shows WHO it's held for + a link, instead of a bare "−1".
+  // Reserve movements are used for BOTH held estimates AND held COD/storefront orders. Resolve both
+  // so a cancelled COD hold is not labelled EST-… (which made leftover order holds look like quotes).
   const reserveRefs = [...new Set(allRows.filter((r) => r.kind === "reserve" && r.ref_id).map((r) => r.ref_id))];
   const invoiceBy = new Map<string, string>();
   const billBy = new Map<string, string>();
-  // Party = who the movement was with — the customer on a sale/estimate, the supplier on a purchase.
-  // Surfaced on every timeline row so the owner can trace "sold 2 to Riya" without opening the bill.
   const partyBy = new Map<string, string>();
+  const estimateBy = new Map<string, { id: string; customer_name: string | null; status: string }>();
+  const orderHoldBy = new Map<string, { invoice_no: string | null; customer_name: string | null }>();
   if (saleRefs.length) { const { data } = await sb.from("orders").select("id,invoice_no,customer_name").in("id", saleRefs as string[]); for (const o of (data as any[]) ?? []) { invoiceBy.set(o.id, o.invoice_no); if (o.customer_name) partyBy.set(o.id, o.customer_name); } }
+  if (reserveRefs.length) {
+    const { data } = await sb.from("orders").select("id,invoice_no,customer_name").in("id", reserveRefs as string[]);
+    for (const o of (data as any[]) ?? []) {
+      orderHoldBy.set(o.id, { invoice_no: o.invoice_no ?? null, customer_name: o.customer_name ?? null });
+      if (o.invoice_no) invoiceBy.set(o.id, o.invoice_no);
+      if (o.customer_name) partyBy.set(o.id, o.customer_name);
+    }
+  }
   if (purchaseRefs.length) { const { data } = await sb.from("purchases").select("id,bill_no, supplier:suppliers(name)").in("id", purchaseRefs as string[]); for (const o of (data as any[]) ?? []) { billBy.set(o.id, o.bill_no); if (o.supplier?.name) partyBy.set(o.id, o.supplier.name); } }
   const estPartyRefs = [...new Set([...estimateRefs, ...reserveRefs])];
-  if (estPartyRefs.length) { const { data } = await sb.from("estimates").select("id,customer_name").in("id", estPartyRefs as string[]); for (const o of (data as any[]) ?? []) { if (o.customer_name) partyBy.set(o.id, o.customer_name); } }
+  if (estPartyRefs.length) {
+    const { data } = await sb.from("estimates").select("id,customer_name,status").in("id", estPartyRefs as string[]);
+    for (const o of (data as any[]) ?? []) {
+      estimateBy.set(o.id, { id: o.id, customer_name: o.customer_name ?? null, status: String(o.status ?? "") });
+      if (o.customer_name) partyBy.set(o.id, o.customer_name);
+    }
+  }
+
+  const estimateShort = (id: string) => `EST-${String(id).slice(0, 8).toUpperCase()}`;
+  const orderHoldShort = (id: string) => invoiceBy.get(id) || `ORD-${String(id).slice(0, 8).toUpperCase()}`;
+  const estimateDoc = (refId: string, kind: string): { href: string; label: string } => {
+    const est = estimateBy.get(refId);
+    const held = kind === "reserve" || est?.status === "held";
+    if (!est) return { href: `/admin/estimate/${refId}`, label: "Check this reservation →" };
+    return { href: `/admin/estimate/${refId}`, label: held ? "Open held estimate →" : "Open estimate →" };
+  };
 
   const docFor = (r: any): { href: string; label: string } | null => {
     if (!r.ref_id) return null;
     if (r.kind === "sale") return { href: `/admin/invoice/${r.ref_id}`, label: "Open invoice →" };
     if (r.kind === "purchase") return { href: `/admin/purchase/${r.ref_id}`, label: "Open purchase →" };
-    if (r.kind === "estimate") return { href: `/admin/estimate/${r.ref_id}`, label: "Open estimate →" };
-    if (r.kind === "reserve") return { href: `/admin/estimate/${r.ref_id}`, label: "Open held estimate →" };
+    if (r.kind === "reserve" && orderHoldBy.has(r.ref_id)) return { href: `/admin/invoice/${r.ref_id}`, label: "Open order hold →" };
+    if (r.kind === "estimate" || r.kind === "reserve") return estimateDoc(r.ref_id, r.kind);
     if (r.kind === "return" || r.kind === "purchase_return") return { href: `/admin/returns`, label: "Open return →" };
     return null;
   };
@@ -1436,7 +1554,10 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
   const { data: resv } = await sb.from("estimate_items")
     .select("qty,unit_price,line_total, variant:variants(color), estimate:estimates(id,customer_name,status,created_at)")
     .eq("product_id", productId);
-  const resvRows = ((resv as any[]) ?? []).filter((r) => r.estimate);
+  const resvRows = ((resv as any[]) ?? []).map((r) => ({
+    ...r,
+    estimate: Array.isArray(r.estimate) ? r.estimate[0] : r.estimate,
+  })).filter((r) => r.estimate?.id);
   const reservations = resvRows
     .map((r) => ({
       id: r.estimate.id as string,
@@ -1473,7 +1594,10 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     id: r.id, kind: r.kind ?? "adjustment", delta: r.delta ?? 0, runningBalance: r.runningBalance ?? 0,
     source: r.source ?? null, reason: r.reason ?? null, created_by: r.created_by ?? r.source ?? null,
     ref_id: r.ref_id ?? null, created_at: r.created_at,
-    invoice_no: r.kind === "sale" ? (invoiceBy.get(r.ref_id) ?? null) : r.kind === "purchase" ? (billBy.get(r.ref_id) ?? null) : null,
+    invoice_no: r.kind === "sale" ? (invoiceBy.get(r.ref_id) ?? null)
+      : r.kind === "purchase" ? (billBy.get(r.ref_id) ?? null)
+      : r.kind === "reserve" && r.ref_id && orderHoldBy.has(r.ref_id) ? orderHoldShort(r.ref_id)
+      : (r.kind === "estimate" || r.kind === "reserve") && r.ref_id ? estimateShort(r.ref_id) : null,
     party: r.ref_id ? (partyBy.get(r.ref_id) ?? null) : null,
     hold: false,
     variant: r.variant_id ? { color: variantById.get(r.variant_id)?.color ?? null, sku: variantById.get(r.variant_id)?.sku ?? null } : null,
@@ -1490,10 +1614,10 @@ export async function getProductLedger(productId: string, opts: { offset?: numbe
     kind: "estimate", delta: -(r.qty ?? 0), runningBalance: null,
     source: null, reason: `Reserved ${r.qty ?? 0} pcs · estimate ${r.estimate.status ?? ""}`.trim(),
     created_by: null, ref_id: r.estimate.id as string, created_at: r.estimate.created_at as string,
-    invoice_no: null, party: (r.estimate.customer_name as string) ?? null, hold: true,
+    invoice_no: estimateShort(r.estimate.id as string), party: (r.estimate.customer_name as string) ?? null, hold: true,
     variant: (r.variant?.color as string | null) ? { color: r.variant.color as string, sku: null } : null,
     price: (r.unit_price as number) ?? null,
-    doc: { href: `/admin/estimate/${r.estimate.id}`, label: "Open estimate →" },
+    doc: estimateDoc(r.estimate.id as string, "estimate"),
   }));
 
   // HONEST BASELINE: if the real stock (products.qty) differs from the sum of every logged
@@ -1675,17 +1799,21 @@ export type DashboardData = {
 export async function getDashboardData(fromISO: string, toISO: string, rule: InventoryRule = DEFAULT_RULE): Promise<DashboardData> {
   const sb = supabaseServer();
   const now = new Date();
-  const [ordersRes, prods, catRes, retRes, apprRes] = await Promise.all([
-    sb.from("orders").select("total,channel,payment_mode,pay_cash,pay_bank,created_at,status,is_backorder").gte("created_at", fromISO).lte("created_at", toISO).or("is_backorder.is.null,is_backorder.eq.false").eq("cod_hold", false),
-    fetchAll((f, t) => sb.from("products").select("sku,name,qty,last_movement_at,created_at,category:categories(name)").range(f, t)),
+  const orderCols = "total,channel,payment_mode,pay_cash,pay_bank,created_at,status,is_backorder,cod_hold";
+  let ordersRes: any = await sb.from("orders").select(orderCols).gte("created_at", fromISO).lte("created_at", toISO);
+  if (ordersRes.error) {
+    ordersRes = await sb.from("orders").select("total,channel,payment_mode,pay_cash,pay_bank,created_at,status").gte("created_at", fromISO).lte("created_at", toISO);
+  }
+  const [prodsHead, sample, catRes, retRes, dealersRes, apprRes] = await Promise.all([
+    sb.from("products").select("id", { count: "exact", head: true }),
+    sb.from("products").select("sku,name,qty,last_movement_at,created_at").order("sku").limit(400),
     sb.from("categories").select("id"),
     sb.from("retailers").select("id,approved"),
+    sb.from("customers").select("id,wholesale_approved").eq("type", "wholesale"),
     sb.from("approvals").select("id,status"),
   ]);
-  // Pending backorders (held, not sold) are already filtered above; also drop cancelled/refunded so
-  // the dashboard revenue matches the sales record (owner: "revenue dikha raha hai but no stock movement").
-  const orders = (ordersRes.data ?? []).filter((o: any) => o.status !== "cancelled" && o.status !== "refunded");
-  const products = (prods as any[]) ?? [];
+  const orders: any[] = (ordersRes.data ?? []).filter((o: any) => o.status !== "cancelled" && o.status !== "refunded" && o.is_backorder !== true && o.cod_hold !== true);
+  const products = (sample.data as any[]) ?? [];
 
   const revenue = orders.reduce((s, o: any) => s + (o.total ?? 0), 0);
   const cod = orders.filter((o: any) => o.payment_mode === "cod").length;
@@ -1699,12 +1827,14 @@ export async function getDashboardData(fromISO: string, toISO: string, rule: Inv
   const inactive = classed.filter((p) => p.cls === "inactive");
   const healthy = classed.filter((p) => p.cls === "healthy");
   const newProducts = products.filter((p: any) => p.created_at >= fromISO && p.created_at <= toISO).length;
+  const fromRetailers = ((retRes.data as any[]) ?? []).filter((r: any) => r.approved).length;
+  const fromDealers = ((dealersRes.data as any[]) ?? []).filter((r: any) => r.wholesale_approved).length;
 
   return {
     revenue, orders: orders.length, cod, pos, cashCollected, bankCollected,
-    retailers: (retRes.data ?? []).filter((r: any) => r.approved).length,
+    retailers: Math.max(fromRetailers, fromDealers),
     pendingApprovals: (apprRes.data ?? []).filter((a: any) => a.status === "pending").length,
-    totalProducts: products.length, newProducts, categories: (catRes.data ?? []).length,
+    totalProducts: prodsHead.count ?? products.length, newProducts, categories: (catRes.data ?? []).length,
     dead: dead.length, low: low.length, inactive: inactive.length, healthy: healthy.length,
     deadList: dead.slice(0, 8).map((p) => ({ sku: p.sku, name: p.name, qty: p.qty })),
     lowList: low.slice(0, 8).map((p) => ({ sku: p.sku, name: p.name, qty: p.qty })),
@@ -1731,10 +1861,12 @@ export type OrderAlertRow = { id: string; invoice_no: string | null; channel: st
 export async function getOrderAlerts(limit = 8): Promise<{ orders: OrderAlertRow[]; last24h: number }> {
   const sb = supabaseServer();
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const [listRes, cntRes] = await Promise.all([
-    sb.from("orders").select("id,invoice_no,channel,status,total,amount_paid,customer_name,created_at").order("created_at", { ascending: false }).limit(limit),
-    sb.from("orders").select("id", { count: "exact", head: true }).gte("created_at", since),
-  ]);
+  const cols = "id,invoice_no,channel,status,total,amount_paid,customer_name,created_at";
+  let listRes: any = await sb.from("orders").select(cols).order("created_at", { ascending: false }).limit(limit);
+  if (listRes.error) {
+    listRes = await sb.from("orders").select("id,channel,status,total,created_at").order("created_at", { ascending: false }).limit(limit);
+  }
+  const cntRes = await sb.from("orders").select("id", { count: "exact", head: true }).gte("created_at", since);
   return { orders: ((listRes.data as any[]) ?? []) as OrderAlertRow[], last24h: cntRes.count ?? 0 };
 }
 
@@ -1853,8 +1985,8 @@ export async function getPromotionsAdmin() {
 // ============================================================================================
 
 /** Cached storefront (per-opts). Use on admin POS/estimate pages that don't need to-the-second freshness. */
-export const getStorefrontCached = (opts: { includeDrafts?: boolean; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean } = {}) =>
-  unstable_cache(() => getStorefront(opts), ["storefront-cached", JSON.stringify(opts)], { tags: ["storefront"], revalidate: 30 })();
+export const getStorefrontCached = (opts: { includeDrafts?: boolean; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean; onlyInStock?: boolean } = {}) =>
+  unstable_cache(() => getStorefront(opts), ["storefront-cached", JSON.stringify(opts)], { tags: ["storefront"], revalidate: 300 })();
 
 /** ALL variant SKUs (colour + stock + price overrides) for the billing/estimate counters — 12k+ rows. */
 export const getBillingVariants = unstable_cache(async (): Promise<any[]> => {
@@ -1879,22 +2011,55 @@ export const getProductsForPurchaseCached = unstable_cache(() => getProductsForP
  *  (header menu + footer + promo strip). They're identical for every visitor and rarely change, so
  *  memoising them removes 3 DB round-trips per page load and makes navigation feel instant. Any catalogue
  *  or promo edit calls revalidateTag("storefront") and refreshes them at once. */
-export const getCategoryTreeCached = unstable_cache(() => getCategoryTree(), ["category-tree"], { tags: ["storefront"], revalidate: 300 });
+export const getCategoryTreeCached = unstable_cache(async () => {
+  const tree = await getCategoryTree();
+  if (!tree.length) throw new Error("category tree empty — not caching");
+  return tree;
+}, ["category-tree-v4"], { tags: ["storefront"], revalidate: 300 });
+
+/** Layout/header must never 500: live-retry, then a small fallback tile set. */
+export async function getCategoryTreeSafe(): Promise<CategoryNode[]> {
+  try { return await getCategoryTreeCached(); }
+  catch {
+    try {
+      const live = await getCategoryTree();
+      if (live.length) return live;
+    } catch { /* fall through */ }
+    const { FALLBACK_SHOP_CATEGORIES } = await import("../shopCatalog");
+    return FALLBACK_SHOP_CATEGORIES.map((c, i) => ({
+      id: `fallback-${c.slug}`, name: c.name, slug: c.slug, sort: i, subcategories: [],
+    }));
+  }
+}
 
 // Shareable catalogue (/catalog) reads were UNCACHED (supabaseServer is no-store), so every share view
 // re-ran the heavy RICH query (all in-stock products + images + labels joins) — slow, and prone to timing
 // out on a big collection. Cache per filter-set (5 min, busted by the "storefront" tag on any edit) so a
 // shared link opens fast for the customer instead of re-querying the whole catalogue each time.
 export const getCatalogProductsCached = (opts: Parameters<typeof getCatalogProducts>[0]) =>
-  unstable_cache(() => getCatalogProducts(opts), ["catalog-products", JSON.stringify(opts)], { tags: ["storefront"], revalidate: 300 })();
-export const getCatalogSuggestionsCached = unstable_cache(() => getCatalogSuggestions(), ["catalog-suggestions"], { tags: ["storefront"], revalidate: 600 });
+  unstable_cache(async () => {
+    const rows = await getCatalogProducts(opts);
+    const unfiltered = (!opts.category || opts.category === "all")
+      && (!opts.subcategory || opts.subcategory === "all")
+      && (!opts.style || opts.style === "all")
+      && !opts.q
+      && !(opts.skus && opts.skus.length);
+    if (unfiltered && rows.length === 0) throw new Error("shared catalogue empty — not caching");
+    return rows;
+  }, ["catalog-products-v2", JSON.stringify(opts)], { tags: ["storefront"], revalidate: 300 })();
+export const getCatalogSuggestionsCached = unstable_cache(async () => {
+  const s = await getCatalogSuggestions();
+  if (!s.categories.length && !s.products.length) throw new Error("suggestions empty — not caching");
+  return s;
+}, ["catalog-suggestions-v4"], { tags: ["storefront"], revalidate: 600 });
 export const getLivePromosCached = (scope: "retail" | "wholesale", placement: "hero" | "popup" | "strip") =>
   unstable_cache(() => getLivePromos(scope, placement), ["live-promos", scope, placement], { tags: ["storefront"], revalidate: 120 })();
 
 export async function getStorefront(
   opts: { includeDrafts?: boolean; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean; onlyInStock?: boolean } = {},
 ): Promise<{ products: StoreProduct[]; formula: PF }> {
-  const sb = supabaseServer();
+  const clients = supabaseReadClients();
+  const sb = clients[0] ?? supabaseServer();
   // D2C-safe defaults: only published, and never wholesale-only items (#1, #23).
   // NOTE: products / images / variants all exceed PostgREST's 1000-row cap — page through them.
   // PERF: select ONLY the columns the storefront actually renders — crucially NOT `generated_content`
@@ -1906,15 +2071,38 @@ export async function getStorefront(
     "subcategory_id, wholesale_override, retail_override, mrp_override, wholesale_only, retail_only, " +
     "style_id, thumbnail_path, default_variant_id, hide_oos_variants, in_stock, more_designs, more_designs_note, " +
     "category:categories(id,name,slug)";
-  const [prods, revs, pimgs, vimgs, formula] = await Promise.all([
-    fetchAll((f, t) => {
-      let q = sb.from("products").select(STOREFRONT_COLS).order("sku");
-      if (!opts.includeDrafts) q = q.eq("status", "published");
-      return q.range(f, t);
-    }),
-    sb.from("reviews").select("product_id, rating").then((r) => r.data ?? []),
-    fetchAll((f, t) => sb.from("product_images").select("product_id, path, sort, kind").order("sort", { ascending: true }).range(f, t)),
-    fetchAll((f, t) => sb.from("variants").select("id, product_id, image_paths, qty").range(f, t)),
+  const STOREFRONT_COLS_BASIC =
+    "id, category_id, sku, name, type, base_wholesale, qty, status, last_movement_at, created_at, " +
+    "subcategory_id, wholesale_override, retail_override, mrp_override, wholesale_only, retail_only, " +
+    "category:categories(id,name,slug)";
+  const productPages = async (cols: string, required = true) => {
+    let last: any[] = [];
+    for (const client of clients) {
+      try {
+        const rows = await fetchAll((f, t) => {
+          let q = client.from("products").select(cols).order("sku");
+          if (!opts.includeDrafts) q = q.eq("status", "published");
+          return q.range(f, t);
+        }, { required: required && client === clients[clients.length - 1] });
+        last = rows;
+        if (rows.length) return rows;
+      } catch { /* try next key */ }
+    }
+    return last;
+  };
+  const STOREFRONT_COLS_MINIMAL =
+    "id, category_id, sku, name, type, base_wholesale, qty, status, created_at, wholesale_only, retail_only, thumbnail_path";
+  let prods: any[] = [];
+  try {
+    prods = await productPages(STOREFRONT_COLS);
+  } catch {
+    try { prods = await productPages(STOREFRONT_COLS_BASIC); }
+    catch { prods = await productPages(STOREFRONT_COLS_MINIMAL, false); }
+  }
+  const [revs, pimgs, vimgs, formula] = await Promise.all([
+    (async () => { const { data } = await sb.from("reviews").select("product_id, rating").limit(5000); return data ?? []; })().catch(() => [] as any[]),
+    fetchAll((f, t) => sb.from("product_images").select("product_id, path, sort, kind").order("sort", { ascending: true }).range(f, t)).catch(() => [] as any[]),
+    fetchAll((f, t) => sb.from("variants").select("id, product_id, image_paths, qty").range(f, t)).catch(() => [] as any[]),
     getPricingFormula(),
   ]);
   const agg = new Map<string, { sum: number; n: number }>();
@@ -1982,9 +2170,46 @@ export async function getStorefront(
     const varSum = new Map<string, number>();
     const hasVar = new Set<string>();
     for (const v of vlist) { hasVar.add(v.product_id); varSum.set(v.product_id, (varSum.get(v.product_id) ?? 0) + (v.qty ?? 0)); }
-    products = products.filter((p: any) => (hasVar.has(p.id) ? (varSum.get(p.id) ?? 0) : (p.qty ?? 0)) > 0);
+    // If the variants table read failed (empty list) we MUST NOT treat every design as sold-out —
+    // fall back to product.qty / in_stock so a transient variants timeout cannot blank the shop.
+    const filtered = vlist.length === 0
+      ? products.filter((p: any) => (p.qty ?? 0) > 0 || p.in_stock === true)
+      : products.filter((p: any) => (hasVar.has(p.id) ? (varSum.get(p.id) ?? 0) : (p.qty ?? 0)) > 0);
+    products = filtered.length > 0 ? filtered : products;
   }
   return { products, formula };
+}
+
+const getPublishedStorefrontCached = unstable_cache(
+  async () => {
+    const store = await getStorefront({ onlyInStock: true });
+    if (!store.products?.length) throw new Error("storefront read returned no products — not caching");
+    return store;
+  },
+  ["storefront-published-v5"],
+  { revalidate: 180, tags: ["storefront"] },
+);
+
+/** Shop/category/search: never serve a cached empty catalogue; live-retry, then published-all. */
+export async function getStorefrontSafe(
+  opts: { onlyInStock?: boolean } = { onlyInStock: true },
+): Promise<{ products: StoreProduct[]; formula: PF }> {
+  try {
+    if (opts.onlyInStock !== false) return await getPublishedStorefrontCached();
+    const live = await getStorefront(opts);
+    if (live.products?.length) return live;
+    throw new Error("empty");
+  } catch {
+    try {
+      const live = await getStorefront({ onlyInStock: true });
+      if (live.products?.length) return live;
+      const all = await getStorefront({ onlyInStock: false });
+      if (all.products?.length) return all;
+      return { products: [], formula: all.formula };
+    } catch {
+      return { products: [], formula: await getPricingFormula() };
+    }
+  }
 }
 
 export type FeaturedReview = { id: string; author_name: string; rating: number; body: string; image_url: string | null };
@@ -2156,27 +2381,158 @@ const ESTIMATES_SORT: Record<string, string> = {
   date: "created_at",
   amount: "total",
 };
+const ESTIMATE_LIST_COLS = [
+  "id,customer_name,customer_phone,total,status,gst,order_id,notes,created_at",
+  "id,customer_name,customer_phone,total,status,order_id,notes,created_at",
+  "id,customer_name,customer_phone,total,status,created_at",
+];
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function parseEstimateKey(id: string): string {
+  let raw = String(id ?? "").trim();
+  try { raw = decodeURIComponent(raw).trim(); } catch { /* already decoded */ }
+  return raw.replace(/^EST-/i, "").trim();
+}
+
+async function hydrateEstimateItems(estimateId: string): Promise<any[]> {
+  const sb = supabaseServer();
+  const RICH = "id,qty,unit_price,line_total,product:products(name,sku),variant:variants(sku,color)";
+  const rich = await sb.from("estimate_items").select(RICH).eq("estimate_id", estimateId);
+  if (!rich.error && rich.data) return (rich.data as any[]) ?? [];
+  const basic = await sb.from("estimate_items").select("id,qty,unit_price,line_total,product_id,variant_id").eq("estimate_id", estimateId);
+  const rows = ((basic.data as any[]) ?? []);
+  if (!rows.length) return [];
+  const pids = [...new Set(rows.map((r) => r.product_id).filter(Boolean))];
+  const vids = [...new Set(rows.map((r) => r.variant_id).filter(Boolean))];
+  const [{ data: products }, { data: variants }] = await Promise.all([
+    pids.length ? sb.from("products").select("id,name,sku").in("id", pids as string[]) : Promise.resolve({ data: [] as any[] }),
+    vids.length ? sb.from("variants").select("id,sku,color").in("id", vids as string[]) : Promise.resolve({ data: [] as any[] }),
+  ]);
+  const pBy = new Map(((products as any[]) ?? []).map((p) => [p.id, p]));
+  const vBy = new Map(((variants as any[]) ?? []).map((v) => [v.id, v]));
+  return rows.map((r) => ({
+    ...r,
+    product: r.product_id ? (pBy.get(r.product_id) ?? null) : null,
+    variant: r.variant_id ? (vBy.get(r.variant_id) ?? null) : null,
+  }));
+}
+
+function sortEstimateItems(items: any[]): any[] {
+  // A–Z by SKU at the source, so EVERY consumer — the estimate view, the editor, the print/PDF, and the
+  // bill it converts into — lists lines in the same predictable order regardless of scan sequence
+  // (owner: "estimate me save karne pe A-Z chahiye"). Numeric-aware so KPKN2 sorts before KPKN10.
+  return [...items].sort((a, b) =>
+    String(a.variant?.sku ?? a.product?.sku ?? "").localeCompare(String(b.variant?.sku ?? b.product?.sku ?? ""), undefined, { numeric: true }));
+}
+
 export async function getEstimates(opts: { sort?: string } = {}) {
   const sb = supabaseServer();
   const [field, dir] = (opts.sort ?? "").split("_");
   const col = ESTIMATES_SORT[field] ?? "created_at";
   const asc = col === "created_at" ? dir === "asc" : dir !== "desc";
-  let q = sb.from("estimates").select("id,customer_name,customer_phone,total,status,gst,order_id,notes,created_at").order(col, { ascending: asc, nullsFirst: false });
-  if (col !== "created_at") q = q.order("created_at", { ascending: false });
-  const { data } = await q.limit(200);
-  return (data as any[]) ?? [];
+
+  let cols = ESTIMATE_LIST_COLS[0];
+  for (const candidate of ESTIMATE_LIST_COLS) {
+    const probe = await sb.from("estimates").select(candidate).limit(1);
+    if (!probe.error) { cols = candidate; break; }
+  }
+
+  // Open + held quotes reserve stock. The old 200-row newest-first cap hid live quotes behind a
+  // pile of billed ones, so the owner saw an empty "To bill" tab while product history still showed
+  // "reserved by open estimates" and 404'd when those links were opened.
+  let live = await fetchAll((f, t) =>
+    sb.from("estimates").select(cols).in("status", ["open", "held"]).order("created_at", { ascending: false }).range(f, t));
+  if (!live.length) {
+    const [openOnly, heldOnly] = await Promise.all([
+      fetchAll((f, t) => sb.from("estimates").select(cols).eq("status", "open").order("created_at", { ascending: false }).range(f, t)),
+      fetchAll((f, t) => sb.from("estimates").select(cols).eq("status", "held").order("created_at", { ascending: false }).range(f, t)),
+    ]);
+    live = [...openOnly, ...heldOnly];
+  }
+  let recentQ = sb.from("estimates").select(cols).order(col as any, { ascending: asc, nullsFirst: false });
+  if (col !== "created_at") recentQ = recentQ.order("created_at", { ascending: false });
+  const recent = await recentQ.limit(400);
+  const byId = new Map<string, any>();
+  for (const e of [...live, ...(((recent.error ? [] : recent.data) as any[]) ?? [])]) {
+    if (e?.id) byId.set(e.id, e);
+  }
+  const list = [...byId.values()];
+  list.sort((a, b) => {
+    let c = 0;
+    if (col === "id") c = String(a.id).localeCompare(String(b.id));
+    else if (col === "customer_name") c = String(a.customer_name ?? "").localeCompare(String(b.customer_name ?? ""));
+    else if (col === "total") c = (Number(a.total) || 0) - (Number(b.total) || 0);
+    else c = String(a.created_at ?? "").localeCompare(String(b.created_at ?? ""));
+    return asc ? c : -c;
+  });
+  return list;
 }
+
 export async function getEstimate(id: string) {
   const sb = supabaseServer();
-  const { data: estimate } = await sb.from("estimates").select("*").eq("id", id).maybeSingle();
+  const key = parseEstimateKey(id);
+  if (!key) return null;
+
+  let estimate: any = null;
+  if (UUID_RE.test(key)) {
+    const { data } = await sb.from("estimates").select("*").eq("id", key).maybeSingle();
+    estimate = data ?? null;
+  }
+  if (!estimate) {
+    // Printed ref is EST- + first 8 of the UUID. Owner may open that short code from a photo or search.
+    const needle = key.replace(/-/g, "").toLowerCase();
+    if (needle.length >= 8) {
+      const { data } = await sb.from("estimates").select("*").order("created_at", { ascending: false }).limit(2000);
+      estimate = ((data as any[]) ?? []).find((e) => {
+        const idHex = String(e.id ?? "").replace(/-/g, "").toLowerCase();
+        return idHex === needle || idHex.startsWith(needle.slice(0, 8)) || String(e.id).slice(0, 8).toLowerCase() === key.slice(0, 8).toLowerCase();
+      }) ?? null;
+    }
+  }
   if (!estimate) return null;
-  const { data: items } = await sb.from("estimate_items").select("id,qty,unit_price,line_total,product:products(name,sku),variant:variants(sku,color)").eq("estimate_id", id);
-  // A–Z by SKU at the source, so EVERY consumer — the estimate view, the editor, the print/PDF, and the
-  // bill it converts into — lists lines in the same predictable order regardless of scan sequence
-  // (owner: "estimate me save karne pe A-Z chahiye"). Numeric-aware so KPKN2 sorts before KPKN10.
-  const sortedItems = ((items as any[]) ?? []).sort((a, b) =>
-    String(a.variant?.sku ?? a.product?.sku ?? "").localeCompare(String(b.variant?.sku ?? b.product?.sku ?? ""), undefined, { numeric: true }));
-  return { estimate, items: sortedItems };
+  const items = sortEstimateItems(await hydrateEstimateItems(estimate.id));
+  return { estimate, items };
+}
+
+/** Leftover estimate_items / reserve movements when the quote row itself is gone. */
+export async function getEstimateGhost(id: string): Promise<{
+  id: string;
+  items: { qty: number; sku: string | null; name: string | null; color: string | null }[];
+  movements: { kind: string; delta: number; sku: string | null; reason: string | null; created_at: string }[];
+}> {
+  const sb = supabaseServer();
+  const key = parseEstimateKey(id);
+  const uuid = UUID_RE.test(key) ? key : "";
+  if (!uuid) return { id: key, items: [], movements: [] };
+  const [{ data: items }, { data: moves }] = await Promise.all([
+    sb.from("estimate_items").select("qty,product_id,variant_id").eq("estimate_id", uuid),
+    sb.from("stock_adjustments").select("kind,delta,sku,reason,created_at").eq("ref_id", uuid).in("kind", ["reserve", "release", "estimate"]).order("created_at", { ascending: false }).limit(40),
+  ]);
+  const rows = ((items as any[]) ?? []);
+  const pids = [...new Set(rows.map((r) => r.product_id).filter(Boolean))];
+  const vids = [...new Set(rows.map((r) => r.variant_id).filter(Boolean))];
+  const [{ data: products }, { data: variants }] = await Promise.all([
+    pids.length ? sb.from("products").select("id,name,sku").in("id", pids as string[]) : Promise.resolve({ data: [] as any[] }),
+    vids.length ? sb.from("variants").select("id,sku,color").in("id", vids as string[]) : Promise.resolve({ data: [] as any[] }),
+  ]);
+  const pBy = new Map(((products as any[]) ?? []).map((p) => [p.id, p]));
+  const vBy = new Map(((variants as any[]) ?? []).map((v) => [v.id, v]));
+  return {
+    id: uuid,
+    items: rows.map((r) => ({
+      qty: r.qty ?? 0,
+      sku: (r.variant_id ? vBy.get(r.variant_id)?.sku : null) ?? (r.product_id ? pBy.get(r.product_id)?.sku : null) ?? null,
+      name: r.product_id ? (pBy.get(r.product_id)?.name ?? null) : null,
+      color: r.variant_id ? (vBy.get(r.variant_id)?.color ?? null) : null,
+    })),
+    movements: ((moves as any[]) ?? []).map((m) => ({
+      kind: String(m.kind ?? ""),
+      delta: Number(m.delta) || 0,
+      sku: m.sku ?? null,
+      reason: m.reason ?? null,
+      created_at: m.created_at as string,
+    })),
+  };
 }
 export async function getRecentOrders(limit = 12) {
   const sb = supabaseServer();
@@ -2387,12 +2743,38 @@ export async function getProductsForPurchase() {
     })),
   }));
 }
+export async function getPurchasesPage(opts: { page?: number; pageSize?: number; q?: string; supplierId?: string; from?: string; to?: string }) {
+  const sb = supabaseServer();
+  const pageSize = opts.pageSize ?? 25;
+  const page = Math.max(1, opts.page ?? 1);
+  let query = sb.from("purchases").select("id,bill_no,total,created_at,supplier:suppliers(name,city)", { count: "exact" });
+  if (opts.supplierId && opts.supplierId !== "all") query = query.eq("supplier_id", opts.supplierId);
+  if (opts.from) query = query.gte("created_at", opts.from);
+  if (opts.to) query = query.lte("created_at", opts.to);
+  if (opts.q?.trim()) {
+    const s = escLike(opts.q);
+    if (s) {
+      const { data: sups } = await sb.from("suppliers").select("id").ilike("name", `%${s}%`);
+      const ids = ((sups as any[]) ?? []).map((x) => x.id).filter(Boolean).slice(0, 80);
+      query = ids.length
+        ? query.or(`bill_no.ilike.%${s}%,supplier_id.in.(${ids.join(",")})`)
+        : query.ilike("bill_no", `%${s}%`);
+    }
+  }
+  const fromIdx = (page - 1) * pageSize;
+  const { data, count } = await query.order("created_at", { ascending: false }).range(fromIdx, fromIdx + pageSize - 1);
+  return { rows: (data as any[]) ?? [], total: count ?? 0, page, pageSize };
+}
+
+/** All purchase bills (newest first). Used by the returns picker so an old bill can still be returned against. */
 export async function getRecentPurchases() {
   const sb = supabaseServer();
-  const { data } = await sb.from("purchases")
-    .select("id,bill_no,total,created_at,supplier:suppliers(name,city),purchase_items(qty)")
-    .order("created_at", { ascending: false }).limit(15);
-  return (data as any[]) ?? [];
+  return fetchAll((f, t) =>
+    sb.from("purchases")
+      .select("id,bill_no,total,created_at,supplier:suppliers(name,city)")
+      .order("created_at", { ascending: false })
+      .range(f, t),
+  );
 }
 
 export async function getPurchaseById(id: string) {
@@ -2496,14 +2878,25 @@ const getSearchCatalogue = unstable_cache(
       getStorefront({ onlyInStock: true }),
       loadStorefrontSearchExtras(),
     ]);
+    if (!products?.length) throw new Error("search catalogue empty — not caching");
     return { products, formula, extras };
   },
-  ["search-catalogue-instock-v2"],
+  ["search-catalogue-instock-v3"],
   { revalidate: 300, tags: ["storefront"] },
 );
 
 export async function searchProducts(q: string) {
-  const { products, formula, extras } = await getSearchCatalogue();
+  let catalogue: { products: StoreProduct[]; formula: PF; extras: any };
+  try {
+    catalogue = await getSearchCatalogue();
+  } catch {
+    const [{ products, formula }, extras] = await Promise.all([
+      getStorefrontSafe(),
+      loadStorefrontSearchExtras().catch(() => ({})),
+    ]);
+    catalogue = { products, formula, extras };
+  }
+  const { products, formula, extras } = catalogue;
   const needle = q.trim();
   if (!needle) return { formula, results: [] as typeof products };
   const scored = products.map((p: any) => {
@@ -2535,17 +2928,23 @@ export async function getRoles() {
  *  Returns published product names + SKUs, category names, and the colour master, so the
  *  owner (or a customer) can jump straight to a design / category / colour. Capped + de-duped. */
 export async function getCatalogSuggestions(): Promise<{ products: { name: string; sku: string }[]; categories: { name: string; slug: string }[]; colours: string[] }> {
-  const sb = supabaseServer();
-  const [{ data: prods }, { data: cats }, { data: cols }] = await Promise.all([
-    sb.from("products").select("name,sku,wholesale_only").eq("status", "published").eq("wholesale_only", false).order("name").limit(500),
-    sb.from("categories").select("name,slug").order("name"),
-    sb.from("variant_options").select("value").eq("kind", "color").order("sort").order("value"),
-  ]);
-  return {
-    products: ((prods as any[]) ?? []).map((p) => ({ name: p.name, sku: p.sku })),
-    categories: ((cats as any[]) ?? []).map((c) => ({ name: c.name, slug: c.slug })),
-    colours: ((cols as any[]) ?? []).map((c) => c.value).filter(Boolean),
-  };
+  let products: { name: string; sku: string }[] = [];
+  let categories: { name: string; slug: string }[] = [];
+  let colours: string[] = [];
+  for (const sb of supabaseReadClients()) {
+    const [{ data: prods, error: pe }, { data: cats, error: ce }, { data: cols }] = await Promise.all([
+      sb.from("products").select("name,sku,wholesale_only").eq("status", "published").order("name").limit(500),
+      sb.from("categories").select("name,slug").order("name"),
+      sb.from("variant_options").select("value").eq("kind", "color").order("sort").order("value"),
+    ]);
+    if (!pe && (prods as any[])?.length) {
+      products = ((prods as any[]) ?? []).filter((p) => !p.wholesale_only).map((p) => ({ name: p.name, sku: p.sku }));
+    }
+    if (!ce && (cats as any[])?.length) categories = ((cats as any[]) ?? []).map((c) => ({ name: c.name, slug: c.slug }));
+    colours = ((cols as any[]) ?? []).map((c) => c.value).filter(Boolean);
+    if (products.length || categories.length) break;
+  }
+  return { products, categories, colours };
 }
 
 // ---------- notifications / assignments ----------
@@ -2595,8 +2994,9 @@ export async function getRetailers() {
   return (data as any[]) ?? [];
 }
 
-/** Badge-only count for the admin nav. NEVER resolve photos — that used to run on every
- *  `/admin/*` page (layout) and blew past Netlify's ~10s edge timeout ("this edge function timed out"). */
+/** Wholesale orders AWAITING the owner's payment verification: a dealer has placed a prepaid order
+ *  (and usually uploaded a payment screenshot) but the money isn't marked received yet. This powers
+ *  the owner's "Wholesale payments to approve" dashboard — screenshot on the left, Approve/Reject. */
 export async function countPendingWholesalePayments(): Promise<number> {
   const sb = supabaseServer();
   const { data } = await sb.from("orders")
@@ -2625,8 +3025,8 @@ export async function getPendingWholesalePayments(opts?: { photos?: boolean }): 
     .limit(200);
   const rows = ((data as any[]) ?? []).filter((o) => Math.max(0, (o.amount_paid ?? 0)) < (o.total ?? 0));
 
-  // Photos only on the wholesale-payments page. Dashboard only needs name/total/proof flag — resolving
-  // every SKU's image_paths here (and AGAIN in the admin layout for a badge) is what crashed admin-bd.
+  // Resolve a thumbnail per line so the approval card reads as a list with photos, not a cramped
+  // comma line — the owner verifies WHAT he's shipping at a glance. Variant colour photo, else parent.
   const imgByUpper = new Map<string, string>();
   const allSkus = photos ? Array.from(new Set(rows.flatMap((o: any) =>
     ((o.order_items as any[]) ?? []).flatMap((it: any) => [it.variant?.sku, it.product?.sku].filter(Boolean))))) : [];
@@ -2659,10 +3059,19 @@ export async function getPendingWholesalePayments(opts?: { photos?: boolean }): 
     }),
   }));
 }
+/**
+ * Sept 2026 — this returned EVERY un-recovered cart with no cap. /admin/abandoned then resolves a
+ * product photo for every SKU in every cart it gets back, so an ever-growing list turned that page into
+ * a 30+ second render that never finished inside Netlify's function limit — the owner's "abandoned cart
+ * kaam nahi kar raha". The owner works the newest carts first, so cap the list; search still scans the
+ * whole table and just caps what it hands back.
+ */
+const ABANDONED_LIST_LIMIT = 200;
+
 export async function getAbandonedCarts(opts?: { search?: string; limit?: number }) {
   const sb = supabaseServer();
   const search = (opts?.search ?? "").trim();
-  const limit = opts?.limit && opts.limit > 0 ? opts.limit : undefined;
+  const cap = opts?.limit && opts.limit > 0 ? opts.limit : ABANDONED_LIST_LIMIT;
   // Surface carts gone quiet for 20+ min (a shopper still browsing isn't "abandoned" yet) — OR any cart
   // that REACHED CHECKOUT (finalised), which the owner wants to see immediately so he can close it.
   const idleSince = new Date(Date.now() - 20 * 60 * 1000).toISOString();
@@ -2673,19 +3082,17 @@ export async function getAbandonedCarts(opts?: { search?: string; limit?: number
     const all = await fetchAll((f, t) =>
       sb.from("abandoned_carts").select("*").order("updated_at", { ascending: false }).range(f, t),
     );
-    return all.filter((c) => recordMatchesShopperQuery({ phone: c.phone, customer_name: c.customer_name }, search));
+    return all
+      .filter((c) => recordMatchesShopperQuery({ phone: c.phone, customer_name: c.customer_name }, search))
+      .slice(0, cap);
   }
 
-  let q = sb.from("abandoned_carts")
+  let res = await sb.from("abandoned_carts")
     .select("*").eq("recovered", false).or(`updated_at.lt.${idleSince},reached_checkout.eq.true`)
-    .order("updated_at", { ascending: false });
-  if (limit) q = q.limit(limit);
-  let res = await q;
+    .order("updated_at", { ascending: false }).limit(cap);
   if (res.error) {
     // `reached_checkout` column may not be deployed yet — fall back to the idle-only rule.
-    let q2 = sb.from("abandoned_carts").select("*").eq("recovered", false).lt("updated_at", idleSince).order("updated_at", { ascending: false });
-    if (limit) q2 = q2.limit(limit);
-    res = await q2;
+    res = await sb.from("abandoned_carts").select("*").eq("recovered", false).lt("updated_at", idleSince).order("updated_at", { ascending: false }).limit(cap);
   }
   const { data } = res;
   // Only surface carts the owner can actually ACT on — a cart with no phone is un-contactable and just
@@ -2715,36 +3122,67 @@ export async function getReorderCandidates(): Promise<ReorderCandidate[]> {
 }
 
 import { cosine as _cosine } from "../ai/embeddings";
+
+/**
+ * How many candidates get re-ranked semantically. Only these SKUs' embedding vectors are read.
+ *
+ * Sept 2026 — this function used to do two things that made every product page miss Netlify's 10s
+ * function limit and leave the customer on the loading skeleton:
+ *   1. `getStorefront()` UNCACHED — the whole ~4.5k-product catalogue, re-read on every product view.
+ *      getStorefrontCached() is the identical read, memoised for 5 min and busted by the "storefront"
+ *      tag, so an edit still shows up immediately.
+ *   2. `fetchAll(products.select("sku,embedding"))` — it downloaded EVERY product's embedding vector
+ *      (thousands of rows × ~1.5k floats each, tens of MB of JSON) and cosine-scored the entire
+ *      catalogue in JS, to pick 4 "you may also like" cards. Now the cheap inventory-aware shortlist
+ *      is built first and only those rows' embeddings are fetched, so the semantic ranking is kept
+ *      but the payload is ~1% of what it was.
+ * The candidate grouping also uses Sets instead of nested .some() — that was ~16M comparisons per view.
+ */
+const RECO_SHORTLIST = 24;
+
 export async function getRecommendations(sku: string, n = 4): Promise<StoreProduct[]> {
-  const { products } = await getStorefront();
-  const sb = supabaseServer();
-  const embRows = await fetchAll((f, t) => sb.from("products").select("sku,embedding").range(f, t));
-  const embBy = new Map<string, number[]>();
-  for (const r of (embRows as any[]) ?? []) if (Array.isArray(r.embedding)) embBy.set(r.sku, r.embedding);
+  // onlyInStock: a "you may also like" rail should never suggest a sold-out design, and it also means
+  // this reads (and deserialises) a much smaller cached catalogue than the full 4.5k-SKU one.
+  const { products } = await getStorefrontCached({ onlyInStock: true });
   const self = products.find((p) => p.sku === sku);
   if (!self) return [];
   const others = products.filter((p) => p.sku !== sku);
-  const selfEmb = embBy.get(sku);
-  let ranked: StoreProduct[];
-  if (selfEmb && others.some((p) => embBy.has(p.sku))) {
-    // Semantic when embeddings exist.
-    ranked = others.filter((p) => embBy.has(p.sku))
-      .map((p) => ({ p, s: _cosine(selfEmb, embBy.get(p.sku)!) }))
-      .sort((a, b) => b.s - a.s).map((x) => x.p);
-  } else {
-    // Inventory-aware fallback (works with zero embeddings): same subcategory → same
-    // category → everything else, preferring in-stock pieces. Never returns empty.
-    const subId = (self as any).subcategory_id;
-    const byStock = (arr: StoreProduct[]) => [...arr].sort((a, b) => (b.qty > 0 ? 1 : 0) - (a.qty > 0 ? 1 : 0));
-    const sameSub = subId ? others.filter((p) => (p as any).subcategory_id === subId) : [];
-    const sameCat = others.filter((p) => p.category?.slug && p.category.slug === self.category?.slug && !sameSub.some((s) => s.sku === p.sku));
-    const rest = others.filter((p) => !sameSub.some((s) => s.sku === p.sku) && !sameCat.some((s) => s.sku === p.sku));
-    ranked = [...byStock(sameSub), ...byStock(sameCat), ...byStock(rest)];
+
+  // Inventory-aware shortlist (works with zero embeddings): same subcategory → same category →
+  // everything else, preferring in-stock pieces. Never returns empty.
+  const subId = (self as any).subcategory_id;
+  const byStock = (arr: StoreProduct[]) => [...arr].sort((a, b) => (b.qty > 0 ? 1 : 0) - (a.qty > 0 ? 1 : 0));
+  const sameSub = subId ? others.filter((p) => (p as any).subcategory_id === subId) : [];
+  const subSkus = new Set(sameSub.map((p) => p.sku));
+  const sameCat = others.filter((p) => p.category?.slug && p.category.slug === self.category?.slug && !subSkus.has(p.sku));
+  const catSkus = new Set(sameCat.map((p) => p.sku));
+  const rest = others.filter((p) => !subSkus.has(p.sku) && !catSkus.has(p.sku));
+  let ranked: StoreProduct[] = [...byStock(sameSub), ...byStock(sameCat), ...byStock(rest)];
+
+  // Semantic re-rank of the shortlist only. Embeddings are an optimisation: if the read fails or the
+  // vectors are missing, the shortlist above still stands and the page renders normally.
+  const shortlist = ranked.slice(0, RECO_SHORTLIST);
+  if (shortlist.length) {
+    try {
+      const sb = supabaseServer();
+      const { data } = await sb.from("products").select("sku,embedding").in("sku", [sku, ...shortlist.map((p) => p.sku)]);
+      const embBy = new Map<string, number[]>();
+      for (const r of (data as any[]) ?? []) if (Array.isArray(r.embedding)) embBy.set(r.sku, r.embedding);
+      const selfEmb = embBy.get(sku);
+      const scored = selfEmb ? shortlist.filter((p) => embBy.has(p.sku)) : [];
+      if (selfEmb && scored.length) {
+        const top = scored
+          .map((p) => ({ p, s: _cosine(selfEmb, embBy.get(p.sku)!) }))
+          .sort((a, b) => b.s - a.s)
+          .map((x) => x.p);
+        const topSkus = new Set(top.map((p) => p.sku));
+        ranked = [...top, ...ranked.filter((p) => !topSkus.has(p.sku))];
+      }
+    } catch {
+      // keep the inventory-aware order
+    }
   }
-  if (ranked.length < n) {
-    const extra = others.filter((p) => !ranked.some((r) => r.sku === p.sku));
-    ranked = [...ranked, ...extra];
-  }
+
   return ranked.slice(0, n);
 }
 

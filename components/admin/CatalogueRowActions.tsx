@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
 import { uploadProductImageAction } from "@/app/actions/media";
-import { setProductVisibilityAction } from "@/app/actions/catalog";
+import { setProductVisibilityResultAction } from "@/app/actions/catalog";
 import { compressImage } from "@/lib/image";
 
 /**
@@ -40,9 +40,18 @@ export function CatalogueRowActions({
     try {
       const fd = new FormData();
       fd.set("sku", sku); fd.set("status", published ? "draft" : "published");
-      await setProductVisibilityAction(fd);
-      toast(published ? `${sku} hidden from store` : `${sku} published ✓`);
-      router.refresh();
+      // Report what ACTUALLY happened. This used to toast "published ✓" no matter what the server
+      // did, so a refused or failed publish looked identical to a successful one and the row simply
+      // stayed DRAFT — the owner published three designs, saw three ticks, and nothing changed.
+      const res = await setProductVisibilityResultAction(fd);
+      if (res.ok) {
+        toast(published ? `${sku} hidden from store` : `${sku} published ✓`);
+        router.refresh();
+      } else {
+        toast(res.error ?? `Couldn't publish ${sku}`, "error");
+      }
+    } catch (e) {
+      toast(e instanceof Error ? e.message : `Couldn't reach the server to publish ${sku}`, "error");
     } finally { setBusy(""); }
   }
 

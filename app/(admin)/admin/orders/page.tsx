@@ -1,16 +1,12 @@
 export const dynamic = "force-dynamic";
 /**
- * Storefront Orders — the owner's dedicated queue for WEBSITE orders (retail + wholesale panel),
- * separate from the POS sales register ("sales me wo samajh nahi ayega"). Every new order shows
- * prepaid/online only (COD has its own queue), the customer's details + delivery address and the exact items, with one-tap
- * ACCEPT (confirms + WhatsApps the customer) or REJECT (cancels properly: restock + revenue
- * reversal + customer notified).
+ * Storefront Orders — prepaid website orders only. COD has its own queue under /admin/cod.
  */
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase/server";
 import { formatPaise } from "@/lib/pricing";
 import { acceptStorefrontOrderAction, rejectStorefrontOrderAction, dispatchStorefrontOrderAction, deliverStorefrontOrderAction } from "@/app/actions/orders";
-import { isPrepaidOrder } from "@/lib/orderPayment";
+import { isPrepaidOrder, paymentLabel, paymentLabelLong } from "@/lib/orderPayment";
 
 export const metadata = { title: "Owner Console · Storefront Orders" };
 
@@ -34,11 +30,10 @@ export default async function StorefrontOrders({ searchParams }: { searchParams?
       ? await q.is("fulfillment", null).neq("status", "cancelled")
       : await q.not("fulfillment", "is", null);
     if (error && /fulfillment/i.test(error.message ?? "")) migrationMissing = true;
+    // Only prepaid in this queue — COD stays on /admin/cod (isCodOrder = payment_mode=cod AND not fully paid).
     rows = ((data as any[]) ?? []).filter((r) => isPrepaidOrder(r));
   }
 
-  // Thumbnails per item — the order used to show a cramped comma-line of names ("list with images"
-  // request). Resolve each SKU to the colour's own photo, else the parent product's first image.
   const imgByUpper = new Map<string, string>();
   const allSkus = Array.from(new Set(rows.flatMap((r: any) =>
     ((r.order_items as any[]) ?? []).flatMap((it: any) => [it.variant?.sku, it.product?.sku].filter(Boolean)))));
@@ -66,7 +61,7 @@ export default async function StorefrontOrders({ searchParams }: { searchParams?
   return (
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
       <h1 className="font-display text-4xl text-ink mb-1">Storefront Orders</h1>
-      <p className="text-sm text-muted mb-4">Prepaid website orders (shop + wholesale panel) — separate from POS sales and from COD. Cash-on-Delivery lives only under <Link href="/admin/cod" className="text-emerald nav-link">COD Orders</Link>. Accept to confirm &amp; pack; Reject cancels the bill, restocks and informs the customer.</p>
+      <p className="text-sm text-muted mb-4">Prepaid website orders (shop + wholesale panel) — separate from POS sales and from COD. Cash-on-Delivery lives only under <Link href="/admin/cod" className="text-emerald nav-link">COD Orders</Link>. Accept to confirm & pack; Reject cancels the bill, restocks and informs the customer.</p>
 
       {migrationMissing ? (
         <div className="rounded-2xl border border-gold/40 bg-gold/10 p-5 text-sm text-ink">
@@ -84,8 +79,8 @@ export default async function StorefrontOrders({ searchParams }: { searchParams?
 
           <div className="space-y-3">
             {rows.map((r) => {
-              const paid = r.amount_paid ?? 0;
-              const prepaid = paid >= (r.total ?? 0) && (r.total ?? 0) > 0;
+              const payLbl = paymentLabelLong(r);
+              const isPrepaidBadge = paymentLabel(r) === "PREPAID";
               const items = ((r.order_items as any[]) ?? []);
               return (
                 <div key={r.id} className="rounded-2xl border border-sand bg-white shadow-card p-4">
@@ -94,8 +89,8 @@ export default async function StorefrontOrders({ searchParams }: { searchParams?
                       <div className="flex flex-wrap items-center gap-2">
                         <Link href={`/admin/invoice/${r.id}`} className="text-emerald nav-link font-medium">{r.invoice_no || String(r.id).slice(0, 8).toUpperCase()} ↗</Link>
                         <span className={`px-2 py-0.5 rounded-full text-xs capitalize ${CH_STYLE[r.channel] ?? "bg-cream text-muted"}`}>{r.channel}</span>
-                        <span className={`px-2 py-0.5 rounded-full text-xs ${prepaid ? "bg-emerald-mist text-emerald-dark" : paid > 0 ? "bg-gold/15 text-gold-dark" : "bg-gold/15 text-gold-dark"}`}>
-                          {prepaid ? "PREPAID ✓" : paid > 0 ? `Part-paid ${formatPaise(paid)}` : "Unpaid — prepaid"}
+                        <span className={`px-2 py-0.5 rounded-full text-xs ${isPrepaidBadge ? "bg-emerald-mist text-emerald-dark" : "bg-gold/15 text-gold-dark"}`}>
+                          {payLbl}
                         </span>
                         {r.payment_ref && <span className="text-[11px] text-muted font-mono">ref {r.payment_ref}</span>}
                         {r.status === "cancelled" && <span className="px-2 py-0.5 rounded-full text-xs bg-rose/10 text-rose">Cancelled</span>}
@@ -116,7 +111,6 @@ export default async function StorefrontOrders({ searchParams }: { searchParams?
                           <span className="text-xs text-emerald nav-link">📷 Payment screenshot ↗</span>
                         </a>
                       )}
-                      {/* Items as a readable list — each on its own line with its photo, colour and qty. */}
                       <div className="mt-2.5 grid gap-1.5">
                         {items.length === 0 && <p className="text-sm text-muted">—</p>}
                         {items.map((it: any, i: number) => {
@@ -138,7 +132,6 @@ export default async function StorefrontOrders({ searchParams }: { searchParams?
                     </div>
                     <div className="text-right shrink-0">
                       <p className="text-xl font-semibold text-ink">{formatPaise(r.total ?? 0)}</p>
-                      {/* Printable packing slip (browser Print → Save as PDF) for staff to pack & dispatch. */}
                       <Link href={`/admin/orders/${r.id}/pack`} target="_blank" className="inline-block mt-1 text-xs px-3 py-1 rounded-full border border-sand text-ink hover:border-emerald">🖨️ Packing slip PDF</Link>
                       {tab === "new" && (
                         <div className="flex gap-2 mt-2">
@@ -153,7 +146,6 @@ export default async function StorefrontOrders({ searchParams }: { searchParams?
                           </form>
                         </div>
                       )}
-                      {/* Dispatch / deliver — moves the customer's tracker + WhatsApps them. */}
                       {r.fulfillment === "accepted" && r.status !== "cancelled" && r.status !== "delivered" && (
                         <div className="mt-2 flex flex-col items-end gap-1.5">
                           {r.status !== "dispatched" ? (

@@ -6,6 +6,7 @@ import { formatPaise, resolvePrices, overridesOf } from "@/lib/pricing";
 import { geminiConfigured } from "@/lib/ai/gemini";
 import { aiProvidersStatus } from "@/lib/ai/listingAgent";
 import { generateContentAction, generateAllContentAction } from "@/app/actions/aiContent";
+import { fixNathListingsAction, fixMislabeledJewelleryAction } from "@/app/actions/fixNath";
 import { generateEmbeddingsAction } from "@/app/actions/embeddings";
 import { Pager } from "@/components/admin/Pager";
 import { getSession, can } from "@/lib/auth";
@@ -28,11 +29,7 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
     getPricingFormula(),
     getCategoryTree(),
   ]);
-  // Subcategory options for the filter: when a category is chosen, show only its subcategories;
-  // otherwise list every subcategory grouped by its parent category (optgroups).
   const catForSub = category !== "all" ? categories.filter((c) => c.slug === category) : categories;
-  // Preserve the exact page + filters so a product's "← Catalogue" back-link returns HERE (e.g. page 174),
-  // not page 1 — the efficient big-store behaviour.
   const retParams = new URLSearchParams();
   if (page > 1) retParams.set("page", String(page));
   if (q) retParams.set("q", q);
@@ -52,6 +49,8 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
   async function genContent(fd: FormData) { "use server"; await generateContentAction(String(fd.get("sku"))); }
   async function genAllContent() { "use server"; await generateAllContentAction(); }
   async function genEmbeddings() { "use server"; await generateEmbeddingsAction(); }
+  async function fixNathOnce() { "use server"; return fixNathListingsAction(); }
+  async function fixMislabeledOnce() { "use server"; return fixMislabeledJewelleryAction(); }
 
   const Pill = ({ on, label }: { on: boolean; label: string }) => (
     <span className={`text-xs px-2.5 py-1 rounded-full ${on ? "bg-emerald-mist text-emerald-dark" : "bg-cream text-muted"}`}>{on ? "●" : "○"} {label}</span>
@@ -65,11 +64,13 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
           <h1 className="font-display text-4xl text-ink">Catalogue</h1>
           <p className="text-sm text-muted">{total} products · AI-drafted pages, one-tap approve</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Link href="/catalog" target="_blank" className="px-4 py-2.5 text-sm font-medium rounded-full bg-gold text-ink hover:opacity-90 transition-opacity">📤 Share Catalogue ↗</Link>
           {canAi && <>
             <form action={genAllContent}><button className="btn-primary px-4 py-2.5 text-sm font-medium">✨ Generate all AI pages</button></form>
             <form action={genEmbeddings}><button className="px-4 py-2.5 text-sm font-medium rounded-full border border-emerald text-emerald hover:bg-emerald-mist transition-colors">⌖ Build recommendations</button></form>
+            <form action={fixNathOnce}><button type="submit" className="px-4 py-2.5 text-sm font-medium rounded-full border border-amber-600 text-amber-800 hover:bg-amber-50 transition-colors" title="Rewrite real nath listings with wrong specs">🪔 Fix nath specs once</button></form>
+            <form action={fixMislabeledOnce}><button type="submit" className="px-4 py-2.5 text-sm font-medium rounded-full border border-rose-600 text-rose-800 hover:bg-rose-50 transition-colors" title="Clear Nose Pin tags on necklace/earring products">🔧 Fix wrong type tags</button></form>
           </>}
           <SeoTitlesButton />
         </div>
@@ -80,7 +81,6 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
         <Pill on={ai.groq} label="Groq (text)" /><Pill on={ai.openai} label="OpenAI (fallback)" /><Pill on={imageReady} label="Gemini (photos)" />
       </div>
 
-      {/* search + filters */}
       <MoreDesignsBulk categories={categories.map((c) => ({ id: c.id, name: c.name }))} />
 
       <form action="/admin/catalogue" className="flex flex-wrap gap-2 mb-4">
@@ -109,7 +109,7 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
         {(q || category !== "all" || subcategory !== "all" || status !== "all" || stock !== "all") && <Link href="/admin/catalogue" className="px-3 py-2 text-sm text-muted hover:text-ink">Clear</Link>}
       </form>
 
-      <p className="text-xs text-muted mb-2">Tip: click any product to expand it — publish, variants &amp; stock, AI and more.</p>
+      <p className="text-xs text-muted mb-2">Tip: click any product to expand it — publish, variants & stock, AI and more. Use <strong>Fix wrong type tags</strong> if a necklace shows Nose Pin tags.</p>
       <div className="overflow-x-auto rounded-2xl border border-sand bg-white shadow-card">
         <table className="w-full text-sm">
           <thead className="bg-cream text-muted text-left">

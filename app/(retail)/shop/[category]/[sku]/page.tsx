@@ -18,25 +18,74 @@ import { Back } from "@/components/site/Back";
 import { Reveal } from "@/components/site/Reveal";
 import { ProductCard } from "@/components/site/ProductCard";
 
+// Next.js type-checks a page's props and allows ONLY params/searchParams, so `preview` cannot be
+// declared here. It is read off the props object at runtime instead — see ProductPage below.
 type Params = { params: { category: string; sku: string } };
 
 // Cache the product page's data per-SKU (3 min). getRecommendations scans the catalogue, so rendering
 // this uncached re-ran heavy queries on every product view. Edits refresh within the window / "storefront" tag.
+/**
+ * Sept 2026 — "preview not working", and product pages taking ~9-11s on a first view.
+ *
+ * MEASURED on the live site: an uncached product page took 8.9s-11.1s; the same page warm took
+ * 0.6s. The whole difference is the "you may also like" rail. getRecommendations calls
+ * getStorefrontCached(), which reads the ENTIRE published catalogue — every product, every
+ * product_image and every variant, paged 1000 rows at a time — and then re-parses that whole blob,
+ * all to choose FOUR cards. The owner's View ↗ button renders this same page through
+ * /admin/preview/<sku>, which is force-dynamic and behind auth, so it pays that cost on a real
+ * request and trips the host's 10s function limit — the "Couldn't load that page" he sees.
+ *
+ * Two things were wrong, and they are fixed separately below.
+ *
+ * 1. THE RAIL WAS INSIDE THE PAGE'S CACHE ENTRY, AND IN generateMetadata'S PATH.
+ *    unstable_cache keys on the arguments, so loadProductPage(sku) from generateMetadata and
+ *    loadProductPage(sku, false) from the page body were TWO different entries — one cold customer
+ *    visit ran the whole heavy load twice. The core load is now a single-argument function with no
+ *    recommendations in it at all, so metadata and the page body share one entry, and metadata —
+ *    which only ever needed the title and description — no longer drags the catalogue in behind it.
+ *
+ * 2. THE RAIL COULD TAKE THE PAGE DOWN WITH IT.
+ *    It is decorative. It must never be the reason a product page or a preview fails, so it is
+ *    fetched separately, under its own cache key, behind a time budget (see RELATED_BUDGET_MS).
+ */
 const loadProductPage = unstable_cache(
   async (sku: string) => {
     const [p, formula] = await Promise.all([getProductBySku(sku), getPricingFormula()]);
     if (!p) return null;
-    // Reviews + recommendations are secondary — a failure in either must NEVER take down the
-    // whole product page. Degrade gracefully to empty.
-    const [reviews, related] = await Promise.all([
-      getProductReviews(p.id).catch(() => ({ avg: 4.6, count: 0, list: [] as any[], dist: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 } as Record<number, number> })),
-      getRecommendations(p.sku, 4).catch(() => [] as any[]),
-    ]);
-    return { p, formula, reviews, related };
+    // Reviews are secondary — a failure there must NEVER take down the whole product page.
+    const reviews = await getProductReviews(p.id).catch(() => ({ avg: 4.6, count: 0, list: [] as any[], dist: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 } as Record<number, number> }));
+    return { p, formula, reviews };
   },
-  ["shop-product-page-v1"],
+  ["shop-product-core-v2"],
   { revalidate: 180, tags: ["storefront"] },
 );
+
+/** The "you may also like" rail, cached on its own so a slow or empty rail never sits inside — or
+ *  invalidates — the product's own cached data. */
+const loadRelated = unstable_cache(
+  async (sku: string, n: number) => getRecommendations(sku, n).catch(() => [] as any[]),
+  ["shop-product-related-v1"],
+  { revalidate: 180, tags: ["storefront"] },
+);
+
+/** How long the page will wait for the related rail before rendering without it.
+ *  A cold catalogue read measured 8.9-11.1s and the host kills the request at 10s, so waiting is
+ *  not an option: better a product page with no rail than no product page. Only the WAIT is
+ *  abandoned — the real result still lands in loadRelated's cache, so nothing caches an empty rail.
+ *
+ *  Be honest about what this does and does not fix: it guarantees the page renders, it does not
+ *  make the rail fast. While the shared catalogue cache is cold the rail will simply be absent.
+ *  The real fix is for getRecommendations to stop reading 4,500 products to choose four — it should
+ *  query the same subcategory/category directly — and that is a separate change to
+ *  lib/supabase/queries.ts, deliberately not bundled into this one. */
+const RELATED_BUDGET_MS = 2_500;
+
+function withBudget<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    work,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
   // Reuse the cached per-SKU load (was an extra uncached read that also forced the page to render
@@ -47,10 +96,31 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   return { title: c.seo.metaTitle, description: c.seo.metaDescription, keywords: c.seo.keywords, openGraph: { title: c.seo.metaTitle, description: c.seo.metaDescription } };
 }
 
-export default async function ProductPage({ params }: Params) {
+export default async function ProductPage(props: Params) {
+  const { params } = props;
+  // Set ONLY by the admin preview route (app/(admin)/admin/preview/[sku]/page.tsx), which checks
+  // the staff session first and passes it in code. Next.js never puts `preview` on a page's props,
+  // so a customer typing this URL can never turn it on.
+  const preview = (props as { preview?: boolean }).preview === true;
   const data = await loadProductPage(params.sku);
   if (!data) notFound();
-  const { p, formula, reviews, related } = data;
+  const { p, formula, reviews } = data;
+  // The related rail: skipped entirely for the staff preview (previewing is about checking ONE
+  // design's own page), and time-budgeted for customers so it can never hold the page past the
+  // host's request limit. See RELATED_BUDGET_MS above.
+  const related = preview ? ([] as any[]) : await withBudget(loadRelated(p.sku, 4), RELATED_BUDGET_MS, [] as any[]);
+  const variants = (p.variants ?? []) as any[];
+  const availableQty = variants.length
+    ? variants.reduce((total, variant) => total + Math.max(0, variant.qty ?? 0), 0)
+    : Math.max(0, (p as any).qty ?? 0);
+  const publiclyVisible = (p as any).status === "published" && availableQty > 0;
+  // Direct public URLs must not reveal unpublished or unavailable products.
+  //
+  // `preview` is set ONLY by the admin-side /admin/preview/<sku> route, which checks the staff
+  // session before rendering. Next.js never passes it, so a customer hitting this URL always gets
+  // the 404 above. Without this the owner's "View ↗" button in the catalogue 404'd on every draft
+  // and every sold-out design — the two cases he most needs to look at.
+  if (!preview && !publiclyVisible) notFound();
 
   // Category should always be present (FK), but never let a missing relation 500 the page.
   const catSlug = p.category?.slug ?? "all";
@@ -72,8 +142,21 @@ export default async function ProductPage({ params }: Params) {
   const orderedVariants = leadId
     ? allVars.sort((a, b) => (a.id === leadId ? -1 : b.id === leadId ? 1 : 0))
     : allVars;
-  // Owner option (per product): hide out-of-stock colourways from the buy selector AND the gallery.
-  const visibleVariants = (orderedVariants as any[]).filter((v: any) => !(p as any).hide_oos_variants || (v.qty ?? 0) > 0);
+  // "Hide out-of-stock colours" — products.hide_oos_variants, the toggle on the Catalogue tab.
+  //
+  // Sept 2026: that toggle was stored and shown in the console but NOTHING ever read it — this line
+  // filtered sold-out colours unconditionally, so the switch did nothing either way and its "shown
+  // to customers as Out of stock" wording was simply untrue. It is wired up here.
+  //
+  // It DEFAULTS TO ON (owner's request), and "on" is exactly what this page already did, so no
+  // existing design changes behaviour — only an explicit OFF now shows sold-out colours. BuyBox
+  // already handles those correctly: its `outOfStock` state disables Add to cart for the selected
+  // colour. A design with EVERY colour sold out still 404s for customers via the check above, so
+  // turning this off can never put an unbuyable page in front of a shopper.
+  const hideOosColours = (p as any).hide_oos_variants !== false;
+  const visibleVariants = hideOosColours
+    ? (orderedVariants as any[]).filter((v: any) => (v.qty ?? 0) > 0)
+    : (orderedVariants as any[]);
   // Per-variant: its own photo, stock and price (variant override → product override → formula).
   const variantsForBuy = (visibleVariants as any[]).map((v: any) => {
     const vOv = overridesOf(v);
@@ -114,6 +197,18 @@ export default async function ProductPage({ params }: Params) {
   return (
     <div className="max-w-6xl mx-auto px-5 py-6">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      {preview && !publiclyVisible && (
+        // Staff-only preview of a page customers cannot reach yet. Says exactly WHY it is hidden,
+        // so the owner can see the design and know what to change to make it live.
+        <div className="mb-5 rounded-xl border border-gold/50 bg-gold/10 px-4 py-3">
+          <p className="text-sm font-medium text-ink">Preview — customers cannot see this page yet.</p>
+          <p className="text-xs text-muted mt-0.5">
+            {(p as any).status !== "published"
+              ? `This design is a ${(p as any).status || "draft"}. Publish it to put this page on the store.`
+              : "Every colour is out of stock. Add stock to put this page back on the store."}
+          </p>
+        </div>
+      )}
       <div className="flex items-center justify-between gap-4 mb-5">
         <Back label="Back" />
         <nav className="text-xs text-muted">

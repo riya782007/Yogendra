@@ -31,7 +31,7 @@ export function MobileMenu({ categories }: { categories: Cat[] }) {
           <button aria-label="Close" onClick={() => setOpen(false)} className="text-xl text-muted hover:text-rose">✕</button>
         </div>
         <nav className="flex-1 overflow-y-auto p-5 space-y-1">
-          <Link href="/shop" onClick={() => setOpen(false)} className="block py-2 font-medium text-ink">All Jewellery</Link>
+          <Link href="/shop/all" onClick={() => setOpen(false)} className="block py-2 font-medium text-ink">All Jewellery</Link>
           {cats.map((c) => (
             <div key={c.slug}>
               <Link href={`/shop/c/${c.slug}`} onClick={() => setOpen(false)} className="block py-2 text-ink/80">{c.name}</Link>
@@ -45,8 +45,8 @@ export function MobileMenu({ categories }: { categories: Cat[] }) {
             </div>
           ))}
           <div className="pt-2 mt-2 border-t border-sand/60">
-            <Link href="/shop#new-arrivals" onClick={() => setOpen(false)} className="block py-2 text-ink/80">New Arrivals</Link>
-            <Link href="/shop#bestsellers" onClick={() => setOpen(false)} className="block py-2 text-ink/80">Bestsellers</Link>
+            <Link href="/shop/new" onClick={() => setOpen(false)} className="block py-2 text-ink/80">New Arrivals</Link>
+            <Link href="/shop/bestsellers" onClick={() => setOpen(false)} className="block py-2 text-ink/80">Bestsellers</Link>
             <Link href="/reels" onClick={() => setOpen(false)} className="block py-2 text-ink/80">Reels</Link>
             <Link href="/wishlist" onClick={() => setOpen(false)} className="block py-2 text-ink/80">My Wishlist</Link>
             <Link href="/account" onClick={() => setOpen(false)} className="block py-2 text-ink/80">Track my order</Link>

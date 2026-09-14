@@ -34,26 +34,56 @@ export default async function Abandoned({ searchParams }: { searchParams?: { q?:
     // product_images. So resolve the cover the SAME way the storefront does: thumbnail → product image →
     // any variant photo. Without the variant fallback these cards showed no image at all.
     const firstVarHttp = (vs: any[]) => (vs ?? []).flatMap((v) => (v?.image_paths as string[]) ?? []).find((u) => typeof u === "string" && u.startsWith("http")) as string | undefined;
-    for (const grp of chunk(allSkus, 60)) {
-      const { data } = await sbA.from("products").select("sku, thumbnail_path, category:categories(slug), images:product_images(path,sort), variants:variants(image_paths)").or(grp.map((s) => `sku.ilike.${String(s).replace(/[,()]/g, "")}`).join(","));
-      for (const p of (data as any[]) ?? []) {
+
+    const PROD_COLS = "sku, thumbnail_path, category:categories(slug), images:product_images(path,sort), variants:variants(image_paths)";
+    const VAR_COLS = "sku, image_paths, product:products(category:categories(slug), images:product_images(path,sort))";
+
+    const takeProducts = (rows: any[]) => {
+      for (const p of rows) {
         const tp = (typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http")) ? p.thumbnail_path as string : undefined;
         const img = tp ?? firstHttp(p.images) ?? firstVarHttp(p.variants);
         const k = String(p.sku).toUpperCase();
-        if (img) imgByUpper.set(k, img);
-        if (p.category?.slug) slugByUpper.set(k, p.category.slug);
+        if (img && !imgByUpper.has(k)) imgByUpper.set(k, img);
+        if (p.category?.slug && !slugByUpper.has(k)) slugByUpper.set(k, p.category.slug);
       }
-    }
+    };
     // Variants → the colour's own photo, else the parent product's photo.
-    for (const grp of chunk(allSkus, 60)) {
-      const { data } = await sbA.from("variants").select("sku, image_paths, product:products(category:categories(slug), images:product_images(path,sort))").or(grp.map((s) => `sku.ilike.${String(s).replace(/[,()]/g, "")}`).join(","));
-      for (const v of (data as any[]) ?? []) {
+    const takeVariants = (rows: any[]) => {
+      for (const v of rows) {
         const k = String(v.sku).toUpperCase();
         const vimg = ((v.image_paths as string[]) ?? []).find((u) => typeof u === "string" && u.startsWith("http"));
         const img = vimg ?? firstHttp(v.product?.images);
         if (img && !imgByUpper.has(k)) imgByUpper.set(k, img);
         if (v.product?.category?.slug && !slugByUpper.has(k)) slugByUpper.set(k, v.product.category.slug);
       }
+    };
+
+    // PASS 1 — exact SKU match. `in()` uses the sku index. The old code went straight to
+    // `.or(sku.ilike.A,sku.ilike.B,…)` with 60 patterns per chunk, which Postgres cannot index, so every
+    // chunk sequentially scanned BOTH products (~4.5k rows) and variants (~12k). That, on top of an
+    // uncapped cart list, is why this page took 30+ seconds and never finished rendering.
+    // Cart SKUs are stored as entered, so nearly all of them match exactly here.
+    for (const grp of chunk(allSkus, 200)) {
+      const [prods, vars] = await Promise.all([
+        sbA.from("products").select(PROD_COLS).in("sku", grp as any[]),
+        sbA.from("variants").select(VAR_COLS).in("sku", grp as any[]),
+      ]);
+      takeProducts((prods.data as any[]) ?? []);
+      takeVariants((vars.data as any[]) ?? []);
+    }
+
+    // PASS 2 — case-insensitive fallback, but ONLY for the SKUs pass 1 could not resolve (carts may
+    // store GOLD / Gold / gold). Usually this loop does nothing at all.
+    const missed = allSkus.filter((s) => !imgByUpper.has(String(s).toUpperCase()));
+    for (const grp of chunk(missed, 60)) {
+      const orFilter = grp.map((s) => `sku.ilike.${String(s).replace(/[,()]/g, "")}`).join(",");
+      if (!orFilter) continue;
+      const [prods, vars] = await Promise.all([
+        sbA.from("products").select(PROD_COLS).or(orFilter),
+        sbA.from("variants").select(VAR_COLS).or(orFilter),
+      ]);
+      takeProducts((prods.data as any[]) ?? []);
+      takeVariants((vars.data as any[]) ?? []);
     }
     for (const s of allSkus) {
       const u = String(s).toUpperCase();

@@ -4,10 +4,17 @@ import { resolveProductContent, templateContent } from "../lib/content";
 describe("content resolver (no model on request path)", () => {
   it("uses cached generated_content when present", () => {
     const c = resolveProductContent({
-      name: "Kundan Set", sku: "KS1",
+      name: "BD1", sku: "BD1",
       generated_content: { title: "Cached", description: "d", specs: {}, tags: [], seo: { metaTitle: "m", metaDescription: "md", keywords: [] } },
     });
     expect(c.title).toBe("Cached");
+  });
+  it("uses the saved product name over a stale cached title", () => {
+    const c = resolveProductContent({
+      name: "Sara Handcrafted Metal Link Choker Necklace", sku: "N510",
+      generated_content: { title: "Ishika Oxidised Choker Set", description: "old", specs: {}, tags: [], seo: { metaTitle: "m", metaDescription: "md", keywords: [] } },
+    });
+    expect(c.title).toBe("Sara Handcrafted Metal Link Choker Necklace");
   });
   it("falls back to deterministic template when no cache", () => {
     const c = resolveProductContent({ name: "Anklet Pair", sku: "AP1", categoryName: "Anklet", colors: ["Gold", "Silver"] });

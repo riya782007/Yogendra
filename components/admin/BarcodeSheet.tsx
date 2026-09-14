@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { Barcode } from "@/components/admin/Barcode";
 import { QtyField } from "@/components/admin/QtyField";
 import { barcodeLookupAction } from "@/app/actions/barcodes";
@@ -68,7 +68,7 @@ const rup = (paise?: number) => {
   return Number.isInteger(v) ? String(v) : v.toFixed(2);
 };
 
-export function BarcodeSheet({ products }: { products: P[] }) {
+export function BarcodeSheet({ products, initialSkus }: { products: P[]; initialSkus?: string[] }) {
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<Row[]>([]);
   const [paper, setPaper] = useState("65");
@@ -148,6 +148,65 @@ export function BarcodeSheet({ products }: { products: P[] }) {
     });
     setQ("");
   };
+
+  /**
+   * PRE-QUEUE FROM THE URL — `/admin/barcodes?skus=A,B,C` (or `?sku=A`).
+   *
+   * Added Sept 2026 so DIVA can act on "in teeno ke labels nikal do" instead of only opening an empty
+   * labels page and leaving the owner to retype every code. The Add Inventory screen can link here the
+   * same way after a save.
+   *
+   * Three things this has to get right, all of which the manual flow already handles:
+   *  • A design WITH colours prints one label per colour, never the bare parent — same rule as add().
+   *  • A SKU created moments ago is not in `products` (that list was fetched when the page rendered),
+   *    so anything missing is looked up live, exactly like the search box does.
+   *  • It runs once. Without the ref guard, `initialSkus` being a fresh array on every render would
+   *    re-queue the same labels forever.
+   */
+  const preQueued = useRef(false);
+  useEffect(() => {
+    if (preQueued.current) return;
+    const want = (initialSkus ?? []).map((s) => String(s).trim().toUpperCase()).filter(Boolean);
+    if (!want.length) return;
+    preQueued.current = true;
+    (async () => {
+      const byKey = new Map(products.map((p) => [p.sku.toUpperCase(), p]));
+      const picked: P[] = [];
+      const seen = new Set<string>();
+      const take = (p: P) => { if (!seen.has(p.sku)) { seen.add(p.sku); picked.push(p); } };
+      const missing: string[] = [];
+      for (const key of want) {
+        const p = byKey.get(key);
+        if (!p) { missing.push(key); continue; }
+        if (p.kind === "product" && (p.variantCount ?? 0) > 0) {
+          products.filter((x) => x.kind === "variant" && x.parentSku === p.sku).forEach(take);
+        } else take(p);
+      }
+      for (const key of missing) {
+        try {
+          const hits = (await barcodeLookupAction(key)) as P[];
+          if (!hits?.length) continue;
+          hits.forEach(take);
+          setExtra((prev) => {
+            const have = new Set(prev.map((x) => x.sku.toUpperCase()));
+            const add2 = hits.filter((h) => !have.has(h.sku.toUpperCase()));
+            return add2.length ? [...prev, ...add2] : prev;
+          });
+        } catch { /* one bad code must not stop the rest */ }
+      }
+      if (picked.length) {
+        setRows((prev) => {
+          const have = new Set(prev.map((x) => x.sku));
+          return [...prev, ...picked.filter((p) => !have.has(p.sku)).map(toRow)];
+        });
+        setScanMsg(`${picked.length} label${picked.length === 1 ? "" : "s"} queued from the link — set the counts and print.`);
+      } else {
+        setScanMsg("Couldn't find those codes in the catalogue.");
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSkus, products]);
+
   // SCAN / Enter: queue the label for the typed-or-scanned code instantly (same behaviour as POS &
   // Estimates). Exact SKU wins; a single fuzzy match is queued too; anything not in memory is looked
   // up live from the database so a freshly-created SKU always adds.

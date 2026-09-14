@@ -5,8 +5,10 @@ import { EstimatesTable } from "@/components/admin/EstimatesTable";
 
 export const metadata = { title: "Owner Console · Estimates" };
 
-export default async function Estimates({ searchParams }: { searchParams: { holderror?: string } }) {
+export default async function Estimates({ searchParams }: { searchParams: { holderror?: string; q?: string; tab?: string } }) {
   const holdError = searchParams?.holderror?.trim();
+  const q = (searchParams?.q ?? "").trim();
+  const tab = (searchParams?.tab ?? "").trim();
   // ROOT PERFORMANCE FIX: the catalogue is ~4.5k products / ~13k SKUs. Previously we expanded every SKU
   // here and shipped them ALL to the browser, so the page took many seconds to open. We no longer
   // preload the catalogue — EstimateClient searches/scans live against the server (posLookupAction),
@@ -24,7 +26,7 @@ export default async function Estimates({ searchParams }: { searchParams: { hold
       <p className="text-sm text-muted mb-6">Quote now; bill only when the customer confirms. Holding an estimate <b>reserves its stock</b> for the customer (set aside, not sellable) without billing — bill it when they collect, and any pieces they don&apos;t take return to stock.</p>
       {holdError && <div className="mb-5 rounded-xl border border-rose/40 bg-rose/5 px-4 py-3 text-sm text-rose">Couldn&apos;t hold this estimate — {holdError}</div>}
       <EstimateClient products={[]} customers={custList} />
-      <EstimatesTable estimates={estimates as any} />
+      <EstimatesTable estimates={estimates as any} initialQuery={q} initialTab={tab} />
     </main>
   );
 }

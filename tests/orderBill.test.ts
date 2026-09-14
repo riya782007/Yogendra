@@ -17,14 +17,14 @@ describe("orderStoredTotalPaise", () => {
     })).toBe(110400);
   });
 
-  it("folds 3% GST into wholesale GST bills (same as add_order_line)", () => {
+  it("does not add a second 3% on wholesale GST bills — GST is already inside the price", () => {
     expect(orderStoredTotalPaise({
-      itemsPaise: 100000,
+      itemsPaise: 314000,
       packingPaise: 0,
-      courierPaise: 0,
+      courierPaise: 30000,
       channel: "wholesale",
       billType: "gst",
-    })).toBe(103000);
+    })).toBe(344000);
   });
 
   it("does not mark up retail or cash bills", () => {

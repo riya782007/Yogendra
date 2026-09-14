@@ -19,9 +19,10 @@ const CH_STYLE: Record<string, string> = {
   retail: "bg-emerald-mist text-emerald-dark", wholesale: "bg-gold/15 text-gold-dark", pos: "bg-blue-100 text-blue-700",
 };
 
-export default async function SalesRecords({ searchParams }: { searchParams: { page?: string; q?: string; channel?: string; from?: string; to?: string; sort?: string } }) {
+export default async function SalesRecords({ searchParams }: { searchParams: { page?: string; q?: string; channel?: string; from?: string; to?: string; sort?: string; amount?: string } }) {
   const page = parseInt(searchParams.page ?? "1", 10) || 1;
   const q = searchParams.q ?? "";
+  const amount = searchParams.amount ?? "";
   const channel = searchParams.channel ?? "all";
   const from = searchParams.from ?? "";
   const to = searchParams.to ?? "";
@@ -30,7 +31,7 @@ export default async function SalesRecords({ searchParams }: { searchParams: { p
   // `billing.gst_only` is a RESTRICTION for the GST-Officer role — it must never apply to the owner
   // (whose "*" wildcard would otherwise match it and hide their own cash memos & estimates).
   const gstOnly = !session.isOwner && session.permissions !== "*" && can(session, "billing.gst_only");
-  const { rows, total } = await getOrdersPage({ page, pageSize: PAGE_SIZE, q, channel, from: from || undefined, to: to ? to + "T23:59:59" : undefined, sort, billType: gstOnly ? "gst" : undefined });
+  const { rows, total } = await getOrdersPage({ page, pageSize: PAGE_SIZE, q, amount, channel, from: from || undefined, to: to ? to + "T23:59:59" : undefined, sort, billType: gstOnly ? "gst" : undefined });
   // Grand total shown must MATCH the printed invoice:
   //  • Cash memo — no tax, grand = total.
   //  • GST INCLUSIVE — the price already contains GST, so grand = total (do NOT add 3% again — that
@@ -57,6 +58,7 @@ export default async function SalesRecords({ searchParams }: { searchParams: { p
     const next = sort === first ? (firstAsc ? desc : asc) : first;
     const p = new URLSearchParams();
     if (q) p.set("q", q);
+    if (amount) p.set("amount", amount);
     if (channel !== "all") p.set("channel", channel);
     if (from) p.set("from", from);
     if (to) p.set("to", to);
@@ -72,15 +74,18 @@ export default async function SalesRecords({ searchParams }: { searchParams: { p
       <p className="text-sm text-muted mb-5">Every sale across all channels. Click an order to open its bill &amp; full detail.</p>
       {gstOnly && <div className="mb-5 rounded-xl border border-emerald/30 bg-emerald-mist/40 px-4 py-2 text-sm text-emerald-dark">Compliance view — showing <b>GST tax invoices only</b>. Cash memos and estimates are hidden for this role.</div>}
 
-      <form action="/admin/sales" className="flex flex-wrap gap-2 mb-4 items-center">
-        <input name="q" defaultValue={q} placeholder="Search customer / phone…" className="rounded-xl border border-sand bg-white px-4 py-2 text-sm outline-none focus:border-emerald flex-1 min-w-[160px]" />
+      <form action="/admin/sales" className="flex flex-wrap gap-2 mb-2 items-center">
+        <input name="q" defaultValue={q} placeholder="Search name, phone, last 4, invoice or ₹ amount…" aria-label="Search sales by customer name, phone, invoice or amount" className="rounded-xl border border-sand bg-white px-4 py-2 text-sm outline-none focus:border-emerald flex-1 min-w-[220px]" />
+        <label className="text-xs text-muted flex items-center gap-1">Amount ₹ <input name="amount" defaultValue={amount} inputMode="decimal" placeholder="e.g. 900" aria-label="Filter by sale amount in rupees" className={`${sel} w-28`} /></label>
         <select name="channel" defaultValue={channel} className={sel}>{CHANNELS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}</select>
         <label className="text-xs text-muted flex items-center gap-1">From <input type="date" name="from" defaultValue={from} className={sel} /></label>
         <label className="text-xs text-muted flex items-center gap-1">To <input type="date" name="to" defaultValue={to} className={sel} /></label>
         <input type="hidden" name="sort" value={sort} />
         <button className="px-4 py-2 rounded-xl bg-ink text-white text-sm">Filter</button>
-        {(q || channel !== "all" || from || to || sort) && <Link href="/admin/sales" className="px-3 py-2 text-sm text-muted hover:text-ink">Clear</Link>}
+        {(q || amount || channel !== "all" || from || to || sort) && <Link href="/admin/sales" className="px-3 py-2 text-sm text-muted hover:text-ink">Clear</Link>}
       </form>
+      <p className="text-[11px] text-muted mb-4">Search by customer name, phone (full or last 4 digits), invoice number, or the bill amount. Use the Amount box with a name to find that customer's ₹900 sale.</p>
+      {(q || amount) && <p className="text-xs text-ink mb-3">{total} sale{total === 1 ? "" : "s"} match{total === 1 ? "es" : ""} {q ? <><span className="text-muted"> “{q}”</span></> : null}{amount ? <><span className="text-muted"> ₹{amount}</span></> : null}.</p>}
 
       <div className="overflow-x-auto rounded-2xl border border-sand bg-white shadow-card">
         <table className="w-full text-sm">
@@ -120,7 +125,7 @@ export default async function SalesRecords({ searchParams }: { searchParams: { p
           {rows.length > 0 && <tfoot><tr className="border-t border-sand bg-cream/40"><td colSpan={7} className="p-3 text-right text-muted">This page</td><td className="p-3 text-right font-semibold text-muted tabular-nums"><span className="sensitive">{formatPaise(pageSumNoTax)}</span></td><td className="p-3 text-right font-semibold text-ink tabular-nums"><span className="sensitive">{formatPaise(pageSumWithTax)}</span></td></tr></tfoot>}
         </table>
       </div>
-      <Pager basePath="/admin/sales" params={{ q, channel, from, to, sort }} page={page} pageSize={PAGE_SIZE} total={total} />
+      <Pager basePath="/admin/sales" params={{ q, amount, channel, from, to, sort }} page={page} pageSize={PAGE_SIZE} total={total} />
     </main>
   );
 }

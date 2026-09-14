@@ -2,10 +2,12 @@
 // storefront read is momentarily empty (so it never caches a blank shop), and at build time that read has
 // no data — which would fail the build. Speed still comes from the slim catalogue query + the inner
 // loadShopHome cache (15 min, busted instantly by the "storefront" tag on any edit).
-export const dynamic = "force-dynamic";
-import { unstable_cache } from "next/cache";
+export const revalidate = 60;
 import Link from "next/link";
-import { getStorefront, getFeaturedReviews, getShoppableReels, getActivePromotions, getCategoryTree, getPricingFormula } from "@/lib/supabase/queries";
+import { unstable_cache } from "next/cache";
+import { getFeaturedReviews, getShoppableReels, getActivePromotions, getCategoryTreeSafe, getPricingFormula } from "@/lib/supabase/queries";
+import { getShopSlice, getCategoryCovers } from "@/lib/catalogSlice";
+import { FALLBACK_SHOP_CATEGORIES, pickBestsellers, pickNewArrivals, publicCategories, categoryRef } from "@/lib/shopCatalog";
 import { ProductCard } from "@/components/site/ProductCard";
 import { PromoHero } from "@/components/site/PromoHero";
 import { ProductImage } from "@/components/Placeholder";
@@ -23,56 +25,96 @@ export const metadata = {
 // (all published products via getStorefront, reviews, reels, promos, category tree) on EVERY render —
 // so each soft navigation / prefetch to /shop took ~9s. Cache the whole bundle for 3 minutes so the
 // page renders instantly; editing a product refreshes it within the window (or via the "storefront" tag).
-const loadShopHome = unstable_cache(
-  async () => {
-    const [store, reviews, reels, promos, tree] = await Promise.all([
-      getStorefront({ onlyInStock: true }), getFeaturedReviews(), getShoppableReels(), getActivePromotions("retail"), getCategoryTree(),
-    ]);
-    // Never cache an empty storefront: zero products means the read failed (DB restricted / transient),
-    // so throwing keeps the empty result OUT of the cache and the page self-heals on the next request
-    // once the database is reachable — instead of a one-off failure freezing the shop blank for 15 min.
-    if (!store.products || store.products.length === 0) throw new Error("shop home: storefront read returned no products — not caching");
-    return { products: store.products, formula: store.formula, reviews, reels, promos, tree };
-  },
-  ["shop-home-v3-instock"],
-  { revalidate: 900, tags: ["storefront"] },
-);
+//
+// Sept 2026 — the two changes below are what stopped /shop returning the error boundary on Netlify:
+//
+//  1. getShopSlice was called with NO limit, so every single request pulled the ENTIRE published
+//     retail catalogue (4k+ SKUs) plus a variants row and an images row for each — to render 16
+//     cards. That is the same bug that was already fixed for trade (see the header of
+//     lib/catalogSlice.ts); the retail shop never got the fix. SHOP_HOME_LIMIT caps it.
+//  2. Nothing on this page was memoised. trade has getTradeSliceCached / getTradeFacetsCached and
+//     therefore works; retail had no cached equivalent, so all 7 reads ran live on every request.
+//     Every Supabase read goes through supabaseServer()'s `cache: "no-store"` fetch, which also
+//     opts the whole route out of ISR — so `revalidate = 60` above could never take effect.
+//     unstable_cache gives the reads their own cache scope, which both memoises them AND lets this
+//     route be cached again. Freshness is unchanged: any product edit calls
+//     revalidateTag("storefront") and busts this immediately.
+//
+// An empty result is deliberately NOT cached (returning null instead), so a momentary Supabase
+// failure can never pin a blank shop for the full window.
+const SHOP_HOME_LIMIT = 240;
 
-// loadShopHome THROWS on an empty read (so it never caches a blank shop). That's right for runtime, but it
-// must NOT propagate — a transient empty read (or the build environment, which has no data) would 500 the
-// page / fail the build. Catch it and render a minimal shell (category tiles still show; rails are empty
-// this once) so the shop always renders and self-heals on the next request.
-async function loadShopHomeSafe() {
+type ShopHomeBundle = {
+  products: any[];
+  formula: any;
+  reviews: any[];
+  reels: any[];
+  promos: any[];
+  tree: any[];
+  // unstable_cache serialises its return value, and a Map does not survive that — so the covers
+  // travel as entries and are rebuilt into a Map on the other side.
+  coverEntries: [string, string][];
+};
+
+async function loadShopHomeUncached(): Promise<ShopHomeBundle> {
   try {
-    return await loadShopHome();
+    const [store, reviews, reels, promos, tree] = await Promise.all([
+      getShopSlice({ order: "new", limit: SHOP_HOME_LIMIT }),
+      getFeaturedReviews().catch(() => []),
+      getShoppableReels().catch(() => []),
+      getActivePromotions("retail").catch(() => []),
+      getCategoryTreeSafe(),
+    ]);
+    const coverBy = await getCategoryCovers(tree as any).catch(() => new Map<string, string>());
+    return {
+      products: store.products,
+      formula: store.formula ?? await getPricingFormula(),
+      reviews, reels, promos, tree,
+      coverEntries: [...coverBy.entries()],
+    };
   } catch {
-    const [formula, tree] = await Promise.all([getPricingFormula(), getCategoryTree()]);
-    return { products: [] as any[], formula, reviews: [] as any[], reels: [] as any[], promos: [] as any[], tree };
+    const [formula, tree] = await Promise.all([getPricingFormula(), getCategoryTreeSafe()]);
+    const coverBy = await getCategoryCovers(tree as any).catch(() => new Map<string, string>());
+    return { products: [] as any[], formula, reviews: [] as any[], reels: [] as any[], promos: [] as any[], tree, coverEntries: [...coverBy.entries()] };
   }
 }
 
+async function loadShopHomeSafe() {
+  const cached = await unstable_cache(
+    async () => {
+      const bundle = await loadShopHomeUncached();
+      // null tells the caller "usable answer not obtained" without caching a blank shop.
+      return bundle.products.length ? bundle : null;
+    },
+    ["shop-home-v1", String(SHOP_HOME_LIMIT)],
+    { tags: ["storefront"], revalidate: 300 },
+  )().catch(() => null);
+  const bundle = cached ?? await loadShopHomeUncached();
+  return { ...bundle, coverBy: new Map<string, string>(bundle.coverEntries) };
+}
+
 export default async function Shop() {
-  const { products, formula, reviews, reels, promos, tree } = await loadShopHomeSafe();
+  const { products, formula, reviews, reels, promos, tree, coverBy } = await loadShopHomeSafe();
   // Category tiles are driven by the catalogue tree, so they always show — even before
   // any products are published (the storefront starts with everything in draft).
   // Category tiles get a REAL jewellery photo automatically — the first in-stock product image in that
   // category — so the "Shop by Category" row never shows bare letter placeholders (HA / N / E).
   const catImg = new Map<string, string>();
   for (const p of products as any[]) {
-    const slug = p.category?.slug; const img = p.image;
-    if (slug && img && !catImg.has(slug)) catImg.set(slug, img);
+    const slug = categoryRef(p).slug; const img = p.image;
+    if (slug && slug !== "all" && img && !catImg.has(slug)) catImg.set(slug, img);
   }
-  const cats = tree.filter((c) => c.name?.trim().toLowerCase() !== "uncategorized").map((c) => ({ name: c.name, slug: c.slug, image: (c as any).imageUrl || catImg.get(c.slug) || null }));
-  // NEW ARRIVALS — genuinely the most recently ADDED pieces (newest first).
-  const createdMs = (p: any) => (p.created_at ? new Date(p.created_at).getTime() : 0);
-  const trending = [...products].sort((a, b) => createdMs(b) - createdMs(a)).slice(0, 8);
-  // BESTSELLERS — real top sellers once there's sales/review data; until then a curated pick that is
-  // ALWAYS distinct from New Arrivals (no product appears in both), so the two rows never look identical.
+  let cats = publicCategories(tree).map((c) => ({ name: c.name, slug: c.slug, image: (c as any).imageUrl || coverBy.get(c.slug) || catImg.get(c.slug) || null }));
+  if (cats.length === 0) {
+    const fromProducts = [...catImg.keys()].map((slug) => {
+      const p = (products as any[]).find((x) => categoryRef(x).slug === slug);
+      return { name: categoryRef(p).name, slug, image: catImg.get(slug) || null };
+    });
+    cats = (fromProducts.length ? fromProducts : FALLBACK_SHOP_CATEGORIES).map((c) => ({ name: c.name, slug: c.slug, image: (c as any).image || coverBy.get(c.slug) || catImg.get(c.slug) || null }));
+  }
+  const trending = pickNewArrivals(products, 8);
   const newIds = new Set(trending.map((p) => p.sku));
-  const bestsellers = [...products]
-    .sort((a, b) => (b.reviews - a.reviews) || (b.rating - a.rating) || a.sku.localeCompare(b.sku))
-    .filter((p) => !newIds.has(p.sku))
-    .slice(0, 8);
+  const bestsellers = pickBestsellers(products, newIds, 8);
   // Real product photos for the hero (falls back to curated premium images if the catalogue is empty).
   const heroPics = products.filter((p) => p.image).slice(0, 4);
   const HERO_FALLBACK = "https://imagedelivery.net/mqSJbpqjeuYhRGHhGSzOzw/01e7b55d-7167-4518-e6d7-5ad7c94cdc00/public";
@@ -127,8 +169,8 @@ export default async function Shop() {
               Handcrafted Kundan, Meenakari &amp; Temple jewellery — premium anti-tarnish finish and trend-ready designs, straight from Sadar Bazar, Delhi.
             </p>
             <div className="flex flex-wrap justify-center md:justify-start gap-3 mt-7">
-              <Link href="#bestsellers" className="btn-primary px-7 py-3 text-sm font-medium">Shop the collection</Link>
-              <Link href="#new-arrivals" className="px-7 py-3 text-sm font-medium rounded-full border border-ink/15 text-ink hover:border-gold hover:text-gold-dark transition-colors">New arrivals</Link>
+            <Link href="/shop/all" className="btn-primary px-7 py-3 text-sm font-medium">Shop the collection</Link>
+            <Link href="/shop/new" className="px-7 py-3 text-sm font-medium rounded-full border border-ink/15 text-ink hover:border-gold hover:text-gold-dark transition-colors">New arrivals</Link>
             </div>
             <div className="flex flex-wrap justify-center md:justify-start items-center gap-x-4 gap-y-1.5 mt-8 text-sm text-muted">
               <span className="flex items-center gap-1.5"><span className="text-gold">★</span> 4.9 · 10,000+ happy divas</span>
@@ -210,11 +252,11 @@ export default async function Shop() {
             <p className="text-gold-dark tracking-[0.25em] uppercase text-xs">Loved by thousands</p>
             <h2 className="font-display text-4xl text-ink mt-1">Bestsellers</h2>
           </div>
-          <Link href="/shop" className="nav-link text-sm text-emerald">View all →</Link>
+          <Link href="/shop/all" className="nav-link text-sm text-emerald">View all →</Link>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
           {bestsellers.map((p, i) => (
-            <Reveal key={p.sku} delay={(i % 4) * 80}><ProductCard p={p as any} formula={formula} index={i} /></Reveal>
+            <Reveal key={p.sku} delay={(i % 4) * 80}><ProductCard p={{ ...(p as any), category: categoryRef(p) }} formula={formula} index={i} /></Reveal>
           ))}
         </div>
       </section>
@@ -223,13 +265,14 @@ export default async function Shop() {
       {/* Curation note — only while the catalogue is still in draft (no products live yet) */}
       {products.length === 0 && (
         <section className="max-w-3xl mx-auto px-5 py-16 text-center">
-          <p className="text-gold-dark tracking-[0.25em] uppercase text-xs">Arriving soon</p>
-          <h2 className="font-display text-4xl text-ink mt-2">Our new collection is being styled</h2>
-          <p className="text-muted mt-3 leading-relaxed">Thousands of handcrafted Kundan, Meenakari, Temple and American-diamond designs are being photographed and readied. Browse by category above — pieces go live daily.</p>
+          <p className="text-gold-dark tracking-[0.25em] uppercase text-xs">Collection</p>
+          <h2 className="font-display text-4xl text-ink mt-2">Browse by category</h2>
+          <p className="text-muted mt-3 leading-relaxed">Jewellery is live — open a category or All jewellery to see designs.</p>
           <div className="flex flex-wrap gap-3 justify-center mt-6">
             {cats.map((c) => (
               <Link key={c.slug} href={`/shop/c/${c.slug}`} className="px-5 py-2 rounded-full border border-sand text-ink hover:border-emerald hover:text-emerald transition-colors text-sm">{c.name}</Link>
             ))}
+            <Link href="/shop/all" className="px-5 py-2 rounded-full border border-sand text-ink hover:border-emerald hover:text-emerald transition-colors text-sm">All jewellery</Link>
           </div>
         </section>
       )}
@@ -242,7 +285,7 @@ export default async function Shop() {
             <p className="relative text-gold-light tracking-[0.3em] uppercase text-xs">The Blythe Diva Promise</p>
             <h2 className="relative font-display text-4xl md:text-5xl mt-2">Handcrafted. Anti-tarnish. Made to shine.</h2>
             <p className="relative text-cream/70 mt-3">₹80 flat shipping · Cash on delivery · Easy 7-day returns.</p>
-            <Link href="/shop" className="relative btn-gold inline-block mt-6 px-8 py-3 text-sm font-medium">Explore the collection</Link>
+            <Link href="/shop/all" className="relative btn-gold inline-block mt-6 px-8 py-3 text-sm font-medium">Explore the collection</Link>
           </div>
         </Reveal>
       </section>
@@ -253,7 +296,7 @@ export default async function Shop() {
         <h2 className="font-display text-4xl text-ink mb-7">New Arrivals</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
           {trending.map((p, i) => (
-            <Reveal key={p.sku} delay={(i % 4) * 80}><ProductCard p={p as any} formula={formula} index={i} /></Reveal>
+            <Reveal key={p.sku} delay={(i % 4) * 80}><ProductCard p={{ ...(p as any), category: categoryRef(p) }} formula={formula} index={i} /></Reveal>
           ))}
         </div>
       </section>

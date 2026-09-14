@@ -518,15 +518,36 @@ export async function createOneRowAction(categoryId: string, row: ParsedRow): Pr
   return { ...res, name: row.name };
 }
 
-/** Hide (draft) or show (publish) a product on the storefront. */
-export async function setProductVisibilityAction(formData: FormData): Promise<void> {
-  if (!(await requirePerm("catalog.publish"))) return;
+/**
+ * Hide (draft) or show (publish) a product on the storefront — AND SAY WHETHER IT WORKED.
+ *
+ * Sept 2026 — owner: "Photo wale 3no edit krke save kr chuka hu… aisa dikha rha h refresh ke baad bhi"
+ * (published three designs; they still showed DRAFT after a refresh).
+ *
+ * This used to return `void` and swallow every failure: a denied permission returned early, and a
+ * Postgres error on the update was never even read. The catalogue list's Publish button then toasted
+ * "published ✓" unconditionally. Success and failure were indistinguishable — the row simply stayed
+ * DRAFT with nothing on screen to say why, which is exactly what he hit.
+ *
+ * The work now lives in the *Result* version and reports its outcome. The void wrapper below keeps
+ * every existing `<form action={setProductVisibilityAction}>` caller working untouched — a form
+ * action's return value is ignored, so those could never have surfaced an error anyway.
+ */
+export async function setProductVisibilityResultAction(formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  if (!(await requirePerm("catalog.publish"))) return { ok: false, error: "Your role isn't allowed to publish or hide products." };
   const sku = String(formData.get("sku") ?? "").trim();
   const status = String(formData.get("status") ?? "") === "published" ? "published" : "draft";
-  if (!sku) return;
-  await supabaseServer().from("products").update({ status }).eq("sku", sku);
+  if (!sku) return { ok: false, error: "Missing SKU" };
+  const { error } = await supabaseServer().from("products").update({ status }).eq("sku", sku);
+  if (error) return { ok: false, error: error.message };
   await logActivity({ action: status === "published" ? "product_shown" : "product_hidden", ref: sku, detail: `${sku} ${status === "published" ? "shown on" : "hidden from"} the store.` });
   revalidatePath("/admin/inventory"); revalidatePath("/admin/catalogue"); revalidatePath("/shop"); revalidateTag("storefront");
+  return { ok: true };
+}
+
+/** Form-action shape (return value ignored by `<form action=…>`). Delegates to the reporting one. */
+export async function setProductVisibilityAction(formData: FormData): Promise<void> {
+  await setProductVisibilityResultAction(formData);
 }
 
 /** #1: mark a product as wholesale-only (hidden from the D2C storefront, shown to retailers). */

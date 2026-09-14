@@ -3,25 +3,16 @@ import { useState } from "react";
 import { ProductImage } from "@/components/Placeholder";
 import { wholesaleShippingPaise, retailShippingPaise } from "@/lib/wholesaleShipping";
 
-const KEY = "bd_cart_v1"; // must match CartProvider (components/cart/CartContext.tsx)
-const TRADE_RECOVER_KEY = "bd_trade_recover"; // read by WholesaleCatalog on mount to restore a dealer cart
+const KEY = "bd_cart_v1";
+const TRADE_RECOVER_KEY = "bd_trade_recover";
 type RItem = { sku: string; name: string; price: number; category?: string; color?: string; qty: number; image?: string | null };
 
 const inr = (paise: number) => "₹" + (paise / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 });
 
-/**
- * Visual recovery view for an abandoned cart. Opening the WhatsApp link SHOWS the exact pieces — photo,
- * name, colour, qty and price — then restores the cart in the RIGHT flow: a retail cart goes to the
- * retail checkout (₹80 flat shipping); a WHOLESALE cart goes to the /trade portal where the owner's
- * fixed shipping SLABS apply (never the retail flat rate — that was charging a dealer's ₹3,400 order
- * only ₹100 courier). Shipping shown here matches exactly what the next screen will charge.
- */
 export function RecoverCartView({ items, channel = "retail" }: { items: RItem[]; channel?: "retail" | "wholesale" }) {
   const [going, setGoing] = useState(false);
   const subtotal = items.reduce((s, i) => s + i.price * i.qty, 0);
   const isWholesale = channel === "wholesale";
-  // Shipping mirrors the destination checkout exactly. Wholesale uses the slab helper (single source of
-  // truth shared with the /trade portal and the server order action); >₹30,000 is quoted separately.
   const ship = isWholesale ? wholesaleShippingPaise(subtotal) : retailShippingPaise(subtotal);
   const shipQuotedSeparately = isWholesale && subtotal > 3000000;
   const total = subtotal + ship;
@@ -30,8 +21,6 @@ export function RecoverCartView({ items, channel = "retail" }: { items: RItem[];
     setGoing(true);
     try {
       if (isWholesale) {
-        // Hand the cart to the wholesale portal (it reads this key on mount) and land the dealer on the
-        // review step, where slab shipping is applied and a WHOLESALE order is placed.
         localStorage.setItem(TRADE_RECOVER_KEY, JSON.stringify(items.map((i) => ({ sku: i.sku, qty: i.qty }))));
         window.location.assign("/trade");
         return;
@@ -85,11 +74,11 @@ export function RecoverCartView({ items, channel = "retail" }: { items: RItem[];
           className="btn-primary w-full mt-5 py-3.5 text-sm font-semibold disabled:opacity-60">
           {going ? (isWholesale ? "Taking you to your order…" : "Taking you to checkout…") : "Complete your order & pay →"}
         </button>
-        {!isWholesale && <p className="text-center text-sm text-emerald-dark font-medium mt-3">🎁 Pay online &amp; get a FREE mystery gift with your order!</p>}
+        {!isWholesale && <p className="text-center text-sm text-emerald-dark font-medium mt-3">🎁 Pay online & get a FREE mystery gift with your order!</p>}
         <p className="text-[11px] text-muted text-center mt-2">
           {isWholesale
             ? "Wholesale shipping as per slab · Cash on Delivery available · Anti-tarnish premium finish"
-            : "₹80 flat shipping · Cash on Delivery available · Anti-tarnish premium finish"}
+            : "₹80 flat shipping · Pay online · Anti-tarnish premium finish"}
         </p>
       </div>
     </main>

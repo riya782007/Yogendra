@@ -14,27 +14,19 @@ import { retailShippingPaise } from "@/lib/wholesaleShipping";
 export default function Checkout() {
   const { items, total, clear, remove } = useCart();
   const router = useRouter();
-  const [payment, setPayment] = useState<"cod" | "online">("cod");
+  const [payment, setPayment] = useState<"cod" | "online">("online");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [f, setF] = useState({ name: "", phone: "", address: "", pincode: "", city: "" });
-  const [codConfirmed, setCodConfirmed] = useState(false); // must tick to place a COD order — cuts accidental/joke COD
-  // Coupon / voucher — validated server-side; the discount is re-checked again at order time.
   const [coupon, setCoupon] = useState("");
   const [applied, setApplied] = useState<{ code: string; discount: number } | null>(null);
   const [couponMsg, setCouponMsg] = useState("");
   const [couponBusy, setCouponBusy] = useState(false);
   const discount = applied ? Math.min(applied.discount, total) : 0;
   const discountedSubtotal = Math.max(0, total - discount);
-  const shipping = retailShippingPaise(discountedSubtotal); // flat retail shipping — single source of truth
-  // COD rules (owner): a flat ₹120 handling fee per COD order, and NO COD on orders above ₹5,000.
-  const COD_FEE = 12000;
-  const codAllowed = discountedSubtotal > 0 && discountedSubtotal <= 500000;
-  const codFee = payment === "cod" && codAllowed ? COD_FEE : 0;
-  const grandTotal = discountedSubtotal + shipping + codFee;
+  const shipping = retailShippingPaise(discountedSubtotal);
+  const grandTotal = discountedSubtotal + shipping;
 
-  // Persist the typed contact so even an ABANDONED checkout surfaces WITH a name + phone on the owner's
-  // Abandoned Carts page (CartContext reads this and attaches it to the tracked cart).
   useEffect(() => {
     const name = f.name.trim(); const phone = f.phone.trim();
     if (name.length < 2 || phone.replace(/\D/g, "").length < 7) return;
@@ -55,23 +47,13 @@ export default function Checkout() {
   }
   function removeCoupon() { setApplied(null); setCoupon(""); setCouponMsg(""); }
 
-  // Honour the method chosen via a "Buy Now" / "Cash on Delivery" button on the product page
-  // (e.g. /checkout?pay=online). Read from the URL on mount to avoid a Suspense boundary.
-  useEffect(() => {
-    const p = new URLSearchParams(window.location.search).get("pay");
-    if (p === "online" || p === "cod") setPayment(p);
-  }, []);
-
-  // Orders above ₹5,000 can't be COD — flip such a cart to online automatically.
-  useEffect(() => { if (!codAllowed && payment === "cod") setPayment("online"); }, [codAllowed, payment]);
+  // Retail storefront is PREPAID-ONLY (owner).
+  useEffect(() => { setPayment("online"); }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault(); setErr(""); setBusy(true);
     const cartItems = items.map((i) => ({ sku: i.sku, qty: i.qty, color: i.color }));
 
-    // STOCK RE-CHECK — a design (or the chosen colour) can sell out after it was added to the bag. Drop
-    // any now-unavailable item from the cart, tell the shopper, and let them confirm the corrected order —
-    // so they never pay for something out of stock (owner: "cart se product disappear ho jaye").
     const stock = await checkCartStockAction(cartItems);
     if (!stock.ok) {
       const names = stock.unavailable.map((u) => {
@@ -84,49 +66,40 @@ export default function Checkout() {
       return;
     }
 
-    // ---- Pay Online (Razorpay) ----
-    if (payment === "online") {
-      const created = await createRazorpayOrderAction(cartItems, f, applied?.code);
-      if (!created.ok) { setBusy(false); setErr(created.error ?? "Couldn't start the payment."); return; }
-      const RZP = (window as any).Razorpay;
-      if (!RZP) { setBusy(false); setErr("Payment is still loading — please try again in a moment."); return; }
-      const rzp = new RZP({
-        key: created.keyId,
-        amount: created.amount,
-        currency: created.currency,
-        order_id: created.orderId,
-        name: "Blythe Diva",
-        description: "Jewellery order",
-        prefill: { name: f.name, contact: f.phone },
-        notes: { address: f.address },
-        theme: { color: "#0f766e" },
-        handler: async (resp: any) => {
-          setErr("");
-          const conf = await confirmRazorpayAction({
-            items: cartItems, customer: f,
-            razorpay_order_id: resp.razorpay_order_id,
-            razorpay_payment_id: resp.razorpay_payment_id,
-            razorpay_signature: resp.razorpay_signature,
-          });
-          setBusy(false);
-          if (!conf.ok) { setErr(conf.error ?? "We couldn't confirm your order — please contact us."); return; }
-          clear(); router.push(`/order/${conf.orderId}`);
-        },
-        modal: { ondismiss: () => setBusy(false) },
-      });
-      rzp.on("payment.failed", (r: any) => {
+    // Pay Online only
+    const created = await createRazorpayOrderAction(cartItems, f, applied?.code);
+    if (!created.ok) { setBusy(false); setErr(created.error ?? "Couldn't start the payment."); return; }
+    const RZP = (window as any).Razorpay;
+    if (!RZP) { setBusy(false); setErr("Payment is still loading — please try again in a moment."); return; }
+    const rzp = new RZP({
+      key: created.keyId,
+      amount: created.amount,
+      currency: created.currency,
+      order_id: created.orderId,
+      name: "Blythe Diva",
+      description: "Jewellery order",
+      prefill: { name: f.name, contact: f.phone },
+      notes: { address: f.address },
+      theme: { color: "#0f766e" },
+      handler: async (resp: any) => {
+        setErr("");
+        const conf = await confirmRazorpayAction({
+          items: cartItems, customer: f,
+          razorpay_order_id: resp.razorpay_order_id,
+          razorpay_payment_id: resp.razorpay_payment_id,
+          razorpay_signature: resp.razorpay_signature,
+        });
         setBusy(false);
-        setErr(r?.error?.description ?? "Payment failed. Please try again or choose Cash on Delivery.");
-      });
-      rzp.open();
-      return; // stays busy until the modal resolves
-    }
-
-    // ---- Cash on Delivery ----
-    const res = await placeOrderAction({ items: cartItems, customer: f, payment, voucher: applied?.code });
-    setBusy(false);
-    if (!res.ok) { setErr(res.error ?? "Something went wrong"); return; }
-    clear(); router.push(`/order/${res.orderId}`);
+        if (!conf.ok) { setErr(conf.error ?? "We couldn't confirm your order — please contact us."); return; }
+        clear(); router.push(`/order/${conf.orderId}`);
+      },
+      modal: { ondismiss: () => setBusy(false) },
+    });
+    rzp.on("payment.failed", (r: any) => {
+      setBusy(false);
+      setErr(r?.error?.description ?? "Payment failed. Please try again or use another card/UPI.");
+    });
+    rzp.open();
   }
 
   if (items.length === 0)
@@ -154,42 +127,20 @@ export default function Checkout() {
             <input className={input} placeholder="City" value={f.city} onChange={(e) => setF({ ...f, city: e.target.value })} />
           </div>
           <h2 className="font-medium text-ink pt-2">Payment</h2>
-          {/* Prepaid incentive (owner: no price discounts — reward instead). A free mystery gift nudges
-              shoppers off flaky COD onto committed online payment. */}
-          <div className={`rounded-xl border px-3 py-2.5 text-sm flex items-center gap-2 transition-colors ${payment === "online" ? "border-emerald bg-emerald-mist text-emerald-dark" : "border-gold/40 bg-gold/5 text-ink"}`}>
+          <div className="rounded-xl border border-emerald bg-emerald-mist text-emerald-dark px-3 py-2.5 text-sm flex items-center gap-2">
             <span className="text-lg">🎁</span>
-            <span>{payment === "online"
-              ? <>Yay! A <b>free mystery gift</b> will be added to your parcel for paying online.</>
-              : <><b>Pay online</b> and get a <b>free mystery gift</b> in your parcel — switch to Pay Online below.</>}</span>
+            <span>Pay online (UPI / Card / Netbanking) — a <b>free mystery gift</b> is added to your parcel.</span>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            {(["cod", "online"] as const).map((p) => {
-              const disabled = p === "cod" && !codAllowed;
-              return (
-                <button type="button" key={p} disabled={disabled} onClick={() => !disabled && setPayment(p)}
-                  className={`rounded-xl border px-4 py-3 text-sm text-left transition-all ${payment === p ? "border-emerald bg-emerald-mist" : "border-sand hover:border-gold"} ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}>
-                  <span className="font-medium block text-ink">{p === "cod" ? "Cash on Delivery" : "Pay Online"}</span>
-                  <span className="text-xs text-muted">{p === "cod" ? (disabled ? "Not available above ₹5,000" : "Pay when it arrives · +₹120 fee") : "UPI / Card / Netbanking"}</span>
-                </button>
-              );
-            })}
+          <div className="rounded-xl border border-emerald bg-white px-4 py-3 text-sm">
+            <span className="font-medium block text-ink">Pay Online</span>
+            <span className="text-xs text-muted">UPI / Card / Netbanking · secure checkout</span>
           </div>
-
-          {/* COD confirmation — a real commitment tick cuts accidental/joke COD orders (owner: customers
-              place COD then say "galti se kar diya" and don't pick up the delivery call). */}
-          {payment === "cod" && codAllowed && (
-            <label className="flex items-start gap-2.5 rounded-xl border border-gold/40 bg-gold/5 px-3 py-2.5 text-xs text-ink cursor-pointer">
-              <input type="checkbox" checked={codConfirmed} onChange={(e) => setCodConfirmed(e.target.checked)} className="mt-0.5 accent-emerald" />
-              <span>I confirm this Cash-on-Delivery order and will be available to <b>receive the parcel and pay ₹{Math.round(grandTotal / 100)}</b> on delivery.</span>
-            </label>
-          )}
-          {/* Confidence line — reassurance right where shoppers hesitate. */}
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted pt-0.5">
             <span>🔒 100% secure checkout</span><span>· 10,000+ happy customers</span><span>· Easy 7-day returns</span>
           </p>
 
           {err && <p className="text-sm text-rose">{err}</p>}
-          <button disabled={busy || (payment === "cod" && codAllowed && !codConfirmed)} className="btn-primary w-full py-3.5 text-sm font-medium disabled:opacity-60">
+          <button disabled={busy} className="btn-primary w-full py-3.5 text-sm font-medium disabled:opacity-60">
             {busy ? "Placing order…" : `Place order · ${formatPaise(grandTotal)}`}
           </button>
         </form>
@@ -204,7 +155,6 @@ export default function Checkout() {
               </div>
             ))}
           </div>
-          {/* Coupon / voucher */}
           <div className="border-t border-sand pt-3 mb-3">
             {applied ? (
               <div className="flex items-center justify-between rounded-xl bg-emerald-mist px-3 py-2">
@@ -225,11 +175,9 @@ export default function Checkout() {
             <div className="flex justify-between text-muted"><span>Subtotal</span><span>{formatPaise(total)}</span></div>
             {discount > 0 && <div className="flex justify-between text-emerald-dark"><span>Discount{applied ? ` (${applied.code})` : ""}</span><span>−{formatPaise(discount)}</span></div>}
             <div className="flex justify-between text-muted"><span>Shipping</span><span>{shipping === 0 ? "Free" : formatPaise(shipping)}</span></div>
-            {codFee > 0 && <div className="flex justify-between text-muted"><span>COD handling fee</span><span>{formatPaise(codFee)}</span></div>}
             <div className="flex justify-between font-semibold text-ink pt-1"><span>Total</span><span>{formatPaise(grandTotal)}</span></div>
           </div>
 
-          {/* Prominent WhatsApp help — a hesitant shopper can reach out in one tap instead of leaving. */}
           <a
             href={`https://wa.me/918700091298?text=${encodeURIComponent("Hi Blythe Diva! I'm at checkout and have a question about my order 🙂")}`}
             target="_blank" rel="noreferrer"

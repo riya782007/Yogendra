@@ -281,3 +281,21 @@ export function formatPaise(paise: number): string {
   const rupees = paise / 100;
   return "₹" + rupees.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
+
+/**
+ * Parse a sales-register search term as rupees and return integer paise.
+ * Accepts 900, 900.00, ₹900, Rs 900, 1,200, 900/-.
+ * Returns null for names, invoice codes, and 8+ digit phone numbers.
+ */
+export function parseRupeeSearch(raw: string | null | undefined): number | null {
+  const t = String(raw ?? "").trim();
+  if (!t) return null;
+  let s = t.replace(/^(rs\.?|inr)\s*/i, "").replace(/^₹\s*/, "").replace(/\s*\/-?\s*$/, "");
+  s = s.replace(/,/g, "").replace(/\s+/g, "");
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return null;
+  const whole = s.split(".")[0] ?? s;
+  if (whole.length >= 8) return null;
+  const rupees = Number(s);
+  if (!Number.isFinite(rupees) || rupees <= 0) return null;
+  return Math.round(rupees * 100);
+}

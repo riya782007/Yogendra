@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
-import { getCatalogProductsCached, getCategoryTreeCached, getCatalogSuggestionsCached, getStyles } from "@/lib/supabase/queries";
+import { getCatalogProducts, getCatalogProductsCached, getCategoryTreeSafe, getCatalogSuggestionsCached, getStyles } from "@/lib/supabase/queries";
 import { CatalogSearch } from "@/components/site/CatalogSearch";
 import { SelectableCatalog } from "@/components/site/SelectableCatalog";
 import { BUSINESS } from "@/lib/business";
@@ -20,9 +20,10 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
   // never shows trade prices unless a wholesale link is opened / the Wholesale toggle is used.
   const view: "retail" | "wholesale" = searchParams.view === "wholesale" ? "wholesale" : "retail";
 
+  const catalogOpts = { category, subcategory, style, q, skus: skus.length ? skus : undefined, includeWholesaleOnly: view === "wholesale", excludeRetailOnly: view === "wholesale", includeWholesalePricing: view === "wholesale", inStock: true };
   const [tree, fetched, suggestions] = await Promise.all([
-    getCategoryTreeCached(),
-    getCatalogProductsCached({ category, subcategory, style, q, skus: skus.length ? skus : undefined, includeWholesaleOnly: view === "wholesale", excludeRetailOnly: view === "wholesale", includeWholesalePricing: view === "wholesale", inStock: true }),
+    getCategoryTreeSafe(),
+    getCatalogProductsCached(catalogOpts).catch(() => getCatalogProducts(catalogOpts)),
     getCatalogSuggestionsCached().catch(() => ({ products: [], categories: [], colours: [] })),
   ]);
   // Never dead-end a shared sub-category link: if nothing is tagged there yet,

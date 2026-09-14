@@ -43,7 +43,9 @@ export default async function Invoice({ params }: { params: { id: string } }) {
   // GST Officer (billing.gst_only) may view only GST tax invoices — block cash memos. Owner exempt.
   const _gs = getSession();
   if (!_gs.isOwner && can(_gs, "billing.gst_only") && isCash) notFound();
-  const total = order.total as number;
+  // The printed document must be derived from the lines printed on it. `orders.total` can be
+  // stale after a previous edit, which otherwise lets the footer disagree with every row.
+  const lineItemsTotal = items.reduce((sum: number, it: any) => sum + (it.line_total ?? (it.unit_price ?? 0) * (it.qty ?? 0)), 0);
   const paid = order.amount_paid ?? 0;
   const buyerStateCode = order.buyer_state || stateCodeFromGstin(order.buyer_gstin);
   // GST mode: an ONLINE cart (retail / wholesale) already shows GST-INCLUSIVE prices — the customer
@@ -59,14 +61,14 @@ export default async function Invoice({ params }: { params: { id: string } }) {
   // bills, e.g. ₹960 printing as ₹989). Exclusive is applied ONLY when the owner explicitly pins it for
   // a one-off bill where he keyed pre-tax rates.
   const gstExclusive = !isCash && gstMode === "exclusive";
-  const g = gstExclusive ? gstSplitExclusive(total, buyerStateCode) : gstSplit(total, buyerStateCode);
-  // Extra charges (Packing/Courier/Adjustment) are folded into the total so GST applies to them;
-  // here we split them back out so the bill itemises them. Products portion = total − charges.
+  // Extra charges are printed separately, but participate in the invoice total and GST calculation.
   const xPacking = (order.extra_packing as number) || 0;
   const xCourier = (order.extra_courier as number) || 0;
   const xAdjust = (order.extra_adjustment as number) || 0;
   const xCharges = xPacking + xCourier + xAdjust;
-  const itemsTotal = total - xCharges;
+  const itemsTotal = lineItemsTotal;
+  const total = Math.max(0, itemsTotal + xCharges);
+  const g = gstExclusive ? gstSplitExclusive(total, buyerStateCode) : gstSplit(total, buyerStateCode);
   // What the customer actually owes: inclusive total (or pre-tax + GST when exclusive).
   const payable = isCash ? total : gstExclusive ? total + g.tax : total;
   const roundedTotal = Math.round(payable / 100) * 100;

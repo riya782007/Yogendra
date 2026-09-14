@@ -19,7 +19,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
   useEffect(() => { try { const s = localStorage.getItem(KEY); if (s) setItems(JSON.parse(s)); } catch {} setLoaded(true); }, []);
-  useEffect(() => { try { localStorage.setItem(KEY, JSON.stringify(items)); } catch {} }, [items]);
+  useEffect(() => { if (loaded) try { localStorage.setItem(KEY, JSON.stringify(items)); } catch {} }, [items, loaded]);
 
   // Record the cart server-side (debounced) so unfinished carts show on the admin Abandoned Carts
   // page. Fire-and-forget — analytics must never break the storefront.
