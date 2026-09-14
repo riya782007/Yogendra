@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 import Link from "next/link";
 import { Fragment } from "react";
 import { supabaseServer } from "@/lib/supabase/server";
@@ -6,7 +7,6 @@ import { formatPaise } from "@/lib/pricing";
 import { confirmCodAction, cancelCodAction } from "@/app/actions/billing";
 import { isCodOrder } from "@/lib/orderPayment";
 import { CodOrderPdfButton, CodOrdersPdfButton } from "@/components/admin/CodOrdersPdfButton";
-import type { PdfCodOrder } from "@/lib/codOrdersPdf";
 
 export const metadata = { title: "Owner Console · COD Orders" };
 
@@ -32,58 +32,14 @@ export default async function CodOrders({ searchParams }: { searchParams?: { err
 
   const orderIds = rows.map((r) => r.id);
   const itemsByOrder = new Map<string, any[]>();
-  if (orderIds.length) {
+  // Light line list only (SKU/qty). Photos for PDF are fetched when the owner clicks Download.
+  for (let i = 0; i < orderIds.length; i += 80) {
+    const part = orderIds.slice(i, i + 80);
     const { data: its } = await sb.from("order_items")
-      .select("id,order_id,qty,unit_price,line_total, product:products(id,name,sku,thumbnail_path), variant:variants(sku,color,image_paths,product_id)")
-      .in("order_id", orderIds);
+      .select("id,order_id,qty, product:products(name,sku), variant:variants(sku,color)")
+      .in("order_id", part);
     for (const it of ((its as any[]) ?? [])) { const a = itemsByOrder.get(it.order_id) ?? []; a.push(it); itemsByOrder.set(it.order_id, a); }
   }
-
-  // Photos for the COD PDF — same cover rules as abandoned-cart / packing-slip downloads.
-  const httpFirst = (arr?: any[]): string | undefined => (Array.isArray(arr) ? arr.find((u: any) => typeof u === "string" && u.startsWith("http")) : undefined);
-  const isHttp = (s: any): s is string => typeof s === "string" && s.startsWith("http");
-  const allLines = [...itemsByOrder.values()].flat();
-  const productIds = Array.from(new Set(allLines.map((it: any) => it.product?.id).filter(Boolean)));
-  const siblingByProduct = new Map<string, string>();
-  if (productIds.length) {
-    const { data: sib } = await sb.from("variants").select("product_id,image_paths").in("product_id", productIds as string[]);
-    for (const v of ((sib as any[]) ?? [])) {
-      const img = httpFirst(v.image_paths as any[]);
-      if (img && !siblingByProduct.has(v.product_id)) siblingByProduct.set(v.product_id, img);
-    }
-  }
-  const imgMap: Record<string, string> = {};
-  const imgFor = (it: any): string | undefined =>
-    httpFirst(it.variant?.image_paths)
-    ?? (isHttp(it.product?.thumbnail_path) ? it.product.thumbnail_path : undefined)
-    ?? (it.product?.id ? siblingByProduct.get(it.product.id) : undefined);
-  for (const it of allLines) {
-    const sku = String(it.variant?.sku ?? it.product?.sku ?? "").trim();
-    const img = imgFor(it);
-    if (sku && img) imgMap[sku] = img;
-  }
-
-  const toPdf = (r: any): PdfCodOrder => {
-    const lines = itemsByOrder.get(r.id) ?? [];
-    return {
-      id: r.id,
-      invoice_no: r.invoice_no,
-      channel: r.channel,
-      customer_name: r.customer_name,
-      customer_phone: r.customer_phone,
-      buyer_address: r.buyer_address,
-      total: r.total,
-      created_at: r.created_at,
-      items: lines.map((it: any) => ({
-        sku: it.variant?.sku ?? it.product?.sku ?? "",
-        name: it.product?.name ?? "",
-        qty: it.qty ?? 1,
-        price: it.unit_price ?? 0,
-        color: it.variant?.color ?? "",
-      })),
-    };
-  };
-  const pdfOrders = rows.map(toPdf);
 
   return (
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen">
@@ -108,9 +64,9 @@ export default async function CodOrders({ searchParams }: { searchParams?: { err
           <p className="text-xs text-muted">Value held (to collect on delivery)</p>
           <p className="text-2xl font-semibold text-ink">{formatPaise(pending)}</p>
         </div>
-        {pdfOrders.length > 0 && (
+        {orderIds.length > 0 && (
           <div className="flex items-center">
-            <CodOrdersPdfButton orders={pdfOrders} imgMap={imgMap} />
+            <CodOrdersPdfButton orderIds={orderIds} />
           </div>
         )}
       </div>
@@ -159,7 +115,7 @@ export default async function CodOrders({ searchParams }: { searchParams?: { err
                           <input type="hidden" name="id" value={r.id} />
                           <button className="px-3 py-1 rounded-full border border-rose/40 text-rose text-[11px] hover:bg-rose/10 whitespace-nowrap" title="Customer refused / no answer — removes the order (nothing to restock)">Cancel order</button>
                         </form>
-                        <CodOrderPdfButton order={toPdf(r)} imgMap={imgMap} />
+                        <CodOrderPdfButton orderId={r.id} />
                       </div>
                     </td>
                   </tr>

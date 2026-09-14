@@ -543,6 +543,18 @@ export async function confirmCodAction(formData: FormData): Promise<void> {
   redirect("/admin/cod?ok=1");
 }
 
+/** Photos + lines for the COD PDF, loaded only when the owner clicks Download — never on page render. */
+export async function fetchCodOrdersPdfAction(orderIds: string[]): Promise<{
+  ok: boolean; error?: string; orders?: import("@/lib/codOrdersPdf").PdfCodOrder[]; imgMap?: Record<string, string>;
+}> {
+  if (!(await requirePerm("billing.sell"))) return { ok: false, error: "Your role can't download COD bills." };
+  const ids = (orderIds ?? []).map((s) => String(s ?? "").trim()).filter(Boolean);
+  if (!ids.length) return { ok: false, error: "No orders to print." };
+  const { loadCodPdfPayload } = await import("@/lib/codOrdersPdfData");
+  const { orders, imgMap } = await loadCodPdfPayload(ids);
+  return { ok: true, orders, imgMap };
+}
+
 /** Cancel a held COD order (customer refused / didn't confirm). It held NO stock and NO revenue, so we
  *  simply delete it — there is nothing to restock or reverse. */
 export async function cancelCodAction(formData: FormData): Promise<void> {

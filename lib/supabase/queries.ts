@@ -2595,14 +2595,26 @@ export async function getRetailers() {
   return (data as any[]) ?? [];
 }
 
-/** Wholesale orders AWAITING the owner's payment verification: a dealer has placed a prepaid order
- *  (and usually uploaded a payment screenshot) but the money isn't marked received yet. This powers
- *  the owner's "Wholesale payments to approve" dashboard — screenshot on the left, Approve/Reject. */
-export async function getPendingWholesalePayments(): Promise<{
+/** Badge-only count for the admin nav. NEVER resolve photos — that used to run on every
+ *  `/admin/*` page (layout) and blew past Netlify's ~10s edge timeout ("this edge function timed out"). */
+export async function countPendingWholesalePayments(): Promise<number> {
+  const sb = supabaseServer();
+  const { data } = await sb.from("orders")
+    .select("id,total,amount_paid")
+    .eq("channel", "wholesale")
+    .not("status", "in", "(cancelled,refunded)")
+    .neq("payment_mode", "cod")
+    .order("created_at", { ascending: false })
+    .limit(200);
+  return ((data as any[]) ?? []).filter((o) => Math.max(0, (o.amount_paid ?? 0)) < (o.total ?? 0)).length;
+}
+
+export async function getPendingWholesalePayments(opts?: { photos?: boolean }): Promise<{
   id: string; invoice_no: string | null; customer_name: string | null; customer_phone: string | null;
   total: number; amount_paid: number; payment_ref: string | null; proofUrl: string | null; created_at: string;
   items: { name: string; sku: string | null; qty: number; image: string | null }[];
 }[]> {
+  const photos = opts?.photos !== false;
   const sb = supabaseServer();
   const { data } = await sb.from("orders")
     .select("id,invoice_no,customer_name,customer_phone,total,amount_paid,payment_ref,payment_proof_path,payment_mode,created_at, order_items(qty, product:products(name,sku), variant:variants(sku,color))")
@@ -2613,11 +2625,11 @@ export async function getPendingWholesalePayments(): Promise<{
     .limit(200);
   const rows = ((data as any[]) ?? []).filter((o) => Math.max(0, (o.amount_paid ?? 0)) < (o.total ?? 0));
 
-  // Resolve a thumbnail per line so the approval card reads as a list with photos, not a cramped
-  // comma line — the owner verifies WHAT he's shipping at a glance. Variant colour photo, else parent.
+  // Photos only on the wholesale-payments page. Dashboard only needs name/total/proof flag — resolving
+  // every SKU's image_paths here (and AGAIN in the admin layout for a badge) is what crashed admin-bd.
   const imgByUpper = new Map<string, string>();
-  const allSkus = Array.from(new Set(rows.flatMap((o: any) =>
-    ((o.order_items as any[]) ?? []).flatMap((it: any) => [it.variant?.sku, it.product?.sku].filter(Boolean)))));
+  const allSkus = photos ? Array.from(new Set(rows.flatMap((o: any) =>
+    ((o.order_items as any[]) ?? []).flatMap((it: any) => [it.variant?.sku, it.product?.sku].filter(Boolean))))) : [];
   if (allSkus.length) {
     const firstHttp = (arr: any[]) => (arr ?? []).filter((i: any) => typeof i?.path === "string" && i.path.startsWith("http")).sort((a: any, b: any) => (a.sort ?? 0) - (b.sort ?? 0))[0]?.path as string | undefined;
     const chunk = <T,>(a: T[], n: number) => a.reduce<T[][]>((acc, x, i) => { (acc[Math.floor(i / n)] ??= []).push(x); return acc; }, []);
@@ -2647,9 +2659,10 @@ export async function getPendingWholesalePayments(): Promise<{
     }),
   }));
 }
-export async function getAbandonedCarts(opts?: { search?: string }) {
+export async function getAbandonedCarts(opts?: { search?: string; limit?: number }) {
   const sb = supabaseServer();
   const search = (opts?.search ?? "").trim();
+  const limit = opts?.limit && opts.limit > 0 ? opts.limit : undefined;
   // Surface carts gone quiet for 20+ min (a shopper still browsing isn't "abandoned" yet) — OR any cart
   // that REACHED CHECKOUT (finalised), which the owner wants to see immediately so he can close it.
   const idleSince = new Date(Date.now() - 20 * 60 * 1000).toISOString();
@@ -2663,12 +2676,16 @@ export async function getAbandonedCarts(opts?: { search?: string }) {
     return all.filter((c) => recordMatchesShopperQuery({ phone: c.phone, customer_name: c.customer_name }, search));
   }
 
-  let res = await sb.from("abandoned_carts")
+  let q = sb.from("abandoned_carts")
     .select("*").eq("recovered", false).or(`updated_at.lt.${idleSince},reached_checkout.eq.true`)
     .order("updated_at", { ascending: false });
+  if (limit) q = q.limit(limit);
+  let res = await q;
   if (res.error) {
     // `reached_checkout` column may not be deployed yet — fall back to the idle-only rule.
-    res = await sb.from("abandoned_carts").select("*").eq("recovered", false).lt("updated_at", idleSince).order("updated_at", { ascending: false });
+    let q2 = sb.from("abandoned_carts").select("*").eq("recovered", false).lt("updated_at", idleSince).order("updated_at", { ascending: false });
+    if (limit) q2 = q2.limit(limit);
+    res = await q2;
   }
   const { data } = res;
   // Only surface carts the owner can actually ACT on — a cart with no phone is un-contactable and just

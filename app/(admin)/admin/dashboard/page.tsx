@@ -1,4 +1,6 @@
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+export const maxDuration = 30;
 import Link from "next/link";
 import { getDashboardData, getDashboardAnalytics, getChannelReport, getOrderAlerts, getStorefrontOrderAlerts, getPendingDealerApplications, getPendingWholesalePayments, getAbandonedCarts } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
@@ -48,7 +50,7 @@ export default async function Dashboard({ searchParams }: { searchParams: { pres
   // owner can see exactly which dates the figures cover — the earlier blank-box confusion.
   const fromDate = searchParams.from ?? from.slice(0, 10);
   const toDate = searchParams.to ?? to.slice(0, 10);
-  const [d, a, report, recent, storefrontOrders, dealerApps, wholesalePays, allCarts] = await Promise.all([getDashboardData(from, to), getDashboardAnalytics(from, to), getChannelReport(from, to), getOrderAlerts(8), getStorefrontOrderAlerts(12).catch(() => []), getPendingDealerApplications(10), getPendingWholesalePayments().catch(() => []), getAbandonedCarts().catch(() => [])]);
+  const [d, a, report, recent, storefrontOrders, dealerApps, wholesalePays, allCarts] = await Promise.all([getDashboardData(from, to), getDashboardAnalytics(from, to), getChannelReport(from, to), getOrderAlerts(8), getStorefrontOrderAlerts(12).catch(() => []), getPendingDealerApplications(10), getPendingWholesalePayments({ photos: false }).catch(() => []), getAbandonedCarts({ limit: 40 }).catch(() => [])]);
   const orderAgo = (iso: string) => { const h = Math.round((Date.now() - new Date(iso).getTime()) / 3600000); return h < 1 ? "just now" : h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`; };
   // Don't show an order in BOTH boxes: a wholesale order still awaiting payment verification already has
   // its own "Wholesale payments to verify" box (with the Accept/Reject buttons). Showing it in the

@@ -7,6 +7,10 @@ import { getSession } from "@/lib/auth";
 import { supabaseServer } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
+// Admin is Node SSR — never Netlify/Vercel Edge. Edge's ~10s cap is what showed
+// "This edge function has crashed / the edge function timed out" on admin-bd.
+export const runtime = "nodejs";
+export const maxDuration = 30;
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const s = getSession();
@@ -20,8 +24,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     pendingSubmissions = count ?? 0;
   } catch { /* badge is optional */ }
   try {
-    const { getPendingWholesalePayments } = await import("@/lib/supabase/queries");
-    pendingWholesalePay = (await getPendingWholesalePayments()).length;
+    const { countPendingWholesalePayments } = await import("@/lib/supabase/queries");
+    pendingWholesalePay = await countPendingWholesalePayments();
   } catch { /* badge is optional */ }
   let openEnquiries = 0;
   try {
