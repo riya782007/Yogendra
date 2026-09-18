@@ -203,6 +203,14 @@ export function POSClient({ products: propProducts, customers = [], methods = []
   const itemsTotal = lines.reduce((s, l) => s + effUnit(l) * l.qty, 0);
   const mrpTotal = lines.reduce((s, l) => s + mrpUnit(l) * l.qty, 0);
   const discountTotal = Math.max(0, mrpTotal - itemsTotal);
+  /**
+   * TOTAL PIECES ON THE BILL — owner (18 Sep 2026): "billing POS me total quantity jo add hui wo
+   * display krdo". While billing a 100+ line bill he cannot tell how many pieces are actually in the
+   * cart; the table only shows per-line qty. This is DISPLAY-ONLY: nothing reads it, nothing is sent
+   * to posSaleAction, so the bill, stock and totals are byte-for-byte unchanged.
+   * qty is clamped to an integer >= 1 by QtyField, but Number()||0 keeps it safe regardless.
+   */
+  const pieceCount = lines.reduce((s, l) => s + (Number(l.qty) || 0), 0);
   const total = itemsTotal + chargesTotal;
   const GST_RATE = 3;
   const isGst = billType === "gst";
@@ -490,6 +498,17 @@ export function POSClient({ products: propProducts, customers = [], methods = []
 
       {/* ================= PRODUCT TABLE (center, largest) ================= */}
       <div className="bg-white rounded-2xl shadow-card overflow-hidden">
+        {/* Live count strip — sits directly above the header row so the running piece total is in the
+            same place the staffer is already looking after every scan. Display only. */}
+        <div className="flex items-center justify-between gap-3 border-b border-sand/60 bg-cream/60 px-3 py-2">
+          <span className="text-xs uppercase tracking-wide text-muted">Items in bill</span>
+          <span className="text-sm text-ink">
+            <span className="font-semibold">{lines.length}</span>
+            <span className="text-muted"> {lines.length === 1 ? "product" : "products"} · </span>
+            <span className="font-semibold text-emerald-dark">{pieceCount}</span>
+            <span className="text-muted"> {pieceCount === 1 ? "piece" : "pieces"}</span>
+          </span>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-cream text-muted text-left text-xs uppercase tracking-wide">
@@ -586,6 +605,7 @@ export function POSClient({ products: propProducts, customers = [], methods = []
 
         {/* Totals + payment — sticky, always visible */}
         <div className="bg-white rounded-2xl shadow-card p-4 lg:sticky lg:top-3 space-y-1.5">
+          <div className="flex justify-between text-sm"><span className="text-muted">Total quantity</span><span className="text-ink/80">{pieceCount} {pieceCount === 1 ? "piece" : "pieces"} <span className="text-muted">/ {lines.length} {lines.length === 1 ? "product" : "products"}</span></span></div>
           <div className="flex justify-between text-sm"><span className="text-muted">Total MRP</span><span className="text-ink/80">{formatPaise(mrpTotal)}</span></div>
           {discountTotal > 0 && <div className="flex justify-between text-sm"><span className="text-muted">Discount</span><span className="text-emerald-dark">− {formatPaise(discountTotal)}</span></div>}
           <div className="flex justify-between text-sm"><span className="text-muted">Net (items)</span><span className="text-ink/80">{formatPaise(itemsTotal)}</span></div>
