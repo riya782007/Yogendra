@@ -127,6 +127,7 @@ describe("features that were lost and restored stay present", () => {
     ["product name wins over mislabelled AI tags", "lib/content.base.ts", /export function templateContent/],
     ["house title name picker", "lib/content.base.ts", /export function pickDivaName/],
     ["storefront search box", "components/site/SearchField.tsx", /name="q"/],
+    ["POS shows the total quantity billed", "components/admin/POSClient.tsx", /pieceCount/],
   ];
 
   it.each(CONTRACTS)("%s", (_label, rel, pattern) => {
