@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { formatPaise } from "@/lib/pricing";
 import { GST_RATE } from "@/lib/business";
 import { createEstimateAction, posLookupAction } from "@/app/actions/billing";
@@ -40,6 +40,13 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
   const [custOpen, setCustOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  // A quote the server recognised as a repeat of this same cart, so it did NOT create a second one.
+  const [dupOf, setDupOf] = useState<string | null>(null);
+  /**
+   * `busy` disables the button, but a React state update is not applied until the next render, so
+   * two clicks landing in the same tick can both get past it. This ref flips synchronously.
+   */
+  const savingRef = useRef(false);
   const [scanMsg, setScanMsg] = useState("");
 
   // Products/variants created AFTER this page loaded — or any SKU beyond the initially-loaded list —
@@ -171,19 +178,49 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
 
   const input = "w-full rounded-xl border border-sand px-4 py-2.5 text-sm bg-white outline-none focus:border-emerald";
 
-  async function save() {
-    setBusy(true); setMsg("");
-    const res = await createEstimateAction({
-      // Send each line's effective rate (tier or edited) so the saved quote — and the bill it
-      // converts to — uses exactly what's on screen.
-      items: lines.map((l) => ({ sku: l.sku, qty: l.qty, priceRupees: effUnit(l) / 100 })),
-      customer: { name, phone },
-      packingRupees: Number(packing) || 0, courierRupees: Number(courier) || 0, adjustmentRupees: Number(adjustment) || 0,
-      gst,
-    });
-    setBusy(false);
-    if (res.ok) { setMsg(`✓ Estimate saved (${formatPaise(res.total ?? 0)}${gst !== "none" ? " + GST" : ""}) — find it below to bill or hold.`); setLines([]); setName(""); setPhone(""); setCustType("retail"); setPacking(""); setCourier(""); setAdjustment(""); setGst("none"); }
-    else setMsg(`✕ ${res.error}`);
+  function clearForm() {
+    setLines([]); setName(""); setPhone(""); setCustType("retail");
+    setPacking(""); setCourier(""); setAdjustment(""); setGst("none");
+  }
+
+  /**
+   * Save the quote. `allowDuplicate` is set only when the staffer, having been told an identical
+   * quote already exists, explicitly asks for a second one.
+   */
+  async function save(allowDuplicate = false) {
+    if (savingRef.current) return; // a second click in the same tick must not become a second quote
+    savingRef.current = true;
+    setBusy(true); setMsg(""); setDupOf(null);
+    try {
+      const res = await createEstimateAction({
+        // Send each line's effective rate (tier or edited) so the saved quote — and the bill it
+        // converts to — uses exactly what's on screen.
+        items: lines.map((l) => ({ sku: l.sku, qty: l.qty, priceRupees: effUnit(l) / 100 })),
+        customer: { name, phone },
+        packingRupees: Number(packing) || 0, courierRupees: Number(courier) || 0, adjustmentRupees: Number(adjustment) || 0,
+        gst,
+        allowDuplicate,
+      });
+      if (res.ok && res.duplicate) {
+        // The server found this exact cart already saved for this customer moments ago and handed
+        // that quote back. Nothing new was created and no extra stock was put on hold.
+        setDupOf(res.estimateId ?? null);
+        setMsg(`⚠ This exact quote for ${name.trim() || "this customer"} was already saved a moment ago (${formatPaise(res.total ?? 0)}) — it is in the list below. Nothing was duplicated.`);
+      } else if (res.ok) {
+        setMsg(`✓ Estimate saved (${formatPaise(res.total ?? 0)}${gst !== "none" ? " + GST" : ""}) — find it below to bill or hold.`);
+        clearForm();
+      } else {
+        setMsg(`✕ ${res.error}`);
+      }
+    } catch {
+      // The action did not answer (dropped connection, or the server ran past its time limit). It
+      // may still have saved. Say so plainly instead of leaving a silent screen that invites another
+      // press — and if they do press again, the server-side check returns the same quote anyway.
+      setMsg("✕ No answer from the server. The quote may still have been saved — check the list below before saving again.");
+    } finally {
+      savingRef.current = false;
+      setBusy(false);
+    }
   }
 
   return (
@@ -287,10 +324,17 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
           <span className="text-lg font-semibold text-ink whitespace-nowrap">{formatPaise(grand)}</span>
         </div>
       </div>
-      <div className="flex justify-end mt-3">
-        <button onClick={save} disabled={busy || !lines.length} className="btn-primary px-5 py-2.5 text-sm font-medium disabled:opacity-50">{busy ? "Saving…" : "Save estimate"}</button>
+      <div className="flex flex-wrap justify-end items-center gap-2 mt-3">
+        {/* Shown only after the server reported this cart as already saved: the one way to make a
+            genuine second identical quote, so the duplicate guard can never block real work. */}
+        {dupOf && !busy && (
+          <button onClick={() => save(true)} disabled={!lines.length} className="px-4 py-2.5 rounded-xl border border-gold text-sm text-ink hover:bg-gold/10 disabled:opacity-50">
+            Save as a separate quote
+          </button>
+        )}
+        <button onClick={() => save()} disabled={busy || !lines.length} className="btn-primary px-5 py-2.5 text-sm font-medium disabled:opacity-50">{busy ? "Saving…" : "Save estimate"}</button>
       </div>
-      {msg && <p className="text-sm mt-2 text-ink">{msg}</p>}
+      {msg && <p className={`text-sm mt-2 ${dupOf ? "text-gold-dark" : "text-ink"}`}>{msg}</p>}
     </div>
   );
 }

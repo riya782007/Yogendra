@@ -128,6 +128,7 @@ describe("features that were lost and restored stay present", () => {
     ["house title name picker", "lib/content.base.ts", /export function pickDivaName/],
     ["storefront search box", "components/site/SearchField.tsx", /name="q"/],
     ["POS shows the total quantity billed", "components/admin/POSClient.tsx", /pieceCount/],
+    ["duplicate quotes are refused", "app/actions/billing_mod_3.ts", /findRecentDuplicate/],
   ];
 
   it.each(CONTRACTS)("%s", (_label, rel, pattern) => {
