@@ -152,12 +152,14 @@ export async function createEstimateAction(input: { items: { sku: string; qty: n
       // Same updates as before, one per line - but issued in small parallel batches rather than
       // strictly one after another, so wall-clock stops growing with the size of the cart. The rows
       // are independent (one per estimate_item id), so order between them never mattered.
-      const jobs: (() => Promise<unknown>)[] = [];
+      const jobs: (() => Promise<void>)[] = [];
       for (const i of priced) {
         const m = bySku.get(i.sku.toUpperCase());
         if (!m) continue;
         const unit = Math.round((i.priceRupees as number) * 100);
-        jobs.push(() => sb.from("estimate_items").update({ unit_price: unit, line_total: unit * m.qty }).eq("id", m.id));
+        // async wrapper on purpose: a PostgREST builder is thenable but is NOT a Promise, so it
+        // cannot be stored as one. Awaiting it here gives Promise.all a real promise to work with.
+        jobs.push(async () => { await sb.from("estimate_items").update({ unit_price: unit, line_total: unit * m.qty }).eq("id", m.id); });
       }
       const BATCH = 8;
       for (let b = 0; b < jobs.length; b += BATCH) {
