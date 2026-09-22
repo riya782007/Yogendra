@@ -130,6 +130,7 @@ describe("features that were lost and restored stay present", () => {
     ["POS shows the total quantity billed", "components/admin/POSClient.tsx", /pieceCount/],
     ["duplicate quotes are refused", "app/actions/billing_mod_3.ts", /findRecentDuplicate/],
     ["repeat quotes are flagged in the list", "components/admin/EstimatesTable.tsx", /dupOf/],
+    ["POS honours an edited rate", "app/actions/orders.ts", /order_items[\s\S]{0,200}variant:variants\(sku\)/],
   ];
 
   it.each(CONTRACTS)("%s", (_label, rel, pattern) => {

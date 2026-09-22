@@ -89,6 +89,12 @@ export function POSClient({ products: propProducts, customers = [], methods = []
   const [payLines, setPayLines] = useState<PayLine[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  /**
+   * A bill that saved, but where at least one edited rate did NOT reach the line. The sale is on
+   * file, so we stop here and say so instead of dropping the staffer onto an invoice that quietly
+   * shows the catalogue price - which is exactly how the wrong rate used to reach the customer.
+   */
+  const [priceWarn, setPriceWarn] = useState<{ text: string; orderId?: string } | null>(null);
   const [allowBackorder, setAllowBackorder] = useState(false);
   // CREDIT SALE — the bill is recorded with whatever was actually received (even ₹0); the balance
   // stays DUE on the bill (sales page shows Unpaid/Partial) instead of silently marking it paid.
@@ -307,7 +313,7 @@ export function POSClient({ products: propProducts, customers = [], methods = []
       empRef.current?.focus();
       return;
     }
-    setBusy(true); setErr("");
+    setBusy(true); setErr(""); setPriceWarn(null);
     // Re-read stock from the database RIGHT NOW. The catalogue snapshot this screen loaded with can be
     // hours old, and stock bought since then would otherwise look like 0 — which used to push a bill
     // into backorder while the goods were sitting on the shelf. Fresh numbers decide, never the snapshot.
@@ -344,6 +350,13 @@ export function POSClient({ products: propProducts, customers = [], methods = []
     });
     setBusy(false);
     if (!res.ok) { setErr(res.error ?? "Failed"); return; }
+    if (res.priceWarning) {
+      // Clear the cart first: the bill IS saved, so leaving the lines on screen would invite a
+      // second press of Complete and a duplicate bill.
+      setLines([]); setPayLines([]);
+      setPriceWarn({ text: res.priceWarning, orderId: res.orderId });
+      return;
+    }
     router.push(`/admin/invoice/${res.orderId}`);
   }
 
@@ -652,6 +665,16 @@ export function POSClient({ products: propProducts, customers = [], methods = []
           </div>
 
           {err && <p className="text-sm text-rose">{err}</p>}
+          {priceWarn && (
+            <div className="rounded-xl border border-gold bg-gold/10 px-3 py-2 text-sm">
+              <p className="font-medium text-ink">Bill saved — but check the rate</p>
+              <p className="text-ink/80 mt-0.5">{priceWarn.text}</p>
+              {priceWarn.orderId && (
+                <button onClick={() => router.push(`/admin/invoice/${priceWarn.orderId}`)}
+                  className="mt-2 px-3 py-1 rounded-full bg-ink text-white text-xs">Open the bill →</button>
+              )}
+            </div>
+          )}
           <button onClick={complete} disabled={busy || lines.length === 0} className="btn-primary w-full mt-2 py-3 text-sm font-medium disabled:opacity-50">
             {busy ? "Completing…" : (billType === "gst" ? "Generate tax invoice" : "Generate cash memo")} <span className="text-[10px] opacity-70">Ctrl+↵</span>
           </button>

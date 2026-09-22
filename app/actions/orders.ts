@@ -136,7 +136,7 @@ export async function posSaleAction(input: {
   // When supplied this is the source of truth — it drives the per-method ledger AND back-fills
   // the legacy pay_cash / pay_bank / payment_method fields so existing reports keep working.
   payments?: { methodId: string; amount: number }[]; // amount in rupees
-}): Promise<{ ok: boolean; orderId?: string; total?: number; error?: string }> {
+}): Promise<{ ok: boolean; orderId?: string; total?: number; error?: string; priceWarning?: string }> {
   if (!(await requirePerm("billing.sell"))) return { ok: false, error: "Your role can't ring up POS sales." };
   if (!input.items?.length) return { ok: false, error: "Add at least one item" };
   for (const it of input.items) if (!Number.isFinite(it.qty) || it.qty < 1) return { ok: false, error: "Every line needs a quantity of 1 or more" };
@@ -159,35 +159,85 @@ export async function posSaleAction(input: {
   // if a match is skipped. Best-effort and fully guarded — a failed match falls back to the
   // catalogue price rather than corrupting the bill.
   const overrides = (input.items ?? []).filter((i) => i.priceRupees != null && Number.isFinite(i.priceRupees) && (i.priceRupees as number) >= 0);
+  const unpriced: string[] = [];
+  let priceWarning: string | undefined;
   if (orderId && overrides.length) {
     try {
-      for (const o of overrides) {
-        const unit = Math.round((o.priceRupees as number) * 100);
-        // Resolve the scanned SKU to its product (and variant, if it's a variant SKU).
-        let productId: string | null = null;
-        let variantId: string | null = null;
-        const { data: prod } = await sb.from("products").select("id").ilike("sku", o.sku).maybeSingle();
-        if (prod) productId = (prod as any).id;
-        else {
-          const { data: v } = await sb.from("variants").select("id,product_id").ilike("sku", o.sku).maybeSingle();
-          if (v) { variantId = (v as any).id; productId = (v as any).product_id; }
-        }
-        if (!productId) continue; // can't map — leave the catalogue price on that line
-        // Original (pre-discount) rate for the invoice's Rate → Disc → Amount display. Only stored
-        // when it's actually higher than the billed net, so a plain override doesn't fake a discount.
-        const list = Number.isFinite(o.listRupees as number) ? Math.round((o.listRupees as number) * 100) : 0;
-        const patch: Record<string, number> = { unit_price: unit, line_total: unit * o.qty };
-        if (list > unit) patch.unit_mrp = list;
-        let upd = sb.from("order_items").update(patch).eq("order_id", orderId).eq("product_id", productId);
-        upd = variantId ? upd.eq("variant_id", variantId) : upd.is("variant_id", null);
-        await upd;
+      /**
+       * EDITED RATES - owner, 22 Sep 2026: "while billing when he edits the price the system
+       * sometimes does not consider edited amount and shows real price only".
+       *
+       * It did not "sometimes fail" at random. This block used to RE-RESOLVE each scanned SKU on its
+       * own - `products.ilike(sku)` then `variants.ilike(sku)`, each with maybeSingle() - and then
+       * find the row to patch by (product_id, variant_id). Three ways that silently lost the edit,
+       * every one of them ending in `continue` with the catalogue price left on the bill:
+       *
+       *  1. The SKU went into `ilike` unescaped. In LIKE syntax `_` is a single-character wildcard
+       *     and `%` matches anything, so a SKU containing either could match several rows -
+       *     maybeSingle() then returns an ERROR and no data, and the edit was dropped.
+       *  2. The lookup tried `products` FIRST. When a SKU exists as a product row but place_order
+       *     billed the variant (or the reverse), the resolution here disagreed with the one the RPC
+       *     had already made, and the follow-up `.is("variant_id", null)` matched no row at all.
+       *  3. Any single-row miss - a trailing space, a case difference the collation did not fold -
+       *     had the same silent ending.
+       *
+       * The fix is to stop guessing. Read back the rows place_order ACTUALLY wrote for this order,
+       * key them on their own product/variant SKU, and patch by order_item id. The database's own
+       * answer replaces a second, independent resolution that could disagree with it. (Same pattern
+       * createEstimateAction already uses to price estimate lines.)
+       *
+       * If a line still cannot be matched, it is reported back instead of being swallowed - a wrong
+       * rate the staffer is told about is recoverable; a silent one is what reached the customer.
+       */
+      const { data: rows } = await sb
+        .from("order_items")
+        .select("id, qty, product:products(sku), variant:variants(sku)")
+        .eq("order_id", orderId);
+      // One SKU can legitimately map to more than one row; price every row that carries it.
+      const bySku = new Map<string, { id: string; qty: number }[]>();
+      for (const r of ((rows as any[]) ?? [])) {
+        const sku = (r as any).variant?.sku ?? (r as any).product?.sku;
+        if (!sku) continue;
+        const key = String(sku).trim().toUpperCase();
+        const list = bySku.get(key) ?? [];
+        list.push({ id: (r as any).id, qty: (r as any).qty });
+        bySku.set(key, list);
       }
+
+      const jobs: (() => Promise<void>)[] = [];
+      for (const o of overrides) {
+        const matches = bySku.get(String(o.sku ?? "").trim().toUpperCase());
+        if (!matches?.length) { unpriced.push(o.sku); continue; }
+        const unit = Math.round((o.priceRupees as number) * 100);
+        // Original (pre-discount) rate for the invoice's Rate -> Disc -> Amount display. Only stored
+        // when it is actually higher than the billed net, so a plain override doesn't fake a discount.
+        const list = Number.isFinite(o.listRupees as number) ? Math.round((o.listRupees as number) * 100) : 0;
+        for (const m of matches) {
+          // Bill the quantity the ORDER carries, not what the screen believed it to be.
+          const qty = Number.isFinite(m.qty) ? m.qty : o.qty;
+          const patch: Record<string, number> = { unit_price: unit, line_total: unit * qty };
+          if (list > unit) patch.unit_mrp = list;
+          jobs.push(async () => { await sb.from("order_items").update(patch).eq("id", m.id); });
+        }
+      }
+      const BATCH = 8;
+      for (let b = 0; b < jobs.length; b += BATCH) {
+        await Promise.all(jobs.slice(b, b + BATCH).map((run) => run()));
+      }
+
       // Recompute the authoritative total from the (possibly edited) line items.
       const { data: lines } = await sb.from("order_items").select("line_total").eq("order_id", orderId);
       const recomputed = ((lines as any[]) ?? []).reduce((s, l) => s + (l.line_total ?? 0), 0);
       if (recomputed > 0) total = recomputed;
     } catch {
-      /* keep the RPC's total if reconciliation hits a snag — never corrupt the bill */
+      // Reconciliation failed outright - keep the RPC's total rather than corrupt the bill, but do
+      // NOT pretend the edits landed.
+      unpriced.length = 0;
+      for (const o of overrides) unpriced.push(o.sku);
+    }
+    const missed = [...new Set(unpriced.filter(Boolean))];
+    if (missed.length) {
+      priceWarning = `The edited rate could not be applied to ${missed.join(", ")} — that line is billed at the catalogue price. Open this bill in Edit bill and set the rate there.`;
     }
   }
 
@@ -370,7 +420,7 @@ export async function posSaleAction(input: {
   // A real counter sale deducts stock now (a backorder holds none), so refresh the storefront so a
   // design that just sold out drops off the shop at once.
   if (!input.backorder) revalidateTag("storefront");
-  return { ok: true, orderId, total };
+  return { ok: true, orderId, total, ...(priceWarning ? { priceWarning } : {}) };
 }
 
 /** ACCEPT a storefront (website) order — moves it out of the "new" queue; customer WhatsApp'd. */
