@@ -33,10 +33,46 @@ export function EstimatesTable({ estimates, initialQuery = "", initialTab = "" }
 
   const counts = useMemo(() => Object.fromEntries(TABS.map((t) => [t.key, estimates.filter((e) => t.match(e.status)).length])), [estimates]);
 
+  /**
+   * DUPLICATE FLAG - owner, 21 Sep 2026: "Yeh customer ke 4 bills ban gye h". Saving a quote used to
+   * have no idempotency, so a retry after a slow save wrote another quote; the server now refuses
+   * those, but the ones already on file are still here, each holding stock, and nobody can tell by
+   * eye which of four identical rows is the real one.
+   *
+   * So flag them. Among LIVE quotes only (open/held - a billed or denied one is finished business),
+   * group by customer + exact total + same calendar day. In any group of two or more, the EARLIEST
+   * is treated as the real quote and the later ones are marked as duplicates of it.
+   *
+   * This only ever draws a badge and offers a filter. Nothing is denied, hidden or changed
+   * automatically - a person still presses Deny on each row, because only they know whether a repeat
+   * order is real.
+   */
+  const dupOf = useMemo(() => {
+    const groups = new Map<string, E[]>();
+    for (const e of estimates) {
+      if (e.status !== "open" && e.status !== "held") continue;
+      const who = `${(e.customer_name ?? "").trim().toLowerCase().replace(/\s+/g, " ")}|${String(e.customer_phone ?? "").replace(/\D/g, "").slice(-10)}`;
+      const day = String(e.created_at ?? "").slice(0, 10);
+      const key = `${who}|${e.total ?? 0}|${day}`;
+      const list = groups.get(key) ?? [];
+      list.push(e);
+      groups.set(key, list);
+    }
+    const out = new Map<string, string>(); // duplicate id -> the earlier quote it repeats
+    for (const list of groups.values()) {
+      if (list.length < 2) continue;
+      const byTime = [...list].sort((x, y) => new Date(x.created_at).getTime() - new Date(y.created_at).getTime());
+      for (const e of byTime.slice(1)) out.set(e.id, byTime[0].id);
+    }
+    return out;
+  }, [estimates]);
+  const [dupOnly, setDupOnly] = useState(false);
+  const shortRef = (id: string) => String(id).slice(0, 8).toUpperCase();
+
   const rows = useMemo(() => {
     const ql = q.toLowerCase().trim();
     const idq = ql.replace(/^est-/, "");
-    const filtered = estimates.filter((e) => tab.match(e.status) && (!ql || (e.customer_name ?? "").toLowerCase().includes(ql) || String(e.id).toLowerCase().includes(ql) || String(e.id).toLowerCase().includes(idq) || String(e.id).slice(0, 8).toLowerCase() === idq.slice(0, 8)));
+    const filtered = estimates.filter((e) => tab.match(e.status) && (!dupOnly || dupOf.has(e.id)) && (!ql || (e.customer_name ?? "").toLowerCase().includes(ql) || String(e.id).toLowerCase().includes(ql) || String(e.id).toLowerCase().includes(idq) || String(e.id).slice(0, 8).toLowerCase() === idq.slice(0, 8)));
     const dir = sortDir === "asc" ? 1 : -1;
     return [...filtered].sort((a, b) => {
       let c = 0;
@@ -47,7 +83,7 @@ export function EstimatesTable({ estimates, initialQuery = "", initialTab = "" }
       return c * dir;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [estimates, tabKey, q, sort]);
+  }, [estimates, tabKey, q, sort, dupOnly, dupOf]);
 
   const toggleSort = (field: string, firstAsc: boolean) => setSort((prev) => {
     const [f, dr] = prev.split("_");
@@ -71,6 +107,21 @@ export function EstimatesTable({ estimates, initialQuery = "", initialTab = "" }
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search customer / ref…"
           className="ml-auto rounded-full border border-sand px-4 py-1.5 text-sm bg-white outline-none focus:border-emerald w-56" />
       </div>
+      {dupOf.size > 0 && (
+        <div className="mb-3 rounded-xl border border-rose/40 bg-rose/5 px-4 py-3 text-sm">
+          <p className="text-ink">
+            <span className="font-semibold">{dupOf.size} quote{dupOf.size === 1 ? "" : "s"} look{dupOf.size === 1 ? "s" : ""} like a repeat</span>
+            {" "}of an earlier one — same customer, same amount, same day. Each one still holds stock.
+          </p>
+          <p className="text-xs text-muted mt-1">
+            Check the flagged rows and press <span className="text-rose font-medium">Deny</span> on the ones that are not real orders; denying releases the stock they hold. The earliest quote in each set is never flagged.
+          </p>
+          <button type="button" onClick={() => setDupOnly((v) => !v)}
+            className={`mt-2 px-3 py-1 rounded-full text-xs ${dupOnly ? "bg-ink text-white" : "border border-rose/50 text-rose hover:bg-rose/10"}`}>
+            {dupOnly ? "Showing only repeats — show everything" : "Show only the repeats"}
+          </button>
+        </div>
+      )}
       {tab.key === "open" && (counts.held ?? 0) > 0 && (
         <p className="text-xs text-gold-dark mb-3">
           {counts.held} quote{counts.held === 1 ? "" : "s"} {counts.held === 1 ? "is" : "are"} <button type="button" className="underline" onClick={() => setTabKey("held")}>On hold</button>
@@ -96,7 +147,14 @@ export function EstimatesTable({ estimates, initialQuery = "", initialTab = "" }
             </td></tr>}
             {rows.map((e) => (
               <tr key={e.id} className="border-t border-sand/60 align-middle">
-                <td className="p-3 text-muted whitespace-nowrap">{String(e.id).slice(0, 8).toUpperCase()}</td>
+                <td className="p-3 text-muted whitespace-nowrap">
+                  {shortRef(e.id)}
+                  {dupOf.has(e.id) && (
+                    <span className="block mt-0.5 text-[10px] text-rose font-medium" title="Same customer, same amount, same day as an earlier quote">
+                      ⧉ repeat of {shortRef(dupOf.get(e.id)!)}
+                    </span>
+                  )}
+                </td>
                 <td className="p-3 text-ink">{e.customer_name || "—"}{e.customer_phone && <span className="block text-xs text-muted">{e.customer_phone}</span>}</td>
                 <td className="p-3 font-medium whitespace-nowrap">{formatPaise(e.total)}</td>
                 <td className="p-3"><span className={`px-2 py-0.5 rounded-full text-xs ${STATUS_STYLE[e.status] ?? "bg-cream text-muted"}`}>{STATUS_LABEL[e.status] ?? e.status}</span></td>

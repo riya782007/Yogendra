@@ -129,6 +129,7 @@ describe("features that were lost and restored stay present", () => {
     ["storefront search box", "components/site/SearchField.tsx", /name="q"/],
     ["POS shows the total quantity billed", "components/admin/POSClient.tsx", /pieceCount/],
     ["duplicate quotes are refused", "app/actions/billing_mod_3.ts", /findRecentDuplicate/],
+    ["repeat quotes are flagged in the list", "components/admin/EstimatesTable.tsx", /dupOf/],
   ];
 
   it.each(CONTRACTS)("%s", (_label, rel, pattern) => {
