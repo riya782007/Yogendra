@@ -1,0 +1,143 @@
+# Nightly logical backup of the blythe-diva Postgres database.
+#
+# Why this exists: Supabase Pro takes daily backups for you. The Free plan takes NONE. This job has
+# to be running, and proven, BEFORE the org is downgraded - otherwise the shop's invoices, stock
+# ledger and receivables have no copy anywhere.
+#
+# It does three things every night, and the job FAILS if any of them fail:
+#   1. pg_dump the whole database.
+#   2. Restore that dump into a throwaway Postgres 17 and compare row counts table by table
+#      against the live database. A dump that cannot be restored is not a backup, and the only
+#      way to know is to restore it.
+#   3. Upload the verified dump to private R2 storage and prune anything older than 30 days.
+#
+# Secrets are set in the repo's Settings > Secrets and variables > Actions. This repo is PUBLIC,
+# so note: Actions secrets are NOT exposed to forks or pull requests, and this workflow only runs
+# on `schedule` and manual `workflow_dispatch` from the default branch. Never put a credential in
+# the workflow file itself.
+#
+#   SUPABASE_DB_URL   Supabase Dashboard > Project Settings > Database > Connection string >
+#                     **Session pooler** (URI). Use the pooler, not the direct db.<ref> host:
+#                     direct connections are IPv6-only and GitHub runners have no IPv6.
+#   R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET
+#                     Cloudflare > R2 > Manage API tokens. Bucket stays private.
+
+name: Nightly DB backup (blythe-diva)
+
+on:
+  schedule:
+    - cron: "45 19 * * *"        # 01:15 IST daily - after the shop has closed
+  workflow_dispatch:              # so it can be run on demand and watched
+
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      verify:                     # the throwaway database the dump is restored into
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: verify
+          POSTGRES_DB: verify
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Install PostgreSQL 17 client
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          pg_dump --version
+
+      - name: Dump the database
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          [ -n "$DB_URL" ] || { echo "::error::SUPABASE_DB_URL is not set - blythe-diva has NO backup. Add it in Settings > Secrets and variables > Actions."; exit 1; }
+          STAMP=$(date -u +%Y-%m-%dT%H-%M-%SZ)
+          echo "STAMP=$STAMP" >> "$GITHUB_ENV"
+          # Custom format: compressed, and restorable table-by-table if it ever has to be.
+          pg_dump "$DB_URL" --format=custom --no-owner --no-privileges --verbose \
+            --file="blythediva-$STAMP.dump" 2> dump.log || { tail -40 dump.log; exit 1; }
+          ls -lh "blythediva-$STAMP.dump"
+          # A dump that is suspiciously small means something went wrong - fail loudly, do not ship it.
+          SIZE=$(stat -c%s "blythediva-$STAMP.dump")
+          echo "dump is $SIZE bytes"
+          [ "$SIZE" -gt 1000000 ] || { echo "::error::dump is only $SIZE bytes - refusing it"; exit 1; }
+
+      - name: Restore it into a throwaway database and compare row counts
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          pg_restore --dbname "postgresql://postgres:verify@localhost:5432/verify" \
+            --no-owner --no-privileges --jobs 4 "blythediva-$STAMP.dump" 2> restore.log \
+            || { echo "::warning::pg_restore reported issues:"; tail -40 restore.log; }
+
+          # Row counts, live vs restored, for every public table. Any mismatch fails the job.
+          COUNTS_SQL="select table_name from information_schema.tables
+                      where table_schema='public' and table_type='BASE TABLE' order by 1;"
+          psql "$DB_URL" -Atc "$COUNTS_SQL" > tables.txt
+          echo "comparing $(wc -l < tables.txt) tables"
+          FAIL=0
+          while read -r t; do
+            [ -n "$t" ] || continue
+            LIVE=$(psql "$DB_URL" -Atc "select count(*) from public.\"$t\";")
+            COPY=$(psql "postgresql://postgres:verify@localhost:5432/verify" -Atc "select count(*) from public.\"$t\";" 2>/dev/null || echo MISSING)
+            if [ "$LIVE" != "$COPY" ]; then
+              echo "::error::$t  live=$LIVE  restored=$COPY"
+              FAIL=1
+            fi
+          done < tables.txt
+          [ "$FAIL" -eq 0 ] || { echo "::error::the backup does not restore faithfully - NOT uploading it"; exit 1; }
+          echo "every table restored with a matching row count"
+
+      - name: Upload the verified dump to R2, keep 30 days
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          [ -n "$BUCKET" ] || { echo "::error::R2 secrets are not set - the dump was verified but has nowhere to live."; exit 1; }
+          aws s3 cp "blythediva-$STAMP.dump" "s3://$BUCKET/blythediva/blythediva-$STAMP.dump" \
+            --endpoint-url "$ENDPOINT" --only-show-errors
+          echo "uploaded blythediva-$STAMP.dump"
+          CUTOFF=$(date -u -d '30 days ago' +%Y-%m-%d)
+          aws s3 ls "s3://$BUCKET/blythediva/" --endpoint-url "$ENDPOINT" | awk '{print $4}' | while read -r k; do
+            [ -n "$k" ] || continue
+            d=$(echo "$k" | sed -n 's/^blythediva-\([0-9-]\{10\}\)T.*/\1/p')
+            if [ -n "$d" ] && [ "$d" \< "$CUTOFF" ]; then
+              aws s3 rm "s3://$BUCKET/blythediva/$k" --endpoint-url "$ENDPOINT" --only-show-errors
+              echo "pruned $k"
+            fi
+          done
+
+      - name: Say what happened
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "### Backup verified and stored" >> "$GITHUB_STEP_SUMMARY"
+            echo "\`blythediva-$STAMP.dump\` was dumped, restored into a clean Postgres 17, row-count matched on every table, and uploaded to R2." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Backup FAILED - blythe-diva may have no fresh copy tonight" >> "$GITHUB_STEP_SUMMARY"
+            echo "Check the failing step above before relying on the Free plan." >> "$GITHUB_STEP_SUMMARY"
+          fi
