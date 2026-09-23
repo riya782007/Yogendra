@@ -1,0 +1,93 @@
+# Move Blythe Diva's Supabase-hosted images to Cloudinary. Manual, one stage at a time.
+#
+# Every image URL in this database is absolute, so this is a string swap in four columns -
+# product_images.path, products.thumbnail_path, promotions.image_path and variants.image_paths[].
+# No React file changes; the 54 <img> tags render whatever string is in the row.
+#
+# RUN THE STAGES IN THIS ORDER, checking the log after each:
+#   plan      read-only. What would move, and what is left to do. Change nothing else.
+#   upload    Cloudinary pulls each image from its public Supabase URL and the old -> new pair is
+#             recorded in media_url_migrations. NO app-visible column changes yet, so the site is
+#             still serving entirely from Supabase. Safe to run in batches with LIMIT.
+#   switch    each new URL is fetched and proven to be a real image, then the columns are updated.
+#             This is the only stage the storefront notices.
+#   verify    re-check every switched URL is still serving.
+#   rollback  put the old Supabase URLs back. The Cloudinary copies stay for a retry.
+#
+# Nothing here ever deletes from Supabase Storage. The originals remain as the fallback.
+#
+# Secrets (Settings > Secrets and variables > Actions):
+#   SUPABASE_URL                 https://qfybzwiyhnnpqumtzkpf.supabase.co
+#   SUPABASE_SERVICE_ROLE_KEY    Supabase > Project Settings > API > service_role
+#   CLOUDINARY_CLOUD_NAME        hwqo1klq
+#   CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET   Cloudinary > Settings > API Keys
+
+name: Move images to Cloudinary
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "Which stage to run"
+        required: true
+        default: plan
+        type: choice
+        options: [plan, upload, switch, verify, rollback]
+      limit:
+        description: "Max files this run (0 = all). Use a small number for the first upload."
+        required: false
+        default: "25"
+      concurrency:
+        description: "Parallel requests (1-8)"
+        required: false
+        default: "4"
+
+concurrency:
+  group: media-migration        # never let two stages run at once
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Confirm what is about to happen
+        run: |
+          echo "### Stage: \`${{ inputs.stage }}\`  (limit ${{ inputs.limit }})" >> "$GITHUB_STEP_SUMMARY"
+          case "${{ inputs.stage }}" in
+            plan)     echo "Read-only. Nothing will change." >> "$GITHUB_STEP_SUMMARY" ;;
+            upload)   echo "Copies images into Cloudinary and records the mapping. The storefront still serves from Supabase after this." >> "$GITHUB_STEP_SUMMARY" ;;
+            switch)   echo "**Changes what the storefront serves.** Each URL is verified first; \`rollback\` undoes it." >> "$GITHUB_STEP_SUMMARY" ;;
+            verify)   echo "Re-checks every switched image is serving." >> "$GITHUB_STEP_SUMMARY" ;;
+            rollback) echo "**Restores the Supabase URLs.**" >> "$GITHUB_STEP_SUMMARY" ;;
+          esac
+
+      - name: Run the stage
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+          LIMIT: ${{ inputs.limit }}
+          CONCURRENCY: ${{ inputs.concurrency }}
+        run: |
+          set -euo pipefail
+          [ -n "$SUPABASE_URL" ] || { echo "::error::SUPABASE_URL is not set"; exit 1; }
+          [ -n "$CLOUDINARY_CLOUD_NAME" ] || { echo "::error::Cloudinary secrets are not set"; exit 1; }
+          node scripts/media-migrate.mjs "${{ inputs.stage }}" | tee run.log
+          {
+            echo ""
+            echo "<details><summary>Full log</summary>"
+            echo ""
+            echo '```'
+            cat run.log
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
