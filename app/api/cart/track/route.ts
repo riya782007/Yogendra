@@ -37,7 +37,23 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, cleared: true });
     }
 
-    const clean = items.slice(0, 50).map((i: any) => ({
+    /**
+     * CART LINE CAP - owner, 23 Sep 2026: a wholesale cart printed a total its own lines did not add
+     * up to. The list showed 50 items worth Rs 16,764.28 under a heading of Rs 21,172.68.
+     *
+     * Cause: this cap used to be 50, and `total` below is taken from the browser, where it is summed
+     * over the WHOLE cart. So a dealer with more than 50 lines had the extra ones silently dropped
+     * while their value stayed in the total. The total was right; the itemisation was short. Eight
+     * carts had already hit it, Rs 77,855 of cart value sitting in totals with no lines behind it -
+     * and the WhatsApp recovery message quotes the stored item COUNT next to that full total, so
+     * dealers were being told "50 pieces (Rs 21,172.68)".
+     *
+     * 200 is comfortably past any real dealer cart (the biggest seen is ~60) while still bounding
+     * what a script could push into the row. If it is ever hit, items_dropped records it rather than
+     * letting the shortfall pass unnoticed - `total` deliberately still covers the whole cart.
+     */
+    const MAX_TRACKED_ITEMS = 200;
+    const clean = items.slice(0, MAX_TRACKED_ITEMS).map((i: any) => ({
       sku: (i?.sku ?? "").toString().slice(0, 60),
       name: (i?.name ?? "").toString().slice(0, 160),
       qty: Math.max(1, Math.round(Number(i?.qty) || 1)),
@@ -48,13 +64,15 @@ export async function POST(req: Request) {
     // who reached "Pay to confirm" has finalised — the owner can call/close it, esp. international ones)
     // instead of waiting for the 20-min "abandoned" window.
     const reachedCheckout = String(body?.stage ?? "").toLowerCase() === "checkout" || body?.reachedCheckout === true;
-    const row: any = { session_id: sid, items: clean, total, customer_name: name, phone, recovered: false, channel, updated_at: new Date().toISOString() };
+    const itemsDropped = Math.max(0, items.length - clean.length);
+    const row: any = { session_id: sid, items: clean, total, customer_name: name, phone, recovered: false, channel, items_dropped: itemsDropped, updated_at: new Date().toISOString() };
     if (city) row.city = city;
     if (reachedCheckout) row.reached_checkout = true;
     let up = await sb.from("abandoned_carts").upsert(row, { onConflict: "session_id" });
     if (up.error) {
-      // `channel`/`city` columns may not be deployed yet — retry without them so tracking never breaks.
-      delete row.channel; delete row.city;
+      // `channel`/`city`/`items_dropped` columns may not be deployed yet — retry without them so
+      // tracking never breaks on an older database.
+      delete row.channel; delete row.city; delete row.items_dropped;
       up = await sb.from("abandoned_carts").upsert(row, { onConflict: "session_id" });
     }
     return NextResponse.json({ ok: true });

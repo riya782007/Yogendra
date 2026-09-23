@@ -10,7 +10,7 @@ import { deleteAbandonedCartAction } from "@/app/actions/abandoned";
 import { openAbandonedCartsPdf } from "@/lib/abandonedCartPdf";
 
 type Item = { sku?: string; name: string; qty: number; price: number };
-type Cart = { id: string; session_id?: string | null; customer_name?: string | null; phone?: string | null; total: number; created_at: string; items: Item[]; channel?: string | null; reached_checkout?: boolean | null; recovered?: boolean | null };
+type Cart = { id: string; session_id?: string | null; customer_name?: string | null; phone?: string | null; total: number; created_at: string; items: Item[]; channel?: string | null; reached_checkout?: boolean | null; recovered?: boolean | null; items_dropped?: number | null };
 
 const agoText = (d: string) => {
   const h = Math.round((Date.now() - new Date(d).getTime()) / 3600000);
@@ -37,6 +37,14 @@ export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMa
     else setPlaceMsg({ text: r.error ?? "Couldn't delete.", ok: false });
   }
   const totalQty = items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
+  /**
+   * Lines this cart has that were never stored (tracking cap). `total` covers the WHOLE cart, so
+   * when this is set the listed items are worth LESS than the total shown - say so rather than
+   * letting the two numbers silently disagree, which is how a dealer once got quoted "50 pieces"
+   * against a total covering more than 50.
+   */
+  const dropped = Math.max(0, Number(cart.items_dropped) || 0);
+  const listedValue = items.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 0), 0);
   let phone = cart.phone ? String(cart.phone).replace(/\D/g, "") : "";
   if (phone.startsWith("0")) phone = phone.slice(1);
   if (phone.length === 10) phone = "91" + phone; // country code so WhatsApp opens the right chat
@@ -55,9 +63,12 @@ export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMa
   // to checkout/payment. The owner just hits send; the customer taps and pays.
   const recoverUrl = `${SITE}/cart/recover/${cart.id}`;
   const money = formatPaise(cart.total);
+  // When some lines were not recorded, the stored count understates the cart - so the message says
+  // the amount without claiming a piece count that does not match it.
+  const piecePhrase = dropped > 0 ? "your items" : `${totalQty} piece${totalQty === 1 ? "" : "s"}`;
   const waMsg = isWholesale
-    ? `Hi ${cart.customer_name || "there"}! 🙏 Your Blythe Diva wholesale cart has ${totalQty} piece${totalQty === 1 ? "" : "s"} (${money}). Tap below to review and confirm your order — payment is quick and secure:\n${recoverUrl}`
-    : `Hi ${cart.customer_name || "there"}! ✨ You left ${totalQty} beautiful piece${totalQty === 1 ? "" : "s"} (${money}) in your Blythe Diva bag. Complete your order and pay securely here:\n${recoverUrl}\n\n🎁 Pay online and get a FREE mystery gift with your order!`;
+    ? `Hi ${cart.customer_name || "there"}! 🙏 Your Blythe Diva wholesale cart has ${piecePhrase} (${money}). Tap below to review and confirm your order — payment is quick and secure:\n${recoverUrl}`
+    : `Hi ${cart.customer_name || "there"}! ✨ You left ${dropped > 0 ? "your beautiful pieces" : `${totalQty} beautiful piece${totalQty === 1 ? "" : "s"}`} (${money}) in your Blythe Diva bag. Complete your order and pay securely here:\n${recoverUrl}\n\n🎁 Pay online and get a FREE mystery gift with your order!`;
   const wa = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(waMsg)}` : null;
   const when = new Date(cart.created_at).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
@@ -77,6 +88,11 @@ export function AbandonedCartCard({ cart, imgMap, slugMap }: { cart: Cart; imgMa
         <div className="text-right shrink-0 flex items-start gap-2">
           <div>
             <p className="font-semibold text-ink">{formatPaise(cart.total)}</p>
+          {dropped > 0 && (
+            <p className="text-[11px] text-rose mt-0.5" title="The total covers the whole cart; these extra lines were not recorded.">
+              +{dropped} more item{dropped === 1 ? "" : "s"} not listed · shown lines = {formatPaise(listedValue)}
+            </p>
+          )}
             {wa ? (
               <a href={wa} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}
                 title="Open WhatsApp with a ready message + payment link"
