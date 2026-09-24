@@ -60,11 +60,33 @@ export default async function Invoice({ params }: { params: { id: string } }) {
   // CGST/SGST share from within the price instead of adding 3% on top (which was double-charging on POS
   // bills, e.g. ₹960 printing as ₹989). Exclusive is applied ONLY when the owner explicitly pins it for
   // a one-off bill where he keyed pre-tax rates.
-  const gstExclusive = !isCash && gstMode === "exclusive";
+  /**
+   * TRADE (dealer) BILLS ARE THE ONE EXCLUSIVE CHANNEL. Everything else in this system stores a
+   * GST-INCLUSIVE price, but a wholesale order is priced the other way round: `place_wholesale_order`
+   * writes the PRE-GST wholesale rate onto the lines and the checkout adds the 3% on top to reach the
+   * amount the dealer agreed to. Nothing ever stamped that on the order, so this page fell back to
+   * "inclusive" and printed a grand total 3% of goods BELOW the amount held against the order.
+   * (Owner, 24 Sep 2026: "Calculation error" - bill Rs 3,486 vs Rs 3,577.98 on the COD screen.)
+   * Defaulting on the CHANNEL rather than on a stored flag also fixes every dealer bill already in
+   * the database, with no data migration. The owner can still pin either mode per bill.
+   */
+  const isTradeOrder = String((order as any).channel ?? "").toLowerCase() === "wholesale";
+  const gstExclusive = !isCash && (gstMode === "exclusive" || (gstMode == null && isTradeOrder));
   // Extra charges are printed separately, but participate in the invoice total and GST calculation.
-  const xPacking = (order.extra_packing as number) || 0;
-  const xCourier = (order.extra_courier as number) || 0;
-  const xAdjust = (order.extra_adjustment as number) || 0;
+  const rawPacking = (order.extra_packing as number) || 0;
+  const rawCourier = (order.extra_courier as number) || 0;
+  const rawAdjust = (order.extra_adjustment as number) || 0;
+  /**
+   * On a trade bill the goods are pre-tax but the shipping slab and the Rs 120 COD fee are the
+   * owner's flat, already-GST-inclusive figures - the checkout adds them AFTER the 3%. Show them at
+   * their pre-tax value here so their GST joins the tax line exactly once and the printed column
+   * adds up to the rupee the dealer agreed to. POS and retail bills are untouched: their charges are
+   * either genuinely pre-tax (exclusive) or inclusive along with the goods, and both already agree.
+   */
+  const chargePreTax = (p: number) => (gstExclusive && isTradeOrder ? Math.round(p / (1 + GST_RATE / 100)) : p);
+  const xPacking = chargePreTax(rawPacking);
+  const xCourier = chargePreTax(rawCourier);
+  const xAdjust = chargePreTax(rawAdjust);
   const xCharges = xPacking + xCourier + xAdjust;
   const itemsTotal = lineItemsTotal;
   const total = Math.max(0, itemsTotal + xCharges);
@@ -468,9 +490,12 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                     customer_phone: (order.customer_phone as string) ?? null,
                     buyer_gstin: (order.buyer_gstin as string) ?? null,
                     buyer_address: (order.buyer_address as string) ?? null,
-                    extra_packing: xPacking,
-                    extra_courier: xCourier,
-                    extra_adjustment: xAdjust,
+                    // RAW, not the pre-tax display values: Edit bill writes straight back to these
+                    // columns, so handing it the pre-tax figure would quietly shave the GST off the
+                    // charge the moment the owner opened the panel and saved.
+                    extra_packing: rawPacking,
+                    extra_courier: rawCourier,
+                    extra_adjustment: rawAdjust,
                     items: items.map((it: any) => ({
                       id: String(it.id ?? ""),
                       sku: (it.variant?.sku ?? it.product?.sku ?? "") as string,
