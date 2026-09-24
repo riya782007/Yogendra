@@ -28,7 +28,11 @@ export default async function CodOrders({ searchParams }: { searchParams?: { err
   // belongs here — paid / online orders stay on Storefront Orders.
   const rows = ((data as any[]) ?? []).filter((r) =>
     isCodOrder(r) && String(r.status ?? "").toLowerCase() !== "cancelled");
-  const pending = rows.reduce((s, r) => s + (r.total ?? 0), 0);
+  // Show the SAME rupee the printed bill shows. The invoice rounds its grand total to the nearest
+  // Rs 1 and confirming the order copies the order total into amount_paid, so printing raw paise
+  // here is how the owner ended up holding one figure on screen and reading another on the bill.
+  const collectOnDelivery = (r: any) => Math.round((((r?.total ?? 0) as number)) / 100) * 100;
+  const pending = rows.reduce((s, r) => s + collectOnDelivery(r), 0);
 
   const orderIds = rows.map((r) => r.id);
   const itemsByOrder = new Map<string, any[]>();
@@ -103,7 +107,7 @@ export default async function CodOrders({ searchParams }: { searchParams?: { err
                       {r.customer_phone && <a href={`tel:${r.customer_phone}`} className="block text-xs text-emerald">{r.customer_phone}</a>}
                       {r.buyer_address && <span className="block text-xs text-muted mt-0.5 max-w-xs">{r.buyer_address}</span>}
                     </td>
-                    <td className="p-3 text-right font-semibold whitespace-nowrap">{formatPaise(r.total)}</td>
+                    <td className="p-3 text-right font-semibold whitespace-nowrap">{formatPaise(collectOnDelivery(r))}</td>
                     <td className="p-3 text-right">
                       <div className="flex flex-col items-end gap-1.5">
                         <Link href={`/admin/invoice/${r.id}#edit-bill`} className="px-3 py-1.5 rounded-full bg-ink/5 text-ink text-xs font-medium hover:bg-ink/10 whitespace-nowrap">✎ Edit bill</Link>
