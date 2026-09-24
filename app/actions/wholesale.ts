@@ -306,8 +306,24 @@ async function placeWholesaleCore(
     }
     const ship = wholesaleShippingPaise(itemsGst);
     const codFee = opts?.cod ? WHOLESALE_COD_FEE_PAISE : 0;
-    total = itemsGst + ship + codFee;
-    await sb.from("orders").update({ total, extra_courier: ship + codFee }).eq("id", orderId).then(() => {}, () => {});
+    // Round to the nearest Rs 1. The printed invoice rounds its grand total the same way and
+    // confirming a COD order copies THIS number into amount_paid - left at paise the two differ by
+    // a couple of paise and a fully collected bill shows a phantom balance for ever.
+    total = Math.round((itemsGst + ship + codFee) / 100) * 100;
+    await sb.from("orders").update({
+      total,
+      extra_courier: ship + codFee,
+      // A dealer order is a B2B TAX INVOICE whose LINES carry the PRE-GST wholesale rate: `itemsGst`
+      // above adds the 3% on top, and every bill-edit path (saveOrderBill / editOrderCharges /
+      // add_order_line / edit_order_line) recomputes it the same way. Stamp that on the order so the
+      // printed bill uses the same rule. Left unset it fell back to "GST is already inside the rate"
+      // and printed a grand total 3% of goods SHORT of the amount held against the order - Rs 3,486
+      // on a bill the COD screen was holding at Rs 3,577.98. (Owner, 24 Sep 2026: "Calculation error".)
+      // bill_type also matters on its own: those edit paths only re-apply the 3% when it reads "gst",
+      // so while it was null, editing a dealer bill silently knocked the tax back off the total.
+      bill_type: "gst",
+      gst_mode: "exclusive",
+    }).eq("id", orderId).then(() => {}, () => {});
     // Record the dealer's UPI payment claim so the owner can match it against his bank/UPI history.
     if (ref) await sb.from("orders").update({ payment_ref: ref, payment_mode: "upi" }).eq("id", orderId);
     // Dealer's payment SCREENSHOT (owner's preferred proof) — stored on the order for one-tap verify.
