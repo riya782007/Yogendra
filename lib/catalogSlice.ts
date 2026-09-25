@@ -569,3 +569,54 @@ export async function getTradeSliceCached(offset = 0, limit: number = TRADE_PAGE
     return getTradeSlice(offset, limit, filter);
   }
 }
+
+/**
+ * Catalogue rows for a specific set of SKUs (product SKUs and/or variant SKUs).
+ *
+ * Used to rebuild a dealer's SAVED CART at LIVE prices and LIVE stock when they log back in. It is
+ * deliberately the same pricing path the trade grid uses - resolvePrices() then gstInc() - so a
+ * restored line is priced identically to the same design sitting in the catalogue. Anything the
+ * caller asked for that is not returned here no longer exists and must be reported, not dropped.
+ */
+export async function getTradeRowsBySkus(skus: string[]): Promise<TradeRow[]> {
+  const want = [...new Set((skus ?? []).map((s) => String(s ?? "").trim().toUpperCase()).filter(Boolean))];
+  if (!want.length) return [];
+  const sb = supabaseServer();
+  const formula = await formulaOf();
+  const gstInc = (paise: number) => Math.round(paise * (1 + GST_RATE / 100));
+
+  // Variants first: a trade row is normally a variant (SKU + colour), and its stock is authoritative.
+  const { data: vrows } = await sb
+    .from("variants")
+    .select("id,sku,color,qty,image_paths,product:products(id,sku,name,base_wholesale,status,wholesale_only,retail_only,wholesale_override,mrp_override,thumbnail_path,category:categories(id,name,slug))")
+    .in("sku", want);
+  const { data: prows } = await sb
+    .from("products")
+    .select("id,sku,name,qty,base_wholesale,status,wholesale_only,retail_only,wholesale_override,mrp_override,thumbnail_path,category:categories(id,name,slug)")
+    .in("sku", want);
+
+  const out: TradeRow[] = [];
+  const seen = new Set<string>();
+  const push = (r: TradeRow) => { const k = r.sku.toUpperCase(); if (!seen.has(k)) { seen.add(k); out.push(r); } };
+
+  for (const v of ((vrows as any[]) ?? [])) {
+    const p = v.product;
+    if (!p) continue;
+    const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));
+    const imgs = ((v.image_paths as string[]) ?? []).filter((x) => typeof x === "string" && x.startsWith("http")).slice(0, 3);
+    push({
+      pid: p.id, sku: v.sku, name: p.name, category: p.category?.name ?? "", sub: null, style: null,
+      colour: v.color ?? null, qty: v.qty ?? 0, price: gstInc(ps.wholesaleRate), mrp: ps.mrp,
+      image: imgs[0] ?? (typeof p.thumbnail_path === "string" ? p.thumbnail_path : null), images: imgs,
+    });
+  }
+  for (const p of ((prows as any[]) ?? [])) {
+    const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));
+    push({
+      pid: p.id, sku: p.sku, name: p.name, category: p.category?.name ?? "", sub: null, style: null,
+      colour: null, qty: p.qty ?? 0, price: gstInc(ps.wholesaleRate), mrp: ps.mrp,
+      image: typeof p.thumbnail_path === "string" ? p.thumbnail_path : null, images: [],
+    });
+  }
+  return out;
+}
