@@ -31,10 +31,19 @@ export async function POST(req: Request) {
     }
 
     const sb = supabaseServer();
-    // Empty cart → clear any stored row (they emptied it, not abandoned).
+    // An empty payload clears the stored row ONLY when the client explicitly asks for it.
+    //
+    // It used to delete on ANY empty cart. The bd_cart_sid cookie lives 30 days, and the wholesale
+    // tracker fires on mount while `qty` is still empty - so simply RE-OPENING the trade catalogue
+    // POSTed an empty cart and wiped the cart that dealer had saved on an earlier visit. The carts the
+    // owner most wanted were exactly the ones that disappeared, with no error and no log anywhere.
+    // (Owner, 24-25 Sep 2026: Neha's cart, and Ruchika's after she reached the payment screen.)
     if (!items.length || total <= 0) {
-      await sb.from("abandoned_carts").delete().eq("session_id", sid);
-      return NextResponse.json({ ok: true, cleared: true });
+      if (body?.clear === true) {
+        await sb.from("abandoned_carts").delete().eq("session_id", sid);
+        return NextResponse.json({ ok: true, cleared: true });
+      }
+      return NextResponse.json({ ok: true, ignored: "empty" });
     }
 
     /**
@@ -74,6 +83,20 @@ export async function POST(req: Request) {
       // tracking never breaks on an older database.
       delete row.channel; delete row.city; delete row.items_dropped;
       up = await sb.from("abandoned_carts").upsert(row, { onConflict: "session_id" });
+    }
+    if (up.error) {
+      // Last resort: `reached_checkout` may be missing too, and it was never stripped. On a database
+      // without that column EVERY cart that reached the payment screen failed both attempts and was
+      // dropped in silence - the highest-intent carts of all.
+      delete row.reached_checkout;
+      up = await sb.from("abandoned_carts").upsert(row, { onConflict: "session_id" });
+    }
+    if (up.error) {
+      // Never break the storefront - but never lose a cart silently either. This line is the only
+      // trace a failed save leaves; without it a missing cart can only be reconstructed from the
+      // owner's WhatsApp screenshots.
+      console.error("[cart/track] could not save cart", { sid, lines: clean.length, total, error: up.error.message });
+      return NextResponse.json({ ok: false, saved: false });
     }
     return NextResponse.json({ ok: true });
   } catch (e) {
