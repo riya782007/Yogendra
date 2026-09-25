@@ -42,13 +42,15 @@ type PayInfo = { payeeName: string; upiId: string | null; qrUrl: string | null }
 const shipSlab = wholesaleShippingPaise;
 const COD_FEE = WHOLESALE_COD_FEE_PAISE; // ₹120 per COD order
 
-export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets = [], colourOptions = [], customerName, customerPhone = "", savedAddress = "", savedPincode = "", minOrder = 300000, history = [], payInfo = null, outstanding = 0, tiers = [], guest = false }: {
+export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets = [], colourOptions = [], customerName, customerPhone = "", savedAddress = "", savedPincode = "", minOrder = 300000, history = [], payInfo = null, outstanding = 0, tiers = [], guest = false, savedCart = null }: {
   products: P[]; hasMore?: boolean; facets?: Facet[];
   /** Every in-stock colour in the catalogue — the dropdown must not be limited to the loaded page. */
   colourOptions?: string[];
   customerName: string; customerPhone?: string; savedAddress?: string; savedPincode?: string; minOrder?: number; history?: Hist[]; payInfo?: PayInfo | null; outstanding?: number; tiers?: WholesaleTier[];
   /** Browsing without a dealer account: designs + rates are visible, ordering is not. */
   guest?: boolean;
+  /** This dealer's un-finished cart, restored on login. Priced LIVE, not from the stored row. */
+  savedCart?: { qty: Record<string, number>; rows: P[]; unavailable: string[]; updatedAt: string | null } | null;
 }) {
   const [extra, setExtra] = useState<P[]>([]);
   const [remote, setRemote] = useState<P[] | null>(null);
@@ -65,6 +67,10 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets =
   const [inStock, setInStock] = useState(false);
   const [sort, setSort] = useState<"featured" | "price_asc" | "price_desc" | "margin">("featured");
   const [qty, setQty] = useState<Record<string, number>>({});
+  // Banner shown once when a logged-in dealer's previous cart is put back. Dismissing it (or
+  // "Start fresh") never touches the saved row - the tracker rewrites it from whatever is in the
+  // cart, so emptying the cart here is enough.
+  const [restored, setRestored] = useState<{ lines: number; unavailable: string[] } | null>(null);
   const [busy, setBusy] = useState(false);
   const [reviewing, setReviewing] = useState(false); // cart review (full item list + images) before pay
   const [paying, setPaying] = useState(false);   // payment (QR + screenshot) step
@@ -125,6 +131,38 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets =
       if (Object.keys(next).length) { setQty(next); setReviewing(true); }
     } catch { /* ignore — recovery is best-effort */ }
   }, [bySku]);
+
+  /**
+   * SAVED CART — a logged-in dealer picks up exactly where they left off, on ANY device.
+   *
+   * The cart used to live only in React state behind a 30-day browser cookie: a new device, a
+   * cleared browser or a closed tab lost it, and the owner ended up chasing dealers on WhatsApp for
+   * a list nobody had. The server hands back the same cart it captured, re-priced and re-stocked
+   * from the LIVE catalogue, with its rows seeded into the SKU map so totals are right even for
+   * designs that sit on a later page of the grid.
+   *
+   * Runs once, and only into an EMPTY cart - it must never overwrite something the dealer has
+   * already started picking in this session, and a recovery link (handled above) always wins.
+   */
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current || !savedCart) return;
+    const next = savedCart.qty ?? {};
+    if (!Object.keys(next).length) return;
+    if (Object.keys(qty).length) { restoredRef.current = true; return; }
+    restoredRef.current = true;
+    // Seed the SKU map first: a restored line whose design is not on the loaded page would
+    // otherwise price at 0 and quietly understate the cart.
+    for (const r of (savedCart.rows ?? [])) seenRef.current.set(r.sku.toUpperCase(), r);
+    setExtra((prev) => {
+      const have = new Set([...products, ...prev].map((x) => x.sku.toUpperCase()));
+      const add = (savedCart.rows ?? []).filter((r) => !have.has(r.sku.toUpperCase()));
+      return add.length ? [...prev, ...add] : prev;
+    });
+    setQty(next);
+    setRestored({ lines: Object.keys(next).length, unavailable: savedCart.unavailable ?? [] });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedCart]);
   const categories = useMemo(() => {
     const names = facets.map((f) => f.name).filter(Boolean);
     if (names.length) return [...new Set(names)].sort();
@@ -447,6 +485,25 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets =
 
   return (
     <div>
+      {/* Saved cart restored on login - always ANNOUNCED, never silent. A dealer must know why
+          there are already pieces in their cart, and be able to start over in one tap. */}
+      {restored && (
+        <div className="mb-4 rounded-2xl border border-emerald/40 bg-emerald-mist px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="text-sm text-emerald-dark">
+            <b>Your last cart is back</b> — {restored.lines} design{restored.lines === 1 ? "" : "s"} · <b>{formatPaise(orderTotal)}</b> at today&apos;s rates.
+            {restored.unavailable.length > 0 && (
+              <span className="block text-[12px] text-ink/70 mt-0.5">
+                Not added (out of stock or no longer listed): <span className="font-mono">{restored.unavailable.join(", ")}</span>
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button onClick={() => { setQty({}); setRestored(null); }} className="px-3 py-1.5 rounded-full text-sm bg-white border border-sand text-ink hover:bg-ink/5">Start fresh</button>
+            {/* One tap from "logged back in" to "paying" - the whole point of restoring the cart. */}
+            <button onClick={() => { setRestored(null); if (!belowMin) setReviewing(true); }} className="px-3 py-1.5 rounded-full text-sm bg-emerald text-white">{belowMin ? "Keep it" : "Review & pay"}</button>
+          </div>
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div>
           <p className="text-sm text-muted">{guest ? "Viewing" : "Signed in as"}</p>
