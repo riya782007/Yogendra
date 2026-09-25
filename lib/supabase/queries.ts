@@ -3249,3 +3249,55 @@ export async function getProductsWithMedia() {
   }
   return base;
 }
+
+/**
+ * SAVED TRADE CART — the dealer's un-finished cart, restored when they log back in.
+ *
+ * A cart used to live only in React state keyed by a browser cookie, so a dealer who logged in from
+ * another device (or whose session ended) lost it entirely, and the owner was left reconstructing
+ * orders from WhatsApp screenshots. The cart is already captured in `abandoned_carts` for the owner's
+ * follow-up list; this reads the SAME row back for the dealer it belongs to, matched on the last 8
+ * digits of the phone (the format-agnostic rule wholesale login already uses).
+ *
+ * Returns catalogue-shaped rows so the cart prices and totals are the LIVE ones, not whatever was
+ * stored when the cart was abandoned - a dealer must never be shown a stale price. Lines whose SKU no
+ * longer exists, or is out of stock, are reported separately instead of being dropped in silence.
+ */
+export async function getSavedTradeCart(phone: string): Promise<{
+  qty: Record<string, number>;
+  rows: { pid: string; sku: string; name: string; category: string; qty: number; price: number; mrp: number; image: string | null; images?: string[]; colour?: string | null }[];
+  unavailable: string[];
+  updatedAt: string | null;
+} | null> {
+  const digits = String(phone ?? "").replace(/\D/g, "");
+  if (digits.length < 8) return null;
+  const sb = supabaseServer();
+  const { data: cart } = await sb
+    .from("abandoned_carts")
+    .select("items,updated_at")
+    .eq("recovered", false)
+    .ilike("phone", `%${digits.slice(-8)}`)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const raw = (((cart as any)?.items as any[]) ?? [])
+    .map((i) => ({ sku: String(i?.sku ?? "").trim(), qty: Math.max(0, Math.round(Number(i?.qty) || 0)) }))
+    .filter((i) => i.sku && i.qty > 0);
+  if (!raw.length) return null;
+
+  // Price and stock come from the CATALOGUE, never from the stored row.
+  const { getTradeRowsBySkus } = await import("@/lib/catalogSlice");
+  const rows = await getTradeRowsBySkus(raw.map((i) => i.sku)).catch(() => []);
+  const bySku = new Map(rows.map((r) => [r.sku.toUpperCase(), r]));
+  const qty: Record<string, number> = {};
+  const unavailable: string[] = [];
+  for (const i of raw) {
+    const r = bySku.get(i.sku.toUpperCase());
+    // Clamp to what is actually on the shelf, exactly as the catalogue does when a dealer types a qty.
+    const can = Math.min(i.qty, r?.qty ?? 0);
+    if (r && can > 0) qty[r.sku] = can;
+    else unavailable.push(i.sku);
+  }
+  if (!Object.keys(qty).length) return null;
+  return { qty, rows: rows.filter((r) => qty[r.sku] != null), unavailable, updatedAt: ((cart as any)?.updated_at as string) ?? null };
+}
