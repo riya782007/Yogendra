@@ -42,6 +42,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             items: items.map((i) => ({ sku: i.sku, name: i.name, qty: i.qty, price: i.price })), total,
+            // The server no longer deletes on a bare empty payload (that was wiping saved carts), so an
+            // intentionally emptied RETAIL cart has to say so explicitly to clear its row.
+            clear: items.length === 0,
             name: contact.name || undefined, phone: contact.phone || undefined, city: contact.city || undefined,
           }),
           keepalive: true,
