@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 import type { Metadata } from "next";
 import { TradeLeadPopup } from "@/components/site/TradeLeadPopup";
-import { getPricingFormula, getWholesaleOrderHistory, getCategories, getLivePromosCached } from "@/lib/supabase/queries";
+import { getPricingFormula, getWholesaleOrderHistory, getCategories, getLivePromosCached, getSavedTradeCart } from "@/lib/supabase/queries";
 import { supabaseServer } from "@/lib/supabase/server";
 import { PromoHero } from "@/components/site/PromoHero";
 import { getWholesaleSession } from "@/lib/wholesale";
@@ -53,6 +53,11 @@ export default async function TradeDashboard() {
     list: [] as any[], hasMore: false, facets: [] as TradeFacet[], colourOptions: [] as string[], minOrder: WHOLESALE_MIN, minRupees: "3,000", payInfo: null as any, wholesaleTiers: [] as any[],
   }));
   const historyP = session ? getWholesaleOrderHistory(session.id).catch(() => []) : Promise.resolve([]);
+  // A logged-in dealer gets their un-finished cart back. It lives in `abandoned_carts` (captured for
+  // the owner's follow-up list) and is keyed to their phone, so logging in from ANY device restores
+  // it - previously a cart lived only in React state behind a browser cookie and was lost with the
+  // tab. Best-effort: the catalogue must render even if this lookup fails.
+  const savedCartP = session?.phone ? getSavedTradeCart(session.phone).catch(() => null) : Promise.resolve(null);
   const promosP = getLivePromosCached("wholesale", "hero").catch(() => []);
   const catsP = session ? getCategories().then((cs) => cs.map((c) => ({ id: c.id, name: c.name }))).catch(() => []) : Promise.resolve([] as { id: string; name: string }[]);
   const dealerP = (async () => {
@@ -63,7 +68,7 @@ export default async function TradeDashboard() {
     } catch { return null; }
   })();
 
-  const [packed, history, promos, categories, dealer] = await Promise.all([packedP, historyP, promosP, catsP, dealerP]);
+  const [packed, history, promos, categories, dealer, savedCart] = await Promise.all([packedP, historyP, promosP, catsP, dealerP, savedCartP]);
   const { list, hasMore, facets, colourOptions, minOrder, minRupees, payInfo, wholesaleTiers } = packed;
   const outstanding = (history as any[]).reduce((s, h) => s + Math.max(0, (h.total ?? 0) - (h.amountPaid ?? 0)), 0);
 
@@ -72,7 +77,7 @@ export default async function TradeDashboard() {
       {promos.length > 0 && <div className="rounded-2xl overflow-hidden mb-6 shadow-card"><PromoHero promos={promos} /></div>}
       <h1 className="font-display text-4xl text-ink mb-1">Wholesale Catalogue</h1>
       <p className="text-sm text-muted mb-6">Factory-direct trade rates — browse freely and check out directly. ₹{minRupees} minimum order. Your margin vs MRP is shown on every line.</p>
-      <WholesaleCatalog products={list} hasMore={!!hasMore} facets={facets} colourOptions={colourOptions} customerName={session?.name ?? "Guest"} customerPhone={session?.phone ?? ""} savedAddress={dealer?.address ?? ""} savedPincode={dealer?.pincode ?? ""} minOrder={minOrder} history={history} payInfo={payInfo} outstanding={outstanding} tiers={wholesaleTiers} guest={guest} />
+      <WholesaleCatalog products={list} hasMore={!!hasMore} facets={facets} colourOptions={colourOptions} customerName={session?.name ?? "Guest"} customerPhone={session?.phone ?? ""} savedAddress={dealer?.address ?? ""} savedPincode={dealer?.pincode ?? ""} minOrder={minOrder} history={history} payInfo={payInfo} outstanding={outstanding} tiers={wholesaleTiers} guest={guest} savedCart={savedCart} />
 
       {guest && <TradeLeadPopup totalDesigns={list.length} />}
 
