@@ -99,6 +99,40 @@ export async function wholesaleLoginAction(formData: FormData) {
   redirect("/trade");
 }
 
+/**
+ * Recognise a returning dealer from the phone they type into the trade lead popup.
+ *
+ * The dealer portal was removed ("no login, no friction"), so `bd_wholesale` was only ever set after
+ * someone PLACED an order. That left a returning dealer as a guest on every new device: their saved
+ * cart, their order history and their delivery address all looked lost, because nothing on the page
+ * knew who they were. Yogendra hit this himself — cart built on one phone, signed in on another,
+ * "nh ho rha kuch".
+ *
+ * The rule here is exactly the one `wholesaleLoginAction` already uses, and no weaker: the number
+ * must belong to an owner-APPROVED wholesale customer, matched suffix-wise so any country-code
+ * format works. Anyone else stays a guest and nothing is revealed to them.
+ *
+ * Returns true if the dealer was signed in, so the caller can refresh and let the server re-render
+ * with their cart and history. Never throws and never redirects — a failure here must not cost the
+ * shop a captured lead.
+ */
+export async function signInApprovedDealerAction(phone: string): Promise<boolean> {
+  try {
+    const entered = String(phone ?? "").replace(/\D/g, "");
+    if (entered.length < 8) return false;
+    const { data } = await supabaseServer()
+      .from("customers").select("id,phone")
+      .eq("type", "wholesale").eq("wholesale_approved", true).ilike("phone", `%${entered.slice(-8)}`)
+      .limit(50);
+    const match = ((data as any[]) ?? []).find((c) => samePhone(c.phone, entered));
+    if (!match) return false;
+    cookies().set("bd_wholesale", match.id, COOKIE);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function wholesaleLogoutAction() {
   cookies().set("bd_wholesale", "", { httpOnly: true, path: "/", maxAge: 0 });
   redirect("/trade/login");
