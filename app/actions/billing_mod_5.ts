@@ -101,7 +101,9 @@ async function recomputeSavedBillTotal(
  * ONE-SHOT bill save — same idea as saveEstimateAction. The owner edits the bill the way they
  * create one (lines, packing, courier, GST, customer) and presses Save once.
  *
- * Held COD / pending backorders never moved stock, so lines are rewritten directly.
+ * Held COD / pending backorders: lines are rewritten directly. Backorders move no stock; for a
+ * held COD/prepaid order the order_items triggers (migration 0073) resync the reservation, so a
+ * removed/swapped/reduced line releases its hold and an added line reserves.
  * A posted sale still uses add/edit_order_line so inventory stays correct. Staff need the owner
  * OTP for a posted sale; the owner (and any held COD) do not — that OTP-per-line flow is what
  * made editing feel complicated.
