@@ -301,14 +301,19 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
     const { data: cat } = await sb.from("categories").select("id").eq("slug", opts.category).maybeSingle();
     catId = (cat as any)?.id ?? null;
   }
-  let subIds: string[] | null = null;
+  // Subcategory filter is STRICT: match the product's SELECTED subcategory (products.subcategory_id),
+  // exactly what the admin edit screen sets. It used to read product_subcategory_map, which only ever
+  // GROWS (the 0002 trigger inserts on every subcategory change and never removes the old one) — so a
+  // Maang Tikka that was once tagged Nath kept appearing in the Nath catalogue/PDF.
+  // Slugs are unique only WITHIN a category, so scope the lookup to the active category; an unknown
+  // slug returns nothing instead of silently dropping the filter (which showed the whole category).
+  let subCatIds: string[] | null = null;
   if (opts.subcategory && opts.subcategory !== "all") {
-    const { data: sub } = await sb.from("subcategories").select("id").eq("slug", opts.subcategory).maybeSingle();
-    if (sub) {
-      const { data: maps } = await sb.from("product_subcategory_map").select("product_id").eq("subcategory_id", (sub as any).id);
-      subIds = ((maps as any[]) ?? []).map((m) => m.product_id);
-      if (subIds.length === 0) subIds = ["00000000-0000-0000-0000-000000000000"];
-    }
+    let sq = sb.from("subcategories").select("id").eq("slug", opts.subcategory);
+    if (catId) sq = sq.eq("category_id", catId);
+    const { data: subs } = await sq;
+    subCatIds = ((subs as any[]) ?? []).map((s) => s.id);
+    if (subCatIds.length === 0) subCatIds = ["00000000-0000-0000-0000-000000000000"];
   }
   // Style filter (2nd dimension). Resilient: if the styles table isn't there yet, skip silently.
   let styleId: string | null = null;
@@ -326,7 +331,7 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
     // Public catalogue never shows sold-out designs, including hand-picked share links.
     if (opts.inStock) q = q.gt("qty", 0);
     if (catId) q = q.eq("category_id", catId);
-    if (subIds) q = q.in("id", subIds);
+    if (subCatIds) q = q.in("subcategory_id", subCatIds);
     if (styleId) q = q.eq("style_id", styleId);
     if (opts.skus && opts.skus.length) q = q.in("sku", opts.skus.map((s) => s.trim().toUpperCase()).filter(Boolean));
     if (opts.q && opts.q.trim()) { const esc = opts.q.trim().replace(/[%,()]/g, " "); q = q.or(`name.ilike.%${esc}%,sku.ilike.%${esc}%`); }
@@ -2046,7 +2051,7 @@ export const getCatalogProductsCached = (opts: Parameters<typeof getCatalogProdu
       && !(opts.skus && opts.skus.length);
     if (unfiltered && rows.length === 0) throw new Error("shared catalogue empty — not caching");
     return rows;
-  }, ["catalog-products-v2", JSON.stringify(opts)], { tags: ["storefront"], revalidate: 300 })();
+  }, ["catalog-products-v3", JSON.stringify(opts)], { tags: ["storefront"], revalidate: 300 })();
 export const getCatalogSuggestionsCached = unstable_cache(async () => {
   const s = await getCatalogSuggestions();
   if (!s.categories.length && !s.products.length) throw new Error("suggestions empty — not caching");

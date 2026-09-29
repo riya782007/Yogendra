@@ -26,14 +26,11 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
     getCatalogProductsCached(catalogOpts).catch(() => getCatalogProducts(catalogOpts)),
     getCatalogSuggestionsCached().catch(() => ({ products: [], categories: [], colours: [] })),
   ]);
-  // Never dead-end a shared sub-category link: if nothing is tagged there yet,
-  // fall back to the whole parent category so the catalogue always shows stock.
-  let products = fetched;
-  let subFellBack = false;
-  if (products.length === 0 && subcategory !== "all" && skus.length === 0) {
-    products = await getCatalogProductsCached({ category, q, inStock: true });
-    subFellBack = products.length > 0;
-  }
+  // Sub-category catalogues are STRICT: a Nath link/PDF shows only designs tagged Nath. (This used to
+  // fall back to the whole parent category when nothing matched, which put Maang Tikkas and every other
+  // accessory into a "Nath" download.) An empty sub-category shows a note + link to the full category.
+  const products = fetched;
+  const subEmpty = products.length === 0 && subcategory !== "all" && skus.length === 0;
 
   const activeCat = tree.find((c) => c.slug === category);
   const subs = activeCat?.subcategories ?? [];
@@ -113,8 +110,8 @@ export default async function Catalog({ searchParams }: { searchParams: { catego
 
       {/* Cards + select-to-share */}
       <div className="max-w-6xl mx-auto px-5 py-6">
-        {subFellBack && (
-          <p className="no-print text-xs text-muted mb-3">No designs are tagged under <b>{activeSub?.name}</b> yet — showing all of <b>{activeCat?.name}</b>.</p>
+        {subEmpty && activeCat && (
+          <p className="no-print text-xs text-muted mb-3">No in-stock designs are tagged under <b>{activeSub?.name ?? subcategory}</b> yet. <Link href={`/catalog?category=${category}${viewQ}`} className="text-gold-dark underline">See all of {activeCat.name}</Link></p>
         )}
         <SelectableCatalog products={products} view={view} brand={BUSINESS.brand} phone={BUSINESS.phone} />
       </div>
