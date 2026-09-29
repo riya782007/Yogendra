@@ -445,8 +445,11 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       colors: [...(colorsByP.get(p.id) ?? [])].sort(),
     };
   });
-  const withPhotos = cards.filter((c) => typeof c.image === "string" && c.image.startsWith("http"));
-  return withPhotos.length > 0 ? withPhotos : cards;
+  // Every published, in-stock design in the filter is returned — the catalogue must show 100% of them.
+  // This used to DROP any design without a customer-facing photo (only raw 'source'/'flatlay' uploads,
+  // or none yet) whenever at least one other design had a photo, so pieces silently went missing from a
+  // category's catalogue and PDF. They now appear with the card's "No image" placeholder instead.
+  return cards;
 }
 
 // ---------- customer directory (real customers table) ----------
