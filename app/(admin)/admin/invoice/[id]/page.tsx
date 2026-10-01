@@ -10,7 +10,7 @@ import { CancelOrderButton } from "@/components/admin/CancelOrderButton";
 import { EditBillPanel } from "@/components/admin/EditBillPanel";
 import { BUSINESS, HSN_JEWELLERY, GST_RATE, gstSplit, gstSplitExclusive, stateCodeFromGstin, stateNameFromCode, bankHasDetails, amountInWords } from "@/lib/business";
 import { getSession, can } from "@/lib/auth";
-import { recordPaymentAction, setDocTypeAction, saveOrderNoteAction, setBillTypeAction, setGstModeAction } from "@/app/actions/payments";
+import { recordPaymentAction, setDocTypeAction, saveOrderNoteAction, setBillTypeAction, setGstModeAction, writeOffBillBalanceAction } from "@/app/actions/payments";
 
 export const metadata = { title: "Invoice" };
 
@@ -438,6 +438,20 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                   <button className="btn-primary px-6 py-2.5 text-sm font-medium">✓ Record payment</button>
                 </form>
                 <p className="text-[11px] text-emerald-dark/70 mt-2">Full amount is pre-filled — for a part-payment just change the number. It posts against the chosen bank/UPI/cash account so your day-book stays split by account.</p>
+                {/* The upar-ka-chhutta case: ₹22,000 taken on a ₹22,030 bill and the ₹30 forgiven. One tap
+                    closes it. The printed bill and its GST are untouched — only this shop's copy settles,
+                    and no bank balance moves, because no money arrived. */}
+                {paid > 0 && (
+                  <form action={writeOffBillBalanceAction} className="mt-3 pt-3 border-t border-emerald/20 flex flex-wrap items-center gap-2">
+                    <input type="hidden" name="order_id" value={order.id} />
+                    <p className="text-[11px] text-emerald-dark/80 flex-1 min-w-[200px]">
+                      <b>Baaki {formatPaise(balanceDue)} nahi aaya?</b> Discount maan kar bill settle kar dein — bill ka total aur GST waisa hi rahega, bank/cash me kuch nahi jayega.
+                    </p>
+                    <button className="px-4 py-2 rounded-xl bg-gold/15 text-gold-dark text-sm font-medium hover:bg-gold/25 whitespace-nowrap">
+                      Write off {formatPaise(balanceDue)}
+                    </button>
+                  </form>
+                )}
               </div>
             )}
             {/* PAID CONFIRMATION — when the bill is fully settled there's nothing to record, so instead of a
