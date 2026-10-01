@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { captureTradeVisitorAction } from "@/app/actions/leads";
+import { signInApprovedDealerAction } from "@/app/actions/wholesale";
 import { shouldOpenTradeLead } from "@/lib/tradeLead";
 
 const K_DONE = "bd_trade_lead_done";
@@ -22,6 +24,7 @@ export function TradeLeadPopup({ totalDesigns = 0 }: { totalDesigns?: number }) 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [done, setDone] = useState(false);
+  const router = useRouter();
 
   const seconds = useRef(0);
   const depth = useRef(0);
@@ -60,7 +63,17 @@ export function TradeLeadPopup({ totalDesigns = 0 }: { totalDesigns?: number }) 
       // (the whole point — no more anonymous "Guest" carts the owner can't call back).
       localStorage.setItem("bd_trade_contact", JSON.stringify({ name: name.trim(), phone: phone.trim(), city: city.trim() }));
     } catch { /* ignore */ }
+    // The catalogue's cart tracker reads that contact from localStorage, which is not reactive: a
+    // phone captured AFTER designs were added would otherwise not be picked up until the next qty
+    // change, and a cart could sit un-saved. Tell it the moment we have the details.
+    try { window.dispatchEvent(new Event("bd:trade-contact")); } catch { /* ignore */ }
     setDone(true);
+    // If this number belongs to an approved dealer, sign them in and re-render: their saved cart,
+    // past orders and delivery address come back on whatever device they are holding. This is the
+    // whole of "past orders ya cart krke kuch nhi aa rha" — without it every dealer is a guest.
+    try {
+      if (await signInApprovedDealerAction(phone)) { setShow(false); router.refresh(); return; }
+    } catch { /* stay a guest — the catalogue works either way */ }
     setTimeout(() => setShow(false), 2200);
   }
 
