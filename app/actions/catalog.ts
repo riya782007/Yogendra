@@ -195,6 +195,31 @@ async function insertOne(sb: ReturnType<typeof supabaseServer>, formula: any, n:
     return `${parent}-${suffix}`;
   };
 
+  /**
+   * Make a design's variant SKUs unique — within the design AND across the whole shop.
+   *
+   * variants.sku is UNIQUE, and Postgres rejects an insert batch WHOLE if a single row collides. Two
+   * colours can share a generated code ("Blush Pink" and "Pink" both → PINK), and any colour the
+   * master doesn't know yet falls back to a 6-letter truncation, so collisions were easy. Before this,
+   * one clash threw away every colour of the design while the product itself stayed — Yogendra's
+   * "listing bani hi nahi, koi variant nahi bana". A clash now gets -2, -3… instead of failing.
+   * Manually-typed SKUs are never rewritten (they are validated separately and reported if taken).
+   */
+  const uniqueSkus = async (desired: { sku: string; manual: boolean }[]): Promise<string[]> => {
+    const want = desired.map((d) => d.sku.toUpperCase());
+    const { data: existing } = await sb.from("variants").select("sku").in("sku", want);
+    const taken = new Set(((existing as any[]) ?? []).map((r) => String(r.sku).toUpperCase()));
+    const used = new Set<string>();
+    return desired.map((d) => {
+      const base = d.sku.toUpperCase();
+      if (d.manual) { used.add(base); return base; }
+      let s = base;
+      for (let n = 2; used.has(s) || taken.has(s); n++) s = `${base}-${n}`;
+      used.add(s);
+      return s;
+    });
+  };
+
   if (useExplicit) {
     const variantRows = explicitVariants.map((v) => {
       const color = (v.color ?? "").trim();
@@ -213,6 +238,8 @@ async function insertOne(sb: ReturnType<typeof supabaseServer>, formula: any, n:
         mrp_override: toPaise(v.mrpRupees ?? null),
       };
     });
+    const finalSkus = await uniqueSkus(explicitVariants.map((v, i) => ({ sku: variantRows[i].sku, manual: !!(v.sku ?? "").trim() })));
+    variantRows.forEach((r, i) => { r.sku = finalSkus[i]; });
     const { data: vs, error: vErr } = await sb.from("variants").insert(variantRows).select("id, qty");
     if (vErr) {
       // Best-effort rollback so we don't leave an orphaned product when only the variants failed.
@@ -237,10 +264,20 @@ async function insertOne(sb: ReturnType<typeof supabaseServer>, formula: any, n:
     // Bulk colours-comma shortcut: also honour the canonical colour code so old import
     // paths print proper barcodes (BD2024-RED instead of BD2024-RED5).
     const legacyCodes = await getColorCodeMap();
-    const { data: vs } = await sb.from("variants").insert(n.colors.map((c) => {
+    const legacySkus = await uniqueSkus(n.colors.map((c) => {
       const code = legacyCodes[c.toLowerCase()] ?? barcodeCodeForColor(c) ?? c.slice(0, 3).toUpperCase();
-      return { product_id: prod!.id, color: c, sku: `${sku}-${code}`, qty: per };
-    })).select("id, qty");
+      return { sku: `${sku}-${code}`, manual: false };
+    }));
+    const { data: vs, error: lvErr } = await sb.from("variants").insert(n.colors.map((c, i) => (
+      { product_id: prod!.id, color: c, sku: legacySkus[i], qty: per }
+    ))).select("id, qty");
+    // This error used to be ignored: the colours were lost, the empty product stayed, and the import
+    // reported the row as created. Now the shell is removed and the row is reported FAILED with the
+    // reason, so the owner sees exactly which designs to redo instead of finding blank listings later.
+    if (lvErr) {
+      await sb.from("products").delete().eq("id", prod!.id);
+      return { row: skuNum, ok: false, error: `${sku}: colours could not be saved — ${lvErr.message}` };
+    }
     for (const v of (vs as any[]) ?? []) if (v.qty > 0) opening.push({ product_id: prod!.id, variant_id: v.id, delta: v.qty, kind: "opening", source: "create", reason: "Opening stock" });
     // Also remember the colours so they appear as suggestions on the Variants tab later.
     const optRows = n.colors.map((c) => ({ kind: "color", value: c.trim() })).filter((r) => r.value);
