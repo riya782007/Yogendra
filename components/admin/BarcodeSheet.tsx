@@ -90,10 +90,32 @@ export function BarcodeSheet({ products, initialSkus }: { products: P[]; initial
   // locally, look it up LIVE from the database and merge the results in — so a just-created SKU always
   // appears without a reload. Debounced so it fires once the owner stops typing.
   const [extra, setExtra] = useState<P[]>([]);
+  // FRESH DATA WINS. `products` is a snapshot taken when this tab opened, and staff keep this tab
+  // open all day. A design whose colours were added (or that was deleted and re-created) after the
+  // snapshot stayed frozen in it — ADN472 showed with no variants and could only print a bare parent
+  // label. Anything the live lookup returns now REPLACES the snapshot's copy, and a design the lookup
+  // refreshed drops its stale snapshot variants entirely, so the colours shown are the current ones.
   const pool = useMemo(() => {
-    const seen = new Set(products.map((p) => p.sku.toUpperCase()));
-    return [...products, ...extra.filter((e) => !seen.has(e.sku.toUpperCase()))];
+    const fresh = new Set(extra.map((e) => e.sku.toUpperCase()));
+    const refreshedParents = new Set(extra.filter((e) => e.kind === "product").map((e) => e.sku.toUpperCase()));
+    const stale = products.filter((p) =>
+      !fresh.has(p.sku.toUpperCase()) &&
+      !(p.kind === "variant" && p.parentSku && refreshedParents.has(p.parentSku.toUpperCase())));
+    return [...extra, ...stale];
   }, [products, extra]);
+
+  /** Merge a live lookup into `extra`, replacing any earlier copy of the same SKU (newest wins). */
+  const mergeFresh = (hits: P[]) => {
+    if (!hits?.length) return;
+    setExtra((prev) => {
+      const parents = new Set(hits.filter((h) => h.kind === "product").map((h) => h.sku.toUpperCase()));
+      const incoming = new Set(hits.map((h) => h.sku.toUpperCase()));
+      const kept = prev.filter((x) =>
+        !incoming.has(x.sku.toUpperCase()) &&
+        !(x.kind === "variant" && x.parentSku && parents.has(x.parentSku.toUpperCase())));
+      return [...hits, ...kept];
+    });
+  };
 
   const matches = useMemo(
     () => (q.trim() ? pool.filter((p) => (p.name + p.sku).toLowerCase().includes(q.toLowerCase())).slice(0, 12) : []),
@@ -103,20 +125,15 @@ export function BarcodeSheet({ products, initialSkus }: { products: P[]; initial
   useEffect(() => {
     const code = q.trim();
     if (code.length < 2) return;
-    // Already have a local hit → no need to hit the server.
-    if (pool.some((p) => (p.name + p.sku).toLowerCase().includes(code.toLowerCase()))) return;
+    // ALWAYS confirm against the database. This used to skip the lookup whenever the stale snapshot
+    // already had a match — which is exactly the case where the snapshot is wrong (colours added
+    // later), so the fix never ran. One small debounced query per search; results replace the snapshot.
     const t = setTimeout(() => {
-      barcodeLookupAction(code).then((hits) => {
-        if (!hits?.length) return;
-        setExtra((prev) => {
-          const have = new Set(prev.map((x) => x.sku.toUpperCase()));
-          const add = hits.filter((h) => !have.has(h.sku.toUpperCase())) as P[];
-          return add.length ? [...prev, ...add] : prev;
-        });
-      }).catch(() => { /* search never blocks */ });
+      barcodeLookupAction(code).then((hits) => mergeFresh(hits as P[])).catch(() => { /* search never blocks */ });
     }, 350);
     return () => clearTimeout(t);
-  }, [q, pool]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
   const G = PAPER.find((p) => p.key === paper) ?? PAPER[0];
   // Handover: the owner uses one fixed pre-cut sheet and never changes these, so the paper-size,
   // label-content and printer-alignment controls are hidden (defaults kept). Set true to expose them.
@@ -134,19 +151,36 @@ export function BarcodeSheet({ products, initialSkus }: { products: P[]; initial
     display: (p.kind === "variant" && p.parentSku) ? p.parentSku : p.sku,
   });
   const add = (p: P) => {
-    // A configurable design (has colours) prints one label PER colour — so the colour is always on the
-    // tag and each colour scans to its own variant. Adding the bare parent (no colour) is never right.
-    if (p.kind === "product" && (p.variantCount ?? 0) > 0) { addAllVariants(p.sku); return; }
+    // A design (product row) is ALWAYS resolved against the database first, because the snapshot's
+    // variantCount can be stale — a design that gained colours after this tab opened looked colour-less
+    // and printed a bare parent label. A configurable design prints one label PER colour, so each colour
+    // scans to its own variant; only a design with genuinely no colours prints the parent itself.
+    if (p.kind === "product") { void addAllVariants(p.sku, p); return; }
     setRows((prev) => (prev.find((x) => x.sku === p.sku) ? prev : [...prev, toRow(p)])); setQ("");
   };
-  /** Variant SKUs are what the POS scans — a design with colours should print one per variant. */
-  const addAllVariants = (parentSku: string) => {
-    const vars = pool.filter((x) => x.kind === "variant" && x.parentSku === parentSku);
+  /** Variant SKUs are what the POS scans — a design with colours prints one label per variant. */
+  const addAllVariants = async (parentSku: string, parentRow?: P) => {
+    setQ("");
+    const key = parentSku.toUpperCase();
+    let vars: P[] = [];
+    let freshParent: P | undefined;
+    try {
+      const hits = (await barcodeLookupAction(parentSku)) as P[];
+      mergeFresh(hits);
+      freshParent = hits.find((h) => h.kind === "product" && h.sku.toUpperCase() === key);
+      vars = hits.filter((h) => h.kind === "variant" && (h.parentSku ?? "").toUpperCase() === key);
+    } catch { /* offline / slow — fall back to what this tab already knows */ }
+    if (!freshParent && !vars.length) {
+      vars = pool.filter((x) => x.kind === "variant" && (x.parentSku ?? "").toUpperCase() === key);
+    }
+    // A design with no colours at all (simple product) prints its own label.
+    const toQueue: P[] = vars.length ? vars : (freshParent ? [freshParent] : parentRow ? [parentRow] : []);
+    if (!toQueue.length) { setScanMsg(`✕ “${parentSku}” not found`); return; }
     setRows((prev) => {
       const have = new Set(prev.map((x) => x.sku));
-      return [...prev, ...vars.filter((v) => !have.has(v.sku)).map(toRow)];
+      return [...prev, ...toQueue.filter((v) => !have.has(v.sku)).map(toRow)];
     });
-    setQ("");
+    setScanMsg(vars.length ? `✓ Queued ${vars.length} colour${vars.length === 1 ? "" : "s"} of ${parentSku}` : `✓ Queued ${parentSku}`);
   };
 
   /**
@@ -219,17 +253,13 @@ export function BarcodeSheet({ products, initialSkus }: { products: P[]; initial
     if (fuzzy.length === 1) { add(fuzzy[0]); setScanMsg(`✓ Queued ${fuzzy[0].sku}`); return; }
     if (fuzzy.length > 1) { setScanMsg(`“${code}” matches ${fuzzy.length} items — pick one from the list`); return; }
     try {
-      const hits = await barcodeLookupAction(code);
-      // Remember the lookup for later searches.
-      setExtra((prev) => { const have = new Set(prev.map((x) => x.sku.toUpperCase())); const add2 = hits.filter((h) => !have.has(h.sku.toUpperCase())) as P[]; return add2.length ? [...prev, ...add2] : prev; });
+      const hits = (await barcodeLookupAction(code)) as P[];
+      // Remember the lookup for later searches (fresh rows replace the tab's snapshot).
+      mergeFresh(hits);
       const pick = hits.find((h) => h.sku.toLowerCase() === code.toLowerCase()) ?? (hits.length === 1 ? hits[0] : null);
       if (!pick) { setScanMsg(`✕ “${code}” not found`); return; }
-      if (pick.kind === "product" && (pick.variantCount ?? 0) > 0) {
-        // Configurable → queue every colour from THIS lookup (pool may not have them yet).
-        const vs = hits.filter((h) => h.kind === "variant" && h.parentSku === pick.sku) as P[];
-        setRows((prev) => { const have = new Set(prev.map((x) => x.sku)); return [...prev, ...vs.filter((v) => !have.has(v.sku)).map(toRow)]; });
-        setScanMsg(`✓ Queued ${vs.length} colour${vs.length === 1 ? "" : "s"} of ${pick.sku}`);
-      } else { add(pick as P); setScanMsg(`✓ Queued ${pick.sku}`); }
+      if (pick.kind === "product") { await addAllVariants(pick.sku, pick); }
+      else { add(pick); setScanMsg(`✓ Queued ${pick.sku}`); }
     } catch { setScanMsg(`✕ “${code}” not found`); }
   }
 
