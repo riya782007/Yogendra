@@ -53,6 +53,32 @@ export async function recordSupplierPaymentAction(formData: FormData): Promise<v
   revalidatePath(`/admin/supplier/${id}`); revalidatePath("/admin/cashbook");
 }
 
+/**
+ * Write off the bit of a supplier bill that was never paid, and never will be.
+ *
+ * Yogendra: "yaha discount ka option chahiye. jaise balance 9 nh diya to." He owes ₹22,009, hands
+ * over ₹22,000, and the supplier waives the ₹9 — but the ledger kept showing ₹9 owed forever, so
+ * nothing ever read as settled and the Suppliers page was full of rupee-sized ghosts.
+ *
+ * This is NOT a payment: no money left any account, so `payment_method_transactions` is deliberately
+ * untouched and Bank & Cash does not move. It lands in `supplier_payments` with mode "discount" so
+ * the ledger credits it and the balance closes, and `getSupplierLedger` reports it under its own
+ * "Discount" total rather than inflating "Paid" — the books stay honest about what was actually paid.
+ */
+export async function recordSupplierDiscountAction(formData: FormData): Promise<void> {
+  if (!(await requirePerm("suppliers.manage"))) return;
+  const id = String(formData.get("id") ?? "");
+  const rupees = Number(formData.get("amount") ?? 0);
+  const note = String(formData.get("note") ?? "").trim() || "Discount / written off";
+  if (!id || !Number.isFinite(rupees) || rupees <= 0) return;
+  await supabaseServer()
+    .from("supplier_payments")
+    .insert({ supplier_id: id, amount: Math.round(rupees * 100), mode: "discount", ref: null, note })
+    .then(() => {}, () => {});
+  revalidatePath(`/admin/supplier/${id}`);
+  revalidatePath("/admin/suppliers");
+}
+
 /** Delete a supplier payment (correction). */
 export async function deleteSupplierPaymentAction(formData: FormData): Promise<void> {
   if (!(await requirePerm("suppliers.manage"))) return;
