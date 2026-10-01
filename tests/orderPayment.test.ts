@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isCodOrder, isCodPaymentMode, isFullyPaid, isPrepaidOrder } from "../lib/orderPayment";
+import { isCodOrder, isCodPaymentMode, isFullyPaid, isPrepaidOrder, isStorefrontPrepaidOrder } from "../lib/orderPayment";
 
 describe("isCodPaymentMode", () => {
   it("accepts any casing of cod", () => {
@@ -38,14 +38,16 @@ describe("COD vs prepaid queues", () => {
     expect(isCodOrder(o)).toBe(false);
     expect(isPrepaidOrder(o)).toBe(true);
   });
-  it("a leftover payment_mode=cod that is actually paid is PREPAID, not COD", () => {
+  it("a paid COD order is not actionable from the storefront prepaid queue", () => {
     const o = { payment_mode: "cod", amount_paid: 180000, total: 180000 };
     expect(isCodOrder(o)).toBe(false);
     expect(isPrepaidOrder(o)).toBe(true);
+    expect(isStorefrontPrepaidOrder(o)).toBe(false);
   });
   it("unpaid online (awaiting verify) is still prepaid, not COD", () => {
     const o = { payment_mode: "upi", amount_paid: 0, total: 90000 };
     expect(isCodOrder(o)).toBe(false);
     expect(isPrepaidOrder(o)).toBe(true);
+    expect(isStorefrontPrepaidOrder(o)).toBe(true);
   });
 });

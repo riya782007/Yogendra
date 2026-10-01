@@ -49,6 +49,8 @@ export type Cache = {
 export type GatewayConfig<T> = {
   primary: Provider<T>;
   secondary?: Provider<T>;
+  /** Additional providers, attempted after primary and secondary in order. */
+  fallbacks?: Provider<T>[];
   /** deterministic, never-fails fallback — the last hop */
   deterministic: (call: GatewayCall<T>) => T;
   cache?: Cache;
@@ -150,7 +152,7 @@ export class AiGateway {
 
     // 3) provider chain
     if (!overBudget) {
-      const chain = [this.cfg.primary, this.cfg.secondary].filter(Boolean) as Provider<T>[];
+      const chain = [this.cfg.primary, this.cfg.secondary, ...(this.cfg.fallbacks ?? [])].filter(Boolean) as Provider<T>[];
       for (const p of chain) {
         if (this.breakerOpen(p.name)) continue;
         try {
