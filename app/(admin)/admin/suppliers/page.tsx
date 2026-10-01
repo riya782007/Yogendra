@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { getSuppliersList, getSupplierCities } from "@/lib/supabase/queries";
+import { formatPaise } from "@/lib/pricing";
 import { upsertSupplierAction, deleteSupplierAction } from "@/app/actions/suppliers";
 import { Pager } from "@/components/admin/Pager";
 
@@ -52,10 +53,10 @@ export default async function Suppliers({ searchParams }: { searchParams: { q?: 
       <div className="overflow-x-auto rounded-2xl border border-sand bg-white shadow-card">
         <table className="w-full text-sm">
           <thead className="bg-cream text-muted text-left"><tr>
-            <th className="p-3">Name</th><th className="p-3">Type</th><th className="p-3">Location</th><th className="p-3">Phone</th><th className="p-3">GSTIN</th><th className="p-3"></th>
+            <th className="p-3">Name</th><th className="p-3">Type</th><th className="p-3">Location</th><th className="p-3">Phone</th><th className="p-3">GSTIN</th><th className="p-3 text-right">Balance</th><th className="p-3"></th>
           </tr></thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan={6} className="p-4 text-muted">No suppliers match.</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={7} className="p-4 text-muted">No suppliers match.</td></tr>}
             {rows.map((s: any) => (
               <tr key={s.id} className="border-t border-sand/60 align-top">
                 <td className="p-3 font-medium"><Link href={`/admin/supplier/${s.id}`} className="text-emerald nav-link">{s.name} ↗</Link>{s.notes && <span className="block text-xs text-muted font-normal">{s.notes}</span>}</td>
@@ -63,6 +64,12 @@ export default async function Suppliers({ searchParams }: { searchParams: { q?: 
                 <td className="p-3 text-muted">{[s.city, s.state].filter(Boolean).join(", ") || "—"}</td>
                 <td className="p-3 text-muted">{s.phone || "—"}</td>
                 <td className="p-3 text-muted text-xs">{s.gstin || "—"}</td>
+                {/* What we still owe, straight from the ledger: red when payable, green when they are
+                    holding our advance, a quiet dash when the account is square. */}
+                <td className={`p-3 text-right whitespace-nowrap font-medium ${(s.balanceOwed ?? 0) > 0 ? "text-rose" : (s.balanceOwed ?? 0) < 0 ? "text-emerald-dark" : "text-muted"}`}>
+                  {(s.balanceOwed ?? 0) === 0 ? "—" : formatPaise(Math.abs(s.balanceOwed))}
+                  {(s.balanceOwed ?? 0) < 0 && <span className="block text-[10px] font-normal text-muted">advance</span>}
+                </td>
                 <td className="p-3 text-right"><form action={deleteSupplierAction}><input type="hidden" name="id" value={s.id} /><button className="text-muted hover:text-rose text-xs">Delete</button></form></td>
               </tr>
             ))}
