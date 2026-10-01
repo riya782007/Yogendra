@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getSupplierLedger, getPaymentMethods } from "@/lib/supabase/queries";
 import { formatPaise } from "@/lib/pricing";
-import { setSupplierOpeningBalanceAction, recordSupplierPaymentAction, deleteSupplierPaymentAction } from "@/app/actions/suppliers";
+import { setSupplierOpeningBalanceAction, recordSupplierPaymentAction, deleteSupplierPaymentAction, recordSupplierDiscountAction } from "@/app/actions/suppliers";
 
 export const metadata = { title: "Owner Console · Supplier ledger" };
 const card = "bg-white rounded-2xl border border-sand p-5 shadow-card";
@@ -13,13 +13,26 @@ export default async function SupplierLedger({ params }: { params: { id: string 
   const [data, methods] = await Promise.all([getSupplierLedger(params.id), getPaymentMethods({ activeOnly: true })]);
   if (!data) notFound();
   const payAccounts = (methods as any[]) ?? [];
-  const { supplier, purchases, payments, totalPurchased, totalQty, opening, totalPaid, balanceOwed } = data as any;
+  const { supplier, purchases, payments, totalPurchased, totalQty, opening, totalPaid, totalDiscount, balanceOwed } = data as any;
+  const discount = (totalDiscount ?? 0) as number;
 
   // Combined chronological ledger with a running "balance owed".
   const events: any[] = [
     ...(opening > 0 ? [{ kind: "opening", date: supplier.created_at, debit: opening, credit: 0, label: "Opening balance", link: null }] : []),
     ...purchases.map((p: any) => ({ kind: "purchase", date: p.created_at, debit: p.total, credit: 0, label: `Purchase ${p.bill_no || String(p.id).slice(0, 6).toUpperCase()}`, link: `/admin/purchase/${p.id}` })),
-    ...payments.map((p: any) => ({ kind: "payment", date: p.created_at, debit: 0, credit: p.amount, label: `Payment · ${p.mode}${p.ref ? ` · ${p.ref}` : ""}${p.note ? ` — ${p.note}` : ""}`, payId: p.id, link: null })),
+    // A write-off reads as "Discount — <reason>", never "Payment · discount": the owner must be able
+    // to tell at a glance which lines were money and which were waived.
+    ...payments.map((p: any) => {
+      const waived = String(p.rawMode ?? "").toLowerCase() === "discount";
+      return {
+        kind: waived ? "discount" : "payment",
+        date: p.created_at, debit: 0, credit: p.amount,
+        label: waived
+          ? `Discount${p.note ? ` — ${p.note}` : ""}`
+          : `Payment · ${p.mode}${p.ref ? ` · ${p.ref}` : ""}${p.note ? ` — ${p.note}` : ""}`,
+        payId: p.id, link: null,
+      };
+    }),
   ].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   let run = 0;
   const rows = events.map((e) => { run += e.debit - e.credit; return { ...e, balance: run }; });
@@ -36,10 +49,13 @@ export default async function SupplierLedger({ params }: { params: { id: string 
         {supplier.phone ? ` · ${supplier.phone}` : ""}{supplier.gstin ? ` · GSTIN ${supplier.gstin}` : ""}
       </p>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+      <div className={`grid grid-cols-2 ${discount > 0 ? "sm:grid-cols-5" : "sm:grid-cols-4"} gap-3 mb-5`}>
         <div className={card}><p className="text-xs uppercase tracking-wide text-muted">Opening</p><p className="text-xl font-semibold text-ink mt-1">{formatPaise(opening)}</p></div>
         <div className={card}><p className="text-xs uppercase tracking-wide text-muted">Purchased</p><p className="text-xl font-semibold text-ink mt-1">{formatPaise(totalPurchased)}</p></div>
         <div className={card}><p className="text-xs uppercase tracking-wide text-muted">Paid</p><p className="text-xl font-semibold text-ink mt-1">{formatPaise(totalPaid)}</p></div>
+        {discount > 0 && (
+          <div className={card}><p className="text-xs uppercase tracking-wide text-muted">Discount</p><p className="text-xl font-semibold text-gold-dark mt-1">{formatPaise(discount)}</p></div>
+        )}
         <div className={`${card} ${balanceOwed > 0 ? "ring-1 ring-rose/40" : ""}`}>
           <p className="text-xs uppercase tracking-wide text-muted">{balanceOwed > 0 ? "We owe" : balanceOwed < 0 ? "Advance" : "Settled"}</p>
           <p className={`text-xl font-semibold mt-1 ${balanceOwed > 0 ? "text-rose" : "text-emerald-dark"}`}>{formatPaise(Math.abs(balanceOwed))}</p>
@@ -71,6 +87,27 @@ export default async function SupplierLedger({ params }: { params: { id: string 
           <button className="btn-primary px-4 py-2 text-sm font-medium">Record payment</button>
         </form>
       </div>
+
+      {/* Write off the remainder. Pre-filled with whatever is still outstanding, because the usual
+          case is exactly Yogendra's: ₹22,000 handed over on ₹22,009 and the ₹9 simply forgiven. */}
+      {balanceOwed > 0 && (
+        <form action={recordSupplierDiscountAction} className={`${card} flex items-end gap-2 flex-wrap mb-5`}>
+          <input type="hidden" name="id" value={supplier.id} />
+          <div className="flex-1 min-w-[200px]">
+            <p className="text-sm font-medium text-ink">Discount / write-off</p>
+            <p className="text-[11px] text-muted mt-0.5">
+              Baaki paisa nahi dena? Yahan daal dein — balance settle ho jayega aur Bank &amp; Cash bilkul nahi badlega.
+            </p>
+          </div>
+          <label className="text-[11px] text-muted">Write off ₹
+            <input name="amount" type="number" min={0.01} step="0.01" defaultValue={(balanceOwed / 100).toFixed(2)} className={`${inp} w-28 block mt-0.5`} />
+          </label>
+          <label className="text-[11px] text-muted">Reason
+            <input name="note" placeholder="rounded off" className={`${inp} w-36 block mt-0.5`} />
+          </label>
+          <button className="px-4 py-2 rounded-xl bg-gold/15 text-gold-dark text-sm font-medium hover:bg-gold/25">Write off</button>
+        </form>
+      )}
 
       <div className="overflow-x-auto rounded-2xl border border-sand bg-white shadow-card">
         <table className="w-full text-sm">
