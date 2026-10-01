@@ -797,12 +797,32 @@ export async function getCustomerById(id: string) {
 
 export async function getSuppliersList(opts: { q?: string; kind?: string; city?: string }) {
   const sb = supabaseServer();
-  let query = sb.from("suppliers").select("id,name,kind,city,state,phone,gstin,address,notes,created_at");
+  let query = sb.from("suppliers").select("id,name,kind,city,state,phone,gstin,address,notes,created_at,opening_balance");
   if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.or(`name.ilike.%${s}%,phone.ilike.%${s}%,gstin.ilike.%${s}%`); }
   if (opts.kind && opts.kind !== "all") query = query.eq("kind", opts.kind);
   if (opts.city && opts.city !== "all") query = query.eq("city", opts.city);
   const { data } = await query.order("name");
-  return (data as any[]) ?? [];
+  const rows = (data as any[]) ?? [];
+  if (!rows.length) return rows;
+
+  // Owner: "suppliers tab me inka balance yaha daldo." Opening each supplier one by one just to see
+  // who is owed what is the slow part of paying people. Two flat reads and a join in memory beats a
+  // per-supplier round trip (PostgREST has no GROUP BY), and keeps this page a single render.
+  const ids = rows.map((s) => s.id);
+  const [{ data: purch }, { data: pays }] = await Promise.all([
+    sb.from("purchases").select("supplier_id,total").in("supplier_id", ids),
+    sb.from("supplier_payments").select("supplier_id,amount").in("supplier_id", ids),
+  ]);
+  const bought = new Map<string, number>();
+  for (const p of ((purch as any[]) ?? [])) bought.set(p.supplier_id, (bought.get(p.supplier_id) ?? 0) + (p.total ?? 0));
+  // Written-off amounts sit in the same table and settle the balance exactly as a payment does, so
+  // for "what is still outstanding" both are simply credits.
+  const credited = new Map<string, number>();
+  for (const p of ((pays as any[]) ?? [])) credited.set(p.supplier_id, (credited.get(p.supplier_id) ?? 0) + (p.amount ?? 0));
+  return rows.map((s) => ({
+    ...s,
+    balanceOwed: (s.opening_balance ?? 0) + (bought.get(s.id) ?? 0) - (credited.get(s.id) ?? 0),
+  }));
 }
 export async function getSupplierCities() {
   const sb = supabaseServer();
@@ -973,15 +993,21 @@ export async function getSupplierLedger(id: string) {
     const { data: pms } = await sb.from("payment_methods").select("id,name").in("id", pmIds);
     for (const m of ((pms as any[]) ?? [])) pmName.set(m.id, m.name);
   }
-  const payments = ((pays as any[]) ?? []).map((p) => ({ id: p.id, amount: p.amount ?? 0, mode: (p.method_id && pmName.get(p.method_id)) ? pmName.get(p.method_id)! : (p.mode as string), ref: p.ref as string | null, note: p.note as string | null, created_at: p.created_at }));
+  // `rawMode` keeps the stored kind ("cash"/"bank"/"upi"/"discount") even after `mode` is swapped for
+  // the friendly account name, so a write-off can still be told apart from real money going out.
+  const payments = ((pays as any[]) ?? []).map((p) => ({ id: p.id, amount: p.amount ?? 0, rawMode: (p.mode as string) ?? "", mode: (p.method_id && pmName.get(p.method_id)) ? pmName.get(p.method_id)! : (p.mode as string), ref: p.ref as string | null, note: p.note as string | null, created_at: p.created_at }));
   const opening = ((supplier as any).opening_balance ?? 0) as number;
   const totalPurchased = list.reduce((s, p) => s + p.total, 0);
-  const totalPaid = payments.reduce((s, p) => s + p.amount, 0);
+  // A written-off remainder settles the balance but is NOT money paid, so it is counted separately.
+  // Folding it into "Paid" would overstate what actually left the bank by exactly the amount waived.
+  const isDiscount = (p: any) => String(p.rawMode ?? "").toLowerCase() === "discount";
+  const totalPaid = payments.filter((p) => !isDiscount(p)).reduce((s, p) => s + p.amount, 0);
+  const totalDiscount = payments.filter(isDiscount).reduce((s, p) => s + p.amount, 0);
   return {
     supplier, purchases: list, payments,
     totalPurchased, totalQty: list.reduce((s, p) => s + p.qty, 0),
-    opening, totalPaid,
-    balanceOwed: opening + totalPurchased - totalPaid, // +ve = we still owe the supplier
+    opening, totalPaid, totalDiscount,
+    balanceOwed: opening + totalPurchased - totalPaid - totalDiscount, // +ve = we still owe the supplier
   };
 }
 
