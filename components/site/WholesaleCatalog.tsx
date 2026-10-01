@@ -309,6 +309,17 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets =
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [guest]);
 
+  // The guest contact lives in localStorage, which React cannot observe. Without this, a dealer who
+  // adds designs FIRST and fills the popup SECOND has their cart skipped by the tracker below (it is
+  // gated on having a phone) until they happen to change a quantity again - and a cart nobody saved
+  // is a cart the owner never sees. The popup fires this the instant it has the details.
+  const [contactTick, setContactTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setContactTick((n) => n + 1);
+    window.addEventListener("bd:trade-contact", bump);
+    return () => window.removeEventListener("bd:trade-contact", bump);
+  }, []);
+
   // ---- Abandoned-cart pipeline (wholesale) ----------------------------------------------------
   // The dealer's live cart is saved (debounced) so a cart left un-ordered surfaces on the owner's
   // Abandoned Carts page WITH the dealer's name + phone — the owner can then nudge them on WhatsApp.
@@ -328,7 +339,7 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets =
     }, 1200);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qty]);
+  }, [qty, contactTick]);
 
   /** Never let a line exceed available stock (the owner's "select jyada ho rha hai"). */
   const clamp = (sku: string, n: number) => {
