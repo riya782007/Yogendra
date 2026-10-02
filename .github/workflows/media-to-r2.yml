@@ -1,0 +1,84 @@
+# Move Blythe Diva's Supabase Storage files to Cloudflare R2 so the Supabase project fits the
+# Free plan. Full design and safety rules: scripts/media-to-r2.mjs. Worker: workers/media/worker.js.
+#
+# RUN IN THIS ORDER, reading the summary after each:
+#   plan     read-only report.
+#   copy     Supabase -> R2. The database is not touched; the shop still serves from Supabase.
+#   switch   proves the Worker serves R2, then swaps the host in every image URL in the database.
+#   verify   re-checks every switched URL serves.
+#   purge    deletes from SUPABASE only what is safely in R2 and no longer referenced. Needs
+#            confirm = delete-originals. This is what brings Supabase storage under 1 GB.
+#   restore  R2 -> Supabase (undo a purge).   rollback   swap the host back.
+#
+# Every night `sync` (copy + switch) runs on its own, so photos uploaded through the admin after the
+# move are copied and switched within a day. It never deletes; purge stays a manual button.
+#
+# Secrets: R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, SUPABASE_SERVICE_ROLE_KEY.
+
+name: Move images to R2
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "Stage"
+        required: true
+        default: plan
+        type: choice
+        options: [plan, copy, switch, sync, verify, purge, restore, rollback]
+      limit:
+        description: "Max files this run (0 = all)"
+        required: false
+        default: "0"
+      confirm:
+        description: "Type delete-originals to allow purge"
+        required: false
+        default: ""
+  schedule:
+    - cron: "17 21 * * *"   # 02:47 IST nightly sync
+
+concurrency:
+  group: media-migration
+  cancel-in-progress: false
+
+env:
+  MEDIA_HOST: https://bd-media.kborse702.workers.dev
+  R2_ACCOUNT_ID: c13f482ff9256e520d3d4e0c85f24a4a
+  R2_BUCKET: blythediva-media
+  SUPABASE_URL: https://qfybzwiyhnnpqumtzkpf.supabase.co
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts
+            workers
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install the S3 client (outside the app, nothing in package.json changes)
+        run: npm install --prefix "$RUNNER_TEMP/s3" --no-audit --no-fund @aws-sdk/client-s3@3 >/dev/null
+
+      - name: Run the stage
+        env:
+          STAGE: ${{ github.event_name == 'schedule' && 'sync' || inputs.stage }}
+          LIMIT: ${{ inputs.limit || '0' }}
+          CONFIRM: ${{ inputs.confirm }}
+          S3_SDK_DIR: ${{ runner.temp }}/s3
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          echo "### Stage: \`$STAGE\`" >> "$GITHUB_STEP_SUMMARY"
+          status=0
+          node scripts/media-to-r2.mjs "$STAGE" 2>&1 | tee run.log || status=$?
+          { echo '```'; tail -n 80 run.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
