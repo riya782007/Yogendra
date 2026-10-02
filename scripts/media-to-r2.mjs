@@ -72,7 +72,7 @@ export function swapDeep(v, from, to, allow, found) {
 // ---------------------------------------------------------------- Supabase
 // A legacy service_role key is a JWT and goes in both headers; a new sb_secret_ key must ONLY go in
 // apikey (the gateway mints the JWT itself and rejects a non-JWT bearer).
-const sbHeaders = () => { const k = need("SUPABASE_SERVICE_ROLE_KEY").trim(); return k.startsWith("eyJ") ? { apikey: k, authorization: `Bearer ${k}` } : { apikey: k }; };
+const sbHeaders = () => { const k = need("SUPABASE_SERVICE_ROLE_KEY").replace(/\s+/g, ""); return k.startsWith("eyJ") ? { apikey: k, authorization: `Bearer ${k}` } : { apikey: k }; };
 async function sbJson(path, init = {}) {
   const r = await fetch(`${SB}${path}`, { ...init, headers: { ...sbHeaders(), "content-type": "application/json", ...(init.headers || {}) } });
   const t = await r.text();
@@ -84,23 +84,34 @@ async function sbJson(path, init = {}) {
 async function listSupabase() {
   const buckets = (await sbJson("/storage/v1/bucket")).filter((b) => b.public);
   const out = new Map(); const skipped = [];
-  for (const b of buckets) {
-    const walk = async (prefix) => {
-      for (let offset = 0; ; offset += 1000) {
-        const page = await sbJson(`/storage/v1/object/list/${encodeURIComponent(b.id)}`, { method: "POST",
-          body: JSON.stringify({ prefix, limit: 1000, offset, sortBy: { column: "name", order: "asc" } }) });
-        for (const e of page) {
-          const p = prefix ? `${prefix}/${e.name}` : e.name;
-          if (e.id === null || !e.metadata) await walk(p);       // a folder
-          else out.set(`${b.id}/${p}`, { size: Number(e.metadata.size ?? e.metadata.contentLength ?? 0),
-            etag: String(e.metadata.eTag || "").replace(/"/g, ""), mime: e.metadata.mimetype || "application/octet-stream",
-            updated: Date.parse(e.updated_at || e.created_at || 0) || 0 });
-        }
-        if (page.length < 1000) break;
+  // Folders are listed in parallel: one request per folder, and a shop has thousands of them
+  // (walking them one by one took ~18 minutes).
+  const queue = buckets.map((b) => ({ b: b.id, prefix: "" }));
+  const listFolder = async ({ b, prefix }) => {
+    for (let offset = 0; ; offset += 1000) {
+      const page = await sbJson(`/storage/v1/object/list/${encodeURIComponent(b)}`, { method: "POST",
+        body: JSON.stringify({ prefix, limit: 1000, offset, sortBy: { column: "name", order: "asc" } }) });
+      for (const e of page) {
+        const p = prefix ? `${prefix}/${e.name}` : e.name;
+        if (e.id === null || !e.metadata) queue.push({ b, prefix: p });       // a folder
+        else out.set(`${b}/${p}`, { size: Number(e.metadata.size ?? e.metadata.contentLength ?? 0),
+          etag: String(e.metadata.eTag || "").replace(/"/g, ""), mime: e.metadata.mimetype || "application/octet-stream",
+          updated: Date.parse(e.updated_at || e.created_at || 0) || 0 });
+      }
+      if (page.length < 1000) break;
+    }
+  };
+  let active = 0;
+  await new Promise((resolve, reject) => {
+    const pump = () => {
+      if (!queue.length && !active) return resolve();
+      while (queue.length && active < 12) {
+        active++;
+        listFolder(queue.shift()).then(() => { active--; pump(); }, reject);
       }
     };
-    await walk("");
-  }
+    pump();
+  });
   return { objects: out, buckets: buckets.map((b) => b.id), skipped };
 }
 
@@ -110,8 +121,16 @@ function s3() {
   if (_s3) return _s3;
   const req = createRequire((process.env.S3_SDK_DIR || process.cwd()).replace(/\/?$/, "/"));
   const sdk = req("@aws-sdk/client-s3");
+  // R2 keys are plain hex (32 and 64 chars). Say WHICH secret is wrong instead of a cryptic
+  // "invalid character in header" from the signer. Never prints the value.
+  for (const [name, len] of [["R2_ACCESS_KEY_ID", 32], ["R2_SECRET_ACCESS_KEY", 64]]) {
+    const v = need(name).replace(/\s+/g, "");
+    if (!/^[0-9a-f]+$/i.test(v) || v.length !== len)
+      { console.error(`::error::${name} looks wrong: expected ${len} hex characters, got ${v.length} characters${/^[0-9a-f]*$/i.test(v) ? "" : " including non-hex ones"}. Re-paste it in Settings > Secrets.`); process.exit(1); }
+  }
   const client = new sdk.S3Client({ region: "auto", endpoint: `https://${ACCOUNT}.r2.cloudflarestorage.com`,
-    credentials: { accessKeyId: need("R2_ACCESS_KEY_ID"), secretAccessKey: need("R2_SECRET_ACCESS_KEY") } });
+    // A pasted secret often carries a trailing newline or space; S3 signing rejects it in the header.
+    credentials: { accessKeyId: need("R2_ACCESS_KEY_ID").replace(/\s+/g, ""), secretAccessKey: need("R2_SECRET_ACCESS_KEY").replace(/\s+/g, "") } });
   return (_s3 = { sdk, client, send: (c) => client.send(c) });
 }
 async function listR2() {
