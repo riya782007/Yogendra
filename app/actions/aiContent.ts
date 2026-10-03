@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { getProductBySku, getPublishedProducts } from "@/lib/supabase/queries";
-import { generateProductContent, generateTitleOptions } from "@/lib/ai/listingAgent";
+import { generateProductContent, generateTitleOptions, fallbackProductContent } from "@/lib/ai/listingAgent";
 import { requirePerm } from "@/lib/auth";
 
 export type ContentResult = { ok: boolean; sku: string; provider?: string; fallbackUsed?: boolean; title?: string; error?: string };
@@ -49,7 +49,30 @@ async function fetchProductImage(p: any): Promise<{ imageBase64?: string; imageM
   }
 }
 
+/**
+ * "Generate AI page" — ROOT CAUSE OF "AI page generator is not working" (Oct 2026)
+ * ============================================================================================
+ * Same trap as alignContentToTitleAction below. Worst case for one product used to be:
+ *     photo download 4 s  +  vision model 30 s (+1 retry 30 s)  +  second provider 30 s  +  groq 18 s
+ * Netlify kills a server action at 10 s, so on any slow model the request died, nothing was saved and
+ * the button just "did nothing". "Generate all AI pages" looped EVERY published product inside ONE
+ * request, so it could never finish at all.
+ *
+ * Now every call fits a hard budget (GEN_BUDGET_MS, well under 10 s):
+ *   1. read the photo (≤ 2.5 s) and ask the vision model, until ~5.5 s in;
+ *   2. if that hasn't answered, a fast text-only model (from name, category, style, polish, colours);
+ *   3. if even that is too slow: a product that has NO page yet gets the standard written-from-fields
+ *      page (clearly marked as such in the result); a product that already HAS a page keeps it — a slow
+ *      model must never overwrite good copy with a template.
+ */
+const GEN_BUDGET_MS = 8_000;
+const within = <T,>(p: Promise<T>, ms: number): Promise<T | null> =>
+  ms <= 0 ? Promise.resolve(null)
+    : Promise.race([p.catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), ms))]);
+
 export async function generateContentAction(sku: string, keywords?: string[]): Promise<ContentResult> {
+  const t0 = Date.now();
+  const left = () => GEN_BUDGET_MS - (Date.now() - t0);
   if (!(await requirePerm("catalog.ai"))) return { ok: false, sku, error: "not permitted" };
   const p = await getProductBySku(sku);
   if (!p) return { ok: false, sku, error: "not found" };
@@ -57,19 +80,47 @@ export async function generateContentAction(sku: string, keywords?: string[]): P
   const colors = (p.variants ?? []).map((v) => v.color ?? "").filter(Boolean);
   const polishes = (p.variants ?? []).map((v: any) => v.polish ?? "").filter(Boolean);
   const { data: st } = (p as any).style_id ? await sb.from("styles").select("name").eq("id", (p as any).style_id).maybeSingle() : { data: null as any };
-  const img = await fetchProductImage(p);
-  const { content, provider, fallbackUsed } = await generateProductContent({
+  const fields = {
     name: nameForAi(p.name, p.sku), sku: p.sku, categoryName: p.category?.name,
     subcategoryName: (p as any).subcategory?.name, styleName: (st as any)?.name, polishes, colors,
     keywords: (keywords ?? []).map((k) => k.trim()).filter(Boolean),
-    imageBase64: img.imageBase64, imageMime: img.imageMime,
-  } as any, { visionFirst: true });
+  };
+
+  const img = (await within(fetchProductImage(p), Math.min(2_500, left() - 3_000))) ?? {};
+  let res = img.imageBase64
+    ? await within(generateProductContent({ ...fields, imageBase64: img.imageBase64, imageMime: img.imageMime } as any, { visionFirst: true }), left() - 2_500)
+    : null;
+  if (!res) res = await within(generateProductContent(fields as any, { visionFirst: false }), left() - 500);
+  if (!res) {
+    if ((p as any).generated_content?.title) {
+      return { ok: false, sku, error: "The AI took too long — the existing page was kept. Try again in a minute." };
+    }
+    res = fallbackProductContent(fields as any);
+  }
+  const { content, provider, fallbackUsed } = res;
   content.title = stripCode(content.title, p.sku) || content.title;
   const { error } = await sb.from("products").update({ generated_content: content }).eq("id", p.id);
   if (error) return { ok: false, sku, error: error.message };
   revalidatePath(`/shop/${p.category.slug}/${sku}`);
   revalidatePath("/admin/catalogue");
   return { ok: true, sku, provider, fallbackUsed, title: content.title };
+}
+
+/** SKUs of published products that have no AI page yet — the "write missing pages" button walks
+ *  this list ONE product per request, so each request fits the host's 10-second limit. */
+export async function listProductsMissingAiAction(): Promise<{ skus: string[]; total: number }> {
+  if (!(await requirePerm("catalog.ai"))) return { skus: [], total: 0 };
+  const products = await getPublishedProducts();
+  const skus = products.map((p: any) => p.sku);
+  if (!skus.length) return { skus: [], total: 0 };
+  const sb = supabaseServer();
+  const have = new Set<string>();
+  for (let i = 0; i < skus.length; i += 300) {
+    const { data } = await sb.from("products").select("sku,generated_content").in("sku", skus.slice(i, i + 300));
+    for (const r of ((data as any[]) ?? [])) if (r.generated_content?.title) have.add(r.sku);
+  }
+  const missing = skus.filter((s: string) => !have.has(s));
+  return { skus: missing, total: skus.length };
 }
 
 export async function suggestProductTitleAction(input: { name: string; category?: string; keywords?: string[]; sku?: string }): Promise<{ ok: boolean; title?: string; description?: string; provider?: string; fallbackUsed?: boolean; usedImage?: boolean; error?: string }> {
@@ -218,12 +269,19 @@ export async function alignContentToTitleAction(input: { sku?: string; name?: st
   }
 }
 
+/** Kept for the old server form: now writes pages only for products that have none, and stops before
+ *  the host's time limit (it used to loop every product in one request and was always killed). The
+ *  catalogue button uses listProductsMissingAiAction + generateContentAction per product instead. */
 export async function generateAllContentAction(): Promise<{ total: number; ok: number; results: ContentResult[] }> {
-  const products = await getPublishedProducts();
+  const t0 = Date.now();
+  const { skus } = await listProductsMissingAiAction();
   const results: ContentResult[] = [];
-  for (const p of products) results.push(await generateContentAction(p.sku));
+  for (const sku of skus) {
+    if (Date.now() - t0 > 1_000) break; // one product per request keeps every call inside the limit
+    results.push(await generateContentAction(sku));
+  }
   revalidatePath("/admin/catalogue");
-  return { total: products.length, ok: results.filter((r) => r.ok).length, results };
+  return { total: skus.length, ok: results.filter((r) => r.ok).length, results };
 }
 
 /** Implementation moved to fixNath.ts (broader match). */
