@@ -8,6 +8,7 @@ import {
 } from "@/app/actions/catalog";
 import { getProductVariantsAction, addVariantImageAction } from "@/app/actions/variants";
 import { generateContentAction } from "@/app/actions/aiContent";
+import { addColourJsonAction } from "@/app/actions/options";
 import { compressImage } from "@/lib/image";
 import { downloadProductTemplate } from "@/lib/xlsxTemplate";
 
@@ -69,7 +70,7 @@ export function UploadClient({
   subcategories = [],
   styles = [],
   variantOptions = { color: [], size: [], polish: [] },
-  colorCodes = {},
+  colorCodes: colorCodesProp = {},
   initialMode = "single",
 }: {
   categories: Cat[];
@@ -93,6 +94,28 @@ export function UploadClient({
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [log, setLog] = useState<LogLine[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Colours saved from this screen (owner: "aur colours add kr sake aur save ho jaye baaki products ke
+  // liye bhi"). They go straight into the colour master, so they are here for every later product too.
+  const [savedColours, setSavedColours] = useState<{ name: string; code: string }[]>([]);
+  const [savingColour, setSavingColour] = useState("");
+  const colorCodes = useMemo<ColorCodeMap>(() => {
+    const m: ColorCodeMap = { ...colorCodesProp };
+    for (const c of savedColours) m[c.name.toLowerCase()] = c.code;
+    return m;
+  }, [colorCodesProp, savedColours]);
+  async function saveColour(raw: string): Promise<string | null> {
+    const name = raw.trim();
+    if (!name) return null;
+    setSavingColour(name.toLowerCase());
+    try {
+      const r = await addColourJsonAction({ name });
+      if (!r.ok || !r.name) { toast(r.error || "Couldn't save the colour", "error"); return null; }
+      setSavedColours((cs) => cs.some((c) => c.name.toLowerCase() === r.name!.toLowerCase()) ? cs : [...cs, { name: r.name!, code: r.code ?? "" }]);
+      toast(r.existed ? `“${r.name}” is already in your colours` : `“${r.name}” saved to your colours (code ${r.code}) — it will be here for every product`);
+      return r.name;
+    } finally { setSavingColour(""); }
+  }
 
   const input = "w-full rounded-xl border border-sand px-4 py-2.5 text-sm bg-white outline-none focus:border-emerald transition-colors";
   const vInput = "rounded-lg border border-sand bg-white px-2.5 py-1.5 text-sm outline-none focus:border-emerald transition-colors";
@@ -127,9 +150,10 @@ export function UploadClient({
   const colorList = useMemo(() => {
     const m = new Map<string, string>(); // lowercase -> display name
     for (const c of variantOptions.color ?? []) { const t = c.trim(); if (t) m.set(t.toLowerCase(), t); }
+    for (const c of savedColours) m.set(c.name.toLowerCase(), c.name);
     for (const k of Object.keys(colorCodes ?? {})) { const t = k.trim(); if (t && !m.has(t.toLowerCase())) m.set(t.toLowerCase(), t.charAt(0).toUpperCase() + t.slice(1)); }
     return [...m.values()].sort((a, b) => a.localeCompare(b));
-  }, [variantOptions, colorCodes]);
+  }, [variantOptions, colorCodes, savedColours]);
   const selectedColors = form.colors.split(",").map((s) => s.trim()).filter(Boolean);
   const selectedColorSet = new Set(selectedColors.map((s) => s.toLowerCase()));
   const filteredColors = colorQ.trim() ? colorList.filter((c) => c.toLowerCase().includes(colorQ.trim().toLowerCase())) : colorList;
@@ -301,7 +325,7 @@ export function UploadClient({
       {/* Datalists power as-you-type suggestions for variant attributes. Typing a brand-new
           value is fine — the server upserts it into variant_options so it shows up here
           next time, matching the catalogue's Variants tab behaviour. */}
-      <datalist id="upload-opt-color">{variantOptions.color.map((o) => <option key={o} value={o} />)}</datalist>
+      <datalist id="upload-opt-color">{colorList.map((o) => <option key={o} value={o} />)}</datalist>
       <datalist id="upload-opt-size">{variantOptions.size.map((o) => <option key={o} value={o} />)}</datalist>
       <datalist id="upload-opt-polish">{variantOptions.polish.map((o) => <option key={o} value={o} />)}</datalist>
 
@@ -370,11 +394,16 @@ export function UploadClient({
                   <p className="text-sm font-medium text-ink">Colours <span className="text-muted font-normal">— tap to select (A–Z)</span></p>
                   {selectedColors.length > 0 && <button type="button" onClick={() => setForm({ ...form, colors: "" })} className="text-[11px] text-muted hover:text-rose">clear ({selectedColors.length})</button>}
                 </div>
-                <input className={input} placeholder="🔎 Search colours…" value={colorQ} onChange={(e) => setColorQ(e.target.value)} />
+                <input className={input} placeholder="🔎 Search colours… or type a new one to add it" value={colorQ} onChange={(e) => setColorQ(e.target.value)} />
+                <p className="text-[11px] text-muted mt-1">Not in the list? Type its name and tap <b>+ Save as a new colour</b> — it is saved to your colours for every future product.</p>
                 <div className="mt-2 max-h-44 overflow-y-auto flex flex-wrap gap-1.5 pr-1">
                   {colorList.length === 0 && !colorQ.trim() && <p className="text-xs text-muted py-2">No colours saved yet — type one above to add it.</p>}
-                  {filteredColors.length === 0 && colorQ.trim() && (
-                    <button type="button" onClick={() => { toggleColor(colorQ.trim()); setColorQ(""); }} className="px-2.5 py-1 rounded-full text-xs border border-emerald text-emerald-dark hover:bg-emerald-mist">+ Add “{colorQ.trim()}”</button>
+                  {colorQ.trim() && !colorList.some((c) => c.toLowerCase() === colorQ.trim().toLowerCase()) && (
+                    <button type="button" disabled={!!savingColour}
+                      onClick={async () => { const nm = await saveColour(colorQ); if (nm) { if (!selectedColorSet.has(nm.toLowerCase())) toggleColor(nm); setColorQ(""); } }}
+                      className="px-2.5 py-1 rounded-full text-xs border border-emerald text-emerald-dark hover:bg-emerald-mist disabled:opacity-50">
+                      {savingColour ? "Saving…" : <>+ Save “{colorQ.trim()}” as a new colour</>}
+                    </button>
                   )}
                   {filteredColors.map((c) => {
                     const on = selectedColorSet.has(c.toLowerCase());
@@ -476,7 +505,10 @@ export function UploadClient({
                           <p className="col-span-2 md:col-span-9 text-[10px] text-muted pl-1 -mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
                             <span>Barcode/SKU: <span className="font-mono text-ink/80">{previewSku(v)}</span></span>
                             {v.color.trim() && !colorCodes[v.color.trim().toLowerCase()] && (
-                              <span className="text-gold-dark">· “{v.color.trim()}” isn&apos;t in the colour master — code is auto-derived</span>
+                              <span className="text-gold-dark">· “{v.color.trim()}” isn&apos;t in your colours{" "}
+                                <button type="button" disabled={!!savingColour} onClick={async () => { const nm = await saveColour(v.color); if (nm) updateVariant(idx, { color: nm }); }}
+                                  className="underline text-emerald-dark hover:text-emerald disabled:opacity-50">{savingColour === v.color.trim().toLowerCase() ? "saving…" : "save it to the list"}</button>
+                              </span>
                             )}
                             {/* Pillar 16 — pick a photo for this variant; uploaded right after the design is created. */}
                             <label className="inline-flex items-center gap-1 cursor-pointer text-emerald-dark hover:underline">
