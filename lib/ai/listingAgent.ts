@@ -112,6 +112,15 @@ export async function generateProductContent(p: ProductLike, opts?: { visionFirs
   return { content: fixed, provider: r.provider, fallbackUsed: r.fallbackUsed };
 }
 
+/** The no-model version of generateProductContent — same naming and type clean-up, written from the
+ *  product's fields. Used when the models are too slow to answer inside the host's time limit. */
+export function fallbackProductContent(p: ProductLike): { content: GeneratedContent; provider: string; fallbackUsed: boolean } {
+  const content = templateContent(p) as GeneratedContent;
+  const forcedName = pickDivaName(((p as any).sku as string) || p.name || "");
+  if (content?.title) content.title = enforceName(content.title, forcedName);
+  return { content: sanitizeJewelleryContent(content, p.name ?? "", p.categoryName), provider: "template", fallbackUsed: true };
+}
+
 const FILLER_WORDS = [
   "classic", "elegant", "designer", "beautiful", "stylish", "premium", "exclusive", "trendy", "fancy",
   "attractive", "gorgeous", "charming", "lovely", "stunning", "luxury", "luxurious", "chic", "modern",
