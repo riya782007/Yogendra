@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { addVariantAction } from "@/app/actions/variants";
 import { barcodeCodeForColor } from "@/lib/colors";
+import { addColourJsonAction } from "@/app/actions/options";
 
 const vInput = "rounded-lg border border-sand bg-white px-2.5 py-1.5 text-sm text-ink focus:border-gold focus:outline-none";
 
@@ -21,7 +22,7 @@ function previewSku(parentSku: string, color: string, size: string, polish: stri
  *  placeholder), so the owner never has to type them — this is what prevents the 1-paise formula
  *  artifact that made POS show a slightly different price. */
 export function AddVariantForm({
-  parentSku, colorCodes, effRetail, effWholesale, effMrp,
+  parentSku, colorCodes: colorCodesProp, effRetail, effWholesale, effMrp,
 }: {
   parentSku: string;
   colorCodes: Record<string, string>;
@@ -34,6 +35,22 @@ export function AddVariantForm({
   const [polish, setPolish] = useState("");
   const [sku, setSku] = useState("");
 
+  // A colour typed here that isn't in the saved list can be saved in one tap, so it shows up for every
+  // later product (owner, Oct 2026) and gets its own unique barcode code.
+  const [saved, setSaved] = useState<Record<string, string>>({});
+  const [saveMsg, setSaveMsg] = useState("");
+  const [savingC, setSavingC] = useState(false);
+  const colorCodes = { ...colorCodesProp, ...saved };
+  const unknownColour = !!color.trim() && !colorCodes[color.trim().toLowerCase()];
+  async function saveColour() {
+    setSavingC(true); setSaveMsg("");
+    const r = await addColourJsonAction({ name: color });
+    setSavingC(false);
+    if (!r.ok || !r.name) { setSaveMsg(r.error || "Couldn't save the colour"); return; }
+    setSaved((m) => ({ ...m, [r.name!.toLowerCase()]: r.code ?? "" }));
+    setColor(r.name);
+    setSaveMsg(r.existed ? `“${r.name}” is already in your colours.` : `“${r.name}” saved to your colours (code ${r.code}).`);
+  }
   const auto = previewSku(parentSku, color, size, polish, colorCodes);
   const shownSku = sku.trim() || auto;
   const rs = (n: number | null) => (n != null ? `same as product · ₹${n.toLocaleString("en-IN")}` : "auto");
@@ -52,6 +69,15 @@ export function AddVariantForm({
         <label className="text-[11px] text-muted">MRP ₹<input name="mrp" type="number" min={0} step="0.01" placeholder={rs(effMrp)} className={`${vInput} w-40 text-right block mt-0.5`} /></label>
         <button className="btn-primary px-4 py-2 text-sm font-medium">+ Add variant</button>
       </form>
+      {unknownColour && (
+        <p className="mt-2 text-[11px] text-gold-dark">
+          “{color.trim()}” isn&apos;t in your saved colours.{" "}
+          <button type="button" onClick={saveColour} disabled={savingC} className="underline text-emerald-dark hover:text-emerald disabled:opacity-50">
+            {savingC ? "Saving…" : "Save it to the colour list"}
+          </button>{" "}— it will then be offered for every product.
+        </p>
+      )}
+      {saveMsg && <p className="mt-1 text-[11px] text-emerald-dark">{saveMsg}</p>}
       {(color || size || polish) && (
         <p className="mt-2 text-[11px] text-emerald-dark">
           Barcode SKU will be <span className="font-mono font-semibold">{shownSku}</span> — created automatically, you don&apos;t need to type it.
