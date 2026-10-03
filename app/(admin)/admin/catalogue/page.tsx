@@ -6,6 +6,7 @@ import { formatPaise, resolvePrices, overridesOf } from "@/lib/pricing";
 import { geminiConfigured } from "@/lib/ai/gemini";
 import { aiProvidersStatus } from "@/lib/ai/listingAgent";
 import { generateContentAction, generateAllContentAction } from "@/app/actions/aiContent";
+import { GenerateMissingAiPagesButton } from "@/components/admin/GenerateAiPageButtons";
 import { fixNathListingsAction, fixMislabeledJewelleryAction } from "@/app/actions/fixNath";
 import { generateEmbeddingsAction } from "@/app/actions/embeddings";
 import { Pager } from "@/components/admin/Pager";
@@ -67,7 +68,7 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
         <div className="flex flex-wrap gap-2">
           <Link href="/catalog" target="_blank" className="px-4 py-2.5 text-sm font-medium rounded-full bg-gold text-ink hover:opacity-90 transition-opacity">📤 Share Catalogue ↗</Link>
           {canAi && <>
-            <form action={genAllContent}><button className="btn-primary px-4 py-2.5 text-sm font-medium">✨ Generate all AI pages</button></form>
+            <GenerateMissingAiPagesButton />
             <form action={genEmbeddings}><button className="px-4 py-2.5 text-sm font-medium rounded-full border border-emerald text-emerald hover:bg-emerald-mist transition-colors">⌖ Build recommendations</button></form>
             <form action={fixNathOnce}><button type="submit" className="px-4 py-2.5 text-sm font-medium rounded-full border border-amber-600 text-amber-800 hover:bg-amber-50 transition-colors" title="Rewrite real nath listings with wrong specs">🪔 Fix nath specs once</button></form>
             <form action={fixMislabeledOnce}><button type="submit" className="px-4 py-2.5 text-sm font-medium rounded-full border border-rose-600 text-rose-800 hover:bg-rose-50 transition-colors" title="Clear Nose Pin tags on necklace/earring products">🔧 Fix wrong type tags</button></form>
