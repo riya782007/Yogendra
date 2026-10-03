@@ -3,6 +3,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { CatalogueRowActions } from "@/components/admin/CatalogueRowActions";
 import { GeneratePhotoButton } from "@/components/admin/GeneratePhotoButton";
+import { GenerateAiPageButton } from "@/components/admin/GenerateAiPageButtons";
 import { DeleteProductButton } from "@/components/admin/DeleteProductButton";
 import { ProductTags } from "@/components/admin/ProductTags";
 import { MoreDesignsToggle } from "@/components/admin/MoreDesignsToggle";
@@ -134,10 +135,7 @@ export function CatalogueRow({
                   <Link href={`/admin/preview/${encodeURIComponent(p.sku)}`} target="_blank" className="px-3 py-1.5 rounded-full bg-gold/15 text-gold-dark text-xs hover:bg-gold/25" title={published ? "Out of stock — not on the store right now" : "Not published yet"}>Preview ↗</Link>
                 )}
                 {canAi && (
-                  <form action={genContent}>
-                    <input type="hidden" name="sku" value={p.sku} />
-                    <button className="px-3 py-1.5 rounded-full bg-emerald/10 text-emerald text-xs font-medium hover:bg-emerald/20">{p.hasAi ? "Regenerate AI page" : "Generate AI page"}</button>
-                  </form>
+                  <GenerateAiPageButton sku={p.sku} hasAi={!!p.hasAi} />
                 )}
                 {canAi && <GeneratePhotoButton sku={p.sku} />}
                 {canDelete && <DeleteProductButton sku={p.sku} className="px-3 py-1.5 rounded-full bg-rose/10 text-rose text-xs hover:bg-rose/20" label="🗑 Delete" />}
