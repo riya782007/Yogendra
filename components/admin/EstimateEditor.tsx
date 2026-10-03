@@ -14,13 +14,49 @@ type Cust = { name: string; phone: string; gstin: string; address: string; email
  * any line's rate or quantity, add/remove items (with the searchable SKU box), set courier/packing/
  * discount, edit the customer + tax — then press "Save all changes" once. Live total updates as you go.
  */
-export function EstimateEditor({ estimateId, initialLines, initialCharges, initialTax, initialCustomer }: {
+type EditorProps = {
   estimateId: string;
   initialLines: Line[];
   initialCharges: Charges;
   initialTax: "none" | "inclusive" | "exclusive";
   initialCustomer: Cust;
-}) {
+};
+
+/**
+ * Owner (Oct 2026): "estimate edit krke save kro to wo save hoke wha se hat jana chahiye, jaise supplier
+ * banate waqt hota hai — warna confusion hota hai ki save hua ya nahi aur do baar save kar dete hain."
+ *
+ * So a successful save now CLOSES the edit panel and leaves a clear "Saved at 6:42 pm" card with an
+ * "Edit again" button, and scrolls back up to the estimate, which already shows the new figures.
+ * "Edit again" re-opens a FRESH editor from the saved estimate (the old panel kept stale rows — a line
+ * added in the first save didn't show in the editor until the page was reloaded). Save is also
+ * disabled until something has actually been changed, so a second click can't re-save the same thing.
+ */
+export function EstimateEditor(props: EditorProps) {
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [round, setRound] = useState(0);
+  if (savedAt) {
+    return (
+      <div id="edit-estimate" className="no-print mt-5 bg-emerald-mist rounded-2xl p-5 ring-1 ring-emerald/30 flex flex-wrap items-center justify-between gap-3 scroll-mt-4">
+        <div>
+          <p className="font-medium text-emerald-dark">✓ Estimate saved at {savedAt}</p>
+          <p className="text-xs text-ink/70 mt-0.5">The estimate above already shows the changes — nothing more to do.</p>
+        </div>
+        <button onClick={() => { setSavedAt(null); setRound((r) => r + 1); }}
+          className="px-4 py-2 rounded-full bg-white border border-emerald text-emerald-dark text-sm hover:bg-emerald/10">✎ Edit again</button>
+      </div>
+    );
+  }
+  return (
+    <EstimateEditorForm key={round} {...props}
+      onSaved={() => {
+        setSavedAt(new Date().toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" }));
+        if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+      }} />
+  );
+}
+
+function EstimateEditorForm({ estimateId, initialLines, initialCharges, initialTax, initialCustomer, onSaved }: EditorProps & { onSaved: () => void }) {
   const router = useRouter();
   const [lines, setLines] = useState<Line[]>(initialLines);
   const [removeIds, setRemoveIds] = useState<string[]>([]);
@@ -50,6 +86,12 @@ export function EstimateEditor({ estimateId, initialLines, initialCharges, initi
     [lines, newItems]);
   const chgTotal = num(charges.packing) + num(charges.courier) + num(charges.tcs) + num(charges.adjustment) - num(charges.discount);
   const grand = Math.max(0, itemsTotal + chgTotal);
+  // Anything to save? Compared with what was loaded, so an untouched panel can't be saved twice.
+  const dirty = useMemo(() =>
+    removeIds.length > 0 || newItems.some((n) => n.sku.trim()) ||
+    JSON.stringify(lines) !== JSON.stringify(initialLines) || JSON.stringify(charges) !== JSON.stringify(initialCharges) ||
+    tax !== initialTax || JSON.stringify(cust) !== JSON.stringify(initialCustomer),
+    [removeIds, newItems, lines, charges, tax, cust, initialLines, initialCharges, initialTax, initialCustomer]);
 
   async function saveAll() {
     setBusy(true); setMsg(null);
@@ -65,11 +107,9 @@ export function EstimateEditor({ estimateId, initialLines, initialCharges, initi
       tax,
       customer: { ...cust },
     });
-    setBusy(false);
-    if (!r.ok) { setMsg({ text: r.error ?? "Couldn't save.", ok: false }); return; }
-    setMsg({ text: "Saved ✓ — estimate updated.", ok: true });
-    setRemoveIds([]); setNewItems([]);
+    if (!r.ok) { setBusy(false); setMsg({ text: r.error ?? "Couldn't save.", ok: false }); return; }
     router.refresh();
+    onSaved();
   }
 
   return (
@@ -132,7 +172,7 @@ export function EstimateEditor({ estimateId, initialLines, initialCharges, initi
         <span className="font-semibold text-ink text-lg tabular-nums">{money(grand)}</span>
       </div>
       <div className="flex items-center gap-3 mt-3">
-        <button onClick={saveAll} disabled={busy} className="btn-primary px-6 py-2.5 text-sm font-medium disabled:opacity-60">{busy ? "Saving…" : "Save all changes"}</button>
+        <button onClick={saveAll} disabled={busy || !dirty} className="btn-primary px-6 py-2.5 text-sm font-medium disabled:opacity-60">{busy ? "Saving…" : dirty ? "Save all changes" : "No changes yet"}</button>
         {msg && <span className={`text-sm ${msg.ok ? "text-emerald-dark" : "text-rose"}`}>{msg.text}</span>}
       </div>
     </div>
