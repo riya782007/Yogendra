@@ -274,7 +274,8 @@ async function doCopy(sbObjs, r2) {
   console.log(`\ncopying ${todo.length} file(s) (${mb(todo.reduce((a, [, m]) => a + m.size, 0))}) to R2, ${CONC} at a time`);
   let ok = 0, bad = 0, bytes = 0;
   await pool(todo, async ([k, m]) => {
-    try { bytes += await copyOne(k, m); r2.set(k, { size: m.size, etag: m.etag }); ok++; }
+    try { const n = await copyOne(k, m); bytes += n;  // read bytes AFTER the await: `bytes += await` loses updates under concurrency
+       r2.set(k, { size: m.size, etag: m.etag }); ok++; }
     catch (e) { bad++; console.error(`   FAILED ${k}: ${e.message}`); }
     if ((ok + bad) % 200 === 0) console.log(`   ${ok + bad}/${todo.length}`);
   });
