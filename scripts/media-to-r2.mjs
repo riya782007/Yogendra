@@ -73,18 +73,32 @@ export function swapDeep(v, from, to, allow, found) {
 // A legacy service_role key is a JWT and goes in both headers; a new sb_secret_ key must ONLY go in
 // apikey (the gateway mints the JWT itself and rejects a non-JWT bearer).
 const sbHeaders = () => { const k = need("SUPABASE_SERVICE_ROLE_KEY").replace(/\s+/g, ""); return k.startsWith("eyJ") ? { apikey: k, authorization: `Bearer ${k}` } : { apikey: k }; };
+// Supabase's gateway returns the odd 502/503/504/429 under load. A READ is retried with backoff;
+// a write (PATCH/DELETE/POST) is never blindly repeated, except a 429/503 that was refused outright.
 async function sbJson(path, init = {}) {
-  const r = await fetch(`${SB}${path}`, { ...init, headers: { ...sbHeaders(), "content-type": "application/json", ...(init.headers || {}) } });
-  const t = await r.text();
-  if (!r.ok) throw new Error(`supabase ${r.status} ${path.slice(0, 120)}: ${t.slice(0, 300)}`);
-  return t ? JSON.parse(t) : null;
+  const method = (init.method || "GET").toUpperCase();
+  const listing = method === "GET" || path.startsWith("/storage/v1/object/list/");
+  for (let attempt = 1; ; attempt++) {
+    let r, t;
+    try {
+      r = await fetch(`${SB}${path}`, { ...init, headers: { ...sbHeaders(), "content-type": "application/json", ...(init.headers || {}) } });
+      t = await r.text();
+    } catch (e) {
+      if (listing && attempt < 6) { await new Promise((ok) => setTimeout(ok, 1000 * 2 ** attempt)); continue; }
+      throw e;
+    }
+    const retryable = r.status === 429 || r.status === 503 || (listing && (r.status === 502 || r.status === 504));
+    if (!r.ok && retryable && attempt < 6) { await new Promise((ok) => setTimeout(ok, 1000 * 2 ** attempt)); continue; }
+    if (!r.ok) throw new Error(`supabase ${r.status} ${path.slice(0, 120)}: ${t.slice(0, 300)}`);
+    return t ? JSON.parse(t) : null;
+  }
 }
 
 /** Every object in every PUBLIC bucket: key "<bucket>/<path>" -> {size, etag, updated, mime}. */
 async function listSupabase() {
   const buckets = (await sbJson("/storage/v1/bucket")).filter((b) => b.public);
   const out = new Map(); const skipped = [];
-  // Folders are listed in parallel: one request per folder, and a shop has thousands of them
+  // Folders are listed 6 at a time: one request per folder, and a shop has thousands of them
   // (walking them one by one took ~18 minutes).
   const queue = buckets.map((b) => ({ b: b.id, prefix: "" }));
   const listFolder = async ({ b, prefix }) => {
@@ -105,7 +119,7 @@ async function listSupabase() {
   await new Promise((resolve, reject) => {
     const pump = () => {
       if (!queue.length && !active) return resolve();
-      while (queue.length && active < 12) {
+      while (queue.length && active < 6) {
         active++;
         listFolder(queue.shift()).then(() => { active--; pump(); }, reject);
       }
