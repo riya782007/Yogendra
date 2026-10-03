@@ -77,6 +77,7 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
+          set -o pipefail   # without this a failed run shows green (tee's exit code wins)
           echo "### Stage: \`$STAGE\`" >> "$GITHUB_STEP_SUMMARY"
           status=0
           node scripts/media-to-r2.mjs "$STAGE" 2>&1 | tee run.log || status=$?
