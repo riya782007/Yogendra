@@ -7,6 +7,7 @@ import { getSession, can } from "@/lib/auth";
 import { upsertCustomerAction, deleteCustomerAction } from "@/app/actions/customers";
 import { approveWholesaleAction, regenWholesaleCodeAction } from "@/app/actions/wholesale";
 import { ReceivePaymentButton } from "@/components/admin/ReceivePaymentButton";
+import { getCustomerLedger } from "@/lib/customerLedger";
 
 export const metadata = { title: "Owner Console · Customer" };
 
@@ -15,6 +16,9 @@ export default async function CustomerDetail({ params }: { params: { id: string 
   if (!data) notFound();
   const { customer: c, orders, totalSpent, orderCount, outstanding, creditAdjustment } = data;
   const canManage = can(getSession(), "customers.manage");
+  const ledger = await getCustomerLedger(c.id, orders as any[], creditAdjustment);
+  const dt = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit", timeZone: "Asia/Kolkata" });
+  const drcr = (p: number) => `${formatPaise(Math.abs(p))} ${p > 0 ? "Dr" : p < 0 ? "Cr" : ""}`.trim();
   const fld = "rounded-xl border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-emerald w-full";
 
   return (
@@ -34,7 +38,7 @@ export default async function CustomerDetail({ params }: { params: { id: string 
         <div className="bg-white rounded-2xl p-4 shadow-card">
           <p className="text-xs uppercase tracking-wide text-muted">Outstanding <span className="text-[10px] opacity-70">(from bills)</span></p>
           <p className={`text-xl font-semibold mt-1 ${outstanding > 0 ? "text-rose" : "text-ink"}`}>{formatPaise(outstanding)}</p>
-          {canManage && outstanding > 0 && <div className="mt-2"><ReceivePaymentButton customerId={c.id} phone={c.phone ?? null} customerName={c.name} outstandingPaise={outstanding} /></div>}
+          {canManage && <div className="mt-2"><ReceivePaymentButton customerId={c.id} phone={c.phone ?? null} customerName={c.name} outstandingPaise={outstanding} label={outstanding > 0 ? "₹ Receive payment" : "₹ Payment / entry"} /></div>}
           {creditAdjustment !== 0 && (
             <p className={`text-[11px] mt-1 ${creditAdjustment > 0 ? "text-rose/80" : "text-emerald-dark"}`}>
               {creditAdjustment > 0 ? "+ " : "− "}{formatPaise(Math.abs(creditAdjustment))} manual adj.
@@ -68,6 +72,52 @@ export default async function CustomerDetail({ params }: { params: { id: string 
           </div>
         </div>
       )}
+
+      {/* Ledger (khata) — owner: "Customer ka ledger thoda ache se bna do. Payment ka record nhi h usme."
+          Bills (Dr), every payment with its date and account (Cr), returns, advances and debit entries,
+          with a running balance. Built from what billing already records — see lib/customerLedger.ts. */}
+      <div className="bg-white rounded-2xl p-5 shadow-card mb-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <div>
+            <h2 className="font-medium text-ink">Ledger</h2>
+            <p className="text-xs text-muted">Dr = customer owes · Cr = paid / credited · newest at the bottom</p>
+          </div>
+          <div className="text-right">
+            <p className="text-[11px] uppercase tracking-wide text-muted">Balance</p>
+            <p className={`text-lg font-semibold ${ledger.closing > 0 ? "text-rose" : ledger.closing < 0 ? "text-emerald-dark" : "text-ink"}`}>
+              {drcr(ledger.closing)}{ledger.closing < 0 ? <span className="text-[11px] font-normal text-muted"> (advance)</span> : null}
+            </p>
+          </div>
+        </div>
+        {ledger.rows.length === 0 ? <p className="text-sm text-muted">No entries yet.</p> : (
+          <div className="overflow-x-auto"><table className="w-full text-sm">
+            <thead className="text-muted text-left text-xs"><tr>
+              <th className="py-1.5 pr-2">Date</th><th className="py-1.5 pr-2">Particulars</th>
+              <th className="py-1.5 pr-2 text-right">Debit</th><th className="py-1.5 pr-2 text-right">Credit</th><th className="py-1.5 text-right">Balance</th>
+            </tr></thead>
+            <tbody>
+              {ledger.rows.map((r) => (
+                <tr key={r.key} className="border-t border-sand/50 align-top">
+                  <td className="py-1.5 pr-2 text-muted whitespace-nowrap">{dt(r.date)}</td>
+                  <td className="py-1.5 pr-2">
+                    {r.href ? <Link href={r.href} className="text-ink hover:text-emerald">{r.label}</Link> : <span className="text-ink">{r.label}</span>}
+                    {(r.account || r.note) && <span className="block text-[11px] text-muted">{[r.account, r.note].filter(Boolean).join(" · ")}</span>}
+                  </td>
+                  <td className="py-1.5 pr-2 text-right whitespace-nowrap">{r.debit ? formatPaise(r.debit) : ""}</td>
+                  <td className="py-1.5 pr-2 text-right whitespace-nowrap text-emerald-dark">{r.credit ? formatPaise(r.credit) : ""}</td>
+                  <td className="py-1.5 text-right whitespace-nowrap font-medium">{drcr(r.balance)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot><tr className="border-t-2 border-sand text-sm">
+              <td className="py-2" /><td className="py-2 font-medium">Total</td>
+              <td className="py-2 pr-2 text-right font-medium">{formatPaise(ledger.totalDebit)}</td>
+              <td className="py-2 pr-2 text-right font-medium text-emerald-dark">{formatPaise(ledger.totalCredit)}</td>
+              <td className="py-2 text-right font-semibold">{drcr(ledger.closing)}</td>
+            </tr></tfoot>
+          </table></div>
+        )}
+      </div>
 
       <div className="grid lg:grid-cols-2 gap-4">
         {/* Profile / edit */}
