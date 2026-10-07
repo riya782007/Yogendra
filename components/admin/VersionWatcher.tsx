@@ -13,6 +13,7 @@ export function VersionWatcher({ current }: { current: string }) {
     if (!current || current === "dev") return; // local dev: nothing to compare against
     let alive = true;
     const check = async () => {
+      if (document.hidden) return; // background tabs don't poll (each check is a paid function call)
       try {
         const r = await fetch("/api/version", { cache: "no-store" });
         if (!r.ok) return;
@@ -21,7 +22,7 @@ export function VersionWatcher({ current }: { current: string }) {
       } catch { /* offline / transient — try again next tick */ }
     };
     check();
-    const id = setInterval(check, 60_000); // check every minute
+    const id = setInterval(check, 5 * 60_000); // every 5 min (was 1 min) — plus on focus, below
     const onFocus = () => check();          // and whenever the staffer comes back to the tab
     window.addEventListener("focus", onFocus);
     return () => { alive = false; clearInterval(id); window.removeEventListener("focus", onFocus); };
