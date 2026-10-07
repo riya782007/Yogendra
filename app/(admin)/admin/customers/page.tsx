@@ -98,7 +98,7 @@ export default async function Customers({ searchParams }: { searchParams: { q?: 
         <div className="flex flex-wrap items-end gap-3">
           <div>
             <p className="font-medium text-ink">🎯 Promotion targeting</p>
-            <p className="text-[11px] text-muted">Find customers who reached a spend target (or are close) so you can reward or nudge them.</p>
+            <p className="text-[11px] text-muted">Find customers who reached a spend target (or are close) so you can reward or nudge them. Only the jewellery counts — shipping, packing and GST are left out.</p>
           </div>
           <label className="text-[11px] text-muted ml-auto">Target ₹<input name="target" type="number" min={0} step={1000} defaultValue={targetRupees} className={`${sel} block mt-0.5 w-32`} /></label>
           <label className="text-[11px] text-muted">Period
@@ -137,7 +137,7 @@ export default async function Customers({ searchParams }: { searchParams: { q?: 
         <table className="w-full text-sm">
           <thead className="bg-cream text-muted text-left"><tr>
             <th className="p-3">Name</th><th className="p-3">Type</th><th className="p-3">Phone</th>
-            <th className="p-3 text-right">Spent ({range.label})</th><th className="p-3">Target progress</th><th className="p-3 text-right">Outstanding</th><th className="p-3"></th>
+            <th className="p-3 text-right" title="Goods value — shipping, packing and GST are not counted toward the target">Spent ({range.label}, excl. GST &amp; shipping)</th><th className="p-3">Target progress</th><th className="p-3 text-right">Outstanding</th><th className="p-3"></th>
           </tr></thead>
           <tbody>
             {rows.length === 0 && <tr><td colSpan={7} className="p-4 text-muted">No customers match. {band !== "all" ? "Try a lower target or a wider period." : "Add one above, or they'll appear as you bill them."}</td></tr>}
