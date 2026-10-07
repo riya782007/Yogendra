@@ -7,6 +7,8 @@ import { cleanTiers, DEFAULT_FORMULA, parseRupeeSearch } from "../pricing";
 import { isCodOrder, isPrepaidOrder } from "../orderPayment";
 import { phoneDigits, recordMatchesShopperQuery } from "../phone";
 import { scoreQuery } from "../search";
+import { MANUAL_ADJUSTMENT_OR } from "../stockRecord";
+import { goodsValue } from "../salesValue";
 
 /**
  * PostgREST caps every select at 1000 rows (the `max-rows` default). With a 4000+ product
@@ -485,35 +487,36 @@ export async function getEmployees(opts: { activeOnly?: boolean } = {}): Promise
 
 /** Per-employee sales performance over an optional date range (paise). Every employee is returned
  *  (even with 0 sales), highest sales first — the basis for performance-based rewards. */
-export async function getEmployeePerformance(range?: { from?: string; to?: string }): Promise<{ id: string; name: string; active: boolean; orders: number; sales: number; collected: number }[]> {
+export async function getEmployeePerformance(range?: { from?: string; to?: string }): Promise<{ id: string; name: string; active: boolean; orders: number; sales: number; billed: number; collected: number }[]> {
   const sb = supabaseServer();
   const emps = await getEmployees({});
   // Exclude pending backorders (not sold yet — held like an estimate) and cancelled/refunded bills,
   // so a salesperson isn't credited for a sale that never actually happened.
-  let q = sb.from("orders").select("sales_employee_id,total,amount_paid,created_at,status,is_backorder").not("sales_employee_id", "is", null).or("is_backorder.is.null,is_backorder.eq.false").eq("cod_hold", false);
+  // `sales` = goods value only (no shipping / packing / GST — owner, Oct 2026); `billed` = full bill amount.
+  let q = sb.from("orders").select("sales_employee_id,total,amount_paid,created_at,status,is_backorder,bill_type,gst_mode,extra_packing,extra_courier,extra_adjustment").not("sales_employee_id", "is", null).or("is_backorder.is.null,is_backorder.eq.false").eq("cod_hold", false);
   if (range?.from) q = q.gte("created_at", range.from);
   if (range?.to) q = q.lte("created_at", range.to);
   const { data } = await q;
-  const agg = new Map<string, { orders: number; sales: number; collected: number }>();
+  const agg = new Map<string, { orders: number; sales: number; billed: number; collected: number }>();
   for (const o of ((data as any[]) ?? [])) {
     if (o.status === "cancelled" || o.status === "refunded") continue;
-    const cur = agg.get(o.sales_employee_id) ?? { orders: 0, sales: 0, collected: 0 };
-    cur.orders += 1; cur.sales += (o.total ?? 0); cur.collected += (o.amount_paid ?? 0);
+    const cur = agg.get(o.sales_employee_id) ?? { orders: 0, sales: 0, billed: 0, collected: 0 };
+    cur.orders += 1; cur.sales += goodsValue(o); cur.billed += (o.total ?? 0); cur.collected += (o.amount_paid ?? 0);
     agg.set(o.sales_employee_id, cur);
   }
   return emps
-    .map((e) => ({ id: e.id, name: e.name, active: e.active, ...(agg.get(e.id) ?? { orders: 0, sales: 0, collected: 0 }) }))
+    .map((e) => ({ id: e.id, name: e.name, active: e.active, ...(agg.get(e.id) ?? { orders: 0, sales: 0, billed: 0, collected: 0 }) }))
     .sort((a, b) => b.sales - a.sales);
 }
 
 /** Individual attributed sales (date + customer + amount) for the owner's employee ledger.
  *  Every bill tied to a salesperson in the period, newest first — so the owner can audit each sale. */
-export async function getEmployeeSalesLedger(range?: { from?: string; to?: string }, limit = 300): Promise<{ id: string; invoice_no: string | null; employee: string; customer: string; total: number; amountPaid: number; billType: string; channel: string; created_at: string }[]> {
+export async function getEmployeeSalesLedger(range?: { from?: string; to?: string }, limit = 300): Promise<{ id: string; invoice_no: string | null; employee: string; customer: string; total: number; goods: number; amountPaid: number; billType: string; channel: string; created_at: string }[]> {
   const sb = supabaseServer();
   const emps = await getEmployees({});
   const nameById = new Map(emps.map((e) => [e.id, e.name]));
   let q = sb.from("orders")
-    .select("id,invoice_no,sales_employee_id,customer_name,total,amount_paid,bill_type,channel,created_at,status")
+    .select("id,invoice_no,sales_employee_id,customer_name,total,amount_paid,bill_type,gst_mode,extra_packing,extra_courier,extra_adjustment,channel,created_at,status")
     .not("sales_employee_id", "is", null)
     .or("is_backorder.is.null,is_backorder.eq.false").eq("cod_hold", false)
     .order("created_at", { ascending: false }).limit(limit);
@@ -526,6 +529,7 @@ export async function getEmployeeSalesLedger(range?: { from?: string; to?: strin
     employee: (nameById.get(o.sales_employee_id) ?? "—") as string,
     customer: (o.customer_name || "Walk-in") as string,
     total: (o.total ?? 0) as number,
+    goods: goodsValue(o),
     amountPaid: (o.amount_paid ?? 0) as number,
     billType: (o.bill_type ?? "") as string,
     channel: (o.channel ?? "") as string,
@@ -537,19 +541,16 @@ export async function getEmployeeSalesLedger(range?: { from?: string; to?: strin
  *  customer_id. Powers promotional targeting on the Customers page (who hit / is near a target). */
 export async function getCustomerSpend(range?: { from?: string; to?: string }): Promise<Map<string, { spend: number; orders: number; last: string | null }>> {
   const sb = supabaseServer();
-  // Count EVERY bill the customer took — cash memos AND GST invoices — at the amount they actually
-  // spent (the GST-inclusive grand total, matching the ledger and the printed bill). GST bills store
-  // `total` pre-tax, so add the 3% GST rounded to ₹1; cash memos have no tax.
-  let q = sb.from("orders").select("customer_id,total,bill_type,gst_mode,created_at,status,is_backorder").not("customer_id", "is", null).or("is_backorder.is.null,is_backorder.eq.false").eq("cod_hold", false);
+  // Count EVERY bill the customer took — cash memos AND GST invoices — at its GOODS value (lib/salesValue):
+  // shipping, packing and GST are overheads, not purchases, so they don't push anyone over a target.
+  let q = sb.from("orders").select("customer_id,total,bill_type,gst_mode,extra_packing,extra_courier,extra_adjustment,created_at,status,is_backorder").not("customer_id", "is", null).or("is_backorder.is.null,is_backorder.eq.false").eq("cod_hold", false);
   if (range?.from) q = q.gte("created_at", range.from);
   if (range?.to) q = q.lte("created_at", range.to);
   const { data } = await q;
   const m = new Map<string, { spend: number; orders: number; last: string | null }>();
   for (const o of ((data as any[]) ?? [])) {
     if (o.status === "cancelled" || o.status === "refunded") continue;
-    const t = o.total ?? 0;
-    // Inclusive GST bills already contain the tax in `total` — don't add 3% again (matches the bill).
-    const grand = o.bill_type === "cash" || o.gst_mode === "inclusive" ? Math.round(t / 100) * 100 : Math.round((t + Math.round(t * 0.03)) / 100) * 100;
+    const grand = goodsValue(o);
     const cur = m.get(o.customer_id) ?? { spend: 0, orders: 0, last: null as string | null };
     cur.spend += grand; cur.orders += 1;
     if (!cur.last || o.created_at > cur.last) cur.last = o.created_at;
@@ -1302,8 +1303,11 @@ export async function getStockMovements(opts: { page?: number; pageSize?: number
   const pageSize = opts.pageSize ?? 30;
   const page = Math.max(1, opts.page ?? 1);
   let query = sb.from("stock_adjustments")
-    .select("id,product_id,variant_id,delta,kind,source,reason,ref_id,sku,created_at, product:products(sku,name), variant:variants(color,qty)", { count: "exact" });
-  if (opts.kind && opts.kind !== "all") query = query.eq("kind", opts.kind);
+    .select("id,product_id,variant_id,delta,kind,source,reason,ref_id,sku,created_at,created_by, product:products(sku,name), variant:variants(color,qty)", { count: "exact" });
+  // "Adjustments" = everything changed by hand (see lib/stockRecord) — manual rows carry a kind guessed
+  // from their reason, so a plain kind = 'adjustment' match found nothing.
+  if (opts.kind === "adjustment") query = query.or(MANUAL_ADJUSTMENT_OR);
+  else if (opts.kind && opts.kind !== "all") query = query.eq("kind", opts.kind);
   if (opts.q?.trim()) { const s = escLike(opts.q); if (s) query = query.ilike("sku", `%${s}%`); }
   if (opts.from) query = query.gte("created_at", opts.from);
   if (opts.to) query = query.lte("created_at", opts.to);
@@ -2416,6 +2420,8 @@ const ESTIMATES_SORT: Record<string, string> = {
   amount: "total",
 };
 const ESTIMATE_LIST_COLS = [
+  // estimate_items(qty) → total pieces per quote (owner: "estimate me total quantity").
+  "id,customer_name,customer_phone,total,status,gst,order_id,notes,created_at,estimate_items(qty)",
   "id,customer_name,customer_phone,total,status,gst,order_id,notes,created_at",
   "id,customer_name,customer_phone,total,status,order_id,notes,created_at",
   "id,customer_name,customer_phone,total,status,created_at",
@@ -2490,7 +2496,12 @@ export async function getEstimates(opts: { sort?: string } = {}) {
   for (const e of [...live, ...(((recent.error ? [] : recent.data) as any[]) ?? [])]) {
     if (e?.id) byId.set(e.id, e);
   }
-  const list = [...byId.values()];
+  const list = [...byId.values()].map((e) => {
+    const its = e.estimate_items as any[] | undefined;
+    if (!its) return e;
+    const { estimate_items: _drop, ...rest } = e;
+    return { ...rest, total_qty: its.reduce((s, it) => s + (it.qty ?? 0), 0) };
+  });
   list.sort((a, b) => {
     let c = 0;
     if (col === "id") c = String(a.id).localeCompare(String(b.id));
@@ -2781,7 +2792,7 @@ export async function getPurchasesPage(opts: { page?: number; pageSize?: number;
   const sb = supabaseServer();
   const pageSize = opts.pageSize ?? 25;
   const page = Math.max(1, opts.page ?? 1);
-  let query = sb.from("purchases").select("id,bill_no,total,created_at,supplier:suppliers(name,city)", { count: "exact" });
+  let query = sb.from("purchases").select("id,bill_no,total,created_at,supplier:suppliers(name,city),purchase_items(qty)", { count: "exact" });
   if (opts.supplierId && opts.supplierId !== "all") query = query.eq("supplier_id", opts.supplierId);
   if (opts.from) query = query.gte("created_at", opts.from);
   if (opts.to) query = query.lte("created_at", opts.to);
@@ -2797,7 +2808,9 @@ export async function getPurchasesPage(opts: { page?: number; pageSize?: number;
   }
   const fromIdx = (page - 1) * pageSize;
   const { data, count } = await query.order("created_at", { ascending: false }).range(fromIdx, fromIdx + pageSize - 1);
-  return { rows: (data as any[]) ?? [], total: count ?? 0, page, pageSize };
+  // Total pieces per bill (owner: "purchase me total quantity").
+  const rows = ((data as any[]) ?? []).map((r) => ({ ...r, total_qty: ((r.purchase_items as any[]) ?? []).reduce((s, it) => s + (it.qty ?? 0), 0) }));
+  return { rows, total: count ?? 0, page, pageSize };
 }
 
 /** All purchase bills (newest first). Used by the returns picker so an old bill can still be returned against. */
