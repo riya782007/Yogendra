@@ -1,7 +1,7 @@
 // ISR: each product page is edge-cached and refreshed in the background, so repeat views load instantly
 // instead of re-rendering on the server every time. Its data is already wrapped in unstable_cache below,
 // and edits/stock changes bust it immediately via the "storefront" tag.
-export const revalidate = 300;
+export const revalidate = 3600;
 import type { Metadata } from "next";
 import { unstable_cache } from "next/cache";
 import Link from "next/link";
@@ -57,7 +57,7 @@ const loadProductPage = unstable_cache(
     return { p, formula, reviews };
   },
   ["shop-product-core-v2"],
-  { revalidate: 180, tags: ["storefront"] },
+  { revalidate: 3600, tags: ["storefront"] },
 );
 
 /** The "you may also like" rail, cached on its own so a slow or empty rail never sits inside — or
@@ -65,7 +65,7 @@ const loadProductPage = unstable_cache(
 const loadRelated = unstable_cache(
   async (sku: string, n: number) => getRecommendations(sku, n).catch(() => [] as any[]),
   ["shop-product-related-v1"],
-  { revalidate: 180, tags: ["storefront"] },
+  { revalidate: 3600, tags: ["storefront"] },
 );
 
 /** How long the page will wait for the related rail before rendering without it.
