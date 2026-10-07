@@ -8,6 +8,7 @@
  *   · kinds only Adjust/Move produce: adjustment, correction, recount, manual, damage, move
  *   · plus 'return' rows with NO linked bill (Returned from cart / Customer cancelled / Sample returned);
  *     bill returns always carry the bill as ref_id, so they stay out.
+ * Shown on the Inventory page (last 12) and on Stock Movement History (filter "Adjustments & moves").
  */
 import { supabaseServer } from "@/lib/supabase/server";
 
