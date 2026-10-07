@@ -13,6 +13,10 @@
 [build]
   command = "VERCEL_GIT_COMMIT_SHA=$COMMIT_REF npm run build"
   publish = ".next"
+  # Cost control (Oct 2026): every production build costs Netlify credits. Skip the build when a push
+  # only touches files the live site never uses (docs, DB migrations, tests, CI, scripts). Exit code 0 =
+  # "nothing to build". A commit message containing [skip netlify] also skips, as before.
+  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- . ':(exclude)*.md' ':(exclude)supabase/' ':(exclude)tests/' ':(exclude).github/' ':(exclude)scripts/' ':(exclude)docs/'"
 
 [build.environment]
   NODE_VERSION = "20"
