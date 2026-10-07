@@ -52,6 +52,9 @@ export function PurchaseClient({ suppliers, products, lastCosts, methods = [] }:
   });
   const suggest = (q: string) => q.trim() ? products.filter((p) => (p.name + p.sku).toLowerCase().includes(q.toLowerCase())).slice(0, 6) : [];
   const itemsTotal = lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.cost) || 0), 0);
+  // Total pieces on this bill (owner: "purchase me total quantity") — to tally against the supplier's bill.
+  const totalQty = lines.reduce((s, l) => s + Math.max(0, Math.round(Number(l.qty) || 0)), 0);
+  const qtyLines = lines.filter((l) => (Number(l.qty) || 0) > 0).length;
 
   // Extra charges + OPTIONAL GST on the supplier bill (all in rupees). GST is 3% input tax, only when ticked.
   const [charges, setCharges] = useState({ packing: "", shipping: "", adjustment: "" });
@@ -290,6 +293,7 @@ export function PurchaseClient({ suppliers, products, lastCosts, methods = [] }:
         </div>
         {/* Bill breakdown */}
         <div className="mt-3 text-sm text-ink space-y-0.5 max-w-xs">
+          <div className="flex justify-between text-ink font-medium"><span>Total quantity</span><span>{totalQty} pcs <span className="text-muted font-normal">· {qtyLines} line{qtyLines === 1 ? "" : "s"}</span></span></div>
           <div className="flex justify-between text-muted"><span>Items</span><span>{formatPaise(itemsTotal * 100)}</span></div>
           {chargesTotal !== 0 && <div className="flex justify-between text-muted"><span>Packing + Shipping + Adj.</span><span>{formatPaise(Math.round(chargesTotal * 100))}</span></div>}
           {gst && <div className="flex justify-between text-muted"><span>GST (3%)</span><span>{formatPaise(Math.round(gstAmt * 100))}</span></div>}
@@ -301,6 +305,7 @@ export function PurchaseClient({ suppliers, products, lastCosts, methods = [] }:
       <div className="mt-4 border-t border-sand pt-4">
         <div className="flex flex-wrap items-center gap-3 mb-2">
           <span className="text-lg font-semibold text-ink">Total: <span className="sensitive">{formatPaise(total * 100)}</span></span>
+          {totalQty > 0 && <span className="text-sm text-ink bg-cream rounded-full px-2.5 py-0.5">{totalQty} pcs</span>}
           <span className="text-[11px] text-muted ml-auto">Split the payment across methods — anything left over stays on credit.</span>
         </div>
         <div className="grid sm:grid-cols-3 gap-3">
