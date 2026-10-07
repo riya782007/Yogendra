@@ -1,7 +1,7 @@
 "use server";
 import {revalidateTag,  revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
-import { requirePerm } from "@/lib/auth";
+import { requirePerm, authoritativePerms, getSession } from "@/lib/auth";
 import { inferStockKind } from "@/lib/stockKind";
 
 /**
@@ -11,6 +11,16 @@ import { inferStockKind } from "@/lib/stockKind";
  * Logged to stock_adjustments.
  */
 export async function adjustStockAction(formData: FormData): Promise<void> {
+  await adjustStockJsonAction(formData);
+}
+
+export type AdjustResult = { ok: boolean; error?: string; sku?: string; applied?: number; nowQty?: number };
+
+/**
+ * Same as adjustStockAction but tells the screen what happened (owner: "adjust stock ka record" — the
+ * old form gave no reply, so staff couldn't tell whether it went through). Also records WHO did it.
+ */
+export async function adjustStockJsonAction(formData: FormData): Promise<AdjustResult> {
   // SKUs are stored upper-case; the owner often types "Bd1001". Normalise so a
   // case/spacing slip never silently no-ops ("Apply does nothing").
   const sku = String(formData.get("sku") ?? "").trim().toUpperCase();
@@ -19,9 +29,12 @@ export async function adjustStockAction(formData: FormData): Promise<void> {
   const source = String(formData.get("source") ?? "").trim() || "Manual adjustment";
   const reason = String(formData.get("reason") ?? "").trim() || null;
   const kind = String(formData.get("kind") ?? "").trim() || inferStockKind(source);
-  if (!sku || !delta) return;
+  if (!sku) return { ok: false, error: "Pick a SKU first." };
+  if (!delta) return { ok: false, error: "Enter a quantity." };
   // Strict: adding needs inventory.add, removing needs inventory.remove.
-  if (!(await requirePerm(delta > 0 ? "inventory.add" : "inventory.remove"))) return;
+  if (!(await requirePerm(delta > 0 ? "inventory.add" : "inventory.remove"))) return { ok: false, error: `Your role can't ${delta > 0 ? "add" : "remove"} stock.` };
+  const by = getSession().roleName || null;
+  let res: AdjustResult = { ok: false, error: `SKU ${sku} was not found.` };
 
   const sb = supabaseServer();
   const now = new Date().toISOString();
@@ -32,39 +45,42 @@ export async function adjustStockAction(formData: FormData): Promise<void> {
     // Not a product SKU — it may be a VARIANT's own SKU (e.g. a scanned variant barcode
     // or a colour/size SKU typed directly). Adjust the variant and roll the product up.
     const { data: v } = await sb.from("variants").select("id,qty,product_id,sku").ilike("sku", sku).maybeSingle();
-    if (!v) return;
+    if (!v) return res;
     const vid = (v as any).id, pid = (v as any).product_id;
     const oldQ = (v as any).qty ?? 0;
     const vNew = Math.max(0, oldQ + delta);
     const applied = vNew - oldQ;
-    if (applied === 0) return; // already at 0 — never log a phantom movement
+    if (applied === 0) return { ok: false, error: `${(v as any).sku ?? sku} is already at 0 — nothing to remove.` }; // never log a phantom movement
     await sb.from("variants").update({ qty: vNew }).eq("id", vid);
     const { data: siblings } = await sb.from("variants").select("qty").eq("product_id", pid);
     const total = ((siblings as any[]) ?? []).reduce((s, x) => s + (x.qty ?? 0), 0);
     await sb.from("products").update({ qty: total, last_movement_at: now }).eq("id", pid);
-    await sb.from("stock_adjustments").insert({ product_id: pid, variant_id: vid, sku: (v as any).sku ?? sku, delta: applied, source, reason, kind });
+    await sb.from("stock_adjustments").insert({ product_id: pid, variant_id: vid, sku: (v as any).sku ?? sku, delta: applied, source, reason, kind, created_by: by });
+    res = { ok: true, sku: (v as any).sku ?? sku, applied, nowQty: vNew };
   } else {
     const pid = (p as any).id;
     if (variantId) {
       // Variant-level: adjust the variant, then roll the product qty up to the variant sum.
       const { data: v } = await sb.from("variants").select("id,qty,sku").eq("id", variantId).eq("product_id", pid).maybeSingle();
-      if (!v) return;
+      if (!v) return { ok: false, error: "That colour was not found on this product." };
       const oldQ = (v as any).qty ?? 0;
       const vNew = Math.max(0, oldQ + delta);
       const applied = vNew - oldQ;
-      if (applied === 0) return; // nothing to remove (already 0) — no phantom -10 movements
+      if (applied === 0) return { ok: false, error: "Already at 0 — nothing to remove." }; // no phantom -10 movements
       await sb.from("variants").update({ qty: vNew }).eq("id", variantId);
       const { data: siblings } = await sb.from("variants").select("qty").eq("product_id", pid);
       const total = ((siblings as any[]) ?? []).reduce((s, x) => s + (x.qty ?? 0), 0);
       await sb.from("products").update({ qty: total, last_movement_at: now }).eq("id", pid);
-      await sb.from("stock_adjustments").insert({ product_id: pid, variant_id: variantId, sku: (v as any).sku ?? sku, delta: applied, source, reason, kind });
+      await sb.from("stock_adjustments").insert({ product_id: pid, variant_id: variantId, sku: (v as any).sku ?? sku, delta: applied, source, reason, kind, created_by: by });
+      res = { ok: true, sku: (v as any).sku ?? sku, applied, nowQty: vNew };
     } else {
       const oldQ = (p as any).qty ?? 0;
       const newQty = Math.max(0, oldQ + delta);
       const applied = newQty - oldQ;
-      if (applied === 0) return; // already at the floor — don't log a phantom movement
+      if (applied === 0) return { ok: false, error: `${sku} is already at 0 — nothing to remove.` }; // don't log a phantom movement
       await sb.from("products").update({ qty: newQty, last_movement_at: now }).eq("id", pid);
-      await sb.from("stock_adjustments").insert({ product_id: pid, sku, delta: applied, source, reason, kind });
+      await sb.from("stock_adjustments").insert({ product_id: pid, sku, delta: applied, source, reason, kind, created_by: by });
+      res = { ok: true, sku, applied, nowQty: newQty };
     }
   }
 
@@ -76,6 +92,53 @@ export async function adjustStockAction(formData: FormData): Promise<void> {
   // (the storefront hides zero-stock designs and caches that list) — owner: "restock hone pe stock online
   // nahi ho raha". This makes a restocked design reappear on the shop at once (and a manual removal hide it).
   revalidateTag("storefront");
+  return res;
+}
+
+export type MoveResult = { ok: boolean; error?: string; moved?: number; from_sku?: string; from_name?: string; from_qty?: number; to_sku?: string; to_name?: string; to_qty?: number };
+
+/**
+ * MOVE STOCK from one SKU to another (owner, Oct 2026): "WT1052 me 3 pcs hain par asli stock WT1050 ka
+ * hai — remove + add ki jagah seedha move kar do, taaki staff ko Adjust stock na dena pade." The shop's
+ * total never changes, so this has its own permission (inventory.move) — staff can fix a wrong SKU
+ * without being able to add or remove stock. Owners / roles that can both add and remove may move too.
+ * Atomic in the database (public.move_stock): both SKUs locked, a linked pair of 'move' rows logged.
+ */
+export async function moveStockAction(input: { from: string; to: string; qty: number; note?: string }): Promise<MoveResult> {
+  const perms = await authoritativePerms();
+  const allowed = perms === "*" || perms.includes("inventory.move") || (perms.includes("inventory.add") && perms.includes("inventory.remove"));
+  if (!allowed) return { ok: false, error: "Your role can't move stock. Ask the owner to tick “Move stock between SKUs”." };
+  const from = String(input?.from ?? "").trim().toUpperCase();
+  const to = String(input?.to ?? "").trim().toUpperCase();
+  const qty = Math.trunc(Number(input?.qty ?? 0));
+  if (!from || !to) return { ok: false, error: "Pick both SKUs — where the stock is now, and where it should be." };
+  if (from === to) return { ok: false, error: "From and To are the same SKU." };
+  if (!(qty >= 1)) return { ok: false, error: "Enter how many pieces to move." };
+  const sb = supabaseServer();
+  const { data, error } = await sb.rpc("move_stock", {
+    p_from: from, p_to: to, p_qty: qty, p_note: String(input?.note ?? "").trim() || null, p_by: getSession().roleName || null,
+  });
+  if (error) return { ok: false, error: error.message || "Couldn't move the stock." };
+  const r = (data ?? {}) as any;
+  revalidatePath("/admin/inventory");
+  revalidatePath("/admin/stock-movements");
+  revalidatePath("/admin/dashboard");
+  revalidateTag("storefront");
+  return { ok: true, ...r };
+}
+
+/** Live stock of one SKU (colour SKU or simple product) for the Move-stock form. */
+export async function skuStockAction(raw: string): Promise<{ sku: string; name: string; qty: number; colours?: number } | null> {
+  const sku = String(raw ?? "").trim();
+  if (!sku) return null;
+  if (!(await requirePerm("inventory.view"))) return null;
+  const sb = supabaseServer();
+  const { data: v } = await sb.from("variants").select("sku,qty,color,product:products(name)").ilike("sku", sku).maybeSingle();
+  if (v) return { sku: (v as any).sku, name: [(v as any).product?.name, (v as any).color].filter(Boolean).join(" · "), qty: (v as any).qty ?? 0 };
+  const { data: p } = await sb.from("products").select("id,sku,name,qty").ilike("sku", sku).maybeSingle();
+  if (!p) return null;
+  const { count } = await sb.from("variants").select("id", { count: "exact", head: true }).eq("product_id", (p as any).id);
+  return { sku: (p as any).sku, name: (p as any).name ?? "", qty: (p as any).qty ?? 0, colours: count ?? 0 };
 }
 
 /**
