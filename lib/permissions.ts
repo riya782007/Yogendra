@@ -24,6 +24,7 @@ export const PERMISSION_GROUPS: PermGroup[] = [
     { key: "inventory.view", label: "View inventory" },
     { key: "inventory.add", label: "Add / increase stock" },
     { key: "inventory.remove", label: "Remove / decrease stock", desc: "the sensitive one" },
+    { key: "inventory.move", label: "Move stock between SKUs", desc: "fix a wrong SKU (e.g. WT1052 → WT1050) — total stock never changes, so staff can correct without add/remove rights" },
     { key: "inventory.barcode", label: "Print barcodes" },
   ]},
   { key: "billing", label: "Billing & POS", perms: [
