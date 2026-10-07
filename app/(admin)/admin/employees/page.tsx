@@ -78,7 +78,7 @@ export default async function EmployeesPage({ searchParams }: { searchParams: { 
               <th className="px-4 py-2.5">#</th>
               <th className="px-4 py-2.5">Employee</th>
               <th className="px-4 py-2.5 text-right">Bills</th>
-              <th className="px-4 py-2.5 text-right">Sales</th>
+              <th className="px-4 py-2.5 text-right" title="Goods value only — shipping, packing and GST are not counted">Sales (goods)</th>
               <th className="px-4 py-2.5 text-right">Collected</th>
               <th className="px-4 py-2.5 text-right">Status</th>
             </tr>
@@ -98,7 +98,7 @@ export default async function EmployeesPage({ searchParams }: { searchParams: { 
                     {roster1?.phone && <span className="block text-[11px] text-muted">{roster1.phone}</span>}
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums">{e.orders}</td>
-                  <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-ink">{formatPaise(e.sales)}</td>
+                  <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-ink">{formatPaise(e.sales)}{e.billed > e.sales && <span className="block text-[10px] font-normal text-muted">billed {formatPaise(e.billed)}</span>}</td>
                   <td className="px-4 py-2.5 text-right tabular-nums text-emerald-dark">{formatPaise(e.collected)}</td>
                   <td className="px-4 py-2.5 text-right">
                     {canManage ? (
@@ -119,7 +119,7 @@ export default async function EmployeesPage({ searchParams }: { searchParams: { 
           </tbody>
         </table>
       </div>
-      <p className="text-[11px] text-muted mt-3">Sales = total value of bills attributed to the employee in the selected period. Collected = amount actually received on those bills. Marking someone inactive hides them from the POS picker but keeps their past sales.</p>
+      <p className="text-[11px] text-muted mt-3">Sales = value of the jewellery sold on bills attributed to the employee in the selected period — shipping, packing and GST are left out (they are overheads, not sales); the full bill amount is shown underneath when it differs. Collected = amount actually received on those bills. Marking someone inactive hides them from the POS picker but keeps their past sales.</p>
 
       {/* Sales ledger — every attributed bill with date + customer, so the owner can audit each sale. */}
       <h2 className="font-display text-2xl text-ink mt-8 mb-1">Sales ledger{empName ? ` — ${empName}` : ""}</h2>
@@ -139,7 +139,7 @@ export default async function EmployeesPage({ searchParams }: { searchParams: { 
               <th className="px-4 py-2.5">Salesperson</th>
               <th className="px-4 py-2.5">Customer</th>
               <th className="px-4 py-2.5">Type</th>
-              <th className="px-4 py-2.5 text-right">Amount</th>
+              <th className="px-4 py-2.5 text-right">Sales (goods)</th>
               <th className="px-4 py-2.5 text-right">Collected</th>
             </tr>
           </thead>
@@ -154,7 +154,7 @@ export default async function EmployeesPage({ searchParams }: { searchParams: { 
                 <td className="px-4 py-2.5 text-ink">{s.employee}</td>
                 <td className="px-4 py-2.5 text-ink">{s.customer}</td>
                 <td className="px-4 py-2.5 text-xs uppercase text-muted">{s.billType === "cash" ? "Cash memo" : "GST"}{s.channel && s.channel !== "pos" ? ` · ${s.channel}` : ""}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums font-medium"><span className="sensitive">{formatPaise(s.total)}</span></td>
+                <td className="px-4 py-2.5 text-right tabular-nums font-medium"><span className="sensitive">{formatPaise(s.goods)}</span>{s.total > s.goods && <span className="block text-[10px] font-normal text-muted sensitive">bill {formatPaise(s.total)}</span>}</td>
                 <td className="px-4 py-2.5 text-right tabular-nums text-emerald-dark"><span className="sensitive">{formatPaise(s.amountPaid)}</span></td>
               </tr>
             ))}
