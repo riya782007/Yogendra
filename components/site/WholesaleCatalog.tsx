@@ -8,8 +8,11 @@ import { UpiAmountQr } from "@/components/admin/UpiAmountQr";
 import { MoreDesignsButton } from "@/components/site/MoreDesignsButton";
 import { wholesaleShippingPaise, WHOLESALE_COD_FEE_PAISE } from "@/lib/wholesaleShipping";
 import { loadTradeSliceAction } from "@/app/actions/tradeCatalog";
+import { useBackToClose } from "@/components/site/useBackToClose";
 
 const TRADE_PAGE = 48;
+const CART_KEY = "bd_trade_cart_v1";
+const VIEW_KEY = "bd_trade_view_v1";
 
 type Facet = { name: string; subs: string[]; styles: string[] };
 type SliceFilter = { category?: string; sub?: string; style?: string; q?: string; colour?: string };
@@ -60,6 +63,11 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets =
   const [filterBusy, setFilterBusy] = useState(false);
   const catalog = useMemo(() => remote ?? [...products, ...extra], [remote, products, extra]);
   const seenRef = useRef<Map<string, P>>(new Map());
+  // One saved cart per dealer on a shared phone/PC (guests share one).
+  const cartKey = `${CART_KEY}:${(customerPhone || "guest").replace(/\D/g, "") || "guest"}`;
+  const recoveredRef = useRef(false);  // a cart-recovery link filled the cart
+  const restoredRef = useRef(false);   // the cart was already filled from a saved copy
+  const skipVisReset = useRef(false);
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
   const [colour, setColour] = useState("all");
@@ -128,9 +136,57 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets =
         const q = Math.max(0, Math.round(Number(it?.qty) || 0));
         if (p && q > 0) next[p.sku] = q;
       }
-      if (Object.keys(next).length) { setQty(next); setReviewing(true); }
+      if (Object.keys(next).length) { recoveredRef.current = true; setQty(next); setReviewing(true); }
     } catch { /* ignore — recovery is best-effort */ }
   }, [bySku]);
+
+  /**
+   * COME BACK TO THE SAME SCREEN (owner, Oct 2026: "back karte hi sab refresh ho raha hai").
+   * Leaving the portal and coming back (phone Back, a WhatsApp link, a refresh) used to start from zero:
+   * filters, the extra pages already loaded, the scroll position and — for a guest — the cart were gone.
+   *  · the cart is kept on this device (localStorage, 7 days) — for a logged-in dealer it wins over the
+   *    server copy because it is the newer one; a cart-recovery link still wins over both.
+   *  · filters, loaded designs and scroll position are kept for this browser tab (sessionStorage, 3 h).
+   */
+  const viewRestored = useRef(false);
+  useEffect(() => {
+    if (viewRestored.current) return;
+    viewRestored.current = true;
+    try {
+      const c = JSON.parse(localStorage.getItem(cartKey) || "null");
+      if (!recoveredRef.current && c && Date.now() - (c.t ?? 0) < 7 * 864e5 && c.qty && Object.keys(c.qty).length) {
+        for (const r of (c.rows ?? []) as P[]) if (r?.sku) seenRef.current.set(r.sku.toUpperCase(), r);
+        setExtra((prev) => {
+          const have = new Set([...products, ...prev].map((x) => x.sku.toUpperCase()));
+          const add = ((c.rows ?? []) as P[]).filter((r) => r?.sku && !have.has(r.sku.toUpperCase()));
+          return add.length ? [...prev, ...add] : prev;
+        });
+        setQty(c.qty);
+        restoredRef.current = true; // newer than the server copy
+      }
+    } catch { /* ignore */ }
+    try {
+      const v = JSON.parse(sessionStorage.getItem(VIEW_KEY) || "null");
+      if (!v || Date.now() - (v.t ?? 0) > 3 * 36e5) return;
+      const changesFilter = v.cat !== "all" || v.sub !== "all" || v.styleF !== "all" || v.colour !== "all" || !!(v.q ?? "").trim();
+      if (changesFilter) skipFilterFetch.current = true; // the saved list below IS that filter's result
+      setQ(v.q ?? ""); setCat(v.cat ?? "all"); setSub(v.sub ?? "all"); setStyleF(v.styleF ?? "all"); setColour(v.colour ?? "all");
+      setBracket(v.bracket ?? "all"); setInStock(!!v.inStock); setSort(v.sort ?? "featured");
+      if (Array.isArray(v.remote)) setRemote(v.remote);
+      if (Array.isArray(v.extra) && v.extra.length) setExtra((prev) => {
+        const have = new Set([...products, ...prev].map((x) => x.sku.toUpperCase()));
+        return [...prev, ...(v.extra as P[]).filter((x) => x?.sku && !have.has(x.sku.toUpperCase()))];
+      });
+      if (typeof v.moreLeft === "boolean") setMore(v.moreLeft);
+      if (typeof v.nextOffset === "number") setNextOffset(v.nextOffset);
+      const viewChanged = changesFilter || (v.bracket ?? "all") !== "all" || !!v.inStock || (v.sort ?? "featured") !== "featured";
+      if (typeof v.visN === "number") { if (viewChanged) skipVisReset.current = true; setVisN(v.visN); }
+      if (v.sel && typeof v.sel === "object") setSel(v.sel);
+      const y = Number(v.y) || 0;
+      if (y > 0) { setTimeout(() => window.scrollTo(0, y), 60); setTimeout(() => window.scrollTo(0, y), 400); }
+    } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /**
    * SAVED CART — a logged-in dealer picks up exactly where they left off, on ANY device.
@@ -144,7 +200,6 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets =
    * Runs once, and only into an EMPTY cart - it must never overwrite something the dealer has
    * already started picking in this session, and a recovery link (handled above) always wins.
    */
-  const restoredRef = useRef(false);
   useEffect(() => {
     if (restoredRef.current || !savedCart) return;
     const next = savedCart.qty ?? {};
@@ -257,7 +312,10 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets =
   // hydrating every card at once (the main cause of the "ultra slow" catalogue).
   const PAGE_SIZE = 60;
   const [visN, setVisN] = useState(PAGE_SIZE);
-  useEffect(() => { setVisN(PAGE_SIZE); }, [q, cat, sub, styleF, colour, bracket, inStock, sort]);
+  useEffect(() => {
+    if (skipVisReset.current) { skipVisReset.current = false; return; }
+    setVisN(PAGE_SIZE);
+  }, [q, cat, sub, styleF, colour, bracket, inStock, sort]);
   const visibleGroups = useMemo(() => groups.slice(0, visN), [groups, visN]);
 
   /** The colour currently shown for a design: the global colour filter wins, then the dealer's
@@ -269,6 +327,54 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets =
     const inCart = g.variants.find((v) => (qty[v.sku] ?? 0) > 0);
     return inCart ?? g.variants[0];
   };
+
+  // Keep the cart on this device and the screen state for this tab (see "COME BACK TO THE SAME SCREEN").
+  useEffect(() => {
+    if (!viewRestored.current) return;
+    try {
+      const ls = Object.entries(qty).filter(([, n]) => n > 0);
+      if (!ls.length) { localStorage.removeItem(cartKey); return; }
+      const rows = ls.map(([sku]) => bySku.get(sku.toUpperCase())).filter(Boolean);
+      localStorage.setItem(cartKey, JSON.stringify({ t: Date.now(), qty: Object.fromEntries(ls), rows }));
+    } catch { /* storage full / blocked — the cart still works, it just won't survive a reload */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qty]);
+  const viewSnap = useRef<any>(null);
+  viewSnap.current = { q, cat, sub, styleF, colour, bracket, inStock, sort, remote, extra: extra.slice(0, 600), moreLeft, nextOffset, visN, sel };
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const save = () => {
+      try { sessionStorage.setItem(VIEW_KEY, JSON.stringify({ ...viewSnap.current, t: Date.now(), y: Math.round(window.scrollY) })); } catch { /* ignore */ }
+    };
+    const onScroll = () => { if (t) clearTimeout(t); t = setTimeout(save, 250); };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("pagehide", save);
+    const onVis = () => { if (document.visibilityState === "hidden") save(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { if (t) clearTimeout(t); save(); window.removeEventListener("scroll", onScroll); window.removeEventListener("pagehide", save); document.removeEventListener("visibilitychange", onVis); };
+  }, []);
+  // Save filter / page changes too (not only on scroll), a moment after they settle.
+  useEffect(() => {
+    if (!viewRestored.current) return;
+    const t = setTimeout(() => {
+      try {
+        const prev = JSON.parse(sessionStorage.getItem(VIEW_KEY) || "null");
+        sessionStorage.setItem(VIEW_KEY, JSON.stringify({ ...viewSnap.current, t: Date.now(), y: prev?.y ?? Math.round(window.scrollY) }));
+      } catch { /* ignore */ }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [q, cat, sub, styleF, colour, bracket, inStock, sort, remote, extra, moreLeft, nextOffset, visN, sel]);
+
+  // Phone Back closes the open panel (zoom → payment → cart review → quote → order history) instead of
+  // leaving the portal.
+  const panelDepth = (zoom ? 1 : 0) + (paying ? 1 : 0) + (reviewing ? 1 : 0) + (rfqOpen ? 1 : 0) + (tab === "history" ? 1 : 0);
+  useBackToClose(panelDepth, () => {
+    if (zoom) setZoom(null);
+    else if (paying) { if (!busy) setPaying(false); }
+    else if (reviewing) setReviewing(false);
+    else if (rfqOpen) { if (!rfqBusy) setRfqOpen(false); }
+    else if (tab === "history") setTab("order");
+  });
 
   const sortedTiers = useMemo(() => [...(tiers ?? [])].sort((a, b) => a.minQty - b.minQty), [tiers]);
   const hasTiers = sortedTiers.length > 0;
