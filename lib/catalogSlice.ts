@@ -206,7 +206,7 @@ export async function getShopSliceCached(opts: {
     ["shop-slice-v1", JSON.stringify({
       c: opts.categorySlug ?? "", o: opts.order ?? "new", l: opts.limit ?? 0, f: opts.offset ?? 0,
     })],
-    { tags: ["storefront"], revalidate: 300 },
+    { tags: ["storefront"], revalidate: 3600 },
   )().catch(() => null);
   return cached ?? await getShopSlice(opts);
 }
@@ -379,7 +379,7 @@ export async function getTradeColoursCached(): Promise<string[]> {
         return list;
       },
       ["trade-colours-v1"],
-      { tags: ["storefront"], revalidate: 300 },
+      { tags: ["storefront"], revalidate: 3600 },
     )();
   } catch {
     return getTradeColours();
@@ -423,7 +423,7 @@ export async function getTradeFacetsCached(): Promise<TradeFacet[]> {
         return facets;
       },
       ["trade-facets-v1"],
-      { tags: ["storefront"], revalidate: 300 },
+      { tags: ["storefront"], revalidate: 3600 },
     )();
   } catch {
     return getTradeFacets();
@@ -563,7 +563,7 @@ export async function getTradeSliceCached(offset = 0, limit: number = TRADE_PAGE
         c: filter.category ?? "", s: filter.sub ?? "", t: filter.style ?? "",
         col: (filter.colour ?? "").trim().toLowerCase(), q: (filter.q ?? "").trim(),
       })],
-      { tags: ["storefront"], revalidate: 120 },
+      { tags: ["storefront"], revalidate: 900 },
     )();
   } catch {
     return getTradeSlice(offset, limit, filter);
