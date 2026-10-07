@@ -25,7 +25,7 @@ const timeAgo = (iso: string) => {
   return `${Math.floor(s / 86400)}d ago`;
 };
 
-/** Live "New Orders" panel — SSR-seeded, then polls every 30s and toasts when a new order arrives. */
+/** Live "New Orders" panel — SSR-seeded, then polls every 60s (only while the tab is visible) and toasts when a new order arrives. */
 export function OrderNotifications({ initial }: { initial: { orders: O[]; last24h: number } }) {
   const { toast } = useToast();
   const [orders, setOrders] = useState<O[]>(initial.orders);
@@ -36,6 +36,9 @@ export function OrderNotifications({ initial }: { initial: { orders: O[]; last24
   useEffect(() => {
     let alive = true;
     const tick = async () => {
+      // A tab left open in the background (POS PC overnight) must not keep calling the server — each
+      // poll is a paid serverless request + a database read. Catch up the moment it is looked at again.
+      if (typeof document !== "undefined" && document.hidden) return;
       try {
         const r = await fetch("/api/admin/recent-orders", { cache: "no-store" });
         if (!r.ok || !alive) return;
@@ -68,12 +71,15 @@ export function OrderNotifications({ initial }: { initial: { orders: O[]; last24
         /* ignore transient poll errors */
       }
     };
-    const id = setInterval(tick, 30000);
+    const id = setInterval(tick, 60000);
+    const onVis = () => { if (!document.hidden) tick(); };
+    document.addEventListener("visibilitychange", onVis);
     const rel = setInterval(() => force((n) => n + 1), 60000);
     return () => {
       alive = false;
       clearInterval(id);
       clearInterval(rel);
+      document.removeEventListener("visibilitychange", onVis);
     };
   }, [toast]);
 
