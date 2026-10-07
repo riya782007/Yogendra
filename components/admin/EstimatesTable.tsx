@@ -4,7 +4,7 @@ import Link from "next/link";
 import { formatPaise } from "@/lib/pricing";
 import { billEstimateAction, denyEstimateAction, reopenEstimateAction, holdEstimateAction } from "@/app/actions/billing";
 
-type E = { id: string; customer_name: string | null; customer_phone: string | null; total: number; status: string; created_at: string; order_id: string | null };
+type E = { id: string; customer_name: string | null; customer_phone: string | null; total: number; status: string; created_at: string; order_id: string | null; total_qty?: number };
 
 // Default view = "To bill" (only estimates still needing action). Everything already billed (GST or cash)
 // sits in ONE "Handled" tab; denied/expired in their own. All filtering/sorting is CLIENT-side so
@@ -156,7 +156,7 @@ export function EstimatesTable({ estimates, initialQuery = "", initialTab = "" }
                   )}
                 </td>
                 <td className="p-3 text-ink">{e.customer_name || "—"}{e.customer_phone && <span className="block text-xs text-muted">{e.customer_phone}</span>}</td>
-                <td className="p-3 font-medium whitespace-nowrap">{formatPaise(e.total)}</td>
+                <td className="p-3 font-medium whitespace-nowrap">{formatPaise(e.total)}{e.total_qty != null && <span className="block text-[11px] font-normal text-muted">{e.total_qty} pcs</span>}</td>
                 <td className="p-3"><span className={`px-2 py-0.5 rounded-full text-xs ${STATUS_STYLE[e.status] ?? "bg-cream text-muted"}`}>{STATUS_LABEL[e.status] ?? e.status}</span></td>
                 <td className="p-3 text-muted whitespace-nowrap">{new Date(e.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" })}</td>
                 <td className="p-3">
