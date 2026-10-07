@@ -2022,9 +2022,18 @@ export async function getPromotionsAdmin() {
 // cache is safe. Result: repeat admin navigation is near-instant instead of multi-second.
 // ============================================================================================
 
+/**
+ * How long a storefront cache entry may live when NOTHING changed (seconds). Every product / stock /
+ * price / promo change already calls revalidateTag("storefront"), which refreshes these at once — so this
+ * is only a safety net. It used to be 2-5 minutes, which re-downloaded the whole catalogue (~13 pages of
+ * variants + products + images) from Supabase all day long even when nothing had changed: most of the
+ * project's database egress and much of the Netlify function time (Oct 2026 cost review).
+ */
+export const STOREFRONT_TTL = 3600;
+
 /** Cached storefront (per-opts). Use on admin POS/estimate pages that don't need to-the-second freshness. */
 export const getStorefrontCached = (opts: { includeDrafts?: boolean; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean; onlyInStock?: boolean } = {}) =>
-  unstable_cache(() => getStorefront(opts), ["storefront-cached", JSON.stringify(opts)], { tags: ["storefront"], revalidate: 300 })();
+  unstable_cache(() => getStorefront(opts), ["storefront-cached", JSON.stringify(opts)], { tags: ["storefront"], revalidate: STOREFRONT_TTL })();
 
 /** ALL variant SKUs (colour + stock + price overrides) for the billing/estimate counters — 12k+ rows. */
 export const getBillingVariants = unstable_cache(async (): Promise<any[]> => {
@@ -2053,7 +2062,7 @@ export const getCategoryTreeCached = unstable_cache(async () => {
   const tree = await getCategoryTree();
   if (!tree.length) throw new Error("category tree empty — not caching");
   return tree;
-}, ["category-tree-v4"], { tags: ["storefront"], revalidate: 300 });
+}, ["category-tree-v4"], { tags: ["storefront"], revalidate: STOREFRONT_TTL });
 
 /** Layout/header must never 500: live-retry, then a small fallback tile set. */
 export async function getCategoryTreeSafe(): Promise<CategoryNode[]> {
@@ -2084,14 +2093,14 @@ export const getCatalogProductsCached = (opts: Parameters<typeof getCatalogProdu
       && !(opts.skus && opts.skus.length);
     if (unfiltered && rows.length === 0) throw new Error("shared catalogue empty — not caching");
     return rows;
-  }, ["catalog-products-v3", JSON.stringify(opts)], { tags: ["storefront"], revalidate: 300 })();
+  }, ["catalog-products-v3", JSON.stringify(opts)], { tags: ["storefront"], revalidate: STOREFRONT_TTL })();
 export const getCatalogSuggestionsCached = unstable_cache(async () => {
   const s = await getCatalogSuggestions();
   if (!s.categories.length && !s.products.length) throw new Error("suggestions empty — not caching");
   return s;
-}, ["catalog-suggestions-v4"], { tags: ["storefront"], revalidate: 600 });
+}, ["catalog-suggestions-v4"], { tags: ["storefront"], revalidate: STOREFRONT_TTL });
 export const getLivePromosCached = (scope: "retail" | "wholesale", placement: "hero" | "popup" | "strip") =>
-  unstable_cache(() => getLivePromos(scope, placement), ["live-promos", scope, placement], { tags: ["storefront"], revalidate: 120 })();
+  unstable_cache(() => getLivePromos(scope, placement), ["live-promos", scope, placement], { tags: ["storefront"], revalidate: 900 })();
 
 export async function getStorefront(
   opts: { includeDrafts?: boolean; includeWholesaleOnly?: boolean; excludeRetailOnly?: boolean; onlyInStock?: boolean } = {},
@@ -2225,7 +2234,7 @@ const getPublishedStorefrontCached = unstable_cache(
     return store;
   },
   ["storefront-published-v5"],
-  { revalidate: 180, tags: ["storefront"] },
+  { revalidate: STOREFRONT_TTL, tags: ["storefront"] },
 );
 
 /** Shop/category/search: never serve a cached empty catalogue; live-retry, then published-all. */
@@ -2929,7 +2938,7 @@ const getSearchCatalogue = unstable_cache(
     return { products, formula, extras };
   },
   ["search-catalogue-instock-v3"],
-  { revalidate: 300, tags: ["storefront"] },
+  { revalidate: STOREFRONT_TTL, tags: ["storefront"] },
 );
 
 export async function searchProducts(q: string) {
