@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useToast } from "@/components/ui/Toast";
 import { createProductFullAction, createCategoryJsonAction, createSubcategoryJsonAction, createStyleJsonAction, type CreateProductPayload } from "@/app/actions/catalog";
 import { getProductVariantsAction, addVariantImageAction } from "@/app/actions/variants";
+import { addColourJsonAction } from "@/app/actions/options";
 import { compressImage } from "@/lib/image";
 
 type Cat = { id: string; name: string };
@@ -47,7 +48,7 @@ export function AddInventoryClient({
   subcategories = [],
   styles = [],
   variantOptions = { color: [], size: [], polish: [] },
-  colorCodes = {},
+  colorCodes: colorCodesProp = {},
 }: {
   categories: Cat[];
   subcategories?: Sub[];
@@ -89,6 +90,33 @@ export function AddInventoryClient({
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // New colours saved right here (owner, Oct 2026: "configurable product ke variants banate waqt aur
+  // colours add karne ka option") — saved to the colour master with their own barcode code, so they show
+  // up for every later product, and picked for this design straight away.
+  const [savedColours, setSavedColours] = useState<{ name: string; code: string }[]>([]);
+  const [newColour, setNewColour] = useState("");
+  const [savingColour, setSavingColour] = useState(false);
+  const colorCodes = useMemo<ColorCodeMap>(() => {
+    const m: ColorCodeMap = { ...colorCodesProp };
+    for (const c of savedColours) m[c.name.toLowerCase()] = c.code;
+    return m;
+  }, [colorCodesProp, savedColours]);
+  async function saveNewColour(raw: string) {
+    const nm0 = raw.trim();
+    if (!nm0) return;
+    setSavingColour(true);
+    try {
+      const r = await addColourJsonAction({ name: nm0 });
+      if (!r.ok || !r.name) { toast(r.error || "Couldn't save the colour", "error"); return; }
+      const nm = r.name;
+      setSavedColours((cs) => cs.some((c) => c.name.toLowerCase() === nm.toLowerCase()) ? cs : [...cs, { name: nm, code: r.code ?? "" }]);
+      setPicks((p) => p.color.some((x) => x.toLowerCase() === nm.toLowerCase()) ? p : { ...p, color: [...p.color, nm] });
+      setNewColour(""); setQ("");
+      toast(r.existed ? `“${nm}” is already in your colours — selected` : `“${nm}” saved to your colours (code ${r.code}) and selected`);
+    } catch { toast("Couldn't reach the server — try again", "error"); }
+    finally { setSavingColour(false); }
+  }
+
   const input = "w-full rounded-xl border border-sand px-3.5 py-2.5 text-sm bg-white outline-none focus:border-emerald transition-colors";
   const cell = "w-full rounded-lg border border-sand bg-white px-2.5 py-1.5 text-sm outline-none focus:border-emerald transition-colors";
 
@@ -97,12 +125,14 @@ export function AddInventoryClient({
     if (a === "color") {
       const m = new Map<string, string>();
       for (const c of variantOptions.color ?? []) { const t = c.trim(); if (t) m.set(t.toLowerCase(), t); }
+      for (const c of savedColours) m.set(c.name.toLowerCase(), c.name);
       for (const k of Object.keys(colorCodes ?? {})) { const t = k.trim(); if (t && !m.has(t.toLowerCase())) m.set(t.toLowerCase(), t.charAt(0).toUpperCase() + t.slice(1)); }
       return [...m.values()].sort((x, y) => x.localeCompare(y));
     }
     return [...new Set((variantOptions[a] ?? []).map((s) => s.trim()).filter(Boolean))].sort((x, y) => x.localeCompare(y));
   };
-  const masters = useMemo(() => ({ color: masterFor("color"), size: masterFor("size"), polish: masterFor("polish") }), [variantOptions, colorCodes]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const masters = useMemo(() => ({ color: masterFor("color"), size: masterFor("size"), polish: masterFor("polish") }), [variantOptions, colorCodes, savedColours]);
   const filterOpts = (a: Attr) => (q.trim() ? masters[a].filter((o) => o.toLowerCase().includes(q.trim().toLowerCase())) : masters[a]);
   // How many variant rows the current selection will produce (product of each chosen attribute's count).
   const comboCount = (["color", "size", "polish"] as Attr[]).reduce((n, a) => (picks[a].length ? n * picks[a].length : n), 1);
@@ -395,7 +425,7 @@ export function AddInventoryClient({
         <section className="bg-white rounded-2xl p-6 shadow-card">
           <div>
             <p className="text-sm font-semibold text-ink"><span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald text-white text-xs mr-2">1</span>Pick the colours, sizes &amp; polishes for this design</p>
-            <p className="text-xs text-muted mt-1">Select values under any of these — you can combine them. If you choose more than one attribute we create a variant for every combination (e.g. 2 colours × 2 polishes = 4 variants). Choose from existing master values only.</p>
+            <p className="text-xs text-muted mt-1">Select values under any of these — you can combine them. If you choose more than one attribute we create a variant for every combination (e.g. 2 colours × 2 polishes = 4 variants). Colour not in the list? Type it under <b>Colour</b> and tap <b>+ Save</b> — it is added to your colours for every future product.</p>
             <input className={`${input} mt-3`} placeholder="🔎 Search options…" value={q} onChange={(e) => setQ(e.target.value)} />
             <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-4">
               {(["color", "size", "polish"] as Attr[]).map((a) => {
@@ -407,7 +437,13 @@ export function AddInventoryClient({
                       {picks[a].length > 0 && <span className="ml-1 text-emerald-dark font-normal">· {picks[a].length} selected</span>}
                     </p>
                     <div className="max-h-40 overflow-y-auto flex flex-wrap gap-1.5 pr-1">
-                      {masters[a].length === 0 && <p className="text-[11px] text-muted py-1">No {attrLabel[a]} in master yet — add them under <Link href="/admin/colours" className="text-emerald nav-link">master data</Link>.</p>}
+                      {masters[a].length === 0 && a !== "color" && <p className="text-[11px] text-muted py-1">No {attrLabel[a]} in master yet — add them under <Link href="/admin/colours" className="text-emerald nav-link">master data</Link>.</p>}
+                      {a === "color" && q.trim() && !masters.color.some((c) => c.toLowerCase() === q.trim().toLowerCase()) && (
+                        <button type="button" disabled={savingColour} onClick={() => saveNewColour(q)}
+                          className="px-2.5 py-1 rounded-full text-xs border border-emerald text-emerald-dark hover:bg-emerald-mist disabled:opacity-50">
+                          {savingColour ? "Saving…" : <>+ Save “{q.trim()}” as a new colour</>}
+                        </button>
+                      )}
                       {opts.map((o) => {
                         const on = picks[a].some((x) => x.toLowerCase() === o.toLowerCase());
                         return (
@@ -418,6 +454,15 @@ export function AddInventoryClient({
                         );
                       })}
                     </div>
+                    {a === "color" && (
+                      <div className="mt-2 flex gap-1.5">
+                        <input value={newColour} onChange={(e) => setNewColour(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); saveNewColour(newColour); } }}
+                          placeholder="New colour, e.g. Rani Pink" className="flex-1 min-w-0 rounded-lg border border-sand bg-white px-2.5 py-1 text-xs outline-none focus:border-emerald" />
+                        <button type="button" disabled={savingColour || !newColour.trim()} onClick={() => saveNewColour(newColour)}
+                          className="px-2.5 py-1 rounded-lg text-xs bg-emerald text-white disabled:opacity-50">{savingColour ? "…" : "+ Save"}</button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
