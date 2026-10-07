@@ -9,6 +9,7 @@ import { phoneDigits, recordMatchesShopperQuery } from "../phone";
 import { scoreQuery } from "../search";
 import { MANUAL_ADJUSTMENT_OR } from "../stockRecord";
 import { goodsValue } from "../salesValue";
+import { listingTitle } from "../content.base";
 
 /**
  * PostgREST caps every select at 1000 rows (the `max-rows` default). With a 4000+ product
@@ -195,7 +196,7 @@ export async function getProductsPage(opts: { page?: number; pageSize?: number; 
   if (opts.q?.trim()) {
     for (const tok of opts.q.trim().split(/\s+/)) {
       const t = escLike(tok);
-      if (t) query = query.or(`name.ilike.%${t}%,sku.ilike.%${t}%`);
+      if (t) query = query.or(`name.ilike.%${t}%,sku.ilike.%${t}%,generated_content->>title.ilike.%${t}%`);
     }
   }
   if (opts.category && opts.category !== "all") {
@@ -336,7 +337,7 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
     if (subCatIds) q = q.in("subcategory_id", subCatIds);
     if (styleId) q = q.eq("style_id", styleId);
     if (opts.skus && opts.skus.length) q = q.in("sku", opts.skus.map((s) => s.trim().toUpperCase()).filter(Boolean));
-    if (opts.q && opts.q.trim()) { const esc = opts.q.trim().replace(/[%,()]/g, " "); q = q.or(`name.ilike.%${esc}%,sku.ilike.%${esc}%`); }
+    if (opts.q && opts.q.trim()) { const esc = opts.q.trim().replace(/[%,()]/g, " "); q = q.or(`name.ilike.%${esc}%,sku.ilike.%${esc}%,generated_content->>title.ilike.%${esc}%`); }
     return q;
   };
 
@@ -422,7 +423,7 @@ export async function getCatalogProducts(opts: { category?: string; subcategory?
       .map((pl) => pl?.labels?.name)
       .filter((n): n is string => typeof n === "string" && n.length > 0);
     return {
-      sku: p.sku, name: p.name,
+      sku: p.sku, name: listingTitle(p),
       category: p.category?.name ?? "", categorySlug: p.category?.slug ?? "all",
       subcategory: p.subcategory?.name ?? null, subcategorySlug: p.subcategory?.slug ?? null,
       // Trade price is emitted ONLY for authorised callers; omitted from retail JSON entirely.
@@ -1166,14 +1167,15 @@ export async function getLabelItems(): Promise<LabelItem[]> {
   // barcode screen ("variant SKU not showing in barcodes").
   const data = await fetchAll((f, t) => sb
     .from("products")
-    .select("sku,name,base_wholesale,wholesale_override,retail_override,mrp_override, variants(sku,color,size,polish,wholesale_override,retail_override,mrp_override)")
+    .select("sku,name,generated_content,base_wholesale,wholesale_override,retail_override,mrp_override, variants(sku,color,size,polish,wholesale_override,retail_override,mrp_override)")
     .order("sku").range(f, t));
   const out: LabelItem[] = [];
   for (const p of (data as any[]) ?? []) {
     const vs = ((p.variants as any[]) ?? []).filter((v) => v.sku);
     const pp = _resolvePrices(p.base_wholesale, formula, overridesOf(null), overridesOf(p));
+    const shown = listingTitle(p);
     out.push({
-      sku: p.sku, name: p.name,
+      sku: p.sku, name: shown,
       price: pp.retailPrice, wholesale: pp.wholesaleRate, mrp: pp.mrp,
       kind: "product", variantCount: vs.length,
     });
@@ -1183,7 +1185,7 @@ export async function getLabelItems(): Promise<LabelItem[]> {
       const opt = (v.color || v.size || "").trim() || null;
       const vp = _resolvePrices(p.base_wholesale, formula, overridesOf(v), overridesOf(p));
       out.push({
-        sku: v.sku, name: `${p.name}${opt ? ` — ${opt}` : ""}`,
+        sku: v.sku, name: `${shown}${opt ? ` — ${opt}` : ""}`,
         price: vp.retailPrice, wholesale: vp.wholesaleRate, mrp: vp.mrp,
         kind: "variant", option: opt || undefined, parentSku: p.sku,
       });
@@ -2093,7 +2095,7 @@ export const getCatalogProductsCached = (opts: Parameters<typeof getCatalogProdu
       && !(opts.skus && opts.skus.length);
     if (unfiltered && rows.length === 0) throw new Error("shared catalogue empty — not caching");
     return rows;
-  }, ["catalog-products-v3", JSON.stringify(opts)], { tags: ["storefront"], revalidate: STOREFRONT_TTL })();
+  }, ["catalog-products-v4", JSON.stringify(opts)], { tags: ["storefront"], revalidate: STOREFRONT_TTL })();
 export const getCatalogSuggestionsCached = unstable_cache(async () => {
   const s = await getCatalogSuggestions();
   if (!s.categories.length && !s.products.length) throw new Error("suggestions empty — not caching");
@@ -2117,6 +2119,7 @@ export async function getStorefront(
     "id, category_id, sku, name, type, base_wholesale, qty, status, last_movement_at, created_at, " +
     "subcategory_id, wholesale_override, retail_override, mrp_override, wholesale_only, retail_only, " +
     "style_id, thumbnail_path, default_variant_id, hide_oos_variants, in_stock, more_designs, more_designs_note, " +
+    "gc_title:generated_content->>title, " +
     "category:categories(id,name,slug)";
   const STOREFRONT_COLS_BASIC =
     "id, category_id, sku, name, type, base_wholesale, qty, status, last_movement_at, created_at, " +
@@ -2204,7 +2207,7 @@ export async function getStorefront(
     const tp = (typeof p.thumbnail_path === "string" && p.thumbnail_path.startsWith("http") && validImgs.get(p.id)?.has(p.thumbnail_path)) ? p.thumbnail_path : null;
     const tpIsOosColour = !!tp && (varImgs.get(p.id)?.has(tp) ?? false) && !(inStockImgs.get(p.id)?.has(tp) ?? false);
     const cover = defImg ?? ((tp && !tpIsOosColour) ? tp : null);
-    return { ...p, image: cover ?? imgByProduct.get(p.id) ?? null, rating: Math.round(rating * 10) / 10, reviews, isNew };
+    return { ...p, name: listingTitle(p), image: cover ?? imgByProduct.get(p.id) ?? null, rating: Math.round(rating * 10) / 10, reviews, isNew };
   });
   if (!opts.includeWholesaleOnly) products = products.filter((p: any) => !p.wholesale_only);
   // Wholesale storefront hides retail-only items (admin/POS pass excludeRetailOnly=false → see all).
@@ -2233,7 +2236,7 @@ const getPublishedStorefrontCached = unstable_cache(
     if (!store.products?.length) throw new Error("storefront read returned no products — not caching");
     return store;
   },
-  ["storefront-published-v5"],
+  ["storefront-published-v6"],
   { revalidate: STOREFRONT_TTL, tags: ["storefront"] },
 );
 

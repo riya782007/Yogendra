@@ -7,6 +7,7 @@ import { updateProductAction, persistProductNameAction } from "@/app/actions/upd
 import { repriceFromFormulaAction } from "@/app/actions/catalog";
 import { suggestProductTitleAction, suggestProductTitlesAction } from "@/app/actions/aiContent";
 import { computePrices, type PricingFormula } from "@/lib/pricing";
+import { isGenericPimName } from "@/lib/content";
 
 type Cat = { id: string; name: string; slug: string };
 export type EditorProduct = {
@@ -56,7 +57,7 @@ export function ProductEditor({
   const [name, setName] = useState(product.name);
   const [description, setDescription] = useState(product.description);
   const [titleAuto, setTitleAuto] = useState(!product.title || product.title.trim() === product.name.trim());
-  useEffect(() => { if (titleAuto) setTitle(name); }, [name, titleAuto]);
+  useEffect(() => { if (titleAuto && !isGenericPimName(name)) setTitle(name); }, [name, titleAuto]);
   useEffect(() => {
     window.dispatchEvent(new CustomEvent("bd-product-name", { detail: name }));
   }, [name]);

@@ -54,6 +54,66 @@ export function preferredTitle(p: { name?: string | null; sku?: string | null })
   return raw;
 }
 
+/** ERP/PIM import names that only name the jewellery *type* — not a unique listing. */
+const GENERIC_MODIFIER =
+  /^(antique|vintage|oxidised|oxidized|kundan|polki|meena|meenakari|temple|pearl|gold|golden|silver|bridal|party|wedding|traditional|fancy|designer|imitation|artificial|american|diamond|ad|cz|set|pair|jewellery|jewelry|new|latest|premium|stylish|trendy)$/i;
+const GENERIC_TYPE =
+  /^(earring|earrings|necklace|necklaces|choker|bracelet|bracelets|bangle|bangles|pendant|anklet|nath|jhumka|jhumkas|jhumki|haar|mangalsutra|ring|rings|tikka|maang|watch|watches|set)$/i;
+
+export function isGenericPimName(name?: string | null): boolean {
+  const raw = (name ?? "").replace(/\s+/g, " ").trim();
+  if (raw.length < 3) return true;
+  if (/^(product|untitled|new product|item|sku\b)/i.test(raw)) return true;
+  if (/^[A-Za-z]{1,4}[-\s]?\d{1,6}[A-Za-z]?$/.test(raw)) return true;
+  const words = raw.split(/\s+/);
+  if (words.length <= 5 && words.every((w) => GENERIC_MODIFIER.test(w) || GENERIC_TYPE.test(w))) return true;
+  if (
+    raw === raw.toUpperCase() &&
+    !/[0-9]/.test(raw) &&
+    raw.length <= 48 &&
+    words.length <= 5 &&
+    words.some((w) => GENERIC_TYPE.test(w))
+  ) return true;
+  return false;
+}
+
+type ListingSource = {
+  name?: string | null;
+  sku?: string | null;
+  generated_content?: { title?: string | null; seo?: { metaTitle?: string | null } } | null;
+  gc_title?: string | null;
+};
+
+function uniqueListingCandidate(raw?: string | null): string | null {
+  const t = (raw ?? "").replace(/\s+/g, " ").trim();
+  if (t.length < 3 || isGenericPimName(t)) return null;
+  return t;
+}
+
+/**
+ * What humans should see on catalogue / barcode / shop rows.
+ * A real saved product name wins (so a rename shows immediately). A generic ERP name
+ * like "ANTIQUE EARRINGS" must not hide a unique generated_content.title.
+ */
+export function listingTitle(p: ListingSource): string {
+  const named = preferredTitle(p);
+  const cached = (p.generated_content?.title ?? p.gc_title ?? "").trim();
+  const meta = (p.generated_content?.seo?.metaTitle ?? "")
+    .replace(/\s*\|\s*BlytheDIVA\s*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return (
+    uniqueListingCandidate(named) ||
+    uniqueListingCandidate(cached) ||
+    uniqueListingCandidate(meta) ||
+    cached ||
+    named ||
+    (p.name ?? "").trim() ||
+    (p.sku ?? "").trim() ||
+    "Product"
+  );
+}
+
 export function pickDivaName(seed: string): string {
   let h = 0;
   const s = (seed || "").toString();
@@ -201,11 +261,10 @@ export function resolveProductContent(p: ProductLike): GeneratedContent {
   if (p.generated_content && p.generated_content.title) {
     const gc = p.generated_content;
     const tpl = templateContent(p);
-    // Product name is what the owner just saved. Stale generated_content.title (the old
-    // "Ishika …" after a rename to "Sara …") must not keep winning on shop/trade listings.
-    const named = preferredTitle(p);
+    // A unique saved name wins over a stale "Ishika …" cache after a rename. A generic
+    // ERP name ("ANTIQUE EARRINGS") must not hide the unique listing title.
     const cached = (gc.title && gc.title.trim()) ? gc.title.trim() : "";
-    const title = named || cached || tpl.title;
+    const title = listingTitle({ name: p.name, sku: p.sku, generated_content: gc }) || cached || tpl.title;
     const pick = (s: string | undefined, fallback: string) => (s && s.trim()) ? s : fallback;
     const merged: GeneratedContent = {
       title,

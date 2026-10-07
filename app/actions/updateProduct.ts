@@ -10,6 +10,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { computePrices, isValidPriceSet } from "@/lib/pricing";
 import { getPricingFormula } from "@/lib/supabase/queries";
 import { requirePerm } from "@/lib/auth";
+import { isGenericPimName } from "@/lib/content";
 
 /** newline- or comma-separated → clean string[] */
 function parseList(raw: string): string[] {
@@ -81,7 +82,15 @@ export async function updateProductAction(formData: FormData): Promise<UpdateRes
 
   // Merge content (keep anything we don't expose in the form).
   const prev = (existing.generated_content as any) ?? {};
-  const displayTitle = String(formData.get("title") ?? "").trim() || name;
+  const submittedTitle = String(formData.get("title") ?? "").trim();
+  const prevTitle = String(prev.title ?? "").trim();
+  // Generic ERP names (and a title field that auto-copied them) must not overwrite a unique listing.
+  const displayTitle =
+    (!isGenericPimName(submittedTitle) ? submittedTitle : "") ||
+    (!isGenericPimName(name) ? name : "") ||
+    prevTitle ||
+    submittedTitle ||
+    name;
   const generated_content = {
     ...prev,
     title: displayTitle,
@@ -132,25 +141,26 @@ export async function updateProductAction(formData: FormData): Promise<UpdateRes
   // submits a comma/newline list of names; we (a) upsert each name into labels so unknown
   // names get auto-created, then (b) re-sync the product_labels rows for this product.
   const labelNames = parseList(String(formData.get("labels") ?? ""));
+  // Empty Basic-tab labels field is "not editing labels", not "delete every chip".
+  // Clearing Bridal/Bestseller still happens on the Catalog tab toggles.
   if (labelNames.length) {
     await sb.from("labels").upsert(
       labelNames.map((name) => ({ name, color: "emerald" })),
       { onConflict: "name", ignoreDuplicates: true },
     );
-  }
-  const { data: labelRows } = await sb.from("labels").select("id,name").in("name", labelNames.length ? labelNames : ["__none__"]);
-  const wantIds = new Set(((labelRows as any[]) ?? []).map((r) => r.id));
-  // Replace the join set: delete the rows we no longer want, insert the new ones.
-  const { data: existingJoin } = await sb.from("product_labels").select("label_id").eq("product_id", existing.id);
-  const haveIds = new Set(((existingJoin as any[]) ?? []).map((r) => r.label_id));
-  const toAdd = [...wantIds].filter((id) => !haveIds.has(id));
-  const toRemove = [...haveIds].filter((id) => !wantIds.has(id));
-  if (toRemove.length) await sb.from("product_labels").delete().eq("product_id", existing.id).in("label_id", toRemove);
-  if (toAdd.length) {
-    await sb.from("product_labels").upsert(
-      toAdd.map((labelId) => ({ product_id: existing.id, label_id: labelId })),
-      { onConflict: "product_id,label_id", ignoreDuplicates: true },
-    );
+    const { data: labelRows } = await sb.from("labels").select("id,name").in("name", labelNames);
+    const wantIds = new Set(((labelRows as any[]) ?? []).map((r) => r.id));
+    const { data: existingJoin } = await sb.from("product_labels").select("label_id").eq("product_id", existing.id);
+    const haveIds = new Set(((existingJoin as any[]) ?? []).map((r) => r.label_id));
+    const toAdd = [...wantIds].filter((id) => !haveIds.has(id));
+    const toRemove = [...haveIds].filter((id) => !wantIds.has(id));
+    if (toRemove.length) await sb.from("product_labels").delete().eq("product_id", existing.id).in("label_id", toRemove);
+    if (toAdd.length) {
+      await sb.from("product_labels").upsert(
+        toAdd.map((labelId) => ({ product_id: existing.id, label_id: labelId })),
+        { onConflict: "product_id,label_id", ignoreDuplicates: true },
+      );
+    }
   }
 
   // Optional: rename the SKU (the client asked for editable SKUs). Validate uniqueness
@@ -194,9 +204,12 @@ export async function persistProductNameAction(sku: string, name: string, title?
   const { data: existing } = await sb.from("products").select("id, generated_content").eq("sku", sku.trim()).maybeSingle();
   if (!existing) return { ok: false, error: "Product not found" };
   const prev = (existing.generated_content as any) ?? {};
+  const nextTitle = (title ?? next).trim() || next;
+  const prevTitle = String(prev.title ?? "").trim();
+  const gcTitle = isGenericPimName(nextTitle) && prevTitle && !isGenericPimName(prevTitle) ? prevTitle : nextTitle;
   const patch: Record<string, any> = {
     name: next,
-    generated_content: { ...prev, title: (title ?? next).trim() || next },
+    generated_content: { ...prev, title: gcTitle },
     last_movement_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };

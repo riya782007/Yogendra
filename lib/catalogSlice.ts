@@ -9,6 +9,7 @@ import { supabaseReadClients, supabaseServer } from "./supabase/server";
 import { categoryRef } from "./shopCatalog";
 import { GST_RATE } from "./business";
 import { resolvePrices, overridesOf, DEFAULT_FORMULA, cleanTiers } from "./pricing";
+import { listingTitle } from "./content.base";
 
 const STOREFRONT_HIDDEN_IMAGE_KINDS = new Set(["source", "flatlay"]);
 function isStorefrontImage(kind?: string | null): boolean {
@@ -16,7 +17,7 @@ function isStorefrontImage(kind?: string | null): boolean {
 }
 
 const COLS = [
-  "id,category_id,sku,name,type,base_wholesale,qty,status,created_at,updated_at,wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,thumbnail_path,subcategory_id,style_id,more_designs,more_designs_note,default_variant_id,category:categories(id,name,slug)",
+  "id,category_id,sku,name,type,base_wholesale,qty,status,created_at,updated_at,wholesale_only,retail_only,wholesale_override,retail_override,mrp_override,thumbnail_path,subcategory_id,style_id,more_designs,more_designs_note,default_variant_id,gc_title:generated_content->>title,category:categories(id,name,slug)",
   "id,category_id,sku,name,type,base_wholesale,qty,status,created_at,updated_at,wholesale_only,retail_only,thumbnail_path,category:categories(id,name,slug)",
   "id,category_id,sku,name,base_wholesale,qty,status,created_at,updated_at,wholesale_only,retail_only,thumbnail_path",
   "id,sku,name,qty,status,base_wholesale,thumbnail_path,category_id",
@@ -63,7 +64,7 @@ async function runRange(
   const needle = (opts.q ?? "").trim().replace(/[%_,]/g, " ").replace(/\s+/g, " ").trim();
   if (needle) {
     const t = needle.replace(/"/g, "");
-    q = q.or(`name.ilike.%${t}%,sku.ilike.%${t}%`);
+    q = q.or(`name.ilike.%${t}%,sku.ilike.%${t}%,generated_content->>title.ilike.%${t}%`);
   }
   return q.order(opts.order.col, { ascending: opts.order.asc }).range(opts.from, opts.to);
 }
@@ -472,7 +473,7 @@ export async function getTradeSlice(offset = 0, limit: number = TRADE_PAGE_SIZE,
     if (styleId) pool = pool.filter((p) => p.style_id === styleId);
     if (q) {
       const s = q.toLowerCase();
-      pool = pool.filter((p) => `${p.name ?? ""} ${p.sku ?? ""}`.toLowerCase().includes(s));
+      pool = pool.filter((p) => `${p.name ?? ""} ${p.gc_title ?? ""} ${p.sku ?? ""}`.toLowerCase().includes(s));
     }
     const stamp = (p: any) => String(p.updated_at ?? p.created_at ?? "");
     pool.sort((a, b) => stamp(b).localeCompare(stamp(a)));
@@ -517,6 +518,7 @@ async function tradeRowsFor(rows: any[], formula: any, gstInc: (paise: number) =
     const price = gstInc(ps.wholesaleRate);
     const parentImg = imgBy.get(p.id) ?? null;
     const catName = categoryRef(p).name;
+    const shown = listingTitle(p);
     const allVs = varsBy.get(p.id) ?? [];
     const sub = p.subcategory_id ? subName.get(p.subcategory_id) ?? null : null;
     const style = p.style_id ? styleName.get(p.style_id) ?? null : null;
@@ -525,7 +527,7 @@ async function tradeRowsFor(rows: any[], formula: any, gstInc: (paise: number) =
         const vImgs = Array.isArray(v.image_paths) ? v.image_paths.filter((x: string) => typeof x === "string" && x.startsWith("http")) : [];
         const images = (vImgs.length ? vImgs : (parentImg ? [parentImg] : [])).slice(0, 3);
         list.push({
-          pid: p.id, sku: v.sku, name: p.name, category: catName, sub, style, colour: v.color ?? null,
+          pid: p.id, sku: v.sku, name: shown, category: catName, sub, style, colour: v.color ?? null,
           qty: v.qty ?? 0, price, mrp: ps.mrp, image: images[0] ?? parentImg, images,
           moreDesigns: !!p.more_designs, moreDesignsNote: p.more_designs_note ?? null,
         });
@@ -533,7 +535,7 @@ async function tradeRowsFor(rows: any[], formula: any, gstInc: (paise: number) =
     } else {
       if ((p.qty ?? 0) <= 0) continue;
       list.push({
-        pid: p.id, sku: p.sku, name: p.name, category: catName, sub, style, colour: null,
+        pid: p.id, sku: p.sku, name: shown, category: catName, sub, style, colour: null,
         qty: p.qty, price, mrp: ps.mrp, image: parentImg, images: parentImg ? [parentImg] : [],
         moreDesigns: !!p.more_designs, moreDesignsNote: p.more_designs_note ?? null,
       });
@@ -559,7 +561,7 @@ export async function getTradeSliceCached(offset = 0, limit: number = TRADE_PAGE
       // The colour MUST be part of the key. Without it every colour would share one cached result and
       // the filter would look like it did nothing — a worse bug than the one being fixed. Bumped to v4
       // so existing v3 entries (keyed without colour) are never reused.
-      ["trade-slice-v4", String(offset), String(limit), JSON.stringify({
+      ["trade-slice-v5", String(offset), String(limit), JSON.stringify({
         c: filter.category ?? "", s: filter.sub ?? "", t: filter.style ?? "",
         col: (filter.colour ?? "").trim().toLowerCase(), q: (filter.q ?? "").trim(),
       })],
@@ -588,11 +590,11 @@ export async function getTradeRowsBySkus(skus: string[]): Promise<TradeRow[]> {
   // Variants first: a trade row is normally a variant (SKU + colour), and its stock is authoritative.
   const { data: vrows } = await sb
     .from("variants")
-    .select("id,sku,color,qty,image_paths,product:products(id,sku,name,base_wholesale,status,wholesale_only,retail_only,wholesale_override,mrp_override,thumbnail_path,category:categories(id,name,slug))")
+    .select("id,sku,color,qty,image_paths,product:products(id,sku,name,generated_content,base_wholesale,status,wholesale_only,retail_only,wholesale_override,mrp_override,thumbnail_path,category:categories(id,name,slug))")
     .in("sku", want);
   const { data: prows } = await sb
     .from("products")
-    .select("id,sku,name,qty,base_wholesale,status,wholesale_only,retail_only,wholesale_override,mrp_override,thumbnail_path,category:categories(id,name,slug)")
+    .select("id,sku,name,generated_content,qty,base_wholesale,status,wholesale_only,retail_only,wholesale_override,mrp_override,thumbnail_path,category:categories(id,name,slug)")
     .in("sku", want);
 
   const out: TradeRow[] = [];
@@ -605,7 +607,7 @@ export async function getTradeRowsBySkus(skus: string[]): Promise<TradeRow[]> {
     const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));
     const imgs = ((v.image_paths as string[]) ?? []).filter((x) => typeof x === "string" && x.startsWith("http")).slice(0, 3);
     push({
-      pid: p.id, sku: v.sku, name: p.name, category: p.category?.name ?? "", sub: null, style: null,
+      pid: p.id, sku: v.sku, name: listingTitle(p), category: p.category?.name ?? "", sub: null, style: null,
       colour: v.color ?? null, qty: v.qty ?? 0, price: gstInc(ps.wholesaleRate), mrp: ps.mrp,
       image: imgs[0] ?? (typeof p.thumbnail_path === "string" ? p.thumbnail_path : null), images: imgs,
     });
@@ -613,7 +615,7 @@ export async function getTradeRowsBySkus(skus: string[]): Promise<TradeRow[]> {
   for (const p of ((prows as any[]) ?? [])) {
     const ps = resolvePrices(p.base_wholesale, formula, overridesOf(p));
     push({
-      pid: p.id, sku: p.sku, name: p.name, category: p.category?.name ?? "", sub: null, style: null,
+      pid: p.id, sku: p.sku, name: listingTitle(p), category: p.category?.name ?? "", sub: null, style: null,
       colour: null, qty: p.qty ?? 0, price: gstInc(ps.wholesaleRate), mrp: ps.mrp,
       image: typeof p.thumbnail_path === "string" ? p.thumbnail_path : null, images: [],
     });

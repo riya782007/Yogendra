@@ -9,6 +9,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 import { getPricingFormula } from "@/lib/supabase/queries";
 import { resolvePrices, overridesOf } from "@/lib/pricing";
+import { listingTitle } from "@/lib/content";
 
 export type LabelHit = {
   sku: string; name: string; price: number; wholesale: number; mrp: number;
@@ -22,11 +23,11 @@ export async function barcodeLookupAction(rawCode: string): Promise<LabelHit[]> 
   const sb = supabaseServer();
   const formula = await getPricingFormula();
   const like = code.replace(/[%,()]/g, "");
-  const PSEL = "sku,name,base_wholesale,wholesale_override,retail_override,mrp_override, variants(sku,color,size,polish,wholesale_override,retail_override,mrp_override)";
+  const PSEL = "sku,name,generated_content,base_wholesale,wholesale_override,retail_override,mrp_override, variants(sku,color,size,polish,wholesale_override,retail_override,mrp_override)";
 
   // Match a product by SKU or name, OR a product that owns a matching variant SKU.
   const [byProduct, byVariant] = await Promise.all([
-    sb.from("products").select(PSEL).or(`sku.ilike.%${like}%,name.ilike.%${like}%`).limit(15),
+    sb.from("products").select(PSEL).or(`sku.ilike.%${like}%,name.ilike.%${like}%,generated_content->>title.ilike.%${like}%`).limit(15),
     sb.from("variants").select("product_id").ilike("sku", `%${like}%`).limit(30),
   ]);
 
@@ -46,12 +47,13 @@ export async function barcodeLookupAction(rawCode: string): Promise<LabelHit[]> 
   for (const p of products) {
     const vs = ((p.variants as any[]) ?? []).filter((v) => v.sku);
     const pp = resolvePrices(p.base_wholesale, formula, overridesOf(null), overridesOf(p));
-    out.push({ sku: p.sku, name: p.name, price: pp.retailPrice, wholesale: pp.wholesaleRate, mrp: pp.mrp, kind: "product", variantCount: vs.length });
+    const shown = listingTitle(p);
+    out.push({ sku: p.sku, name: shown, price: pp.retailPrice, wholesale: pp.wholesaleRate, mrp: pp.mrp, kind: "product", variantCount: vs.length });
     for (const v of vs) {
       // Colour only on labels (never polish); size is the fallback for size-only bangle variants.
       const opt = (v.color || v.size || "").trim() || null;
       const vp = resolvePrices(p.base_wholesale, formula, overridesOf(v), overridesOf(p));
-      out.push({ sku: v.sku, name: `${p.name}${opt ? ` — ${opt}` : ""}`, price: vp.retailPrice, wholesale: vp.wholesaleRate, mrp: vp.mrp, kind: "variant", option: opt || undefined, parentSku: p.sku });
+      out.push({ sku: v.sku, name: `${shown}${opt ? ` — ${opt}` : ""}`, price: vp.retailPrice, wholesale: vp.wholesaleRate, mrp: vp.mrp, kind: "variant", option: opt || undefined, parentSku: p.sku });
     }
   }
   return out;
