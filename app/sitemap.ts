@@ -1,11 +1,16 @@
 export const dynamic = "force-dynamic";
 import type { MetadataRoute } from "next";
+import { unstable_cache } from "next/cache";
 import { getSitemapData } from "@/lib/supabase/queries";
+
+// Crawlers fetch the sitemap often; it lists every published product, so re-reading the whole catalogue
+// on every hit was pure cost. Cached for 6 h and refreshed at once by any catalogue change ("storefront").
+const getSitemapDataCached = unstable_cache(() => getSitemapData(), ["sitemap-data-v1"], { tags: ["storefront"], revalidate: 21600 });
 
 const BASE = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://blythediva.com").replace(/\/$/, "");
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const { products, categories } = await getSitemapData();
+  const { products, categories } = await getSitemapDataCached();
   const now = new Date();
   return [
     { url: `${BASE}/shop`, lastModified: now, changeFrequency: "daily", priority: 1 },
