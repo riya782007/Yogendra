@@ -1,4 +1,4 @@
-export const revalidate = 60;
+export const revalidate = 900;
 import { getShopSliceCached } from "@/lib/catalogSlice";
 import { ShopProductGrid } from "@/components/site/ShopProductGrid";
 
