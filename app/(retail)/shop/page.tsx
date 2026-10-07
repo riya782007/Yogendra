@@ -2,7 +2,7 @@
 // storefront read is momentarily empty (so it never caches a blank shop), and at build time that read has
 // no data — which would fail the build. Speed still comes from the slim catalogue query + the inner
 // loadShopHome cache (15 min, busted instantly by the "storefront" tag on any edit).
-export const revalidate = 60;
+export const revalidate = 900;
 import Link from "next/link";
 import { unstable_cache } from "next/cache";
 import { getFeaturedReviews, getShoppableReels, getActivePromotions, getCategoryTreeSafe, getPricingFormula } from "@/lib/supabase/queries";
@@ -87,7 +87,7 @@ async function loadShopHomeSafe() {
       return bundle.products.length ? bundle : null;
     },
     ["shop-home-v1", String(SHOP_HOME_LIMIT)],
-    { tags: ["storefront"], revalidate: 300 },
+    { tags: ["storefront"], revalidate: 3600 },
   )().catch(() => null);
   const bundle = cached ?? await loadShopHomeUncached();
   return { ...bundle, coverBy: new Map<string, string>(bundle.coverEntries) };
