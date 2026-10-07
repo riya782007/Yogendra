@@ -56,15 +56,17 @@ export default async function Purchases({ searchParams }: { searchParams: { page
             <th className="py-1">Date</th>
             <th className="py-1">Bill</th>
             <th className="py-1">Supplier</th>
+            <th className="py-1 text-right">Qty</th>
             <th className="py-1 text-right">Total</th>
           </tr></thead>
           <tbody>
-            {bills.rows.length === 0 && <tr><td colSpan={4} className="py-3 text-muted">No purchase bills match.</td></tr>}
+            {bills.rows.length === 0 && <tr><td colSpan={5} className="py-3 text-muted">No purchase bills match.</td></tr>}
             {bills.rows.map((p: any) => (
               <tr key={p.id} className="border-t border-sand/50">
                 <td className="py-2 text-muted whitespace-nowrap">{p.created_at ? new Date(p.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"}</td>
                 <td className="py-2"><a href={`/admin/purchase/${p.id}`} className="text-emerald nav-link">{p.bill_no || String(p.id).slice(0, 6).toUpperCase()} ↗</a></td>
                 <td className="py-2 text-muted">{p.supplier?.name}{p.supplier?.city ? ` · ${p.supplier.city}` : ""}</td>
+                <td className="py-2 text-right tabular-nums text-ink">{p.total_qty ?? 0} pcs</td>
                 <td className="py-2 text-right font-medium"><span className="sensitive">{formatPaise(p.total)}</span></td>
               </tr>
             ))}
