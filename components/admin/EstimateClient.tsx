@@ -322,6 +322,7 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
           {gst === "exclusive" && <p className="text-xs text-muted">Subtotal {formatPaise(total)} + GST {formatPaise(gstAmt)}</p>}
           {gst === "inclusive" && <p className="text-xs text-muted">Price includes {GST_RATE}% GST</p>}
           <span className="text-lg font-semibold text-ink whitespace-nowrap">{formatPaise(grand)}</span>
+          {lines.length > 0 && <p className="text-xs text-ink">Total quantity <b>{lines.reduce((s, l) => s + (l.qty || 0), 0)} pcs</b> · {lines.length} item{lines.length === 1 ? "" : "s"}</p>}
         </div>
       </div>
       <div className="flex flex-wrap justify-end items-center gap-2 mt-3">
