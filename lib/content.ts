@@ -6,6 +6,8 @@ export {
   type ProductLike,
   DIVA_NAMES,
   preferredTitle,
+  isGenericPimName,
+  listingTitle,
   pickDivaName,
   includedPieces,
   templateContent,

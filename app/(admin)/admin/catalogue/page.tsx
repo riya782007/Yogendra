@@ -14,6 +14,7 @@ import { getSession, can } from "@/lib/auth";
 import { CatalogueRow } from "@/components/admin/CatalogueRow";
 import { MoreDesignsBulk } from "@/components/admin/MoreDesignsBulk";
 import { SeoTitlesButton } from "@/components/admin/SeoTitlesButton";
+import { listingTitle } from "@/lib/content";
 
 export const metadata = { title: "Owner Console · Catalogue" };
 const PAGE_SIZE = 25;
@@ -127,7 +128,7 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
                 <CatalogueRow
                   key={p.id}
                   p={{
-                    id: p.id, sku: p.sku, name: p.name, status: p.status,
+                    id: p.id, sku: p.sku, name: listingTitle(p), status: p.status,
                     image: p.image ?? null, categoryName: p.category?.name ?? "", categorySlug: p.category?.slug ?? "all",
                     qty: p.qty ?? 0, priceLabel: formatPaise(o.price), offerPct: o.offerPct, hasOffer: o.hasOffer,
                     hasAi: !!(p.generated_content && p.generated_content.title), variants: p.variants ?? [],

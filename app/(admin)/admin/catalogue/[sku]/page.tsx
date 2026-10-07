@@ -541,7 +541,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
         <div className="flex items-start justify-between gap-3 mt-1 flex-wrap">
           <div>
             <div className="flex items-center gap-3 flex-wrap">
-              <LiveProductTitle initial={p.name} />
+              <LiveProductTitle initial={resolved.title} />
               <span className={`text-xs px-2 py-0.5 rounded-full ${published ? "bg-emerald-mist text-emerald-dark" : "bg-gold/15 text-gold-dark"}`}>{published ? "Visible" : "Hidden"}</span>
             </div>
             <p className="text-sm text-muted mt-1">{p.category?.name} · {p.sku} — everything for this product in one place.</p>
