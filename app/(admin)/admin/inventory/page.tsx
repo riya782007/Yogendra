@@ -7,6 +7,7 @@ import { StockAdjust } from "@/components/admin/StockAdjust";
 import { BulkStockImport } from "@/components/admin/BulkStockImport";
 import { StockExportButton } from "@/components/admin/StockExportButton";
 import { getSession, can } from "@/lib/auth";
+import { getAdjustmentRecord } from "@/lib/stockRecord";
 import { setProductVisibilityAction } from "@/app/actions/catalog";
 import { DeleteProductButton } from "@/components/admin/DeleteProductButton";
 
@@ -28,8 +29,10 @@ export default async function Inventory({ searchParams }: { searchParams: { dead
   const q = (searchParams.q ?? "").toLowerCase().trim();
   const page = Math.max(1, parseInt(searchParams.page ?? "1", 10) || 1);
 
-  const rows = await getInventoryClassified({ deadDays, lowQty });
+  const [rows, adjRecord] = await Promise.all([getInventoryClassified({ deadDays, lowQty }), getAdjustmentRecord(12)]);
   const session = getSession();
+  const canAdjust = can(session, "inventory.add") || can(session, "inventory.remove");
+  const canMove = can(session, "inventory.move") || (can(session, "inventory.add") && can(session, "inventory.remove"));
   const counts = rows.reduce((a, r) => { a[r.cls] = (a[r.cls] ?? 0) + 1; return a; }, {} as Record<string, number>);
   const filtered = rows.filter((r) => (!cls || r.cls === cls) && (!q || (r.name + r.sku).toLowerCase().includes(q)));
   const total = filtered.length;
@@ -43,7 +46,31 @@ export default async function Inventory({ searchParams }: { searchParams: { dead
       </div>
       <p className="text-sm text-muted mb-5">Rule: <b>Dead</b> = no movement in <b>{deadDays}</b> days · <b>Low</b> = ≤ <b>{lowQty}</b> pcs · <b>Inactive</b> = never sold or moved even once (checked first — an item can only be Dead or Low once it's had at least one movement). Change the numbers below and the classification updates live.</p>
 
-      <StockAdjust />
+      <StockAdjust canAdjust={canAdjust} canMove={canMove} />
+      {/* Owner: "Adjust stock ka record" — the last hand-made changes, right where they are made. */}
+      <details className="mb-4 bg-white rounded-2xl shadow-card border border-sand" open={adjRecord.length > 0}>
+        <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-ink flex items-center justify-between gap-2">
+          <span>🧾 Adjustment record — last {adjRecord.length} changes made by hand</span>
+          <Link href="/admin/stock-movements?kind=adjustment" className="text-xs text-emerald nav-link font-normal">Full record →</Link>
+        </summary>
+        <div className="overflow-x-auto border-t border-sand">
+          <table className="w-full text-sm">
+            <thead className="bg-cream text-muted text-left"><tr><th className="p-2.5">When</th><th className="p-2.5">Item</th><th className="p-2.5 text-right">Change</th><th className="p-2.5">Reason</th><th className="p-2.5">By</th></tr></thead>
+            <tbody>
+              {adjRecord.length === 0 && <tr><td colSpan={5} className="p-3 text-muted">No stock has been adjusted or moved by hand yet.</td></tr>}
+              {adjRecord.map((a) => (
+                <tr key={a.id} className="border-t border-sand/60">
+                  <td className="p-2.5 text-muted whitespace-nowrap">{new Date(a.created_at).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })}</td>
+                  <td className="p-2.5"><span className="text-ink">{a.product?.name ?? "—"}</span><span className="block text-xs text-muted font-mono">{a.sku ?? a.product?.sku}{a.variant?.color ? ` · ${a.variant.color}` : ""}</span></td>
+                  <td className={`p-2.5 text-right font-semibold tabular-nums ${a.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{a.delta > 0 ? "+" : ""}{a.delta}</td>
+                  <td className="p-2.5 text-muted">{a.kind === "move" ? <span className="px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 text-[11px] mr-1">move</span> : null}{a.source ?? ""}{a.reason ? ` — ${a.reason}` : ""}</td>
+                  <td className="p-2.5 text-muted">{a.created_by ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
       <BulkStockImport />
 
       <form className="flex flex-wrap items-end gap-3 mb-4 bg-white rounded-2xl p-4 shadow-card border border-sand">
