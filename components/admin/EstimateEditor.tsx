@@ -86,6 +86,8 @@ function EstimateEditorForm({ estimateId, initialLines, initialCharges, initialT
     [lines, newItems]);
   const chgTotal = num(charges.packing) + num(charges.courier) + num(charges.tcs) + num(charges.adjustment) - num(charges.discount);
   const grand = Math.max(0, itemsTotal + chgTotal);
+  // Total pieces (owner: "estimate me total quantity").
+  const totalQty = lines.reduce((s, l) => s + num(l.qty), 0) + newItems.reduce((s, n) => s + (n.sku.trim() ? num(n.qty) : 0), 0);
   // Anything to save? Compared with what was loaded, so an untouched panel can't be saved twice.
   const dirty = useMemo(() =>
     removeIds.length > 0 || newItems.some((n) => n.sku.trim()) ||
@@ -168,7 +170,7 @@ function EstimateEditorForm({ estimateId, initialLines, initialCharges, initialT
 
       {/* Total + single save */}
       <div className="flex items-center justify-between mt-4 border-t border-sand pt-3">
-        <span className="text-sm text-muted">Estimate total{tax !== "exclusive" ? "" : " (before GST)"}</span>
+        <span className="text-sm text-muted">Estimate total{tax !== "exclusive" ? "" : " (before GST)"} · <b className="text-ink">{totalQty} pcs</b></span>
         <span className="font-semibold text-ink text-lg tabular-nums">{money(grand)}</span>
       </div>
       <div className="flex items-center gap-3 mt-3">
