@@ -11,7 +11,7 @@ import { WhatsAppFab } from "@/components/site/WhatsAppFab";
 // Refresh the shared shell (menu + promos) periodically; catalogue/promo edits also bust it instantly via
 // the "storefront" tag. No force-dynamic here anymore: the dealer→/trade gate moved to middleware, so this
 // layout reads no cookies and the storefront pages can be edge-cached (fast) instead of rendered per request.
-export const revalidate = 300;
+export const revalidate = 3600;
 
 export default async function RetailLayout({ children }: { children: React.ReactNode }) {
   let cats: { name: string; slug: string; subcategories: { name: string; slug: string }[] }[] = [];
