@@ -83,7 +83,12 @@ export default async function PurchaseDetail({ params, searchParams }: { params:
                 <td className="p-3 text-right font-medium">{formatPaise(it.unit_cost * it.qty)}</td>
               </tr>
             ))}
-            <tr className="bg-cream/50 font-semibold"><td className="p-3" colSpan={4}>Total</td><td className="p-3 text-right">{formatPaise(p.total)}</td></tr>
+            <tr className="bg-cream/50 font-semibold">
+              <td className="p-3" colSpan={2}>Total · {items.length} line{items.length === 1 ? "" : "s"}</td>
+              <td className="p-3 text-right whitespace-nowrap">{items.reduce((s: number, it: any) => s + (it.qty ?? 0), 0)} pcs</td>
+              <td className="p-3"></td>
+              <td className="p-3 text-right">{formatPaise(p.total)}</td>
+            </tr>
           </tbody>
         </table>
       </div>
