@@ -1,4 +1,4 @@
-export const revalidate = 60;
+export const revalidate = 900;
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import Link from "next/link";
@@ -31,7 +31,7 @@ async function loadCatalogueBaseSafe(slug: string) {
       return base.products.length ? base : null;
     },
     ["category-base-v1", slug],
-    { tags: ["storefront"], revalidate: 300 },
+    { tags: ["storefront"], revalidate: 3600 },
   )().catch(() => null);
   return cached ?? await loadCatalogueBaseUncached(slug);
 }
