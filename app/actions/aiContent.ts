@@ -104,7 +104,7 @@ export async function generateContentAction(sku: string, keywords?: string[]): P
   if (!res) {
     if ((p as any).generated_content?.title) {
       // Keep good copy rather than overwrite it with a template — and say WHY nothing came back.
-      const why = errors.length ? ` (${errors[errors.length - 1]})` : "";
+      const why = errors.length ? ` (${[...new Set(errors)].join("; ")})` : "";
       return { ok: false, sku, error: errors.length
         ? `The AI service returned an error, so the existing page was kept${why}.`
         : "The AI took too long — the existing page was kept. Try again in a minute." };
