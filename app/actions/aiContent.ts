@@ -86,14 +86,28 @@ export async function generateContentAction(sku: string, keywords?: string[]): P
     keywords: (keywords ?? []).map((k) => k.trim()).filter(Boolean),
   };
 
-  const img = (await within(fetchProductImage(p), Math.min(2_500, left() - 3_000))) ?? {};
-  let res = img.imageBase64
-    ? await within(generateProductContent({ ...fields, imageBase64: img.imageBase64, imageMime: img.imageMime } as any, { visionFirst: true }), left() - 2_500)
+  // Start the fast text-only model AT ONCE and, in parallel, read the photo and ask the vision model.
+  // Use the vision answer if it lands in time (better: it has seen the piece), else the text one.
+  // (Before: vision got ~5 s, then text only the ~2 s left — so on any slow minute both missed.)
+  const errors: string[] = [];
+  const onLog = (e: any) => { if (e && e.ok === false && e.error) errors.push(`${e.provider}: ${String(e.error).slice(0, 140)}`); };
+  const isReal = (r: any) => r && r.provider !== "deterministic";
+  const textP = generateProductContent(fields as any, { visionFirst: false, timeoutMs: Math.max(1_500, left() - 900), onLog }).catch(() => null);
+  const img = (await within(fetchProductImage(p), Math.min(2_500, left() - 4_500))) ?? {};
+  const visionP = img.imageBase64
+    ? generateProductContent({ ...fields, imageBase64: img.imageBase64, imageMime: img.imageMime } as any,
+        { visionFirst: true, imageDetail: "low", timeoutMs: Math.max(1_500, left() - 1_200), onLog }).catch(() => null)
     : null;
-  if (!res) res = await within(generateProductContent(fields as any, { visionFirst: false }), left() - 500);
+  let res: Awaited<ReturnType<typeof generateProductContent>> | null = null;
+  if (visionP) { const v = await within(visionP, left() - 1_200); if (isReal(v)) res = v; }
+  if (!res) { const t = await within(textP, left() - 500); if (isReal(t)) res = t; }
   if (!res) {
     if ((p as any).generated_content?.title) {
-      return { ok: false, sku, error: "The AI took too long — the existing page was kept. Try again in a minute." };
+      // Keep good copy rather than overwrite it with a template — and say WHY nothing came back.
+      const why = errors.length ? ` (${errors[errors.length - 1]})` : "";
+      return { ok: false, sku, error: errors.length
+        ? `The AI service returned an error, so the existing page was kept${why}.`
+        : "The AI took too long — the existing page was kept. Try again in a minute." };
     }
     res = fallbackProductContent(fields as any);
   }
