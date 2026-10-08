@@ -27,6 +27,8 @@ type ChatArgs = {
   imageDetail?: "low" | "high" | "auto";
   /** Sampling spread. Low = repeatable (detection/extraction); high = varied wording (title ideas). */
   temperature?: number;
+  /** Provider-specific request fields (e.g. Groq reasoning_effort). */
+  extra?: Record<string, unknown>;
 };
 
 async function chat(endpoint: string, key: string, model: string, a: ChatArgs): Promise<string> {
@@ -48,6 +50,7 @@ async function chat(endpoint: string, key: string, model: string, a: ChatArgs): 
         messages: [{ role: "system", content: a.system }, { role: "user", content: userContent }],
         temperature: a.temperature ?? 0.7,
         ...(a.json ? { response_format: { type: "json_object" } } : {}),
+        ...(a.extra ?? {}),
       }),
       signal: controller.signal,
     });
@@ -74,7 +77,11 @@ export function openaiConfigured() { return !!openaiKey() && openaiEnabled(); }
 export async function groqChat(a: ChatArgs): Promise<string> {
   const key = groqKey(); if (!key) throw new Error("no groq key");
   const model = env("GROQ_MODEL") ?? "openai/gpt-oss-120b";
-  return chat("https://api.groq.com/openai/v1/chat/completions", key, model, a);
+  // gpt-oss is a REASONING model: by default it "thinks" before answering, which is what made product
+  // copy take longer than the host's 10-second limit ("AI took too long"). Copywriting needs no deep
+  // reasoning, so ask for the short version.
+  const extra = /gpt-oss/i.test(model) ? { reasoning_effort: "low", ...(a.extra ?? {}) } : a.extra;
+  return chat("https://api.groq.com/openai/v1/chat/completions", key, model, { ...a, extra });
 }
 export async function openaiChat(a: ChatArgs): Promise<string> {
   if (!openaiEnabled()) throw new Error("OpenAI disabled via OPENAI_DISABLED=1 — remove that env var to re-enable");
@@ -142,7 +149,12 @@ export async function geminiChat(a: ChatArgs): Promise<string> {
             ...(a.imageBase64 ? [{ inline_data: { mime_type: a.imageMime ?? "image/jpeg", data: a.imageBase64 } }] : []),
           ],
         }],
-        generationConfig: { temperature: a.temperature ?? 0.3, ...(a.json ? { responseMimeType: "application/json" } : {}) },
+        generationConfig: {
+          temperature: a.temperature ?? 0.3, ...(a.json ? { responseMimeType: "application/json" } : {}),
+          // Gemini 2.5 Flash "thinks" by default (often 5-15 s before the first word). Product copy and
+          // titles don't need it, and it pushed every request past the host's 10-second limit.
+          ...(/flash/i.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+        },
       }),
       signal: controller.signal,
     });
