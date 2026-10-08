@@ -60,7 +60,13 @@ function prompt(p: ProductLike) {
   ].filter(Boolean).join("\n");
 }
 
-export function buildGateway(opts?: { visionFirst?: boolean }) {
+/** timeoutMs aborts each model request (the host kills a request at 10 s, so a caller with a deadline
+ *  passes what it can afford); imageDetail "low" reads the photo at 512px — several times faster than
+ *  "high" and plenty to tell a choker from a jhumka; onLog sees every attempt (used to report the real
+ *  reason when no model answers). */
+type GatewayOpts = { visionFirst?: boolean; timeoutMs?: number; imageDetail?: "low" | "high" | "auto"; onLog?: (e: any) => void };
+
+export function buildGateway(opts?: GatewayOpts) {
   const openaiOn = openaiConfigured();
   const geminiOn = geminiTextConfigured();
   const wantVision = !!opts?.visionFirst && (openaiOn || geminiOn);
@@ -70,6 +76,8 @@ export function buildGateway(opts?: { visionFirst?: boolean }) {
     const args = {
       system: SYSTEM, user: call._prompt, json: true,
       imageBase64: call._product?.imageBase64, imageMime: call._product?.imageMime,
+      ...(opts?.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
+      ...(opts?.imageDetail ? { imageDetail: opts.imageDetail } : {}),
     };
     if (openaiOn) {
       try { return JSON.parse(await openaiChat(args)); }
@@ -77,7 +85,7 @@ export function buildGateway(opts?: { visionFirst?: boolean }) {
     }
     return JSON.parse(await geminiChat(args));
   };
-  const groqRun = async (call: any) => JSON.parse(await groqChat({ system: SYSTEM, user: call._prompt, json: true }));
+  const groqRun = async (call: any) => JSON.parse(await groqChat({ system: SYSTEM, user: call._prompt, json: true, ...(opts?.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}) }));
   return new AiGateway({
     primary: {
       name: groqPrimary ? "groq" : (openaiOn ? "openai" : "gemini"),
@@ -91,11 +99,11 @@ export function buildGateway(opts?: { visionFirst?: boolean }) {
     budgetPaise: Number(process.env.AI_BUDGET_PAISE ?? 500000),
     maxRetries: 1,
     breakerThreshold: 3,
-    log: (e) => console.log("[ai]", JSON.stringify(e)),
+    log: (e) => { console.log("[ai]", JSON.stringify(e)); try { opts?.onLog?.(e); } catch { /* ignore */ } },
   });
 }
 
-export async function generateProductContent(p: ProductLike, opts?: { visionFirst?: boolean }): Promise<{ content: GeneratedContent; provider: string; fallbackUsed: boolean }> {
+export async function generateProductContent(p: ProductLike, opts?: GatewayOpts): Promise<{ content: GeneratedContent; provider: string; fallbackUsed: boolean }> {
   const gateway = buildGateway(opts);
   const call: any = { feature: "listing", cacheKey: `listing:${p.sku}`, schema, estCostPaise: 50, _prompt: prompt(p), _product: p };
   const r = await gateway.run(call);
