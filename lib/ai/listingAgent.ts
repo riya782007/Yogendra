@@ -9,6 +9,7 @@ import { groqChat, openaiChat, geminiChat, groqConfigured, openaiConfigured, gem
 import { templateContent, pickDivaName, DIVA_NAMES, type GeneratedContent, type ProductLike } from "../content";
 import { sanitizeJewelleryContent } from "../jewelleryType";
 import { seoTitleFromName } from "../seoTitle";
+import { normalizeListing, parseModelJson } from "./normalizeListing";
 
 function enforceName(title: string, forced: string): string {
   const t = (title ?? "").trim();
@@ -80,12 +81,12 @@ export function buildGateway(opts?: GatewayOpts) {
       ...(opts?.imageDetail ? { imageDetail: opts.imageDetail } : {}),
     };
     if (openaiOn) {
-      try { return JSON.parse(await openaiChat(args)); }
+      try { return normalizeListing(parseModelJson(await openaiChat(args))); }
       catch (e) { if (!geminiOn) throw e; }
     }
-    return JSON.parse(await geminiChat(args));
+    return normalizeListing(parseModelJson(await geminiChat(args)));
   };
-  const groqRun = async (call: any) => JSON.parse(await groqChat({ system: SYSTEM, user: call._prompt, json: true, ...(opts?.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}) }));
+  const groqRun = async (call: any) => normalizeListing(parseModelJson(await groqChat({ system: SYSTEM, user: call._prompt, json: true, ...(opts?.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}) })));
   return new AiGateway({
     primary: {
       name: groqPrimary ? "groq" : (openaiOn ? "openai" : "gemini"),
