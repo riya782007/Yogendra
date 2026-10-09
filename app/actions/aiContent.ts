@@ -66,6 +66,8 @@ async function fetchProductImage(p: any): Promise<{ imageBase64?: string; imageM
  *      model must never overwrite good copy with a template.
  */
 const GEN_BUDGET_MS = 8_000;
+/** Admin note added to a product when the AI writes its page — remove it once the page is checked. */
+const AI_NOTE = "AI page – check";
 const within = <T,>(p: Promise<T>, ms: number): Promise<T | null> =>
   ms <= 0 ? Promise.resolve(null)
     : Promise.race([p.catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), ms))]);
@@ -122,7 +124,13 @@ export async function generateContentAction(sku: string, keywords?: string[]): P
   // Mark who wrote it, so the store can show the "written with AI" note on AI pages only.
   content.source = provider === "template" ? "template" : "ai";
   content.generatedAt = new Date().toISOString();
-  const { error } = await sb.from("products").update({ generated_content: content }).eq("id", p.id);
+  // Owner, Oct 2026: flag AI-written pages with an admin NOTE (never shown to customers) so staff can
+  // find them, check type/polish, and remove the note once the page is corrected.
+  // Read the notes fresh (getProductBySku may not select them) so existing notes are never wiped.
+  const { data: cur } = await sb.from("products").select("admin_tags").eq("id", p.id).maybeSingle();
+  const tags: string[] = Array.isArray((cur as any)?.admin_tags) ? (cur as any).admin_tags : [];
+  const admin_tags = content.source === "ai" && !tags.some((t) => /^ai page/i.test(t)) ? [...tags, AI_NOTE] : tags;
+  const { error } = await sb.from("products").update({ generated_content: content, admin_tags }).eq("id", p.id);
   if (error) return { ok: false, sku, error: error.message };
   revalidatePath(`/shop/${p.category.slug}/${sku}`);
   revalidatePath("/admin/catalogue");
@@ -184,6 +192,7 @@ export async function suggestProductTitlesAction(input: { name: string; category
   if (!(await requirePerm("catalog.edit"))) return { ok: false, error: "not permitted" };
   const name = (input.name ?? "").trim();
   const skuStr = (input.sku ?? "").trim();
+  const t0 = Date.now();
   try {
     let subcategoryName: string | undefined, styleName: string | undefined, polishes: string[] = [];
     let imageBase64: string | undefined, imageMime: string | undefined;
@@ -196,18 +205,20 @@ export async function suggestProductTitlesAction(input: { name: string; category
           const { data: st } = await supabaseServer().from("styles").select("name").eq("id", (p as any).style_id).maybeSingle();
           styleName = (st as any)?.name;
         }
-        const img = await fetchProductImage(p);
+        const img = (await within(fetchProductImage(p), 2_500)) ?? {};
         imageBase64 = img.imageBase64; imageMime = img.imageMime;
       }
     }
-    const { titles, provider, usedImage } = await generateTitleOptions({
+    const { titles, provider, usedImage, errors } = await generateTitleOptions({
       name: nameForAi(name, skuStr), sku: input.sku || name, categoryName: input.category,
       subcategoryName, styleName, polishes, colors: [],
       keywords: (input.keywords ?? []).map((k) => k.trim()).filter(Boolean),
       imageBase64, imageMime,
-    } as any, Math.min(4, Math.max(3, input.count ?? 4)));
+    } as any, Math.min(4, Math.max(3, input.count ?? 4)), Math.max(3_000, 8_500 - (Date.now() - t0)));
     const clean = titles.map((t) => stripCode(t, skuStr) || t).filter(Boolean);
-    if (!clean.length) return { ok: false, error: "Couldn't suggest titles — try adding a photo or a keyword." };
+    if (!clean.length || provider === "deterministic") {
+      return { ok: false, error: `The AI didn't answer, so no titles were suggested${errors.length ? ` (${errors.join("; ")})` : ""}. Try again in a minute.` };
+    }
     return { ok: true, titles: clean, provider, usedImage };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Could not suggest titles" };
