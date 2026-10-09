@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { addProductTagAction, removeProductTagAction } from "@/app/actions/productTags";
 
 /**
@@ -11,6 +11,9 @@ export function ProductTags({ sku, initial, canEdit = true, compact = false, sto
   sku: string; initial: string[]; canEdit?: boolean; compact?: boolean; stopClick?: boolean;
 }) {
   const [tags, setTags] = useState<string[]>(initial ?? []);
+  // Pick up notes added on the server (e.g. "AI page – check" after Generate AI page + refresh).
+  const initialKey = (initial ?? []).join("\u0001");
+  useEffect(() => { setTags(initial ?? []); }, [initialKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
