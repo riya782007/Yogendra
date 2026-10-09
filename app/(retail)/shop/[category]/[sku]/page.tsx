@@ -245,6 +245,17 @@ export default async function ProductPage(props: Params) {
                 ? <p key={i} className="text-sm"><span className="font-semibold text-ink">{m[1]}:</span> {m[2]}</p>
                 : <p key={i}>{line}</p>;
             })}
+            {content.source === "ai" && (
+              // Owner, Oct 2026: AI pages go live now and categories/polish get corrected over time, so
+              // tell shoppers plainly that this text is AI-written and the photos are the final word.
+              <p className="!mt-4 flex items-start gap-1.5 rounded-lg bg-cream/70 border border-sand px-3 py-2 text-[11px] leading-snug text-muted">
+                <span aria-hidden>✨</span>
+                <span>
+                  This description was written with the help of AI. Details such as polish, colour or type may not be exact —
+                  please go by the photos, or <a href={waHref} target="_blank" rel="noopener noreferrer" className="text-emerald underline underline-offset-2">ask us on WhatsApp</a> before ordering.
+                </span>
+              </p>
+            )}
           </div>
 
           {content.specs && Object.keys(content.specs).length > 0 && (
