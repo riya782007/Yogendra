@@ -137,14 +137,14 @@ const FILLER_WORDS = [
   "attractive", "gorgeous", "charming", "lovely", "stunning", "luxury", "luxurious", "chic", "modern",
 ];
 
-export async function generateTitleOptions(p: ProductLike, n = 4): Promise<{ titles: string[]; provider: string; usedImage: boolean }> {
+export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_500): Promise<{ titles: string[]; provider: string; usedImage: boolean; errors: string[] }> {
   const forcedName = pickDivaName(((p as any).sku as string) || p.name || "");
   const wantVision = !!p.imageBase64;
   const sub = (p as any).subcategoryName ? ` Sub-category: ${(p as any).subcategoryName}.` : "";
   const kw = (p.keywords ?? []).filter(Boolean).join(", ");
   const userPrompt = [
     `You are BlytheDIVA SEO copywriter. Produce ${n} DISTINCT website titles as JSON {"titles":["…"]}.`,
-    wantVision ? `Look at the photo. NAME is ground truth for type — never call a necklace a nose pin.` : `Infer from fields.`,
+    wantVision ? `Look at the photo for colours, stones and polish. The shop's CATEGORY / SUB-CATEGORY and the NAME decide the TYPE — never call a necklace a nose pin, or a hair choti a necklace.` : `Infer from fields.`,
     `Category: ${p.categoryName ?? "Jewellery"}.${sub}`,
     kw ? `Keywords: ${kw}.` : ``,
     `Each title starts with «${forcedName}», 5–7 words total, Title Case.`,
@@ -159,17 +159,39 @@ export async function generateTitleOptions(p: ProductLike, n = 4): Promise<{ tit
   if (groqConfigured()) order.push(["groq", groqChat]);
   if (openaiConfigured() && !order.some(([nm]) => nm === "openai")) order.push(["openai", openaiChat]);
 
-  let titles: string[] = [];
-  let provider = "";
-  for (const [nm, fn] of order) {
+  // ROOT CAUSE OF "Suggest 3-4 titles not working" (Oct 2026): the providers were tried ONE AFTER
+  // ANOTHER with 18-30 s timeouts each, and the host kills the request at 10 s — so a slow first model
+  // meant the rest never ran and only the template's single title came back. Now every model runs AT
+  // ONCE inside one budget; titles from all of them are pooled (vision answers first) and the real
+  // error of each failed model is returned so the screen can say why.
+  const t0 = Date.now();
+  const errors: string[] = [];
+  const results: { nm: string; titles: string[] }[] = [];
+  const timeoutMs = Math.max(2_000, budgetMs - 300);
+  const runs = order.map(([nm, fn]) => (async () => {
     try {
-      const raw = JSON.parse(await fn(call));
-      const arr = Array.isArray(raw?.titles) ? raw.titles : Array.isArray(raw) ? raw : [];
-      const cleaned = arr.map((t: any) => String(t ?? "").trim()).filter(Boolean);
-      if (cleaned.length > titles.length) { titles = cleaned; provider = nm; }
-      if (titles.length >= n) break;
-    } catch { /* next */ }
-  }
+      const args = nm === "groq" ? { ...call, imageBase64: undefined, imageMime: undefined } : { ...call, imageDetail: "low" };
+      const raw: any = parseModelJson(await fn({ ...args, timeoutMs }));
+      const arr = Array.isArray(raw) ? raw
+        : Array.isArray(raw?.titles) ? raw.titles
+        : (Object.values(raw ?? {}).find((v) => Array.isArray(v)) as any[] | undefined) ?? [];
+      const cleaned = arr.map((t: any) => String(typeof t === "object" && t ? (t.title ?? Object.values(t)[0] ?? "") : t ?? "").trim()).filter(Boolean);
+      if (!cleaned.length) throw new Error("no titles in reply");
+      results.push({ nm, titles: cleaned });
+    } catch (e) {
+      errors.push(`${nm}: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`);
+    }
+  })());
+  // Wait for all, but never past the budget; stop early once a vision model has given enough.
+  await Promise.race([
+    Promise.all(runs),
+    new Promise<void>((r) => { const tick = () => { if (Date.now() - t0 >= budgetMs) return r(); if (results.some((x) => x.nm !== "groq" && x.titles.length >= n)) return r(); setTimeout(tick, 150); }; tick(); }),
+  ]);
+  if (Date.now() - t0 >= budgetMs) for (const [nm] of order) if (!results.some((x) => x.nm === nm) && !errors.some((e) => e.startsWith(nm + ":"))) errors.push(`${nm}: too slow`);
+  const rank = (nm: string) => (wantVision && nm !== "groq" ? 0 : 1);
+  results.sort((x, y) => rank(x.nm) - rank(y.nm));
+  let titles: string[] = results.flatMap((x) => x.titles);
+  let provider = results.map((x) => x.nm).join("+");
   if (!titles.length) {
     const t = (templateContent(p) as GeneratedContent).title;
     if (t) titles = [t];
@@ -184,7 +206,7 @@ export async function generateTitleOptions(p: ProductLike, n = 4): Promise<{ tit
     .map((t) => enforceName(t, forcedName))
     .filter((t) => { const k = t.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; })
     .slice(0, n);
-  return { titles, provider, usedImage: wantVision };
+  return { titles, provider, usedImage: wantVision, errors };
 }
 
 export function aiProvidersStatus() {
