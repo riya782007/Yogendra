@@ -113,6 +113,15 @@ export async function generateContentAction(sku: string, keywords?: string[]): P
   }
   const { content, provider, fallbackUsed } = res;
   content.title = stripCode(content.title, p.sku) || content.title;
+  // The shop's own sub-category / category is the truth for "what is this" — the model sometimes
+  // reads a photo of a hair choti on a bride as a "Necklace Set" (Oct 2026). Pin specs.Category to it.
+  const shopType = ((p as any).subcategory?.name || p.category?.name || "").trim();
+  if (shopType && !/^(jewell?ery|all|others?|misc\w*)$/i.test(shopType)) {
+    content.specs = { ...(content.specs ?? {}), Category: shopType };
+  }
+  // Mark who wrote it, so the store can show the "written with AI" note on AI pages only.
+  content.source = provider === "template" ? "template" : "ai";
+  content.generatedAt = new Date().toISOString();
   const { error } = await sb.from("products").update({ generated_content: content }).eq("id", p.id);
   if (error) return { ok: false, sku, error: error.message };
   revalidatePath(`/shop/${p.category.slug}/${sku}`);
