@@ -10,6 +10,10 @@ export type GeneratedContent = {
   specs: Record<string, string>;
   tags: string[];
   seo: { metaTitle: string; metaDescription: string; keywords: string[] };
+  /** "ai" = written by a model (the store shows a small "written with AI" note); "template" = written
+   *  from the product's fields. Pages saved before Oct 2026 have no source — they were AI-written too. */
+  source?: "ai" | "template";
+  generatedAt?: string;
 };
 
 export type ProductLike = {
@@ -217,6 +221,8 @@ export function resolveProductContent(p: ProductLike): GeneratedContent {
         metaDescription: pick(gc.seo?.metaDescription, tpl.seo.metaDescription),
         keywords: gc.seo?.keywords && gc.seo.keywords.length > 0 ? [...gc.seo.keywords] : [...tpl.seo.keywords],
       },
+      // Pages saved before the source stamp existed were all written by the AI button.
+      source: gc.source === "template" ? "template" : "ai",
     };
     return sanitizeJewelleryContent(merged, p.name, p.categoryName);
   }
