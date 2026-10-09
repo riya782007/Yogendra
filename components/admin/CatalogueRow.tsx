@@ -14,7 +14,9 @@ export type CatalogueRowProduct = {
   id: string; sku: string; name: string; status: string;
   image: string | null; categoryName: string; categorySlug: string;
   qty: number; priceLabel: string; offerPct: number; hasOffer: boolean;
-  hasAi: boolean; variants: V[]; adminTags: string[]; wholesaleLabel: string;
+  hasAi: boolean; variants: V[];
+  /** Heading customers see when the product name is only a code (e.g. "BRCS216") — the AI title. */
+  shownTitle?: string | null; adminTags: string[]; wholesaleLabel: string;
   /** Design has more colourways than the catalogue lists — dealers can request the full range. */
   moreDesigns?: boolean;
 };
@@ -54,7 +56,9 @@ export function CatalogueRow({
         <td className="p-3 font-medium text-ink">
           <span className="flex items-center gap-1.5">
             {outOfStock && <span className="h-2 w-2 rounded-full bg-ink inline-block shrink-0" title="Out of stock" />}
-            <span>{p.name}</span>
+            {p.shownTitle
+              ? <span className="flex flex-col leading-tight"><span>{p.shownTitle}</span><span className="text-[10px] font-normal text-muted">{p.name} · <span title="Title written by the AI page — this is what customers see">✨ AI title</span></span></span>
+              : <span>{p.name}</span>}
             {outOfStock && <span className="text-[10px] uppercase tracking-wide text-ink/70 bg-ink/5 border border-sand rounded-full px-1.5 py-0.5 whitespace-nowrap">Out of stock</span>}
             {!outOfStock && oosColours > 0 && <span className="text-[10px] text-muted whitespace-nowrap">· {oosColours} colour{oosColours > 1 ? "s" : ""} out</span>}
           </span>
