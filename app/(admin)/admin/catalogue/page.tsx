@@ -14,6 +14,7 @@ import { getSession, can } from "@/lib/auth";
 import { CatalogueRow } from "@/components/admin/CatalogueRow";
 import { MoreDesignsBulk } from "@/components/admin/MoreDesignsBulk";
 import { SeoTitlesButton } from "@/components/admin/SeoTitlesButton";
+import { preferredTitle } from "@/lib/content.base";
 
 export const metadata = { title: "Owner Console · Catalogue" };
 const PAGE_SIZE = 25;
@@ -131,6 +132,8 @@ export default async function AdminCatalogue({ searchParams }: { searchParams: {
                     image: p.image ?? null, categoryName: p.category?.name ?? "", categorySlug: p.category?.slug ?? "all",
                     qty: p.qty ?? 0, priceLabel: formatPaise(o.price), offerPct: o.offerPct, hasOffer: o.hasOffer,
                     hasAi: !!(p.generated_content && p.generated_content.title), variants: p.variants ?? [],
+                    // What the store shows as the heading: the owner's name if it is a real name, else the AI title.
+                    shownTitle: preferredTitle({ name: p.name, sku: p.sku }) ? null : ((p.generated_content as any)?.title ?? null),
                     adminTags: p.admin_tags ?? [], wholesaleLabel: formatPaise(wholesaleRate),
                     moreDesigns: !!p.more_designs,
                   }}
