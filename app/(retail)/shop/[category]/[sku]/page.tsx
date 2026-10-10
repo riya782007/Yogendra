@@ -237,6 +237,17 @@ export default async function ProductPage(props: Params) {
           <p className="text-xs text-muted mt-1">Inclusive of all taxes · You save {formatPaise(o.savings)}</p>
 
           <BuyBox variants={variantsForBuy} waText={waText} waHref={waHref} item={{ sku: p.sku, name: p.name, price: o.price, category: catSlug, qty: (p as any).qty }} />
+          {(p as any).more_designs && (
+            // Owner, Oct 2026: "More designs" pieces come in more colours than the representative photo.
+            <div className="mt-4 rounded-xl border border-gold/50 bg-gold/10 px-4 py-3 text-sm text-ink">
+              <p className="font-medium text-gold-dark">🎨 Available in more colours than shown</p>
+              <p className="mt-0.5 text-xs text-ink/80 leading-relaxed">
+                This design comes in more colours than the representative picture, so the colour you receive may differ.
+                {(p as any).more_designs_note ? ` ${(p as any).more_designs_note}` : ""} Please check at our store, or{" "}
+                <a href={waHref} target="_blank" rel="noopener noreferrer" className="text-emerald underline underline-offset-2">ask us on WhatsApp</a> to see the colours available.
+              </p>
+            </div>
+          )}
 
           <div className="mt-7 border-t border-sand pt-5 space-y-2 text-ink/80 leading-relaxed">
             {content.description.split("\n").map((line) => line.trim()).filter(Boolean).map((line, i) => {
