@@ -57,7 +57,8 @@ async function rememberOptions(sb: ReturnType<typeof supabaseServer>, o: { color
   const rows: { kind: string; value: string }[] = [];
   if (o.color) rows.push({ kind: "color", value: o.color });
   if (o.size) rows.push({ kind: "size", value: o.size });
-  if (o.polish) rows.push({ kind: "polish", value: o.polish });
+  // Polish is NOT remembered: the list is fixed and managed on the Colours page (owner, Oct 2026 —
+  // typed values like "g", "m", "meh" were becoming polishes).
   if (rows.length) await sb.from("variant_options").upsert(rows, { onConflict: "kind,value", ignoreDuplicates: true });
 }
 
