@@ -41,6 +41,12 @@ export function MoreDesignsButton({ sku, productName, note, dealerName = "" }: {
 
   if (!open) {
     return (
+      <>
+      {/* Owner, Oct 2026 (voice note): designs marked "More designs" come in MORE colours than the one
+          representative photo — say so plainly so nobody expects exactly the pictured colour. */}
+      <span className="mt-1.5 block max-w-[260px] rounded-lg border border-gold/40 bg-gold/10 px-2 py-1 text-[10.5px] leading-snug text-gold-dark">
+        🎨 More colours than shown in the photo — the colour you get may differ. Please check at the store or ask us.
+      </span>
       <button
         onClick={() => setOpen(true)}
         className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] font-medium text-gold-dark bg-gold/10 hover:bg-gold/20 border border-gold/30 rounded-full px-2.5 py-1 transition"
@@ -48,6 +54,7 @@ export function MoreDesignsButton({ sku, productName, note, dealerName = "" }: {
       >
         ✨ More designs available
       </button>
+      </>
     );
   }
 
