@@ -271,7 +271,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
   const vInput = "rounded-xl border border-sand px-3 py-2 text-sm outline-none focus:border-emerald";
   const variantsPanel = (
     <div className={card}>
-      {/* Datalists power as-you-type suggestions; typing a brand-new value grows the master list. */}
+      {/* Datalists power as-you-type suggestions for colour and size. Polish is a fixed pick-list. */}
       <datalist id="opt-color">{vopts.color.map((o) => <option key={o} value={o} />)}</datalist>
       <datalist id="opt-size">{vopts.size.map((o) => <option key={o} value={o} />)}</datalist>
       <datalist id="opt-polish">{vopts.polish.map((o) => <option key={o} value={o} />)}</datalist>
@@ -324,7 +324,13 @@ export default async function ProductPage({ params, searchParams }: { params: { 
                 <input type="hidden" name="product_sku" value={p.sku} />
                 <label className="text-[11px] text-muted">Colour<input name="color" list="opt-color" defaultValue={v.color ?? ""} placeholder="Colour" className={`${vInput} w-28 block mt-0.5`} /></label>
                 <label className="text-[11px] text-muted">Size<input name="size" list="opt-size" defaultValue={v.size ?? ""} placeholder="Size" className={`${vInput} w-24 block mt-0.5`} /></label>
-                <label className="text-[11px] text-muted">Polish<input name="polish" list="opt-polish" defaultValue={v.polish ?? ""} placeholder="Polish" className={`${vInput} w-28 block mt-0.5`} /></label>
+                {/* Owner, Oct 2026: polish is PICKED from the saved list only — typing used to create junk
+                    polishes ("g", "m", "meh"…). A value no longer in the list stays selectable until changed. */}
+                <label className="text-[11px] text-muted">Polish<select name="polish" defaultValue={v.polish ?? ""} className={`${vInput} w-28 block mt-0.5`}>
+                  <option value="">— none —</option>
+                  {vopts.polish.map((o) => <option key={o} value={o}>{o}</option>)}
+                  {v.polish && !(vopts.polish as string[]).includes(v.polish) && <option value={v.polish}>{v.polish} (not in list)</option>}
+                </select></label>
                 <label className="text-[11px] text-muted">SKU<input name="sku" defaultValue={v.sku ?? ""} placeholder="auto" className={`${vInput} w-32 block mt-0.5 font-mono`} /></label>
                 {/* The stock this page was rendered with. If a purchase or sale moves it before this
                     form is saved, the server keeps the newer number instead of writing this one back. */}
@@ -369,6 +375,7 @@ export default async function ProductPage({ params, searchParams }: { params: { 
         effRetail={rs(effective.retailPrice)}
         effWholesale={rs(effective.wholesaleRate)}
         effMrp={rs(effective.mrp)}
+        polishes={vopts.polish}
       />
     </div>
   );
