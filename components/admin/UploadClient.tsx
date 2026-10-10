@@ -469,10 +469,14 @@ export function UploadClient({
                           className={vInput} list="upload-opt-size" placeholder="Size"
                           value={v.size} onChange={(e) => updateVariant(idx, { size: e.target.value })}
                         />
-                        <input
-                          className={vInput} list="upload-opt-polish" placeholder="Polish"
+                        <select
+                          className={vInput} aria-label="Polish"
                           value={v.polish} onChange={(e) => updateVariant(idx, { polish: e.target.value })}
-                        />
+                        >
+                          <option value="">Polish</option>
+                          {variantOptions.polish.map((o) => <option key={o} value={o}>{o}</option>)}
+                          {v.polish && !variantOptions.polish.includes(v.polish) && <option value={v.polish}>{v.polish} (not in list)</option>}
+                        </select>
                         <input
                           className={`${vInput} text-center`} type="number" min={0} step={1} placeholder="0" inputMode="numeric"
                           value={v.qty} onChange={(e) => updateVariant(idx, { qty: e.target.value })}
