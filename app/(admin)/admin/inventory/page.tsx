@@ -7,7 +7,7 @@ import { StockAdjust } from "@/components/admin/StockAdjust";
 import { BulkStockImport } from "@/components/admin/BulkStockImport";
 import { StockExportButton } from "@/components/admin/StockExportButton";
 import { getSession, can } from "@/lib/auth";
-import { getAdjustmentRecord } from "@/lib/stockRecord";
+import { getAdjustmentRecord, getAdjustmentValueSummary, valuePaise, ratePaise } from "@/lib/stockRecord";
 import { setProductVisibilityAction } from "@/app/actions/catalog";
 import { DeleteProductButton } from "@/components/admin/DeleteProductButton";
 
@@ -29,7 +29,8 @@ export default async function Inventory({ searchParams }: { searchParams: { dead
   const q = (searchParams.q ?? "").toLowerCase().trim();
   const page = Math.max(1, parseInt(searchParams.page ?? "1", 10) || 1);
 
-  const [rows, adjRecord] = await Promise.all([getInventoryClassified({ deadDays, lowQty }), getAdjustmentRecord(12)]);
+  const [rows, adjRecord, adjValue] = await Promise.all([getInventoryClassified({ deadDays, lowQty }), getAdjustmentRecord(12), getAdjustmentValueSummary()]);
+  const inr = (paise: number) => `₹${Math.round(Math.abs(paise) / 100).toLocaleString("en-IN")}`;
   const session = getSession();
   const canAdjust = can(session, "inventory.add") || can(session, "inventory.remove");
   const canMove = can(session, "inventory.move") || (can(session, "inventory.add") && can(session, "inventory.remove"));
@@ -53,16 +54,24 @@ export default async function Inventory({ searchParams }: { searchParams: { dead
           <span>🧾 Adjustment record — last {adjRecord.length} changes made by hand</span>
           <Link href="/admin/stock-movements?kind=adjustment" className="text-xs text-emerald nav-link font-normal">Full record →</Link>
         </summary>
+        {/* Owner, Oct 2026: the record in RUPEES — what was lost, what was found, and the net, for the
+            year-end tally. Valued at each piece's cost (base rate). Financial year runs 1 Apr – 31 Mar. */}
+        <div className="border-t border-sand px-4 py-3 grid grid-cols-3 gap-3 text-sm bg-cream/40">
+          <div><p className="text-[11px] uppercase tracking-wide text-muted">Added this year</p><p className="font-semibold text-emerald-dark tabular-nums">+{inr(adjValue.addedPaise)}</p><p className="text-[11px] text-muted">{adjValue.addedPcs} pcs</p></div>
+          <div><p className="text-[11px] uppercase tracking-wide text-muted">Removed this year</p><p className="font-semibold text-rose tabular-nums">−{inr(adjValue.removedPaise)}</p><p className="text-[11px] text-muted">{adjValue.removedPcs} pcs</p></div>
+          <div><p className="text-[11px] uppercase tracking-wide text-muted">Net effect</p><p className={`font-semibold tabular-nums ${adjValue.netPaise < 0 ? "text-rose" : "text-emerald-dark"}`}>{adjValue.netPaise < 0 ? "−" : "+"}{inr(adjValue.netPaise)} {adjValue.netPaise < 0 ? "loss" : adjValue.netPaise > 0 ? "gain" : ""}</p><p className="text-[11px] text-muted">since {new Date(adjValue.from).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kolkata" })}{adjValue.unpriced ? ` · ${adjValue.unpriced} without a rate` : ""}</p></div>
+        </div>
         <div className="overflow-x-auto border-t border-sand">
           <table className="w-full text-sm">
-            <thead className="bg-cream text-muted text-left"><tr><th className="p-2.5">When</th><th className="p-2.5">Item</th><th className="p-2.5 text-right">Change</th><th className="p-2.5">Reason</th><th className="p-2.5">By</th></tr></thead>
+            <thead className="bg-cream text-muted text-left"><tr><th className="p-2.5">When</th><th className="p-2.5">Item</th><th className="p-2.5 text-right">Change</th><th className="p-2.5 text-right">Amount</th><th className="p-2.5">Reason</th><th className="p-2.5">By</th></tr></thead>
             <tbody>
-              {adjRecord.length === 0 && <tr><td colSpan={5} className="p-3 text-muted">No stock has been adjusted or moved by hand yet.</td></tr>}
+              {adjRecord.length === 0 && <tr><td colSpan={6} className="p-3 text-muted">No stock has been adjusted or moved by hand yet.</td></tr>}
               {adjRecord.map((a) => (
                 <tr key={a.id} className="border-t border-sand/60">
                   <td className="p-2.5 text-muted whitespace-nowrap">{new Date(a.created_at).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })}</td>
                   <td className="p-2.5"><span className="text-ink">{a.product?.name ?? "—"}</span><span className="block text-xs text-muted font-mono">{a.sku ?? a.product?.sku}{a.variant?.color ? ` · ${a.variant.color}` : ""}</span></td>
                   <td className={`p-2.5 text-right font-semibold tabular-nums ${a.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{a.delta > 0 ? "+" : ""}{a.delta}</td>
+                  <td className="p-2.5 text-right tabular-nums whitespace-nowrap">{(() => { const v = valuePaise(a); const r = ratePaise(a); return v == null ? <span className="text-muted">—</span> : <><span className={v < 0 ? "text-rose" : "text-emerald-dark"}>{v < 0 ? "−" : "+"}{inr(v)}</span><span className="block text-[11px] text-muted">{Math.abs(a.delta)} × {inr(r!)}</span></>; })()}</td>
                   <td className="p-2.5 text-muted">{a.kind === "move" ? <span className="px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 text-[11px] mr-1">move</span> : null}{a.source ?? ""}{a.reason ? ` — ${a.reason}` : ""}</td>
                   <td className="p-2.5 text-muted">{a.created_by ?? "—"}</td>
                 </tr>
