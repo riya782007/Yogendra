@@ -22,13 +22,15 @@ function previewSku(parentSku: string, color: string, size: string, polish: stri
  *  placeholder), so the owner never has to type them — this is what prevents the 1-paise formula
  *  artifact that made POS show a slightly different price. */
 export function AddVariantForm({
-  parentSku, colorCodes: colorCodesProp, effRetail, effWholesale, effMrp,
+  parentSku, colorCodes: colorCodesProp, effRetail, effWholesale, effMrp, polishes = [],
 }: {
   parentSku: string;
   colorCodes: Record<string, string>;
   effRetail: number | null;   // rupees, product's effective price (placeholder hint)
   effWholesale: number | null;
   effMrp: number | null;
+  /** The saved polish list — polish can only be picked from it, never typed (owner, Oct 2026). */
+  polishes?: string[];
 }) {
   const [color, setColor] = useState("");
   const [size, setSize] = useState("");
@@ -61,7 +63,7 @@ export function AddVariantForm({
         <input type="hidden" name="product_sku" value={parentSku} />
         <label className="text-[11px] text-muted">Colour<input name="color" value={color} onChange={(e) => setColor(e.target.value)} list="opt-color" placeholder="e.g. Green" className={`${vInput} w-28 block mt-0.5`} /></label>
         <label className="text-[11px] text-muted">Size<input name="size" value={size} onChange={(e) => setSize(e.target.value)} list="opt-size" placeholder="e.g. 2.6" className={`${vInput} w-24 block mt-0.5`} /></label>
-        <label className="text-[11px] text-muted">Polish<input name="polish" value={polish} onChange={(e) => setPolish(e.target.value)} list="opt-polish" placeholder="e.g. Oxidised" className={`${vInput} w-28 block mt-0.5`} /></label>
+        <label className="text-[11px] text-muted">Polish<select name="polish" value={polish} onChange={(e) => setPolish(e.target.value)} className={`${vInput} w-28 block mt-0.5`}><option value="">— none —</option>{polishes.map((o) => <option key={o} value={o}>{o}</option>)}</select></label>
         <label className="text-[11px] text-muted">SKU<input name="sku" value={sku} onChange={(e) => setSku(e.target.value)} placeholder="blank = auto" className={`${vInput} w-32 block mt-0.5 font-mono`} /></label>
         <label className="text-[11px] text-muted">Stock<input name="qty" type="number" min={0} defaultValue={0} className={`${vInput} w-14 text-center block mt-0.5`} /></label>
         <label className="text-[11px] text-muted">Retail ₹<input name="retail" type="number" min={0} step="0.01" placeholder={rs(effRetail)} className={`${vInput} w-40 text-right block mt-0.5`} /></label>
