@@ -12,6 +12,8 @@ type Row = {
   id: string; product_id: string | null; kind: string | null; delta: number;
   sku: string | null; source: string | null; reason: string | null; ref_id: string | null;
   created_at: string; created_by?: string | null; invoice_no?: string | null; party?: string | null; price?: number | null;
+  /** Hand-made changes: cost rate per piece and the signed value of the change (paise). */
+  rate?: number | null; value?: number | null;
   product?: { sku: string; name: string } | null; variant?: { color: string; qty?: number | null } | null;
 };
 
@@ -71,7 +73,11 @@ export function StockMovementsTable({ rows }: { rows: Row[] }) {
                   <td className="p-3 text-ink">{r.party ? <span>{r.party}</span> : <span className="text-muted">—</span>}</td>
                   <td className="p-3"><span title={r.kind === "reserve" ? "Set aside for a held estimate — release that estimate to return this piece to stock" : undefined} className={`px-2 py-0.5 rounded-full text-xs capitalize ${KIND_STYLE[r.kind ?? ""] ?? "bg-cream text-muted"}`}>{r.kind === "reserve" ? "reserved" : (r.kind ?? "—")}</span></td>
                   <td className={`p-3 text-right font-semibold tabular-nums ${r.delta > 0 ? "text-emerald-dark" : "text-rose"}`}>{r.delta > 0 ? "+" : ""}{r.delta}</td>
-                  <td className="p-3 text-right tabular-nums text-ink" title={r.kind === "purchase" ? "Unit cost on that purchase" : "Unit rate billed on that document"}>{rupees(r.price) ?? <span className="text-muted">—</span>}</td>
+                  <td className="p-3 text-right tabular-nums text-ink" title={r.value != null ? "Hand-made change, valued at the piece's cost rate" : r.kind === "purchase" ? "Unit cost on that purchase" : "Unit rate billed on that document"}>
+                    {r.value != null && r.rate != null
+                      ? <><span className={r.value < 0 ? "text-rose" : "text-emerald-dark"}>{r.value < 0 ? "−" : "+"}{rupees(Math.abs(r.value))}</span><span className="block text-[11px] text-muted">{Math.abs(r.delta)} × {rupees(r.rate)}</span></>
+                      : (rupees(r.price) ?? <span className="text-muted">—</span>)}
+                  </td>
                   <td className="p-3 text-muted max-w-[260px] truncate" title={`${r.source ?? ""}${r.reason ? ` — ${r.reason}` : ""}${r.created_by ? ` · by ${r.created_by}` : ""}`}>{r.source ?? ""}{r.reason ? ` — ${r.reason}` : ""}{r.created_by && r.created_by !== "owner" ? <span className="block text-[11px]">by {r.created_by}</span> : null}</td>
                   <td className="p-3" onClick={(e) => e.stopPropagation()}>{doc ? (
                     <div className="whitespace-nowrap">
