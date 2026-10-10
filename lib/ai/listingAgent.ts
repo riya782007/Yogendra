@@ -55,7 +55,7 @@ function prompt(p: ProductLike) {
     ``,
     lockedTitle
       ? `TITLE — use EXACTLY: «${lockedTitle}».`
-      : `TITLE — start with EXACTLY «${forcedName}», then 5-7 descriptive words. Title Case, under ~70 chars.`,
+      : `TITLE — start with EXACTLY «${forcedName}», then 5-7 descriptive words naming a REAL feature (stone/work, motif, polish, occasion). Title Case, under ~70 chars. Never use Elegant, Statement, Artisanal or colour-count words like Multi Color.`,
     `DESCRIPTION — 100-125 word SEO paragraph. End with retail/wholesale CTA mentioning BlytheDIVA.`,
     `specs MUST include: Category (correct type from NAME), "Box Containing", Material, Work/Style, Occasion, Care.`,
     `tags: 8-12 search tags matching the REAL type (not nose pin unless it is one).`,
@@ -116,7 +116,7 @@ export async function generateProductContent(p: ProductLike, opts?: GatewayOpts)
     content.title = locked;
   } else {
     const forcedName = pickDivaName(((p as any).sku as string) || p.name || "");
-    if (content?.title) content.title = enforceName(content.title, forcedName);
+    if (content?.title) content.title = enforceName(cleanTitleWords(content.title), forcedName);
   }
   // Strip wrong Nose Pin / nath tags & specs when NAME is necklace/earring/etc.
   const fixed = sanitizeJewelleryContent(content, p.name ?? "", p.categoryName);
@@ -135,27 +135,48 @@ export function fallbackProductContent(p: ProductLike): { content: GeneratedCont
 const FILLER_WORDS = [
   "classic", "elegant", "designer", "beautiful", "stylish", "premium", "exclusive", "trendy", "fancy",
   "attractive", "gorgeous", "charming", "lovely", "stunning", "luxury", "luxurious", "chic", "modern",
+  "statement", "artisanal", "exquisite", "graceful", "glamorous", "timeless", "dazzling", "multi color",
 ];
+
+/**
+ * Owner, Oct 2026: "Sabme 3 common words — Elegant, Statement, Multi Color." The models kept using the
+ * same filler even when told not to, so strip it AFTER they answer: filler adjectives and colour-count
+ * words ("Multi Color", "Multicolour", "Multi-Coloured") say nothing about the piece. Never empties a title.
+ */
+const TITLE_STRIP = new RegExp(
+  "\\b(" + [
+    "multi[\\s-]*colou?r(?:ed|s)?", "multicolou?r(?:ed)?", "colou?rful",
+    ...FILLER_WORDS.filter((w) => !/multi/.test(w)),
+  ].join("|") + ")\\b", "gi");
+export function cleanTitleWords(t: string): string {
+  const out = String(t ?? "").replace(TITLE_STRIP, " ").replace(/\s*[,&]\s*(?=[,&]|$)/g, " ").replace(/\s{2,}/g, " ").trim();
+  return out.split(/\s+/).length >= 2 ? out : String(t ?? "").trim();
+}
 
 export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_500): Promise<{ titles: string[]; provider: string; usedImage: boolean; errors: string[] }> {
   const forcedName = pickDivaName(((p as any).sku as string) || p.name || "");
   const wantVision = !!p.imageBase64;
   const sub = (p as any).subcategoryName ? ` Sub-category: ${(p as any).subcategoryName}.` : "";
+  const style = (p as any).styleName ? ` Style: ${(p as any).styleName}.` : "";
   const kw = (p.keywords ?? []).filter(Boolean).join(", ");
   const userPrompt = [
     `You are BlytheDIVA SEO copywriter. Produce ${n} DISTINCT website titles as JSON {"titles":["…"]}.`,
+    `Write REGULAR, factual e-commerce titles a shopper would search for: material/work + exact type + one real visible detail (e.g. "Kundan Choker Necklace Set with Maang Tikka", "Oxidised Silver Jhumka Earrings with Pearl Drops"). The TYPE must match the shop's Category, Sub-category and Style below.`,
     wantVision ? `Look at the photo for colours, stones and polish. The shop's CATEGORY / SUB-CATEGORY and the NAME decide the TYPE — never call a necklace a nose pin, or a hair choti a necklace.` : `Infer from fields.`,
-    `Category: ${p.categoryName ?? "Jewellery"}.${sub}`,
+    `Category: ${p.categoryName ?? "Jewellery"}.${sub}${style}`,
     kw ? `Keywords: ${kw}.` : ``,
     `Each title starts with «${forcedName}», 5–7 words total, Title Case.`,
-    `Banned fillers: ${FILLER_WORDS.join(", ")}.`,
+    `Make the ${n} titles GENUINELY DIFFERENT: each leads with a different real feature you can see or are told — stone/work (kundan, polki, AD/CZ, pearl, meenakari, beads), motif (peacock, floral, temple, coin, leaf), polish/finish (gold, oxidised, antique, rose gold) or occasion (bridal, festive, daily wear). Do not repeat the same descriptive word across titles.`,
+    `NEVER use colour-count words (Multi Color, Multicolour, Colourful) and NEVER use: ${FILLER_WORDS.join(", ")}.`,
     `Return ONLY JSON.`,
   ].filter(Boolean).join("\n");
   const SYSTEM = "Return only valid minified JSON.";
   const call = { system: SYSTEM, user: userPrompt, json: true, imageBase64: p.imageBase64, imageMime: p.imageMime, temperature: 0.95 };
   const order: [string, (a: any) => Promise<string>][] = [];
+  // Owner, Oct 2026: titles come from GEMINI reading the photo + category + sub-category + style.
+  // The other models only fill in if Gemini is not set up or does not answer in time.
+  if (geminiTextConfigured()) order.push(["gemini", geminiChat]);
   if (wantVision && openaiConfigured()) order.push(["openai", openaiChat]);
-  if (wantVision && geminiTextConfigured()) order.push(["gemini", geminiChat]);
   if (groqConfigured()) order.push(["groq", groqChat]);
   if (openaiConfigured() && !order.some(([nm]) => nm === "openai")) order.push(["openai", openaiChat]);
 
@@ -185,13 +206,16 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
   // Wait for all, but never past the budget; stop early once a vision model has given enough.
   await Promise.race([
     Promise.all(runs),
-    new Promise<void>((r) => { const tick = () => { if (Date.now() - t0 >= budgetMs) return r(); if (results.some((x) => x.nm !== "groq" && x.titles.length >= n)) return r(); setTimeout(tick, 150); }; tick(); }),
+    new Promise<void>((r) => { const tick = () => { if (Date.now() - t0 >= budgetMs) return r(); if (results.some((x) => x.nm === "gemini" && x.titles.length >= n)) return r(); setTimeout(tick, 150); }; tick(); }),
   ]);
   if (Date.now() - t0 >= budgetMs) for (const [nm] of order) if (!results.some((x) => x.nm === nm) && !errors.some((e) => e.startsWith(nm + ":"))) errors.push(`${nm}: too slow`);
-  const rank = (nm: string) => (wantVision && nm !== "groq" ? 0 : 1);
+  const rank = (nm: string) => (nm === "gemini" ? 0 : wantVision && nm !== "groq" ? 1 : 2);
   results.sort((x, y) => rank(x.nm) - rank(y.nm));
-  let titles: string[] = results.flatMap((x) => x.titles);
-  let provider = results.map((x) => x.nm).join("+");
+  // Gemini answered with enough titles → use ONLY Gemini's; otherwise top up from the others.
+  const gem = results.find((x) => x.nm === "gemini" && x.titles.length >= Math.min(n, 3));
+  const used = gem ? [gem] : results;
+  let titles: string[] = used.flatMap((x) => x.titles);
+  let provider = used.map((x) => x.nm).join("+");
   if (!titles.length) {
     const t = (templateContent(p) as GeneratedContent).title;
     if (t) titles = [t];
@@ -203,7 +227,7 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
   }
   const seen = new Set<string>();
   titles = titles
-    .map((t) => enforceName(t, forcedName))
+    .map((t) => enforceName(cleanTitleWords(t), forcedName))
     .filter((t) => { const k = t.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; })
     .slice(0, n);
   return { titles, provider, usedImage: wantVision, errors };
