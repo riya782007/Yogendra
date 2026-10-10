@@ -7,7 +7,7 @@ import { cleanTiers, DEFAULT_FORMULA, parseRupeeSearch } from "../pricing";
 import { isCodOrder, isPrepaidOrder } from "../orderPayment";
 import { phoneDigits, recordMatchesShopperQuery } from "../phone";
 import { scoreQuery } from "../search";
-import { MANUAL_ADJUSTMENT_OR } from "../stockRecord";
+import { MANUAL_ADJUSTMENT_OR, isManualRow, ratePaise, valuePaise } from "../stockRecord";
 import { goodsValue } from "../salesValue";
 
 /**
@@ -1303,7 +1303,7 @@ export async function getStockMovements(opts: { page?: number; pageSize?: number
   const pageSize = opts.pageSize ?? 30;
   const page = Math.max(1, opts.page ?? 1);
   let query = sb.from("stock_adjustments")
-    .select("id,product_id,variant_id,delta,kind,source,reason,ref_id,sku,created_at,created_by, product:products(sku,name), variant:variants(color,qty)", { count: "exact" });
+    .select("id,product_id,variant_id,delta,kind,source,reason,ref_id,sku,created_at,created_by, product:products(sku,name,base_wholesale), variant:variants(color,qty)", { count: "exact" });
   // "Adjustments" = everything changed by hand (see lib/stockRecord) — manual rows carry a kind guessed
   // from their reason, so a plain kind = 'adjustment' match found nothing.
   if (opts.kind === "adjustment") query = query.or(MANUAL_ADJUSTMENT_OR);
@@ -1369,6 +1369,9 @@ export async function getStockMovements(opts: { page?: number; pageSize?: number
     r.price = r.ref_id && r.product_id
       ? (priceBy.get(priceKey(r.ref_id, r.product_id, r.variant_id ?? null)) ?? priceBy.get(priceKey(r.ref_id, r.product_id, null)) ?? null)
       : null;
+    // Hand-made changes have no document price — value them at the piece's cost so the register
+    // shows "−2 × ₹32 = −₹64" (owner, Oct 2026: adjustment record in rupees for the year-end tally).
+    if (r.price == null && isManualRow(r)) { r.rate = ratePaise(r); r.value = valuePaise(r); }
   }
   return { rows, total: count ?? 0, page, pageSize };
 }
