@@ -253,10 +253,10 @@ async function insertOne(sb: ReturnType<typeof supabaseServer>, formula: any, n:
     // suggestions next time (same behaviour as addVariantAction's rememberOptions).
     const optRows: { kind: string; value: string }[] = [];
     for (const v of explicitVariants) {
-      const c = (v.color ?? "").trim(), z = (v.size ?? "").trim(), p = (v.polish ?? "").trim();
+      const c = (v.color ?? "").trim(), z = (v.size ?? "").trim();
       if (c) optRows.push({ kind: "color", value: c });
       if (z) optRows.push({ kind: "size", value: z });
-      if (p) optRows.push({ kind: "polish", value: p });
+      // polish is a fixed list (Colours page) — never grown from a product save
     }
     if (optRows.length) await sb.from("variant_options").upsert(optRows, { onConflict: "kind,value", ignoreDuplicates: true });
   } else if (n.type === "configurable" && n.colors.length) {
@@ -1092,7 +1092,7 @@ export async function createProductFullAction(
     await sb.from("variant_channel_settings").upsert(vcs, { onConflict: "variant_id,channel" }).then(() => {}, () => {});
     // remember any new master values for autocomplete
     const optRows: { kind: string; value: string }[] = [];
-    for (const v of resolved) { if (v.color) optRows.push({ kind: "color", value: v.color.trim() }); if (v.size) optRows.push({ kind: "size", value: v.size.trim() }); if (v.polish) optRows.push({ kind: "polish", value: v.polish.trim() }); }
+    for (const v of resolved) { if (v.color) optRows.push({ kind: "color", value: v.color.trim() }); if (v.size) optRows.push({ kind: "size", value: v.size.trim() }); /* polish: fixed list, never grown here */ }
     if (optRows.length) await sb.from("variant_options").upsert(optRows, { onConflict: "kind,value", ignoreDuplicates: true }).then(() => {}, () => {});
   } else if (productQty > 0) {
     opening.push({ product_id: productId, delta: productQty, kind: "opening", source: "create", reason: "Opening stock", created_by: "owner" });
