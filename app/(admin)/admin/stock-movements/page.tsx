@@ -3,6 +3,7 @@ import Link from "next/link";
 import { getStockMovements, getOpenEstimateReservations, getPendingHeldOrders } from "@/lib/supabase/queries";
 import { Pager } from "@/components/admin/Pager";
 import { StockMovementsTable } from "@/components/admin/StockMovementsTable";
+import { getAdjustmentValueSummary, financialYearStart } from "@/lib/stockRecord";
 
 export const metadata = { title: "Owner Console · Stock Movement History" };
 const PAGE_SIZE = 30;
@@ -29,7 +30,7 @@ export default async function StockMovements({ searchParams }: { searchParams: {
   const q = searchParams.q ?? "";
   const from = searchParams.from ?? "";
   const to = searchParams.to ?? "";
-  const [{ rows, total }, reservations, held] = await Promise.all([
+  const [{ rows, total }, reservations, held, adjValue] = await Promise.all([
     getStockMovements({ page, pageSize: PAGE_SIZE, kind, q, from: from || undefined, to: to ? to + "T23:59:59" : undefined }),
     // #6: soft holds are a separate concept from the stock_adjustments ledger — show them on
     // every page (not only page 1) whenever the user is on the All or Estimate tab, so the
@@ -38,7 +39,12 @@ export default async function StockMovements({ searchParams }: { searchParams: {
     // Backorders + COD-hold orders are committed stock-OUT that hasn't been deducted yet. Show them
     // on the All and Sales tabs so a pending outflow is never invisible (owner's request).
     (kind === "all" || kind === "sale") ? getPendingHeldOrders() : Promise.resolve([] as any[]),
+    // Adjustments tab: rupee totals for the chosen dates (default: this financial year) — year-end tally.
+    kind === "adjustment"
+      ? getAdjustmentValueSummary(from ? new Date(from + "T00:00:00+05:30").toISOString() : financialYearStart(), to ? new Date(to + "T23:59:59+05:30").toISOString() : undefined)
+      : Promise.resolve(null),
   ]);
+  const inr = (paise: number) => `₹${Math.round(Math.abs(paise) / 100).toLocaleString("en-IN")}`;
   const reservedTotal = (reservations as any[]).reduce((s, e) => s + e.qty, 0);
   const heldTotal = (held as any[]).reduce((s, e) => s + e.qty, 0);
   const sel = "rounded-xl border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-emerald";
@@ -102,6 +108,18 @@ export default async function StockMovements({ searchParams }: { searchParams: {
               );
             })}
           </ul>
+        </div>
+      )}
+
+      {adjValue && (
+        <div className="mb-5 rounded-2xl border border-sand bg-white p-4 shadow-card">
+          <p className="text-sm font-semibold text-ink mb-2">🧾 Adjustment value — {from || to ? `${from || "start"} to ${to || "today"}` : `this financial year (from ${new Date(adjValue.from).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kolkata" })})`}</p>
+          <div className="grid grid-cols-3 gap-3 text-sm">
+            <div><p className="text-[11px] uppercase tracking-wide text-muted">Added</p><p className="font-semibold text-emerald-dark tabular-nums">+{inr(adjValue.addedPaise)}</p><p className="text-[11px] text-muted">{adjValue.addedPcs} pcs</p></div>
+            <div><p className="text-[11px] uppercase tracking-wide text-muted">Removed</p><p className="font-semibold text-rose tabular-nums">−{inr(adjValue.removedPaise)}</p><p className="text-[11px] text-muted">{adjValue.removedPcs} pcs</p></div>
+            <div><p className="text-[11px] uppercase tracking-wide text-muted">Net effect</p><p className={`font-semibold tabular-nums ${adjValue.netPaise < 0 ? "text-rose" : "text-emerald-dark"}`}>{adjValue.netPaise < 0 ? "−" : "+"}{inr(adjValue.netPaise)} {adjValue.netPaise < 0 ? "loss" : adjValue.netPaise > 0 ? "gain" : ""}</p><p className="text-[11px] text-muted">{adjValue.rows} changes{adjValue.unpriced ? ` · ${adjValue.unpriced} without a rate` : ""}</p></div>
+          </div>
+          <p className="text-[11px] text-muted mt-2">Each change is valued at the piece's cost (base rate) — e.g. 2 pcs of a ₹32 piece missing = −₹64. Set From/To above for any period.</p>
         </div>
       )}
 
