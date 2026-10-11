@@ -146,7 +146,7 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets =
    * filters, the extra pages already loaded, the scroll position and — for a guest — the cart were gone.
    *  · the cart is kept on this device (localStorage, 7 days) — for a logged-in dealer it wins over the
    *    server copy because it is the newer one; a cart-recovery link still wins over both.
-   *  · filters, loaded designs and scroll position are kept for this browser tab (sessionStorage, 3 h).
+   *  · filters, loaded designs and scroll position are kept for this browser tab (sessionStorage, 30 min).
    */
   const viewRestored = useRef(false);
   useEffect(() => {
@@ -167,7 +167,9 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets =
     } catch { /* ignore */ }
     try {
       const v = JSON.parse(sessionStorage.getItem(VIEW_KEY) || "null");
-      if (!v || Date.now() - (v.t ?? 0) > 3 * 36e5) return;
+      // 30 min, not 3 h: the saved rows are a snapshot, so a design renamed/repriced since (e.g. an AI
+      // title just published) would keep showing its old name for hours (owner, Oct 2026).
+      if (!v || Date.now() - (v.t ?? 0) > 30 * 6e4) return;
       const changesFilter = v.cat !== "all" || v.sub !== "all" || v.styleF !== "all" || v.colour !== "all" || !!(v.q ?? "").trim();
       if (changesFilter) skipFilterFetch.current = true; // the saved list below IS that filter's result
       setQ(v.q ?? ""); setCat(v.cat ?? "all"); setSub(v.sub ?? "all"); setStyleF(v.styleF ?? "all"); setColour(v.colour ?? "all");
