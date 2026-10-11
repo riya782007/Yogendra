@@ -1,6 +1,7 @@
 "use server";
 /** AI product-page content generation (Listing Agent). Explicit button only — never on render. */
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
+import { preferredTitle } from "@/lib/content.base";
 import { supabaseServer } from "@/lib/supabase/server";
 import { getProductBySku, getPublishedProducts } from "@/lib/supabase/queries";
 import { generateProductContent, generateTitleOptions, fallbackProductContent } from "@/lib/ai/listingAgent";
@@ -130,10 +131,17 @@ export async function generateContentAction(sku: string, keywords?: string[]): P
   const { data: cur } = await sb.from("products").select("admin_tags").eq("id", p.id).maybeSingle();
   const tags: string[] = Array.isArray((cur as any)?.admin_tags) ? (cur as any).admin_tags : [];
   const admin_tags = content.source === "ai" && !tags.some((t) => /^ai page/i.test(t)) ? [...tags, AI_NOTE] : tags;
-  const { error } = await sb.from("products").update({ generated_content: content, admin_tags }).eq("id", p.id);
+  // Owner, Oct 2026: "AI title generate krke publish kiya, storefront par name update nahi hua." The trade
+  // portal, POS and product cards show products.name — so when the name is still only a code
+  // ("RRE5327"), the AI title becomes the name too. A real name the owner typed is never replaced.
+  const renamed = content.source === "ai" && !preferredTitle({ name: p.name, sku: p.sku }) && !!content.title?.trim();
+  const patch: Record<string, any> = { generated_content: content, admin_tags };
+  if (renamed) patch.name = content.title.trim().slice(0, 140);
+  const { error } = await sb.from("products").update(patch).eq("id", p.id);
   if (error) return { ok: false, sku, error: error.message };
   revalidatePath(`/shop/${p.category.slug}/${sku}`);
   revalidatePath("/admin/catalogue");
+  if (renamed) { revalidateTag("storefront"); revalidateTag("trade-catalog"); revalidatePath("/trade"); }
   return { ok: true, sku, provider, fallbackUsed, title: content.title };
 }
 
