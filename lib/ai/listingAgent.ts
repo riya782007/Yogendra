@@ -11,6 +11,77 @@ import { sanitizeJewelleryContent } from "../jewelleryType";
 import { seoTitleFromName } from "../seoTitle";
 import { normalizeListing, parseModelJson } from "./normalizeListing";
 
+/**
+ * productType — what KIND of piece a product is, from the shop's own data (sub-category, style,
+ * category, name), and a check that an AI title doesn't describe a different kind.
+ *
+ * Owner, Oct 2026: a hair choti in "Other Accessories → Choti" got titles like "Polki Jhumka Earrings",
+ * "Oxidised Silver Anklet" and "Rose Gold Hair Clip". The models read the photo (a bride wearing many
+ * pieces) and guessed. The shop's sub-category is the truth; titles naming another type are dropped.
+ */
+
+const TYPES: [string, RegExp][] = [
+  ["choti", /\b(choti|chotis|parandi|paranda|braid)\b/i],
+  ["necklace", /\b(necklace|choker|haar|rani\s*haar|mala|neckpiece)\b/i],
+  ["earrings", /\b(earrings?|jhumk[ai]s?|jhumkas|studs?|danglers?|chandbali|bali|ear\s*cuffs?|tops)\b/i],
+  ["anklet", /\b(anklets?|payal|pajeb)\b/i],
+  ["ring", /\b(finger\s*rings?|rings?)\b/i],
+  ["bracelet", /\b(bracelets?|bangles?|kada|kangan|cuff)\b/i],
+  ["maang tikka", /\b(maang\s*tikk?a|mang\s*tikk?a|tikka|matha\s*patti)\b/i],
+  ["nose pin", /\b(nose\s*(pin|ring)|nath)\b/i],
+  ["hair accessory", /\b(hair\s*(clip|pin|brooch|accessor(y|ies))|juda|bun\s*pin|hair\s*band|hairband|clip)\b/i],
+  ["waist belt", /\b(kamar\s*bandh?|kamarband|waist\s*(belt|chain)|belt)\b/i],
+  ["hathphool", /\b(hath\s*phool|haath\s*phool|hand\s*harness)\b/i],
+  ["passa", /\b(passa|jhoomar|jhumar)\b/i],
+  ["armlet", /\b(bajuband|armlet|bajubandh)\b/i],
+  ["brooch", /\b(brooch|saree\s*pin)\b/i],
+  ["mangalsutra", /\bmangalsutra\b/i],
+  ["pendant", /\b(pendant|locket)\b/i],
+  ["watch", /\bwatch(es)?\b/i],
+];
+
+/** Types a "set" may legitimately name alongside its main piece. */
+const GOES_WITH: Record<string, string[]> = {
+  necklace: ["earrings", "maang tikka", "ring", "pendant"],
+  choti: ["hair accessory"],
+  "hair accessory": ["choti"],
+  bracelet: ["ring", "watch"],
+  watch: ["bracelet"],
+  hathphool: ["ring", "bracelet"],
+  pendant: ["necklace", "earrings"],
+};
+
+function typesIn(text: string | null | undefined): string[] {
+  const t = String(text ?? "");
+  return TYPES.filter(([, re]) => re.test(t)).map(([k]) => k);
+}
+
+/** The piece's type(s) per the shop: sub-category first, then style, then name, then category. */
+function shopTypes(p: { subcategoryName?: string | null; styleName?: string | null; name?: string | null; categoryName?: string | null }): string[] {
+  for (const src of [p.subcategoryName, p.styleName, p.name, p.categoryName]) {
+    const found = typesIn(src);
+    if (found.length) return found;
+  }
+  return [];
+}
+
+/** Types named in `title` that the shop's type does NOT allow. Empty when the shop type is unknown. */
+function conflictingTypes(title: string, allowed: string[]): string[] {
+  if (!allowed.length) return [];
+  const ok = new Set<string>(allowed);
+  for (const a of allowed) for (const g of GOES_WITH[a] ?? []) ok.add(g);
+  return typesIn(title).filter((t) => !ok.has(t));
+}
+
+/** Human label for prompts, e.g. "Choti (hair-braid accessory)". */
+function typeLabel(p: { subcategoryName?: string | null; styleName?: string | null; categoryName?: string | null }): string {
+  const sub = (p.subcategoryName ?? "").trim();
+  const style = (p.styleName ?? "").trim();
+  const base = sub || style || (p.categoryName ?? "").trim();
+  if (!base) return "";
+  return /choti|parandi/i.test(base) ? `${base} (hair-braid accessory)` : base;
+}
+
 function enforceName(title: string, forced: string): string {
   const t = (title ?? "").trim();
   if (!t) return forced;
@@ -39,6 +110,7 @@ function prompt(p: ProductLike) {
   return [
     `You are the senior product copywriter for "BlytheDIVA", premium artificial jewellery (Sadar Bazar, Delhi).`,
     `Write ONE product page as STRICT minified JSON: title, description, specs (object), tags (array), seo (metaTitle, metaDescription, keywords).`,
+    typeLabel(p as any) ? `THE PRODUCT IS A ${typeLabel(p as any).toUpperCase()}. Title, description and tags describe this one piece as that type — never as earrings, a necklace, anklet or any other kind, whatever else the photo shows.` : ``,
     hasImage ? `• PHOTO attached — use it for materials, colours, polish and included pieces. Do NOT decide the TYPE from the photo (a model wearing several pieces is not a "set").` : ``,
     `• Product name: ${p.name}`,
     `• Category: ${p.categoryName ?? "Jewellery"}.${sub}`,
@@ -117,6 +189,15 @@ export async function generateProductContent(p: ProductLike, opts?: GatewayOpts)
   } else {
     const forcedName = pickDivaName(((p as any).sku as string) || p.name || "");
     if (content?.title) content.title = enforceName(cleanTitleWords(content.title), forcedName);
+    // A title naming another kind of piece (e.g. "Jhumka Earrings" for a Choti) is replaced with a
+    // plain, correct one built from the shop's own type.
+    const allowed = shopTypes(p as any);
+    const kind = typeLabel(p as any).replace(/\s*\(.*\)$/, "");
+    if (content?.title && kind && conflictingTypes(content.title, allowed).length) {
+      const style = ((p as any).styleName ?? "").trim();
+      const polish = ((p as any).polishes ?? [])[0] ?? "";
+      content.title = [forcedName, polish, style && !kind.toLowerCase().includes(style.toLowerCase()) ? style : "", kind].filter(Boolean).join(" ").replace(/\s+/g, " ");
+    }
   }
   // Strip wrong Nose Pin / nath tags & specs when NAME is necklace/earring/etc.
   const fixed = sanitizeJewelleryContent(content, p.name ?? "", p.categoryName);
@@ -159,26 +240,28 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
   const sub = (p as any).subcategoryName ? ` Sub-category: ${(p as any).subcategoryName}.` : "";
   const style = (p as any).styleName ? ` Style: ${(p as any).styleName}.` : "";
   const kw = (p.keywords ?? []).filter(Boolean).join(", ");
+  const kind = typeLabel(p as any);
+  const allowed = shopTypes(p as any);
   const userPrompt = [
-    `You are BlytheDIVA SEO copywriter. Produce ${n} DISTINCT website titles as JSON {"titles":["…"]}.`,
-    `Write REGULAR, factual e-commerce titles a shopper would search for: material/work + exact type + one real visible detail (e.g. "Kundan Choker Necklace Set with Maang Tikka", "Oxidised Silver Jhumka Earrings with Pearl Drops"). The TYPE must match the shop's Category, Sub-category and Style below.`,
-    wantVision ? `Look at the photo for colours, stones and polish. The shop's CATEGORY / SUB-CATEGORY and the NAME decide the TYPE — never call a necklace a nose pin, or a hair choti a necklace.` : `Infer from fields.`,
+    `You are BlytheDIVA SEO copywriter. Produce ${n} alternative website titles for ONE product as JSON {"titles":["…"]}.`,
+    kind ? `THE PRODUCT IS A ${kind.toUpperCase()}. Every title is for this same single piece and must name it as a ${kind.replace(/\s*\(.*\)$/, "")}. Never call it any other kind of jewellery (earrings, necklace, anklet, clip, ring…), even if the photo shows a model wearing other pieces.` : ``,
+    `Write REGULAR, factual e-commerce titles a shopper would search for: material/work + the type + one real visible detail (e.g. "Kundan Choker Necklace Set with Maang Tikka", "Oxidised Silver Jhumka Earrings with Pearl Drops").`,
+    wantVision ? `Use the photo ONLY for colours, stones, work and polish of this piece.` : `Infer from fields.`,
     `Category: ${p.categoryName ?? "Jewellery"}.${sub}${style}`,
     kw ? `Keywords: ${kw}.` : ``,
     `Each title starts with «${forcedName}», 5–7 words total, Title Case.`,
-    `Make the ${n} titles GENUINELY DIFFERENT: each leads with a different real feature you can see or are told — stone/work (kundan, polki, AD/CZ, pearl, meenakari, beads), motif (peacock, floral, temple, coin, leaf), polish/finish (gold, oxidised, antique, rose gold) or occasion (bridal, festive, daily wear). Do not repeat the same descriptive word across titles.`,
+    `Vary the wording between titles (different visible detail: stone/work, motif, polish or occasion) — but it is always the SAME piece and the SAME type.`,
     `NEVER use colour-count words (Multi Color, Multicolour, Colourful) and NEVER use: ${FILLER_WORDS.join(", ")}.`,
     `Return ONLY JSON.`,
   ].filter(Boolean).join("\n");
   const SYSTEM = "Return only valid minified JSON.";
   const call = { system: SYSTEM, user: userPrompt, json: true, imageBase64: p.imageBase64, imageMime: p.imageMime, temperature: 0.95 };
   const order: [string, (a: any) => Promise<string>][] = [];
-  // Owner, Oct 2026: titles come from GEMINI reading the photo + category + sub-category + style.
-  // The other models only fill in if Gemini is not set up or does not answer in time.
+  // Owner, Oct 2026: OpenAI is the FIRST choice for title suggestions (reads the photo + category +
+  // sub-category + style); Gemini, then Groq, only fill in if OpenAI is not set up or doesn't answer.
+  if (openaiConfigured()) order.push(["openai", openaiChat]);
   if (geminiTextConfigured()) order.push(["gemini", geminiChat]);
-  if (wantVision && openaiConfigured()) order.push(["openai", openaiChat]);
   if (groqConfigured()) order.push(["groq", groqChat]);
-  if (openaiConfigured() && !order.some(([nm]) => nm === "openai")) order.push(["openai", openaiChat]);
 
   // ROOT CAUSE OF "Suggest 3-4 titles not working" (Oct 2026): the providers were tried ONE AFTER
   // ANOTHER with 18-30 s timeouts each, and the host kills the request at 10 s — so a slow first model
@@ -196,8 +279,10 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
       const arr = Array.isArray(raw) ? raw
         : Array.isArray(raw?.titles) ? raw.titles
         : (Object.values(raw ?? {}).find((v) => Array.isArray(v)) as any[] | undefined) ?? [];
-      const cleaned = arr.map((t: any) => String(typeof t === "object" && t ? (t.title ?? Object.values(t)[0] ?? "") : t ?? "").trim()).filter(Boolean);
-      if (!cleaned.length) throw new Error("no titles in reply");
+      const all = arr.map((t: any) => String(typeof t === "object" && t ? (t.title ?? Object.values(t)[0] ?? "") : t ?? "").trim()).filter(Boolean);
+      // Drop any title that names a different kind of piece than the shop's sub-category says.
+      const cleaned = all.filter((t: string) => conflictingTypes(t, allowed).length === 0);
+      if (!cleaned.length) throw new Error(all.length ? `titles named the wrong type (${all[0].slice(0, 60)})` : "no titles in reply");
       results.push({ nm, titles: cleaned });
     } catch (e) {
       errors.push(`${nm}: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`);
@@ -206,14 +291,14 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
   // Wait for all, but never past the budget; stop early once a vision model has given enough.
   await Promise.race([
     Promise.all(runs),
-    new Promise<void>((r) => { const tick = () => { if (Date.now() - t0 >= budgetMs) return r(); if (results.some((x) => x.nm === "gemini" && x.titles.length >= n)) return r(); setTimeout(tick, 150); }; tick(); }),
+    new Promise<void>((r) => { const tick = () => { if (Date.now() - t0 >= budgetMs) return r(); if (results.some((x) => x.nm === "openai" && x.titles.length >= Math.min(n, 3))) return r(); setTimeout(tick, 150); }; tick(); }),
   ]);
   if (Date.now() - t0 >= budgetMs) for (const [nm] of order) if (!results.some((x) => x.nm === nm) && !errors.some((e) => e.startsWith(nm + ":"))) errors.push(`${nm}: too slow`);
-  const rank = (nm: string) => (nm === "gemini" ? 0 : wantVision && nm !== "groq" ? 1 : 2);
+  const rank = (nm: string) => (nm === "openai" ? 0 : nm === "gemini" ? 1 : 2);
   results.sort((x, y) => rank(x.nm) - rank(y.nm));
-  // Gemini answered with enough titles → use ONLY Gemini's; otherwise top up from the others.
-  const gem = results.find((x) => x.nm === "gemini" && x.titles.length >= Math.min(n, 3));
-  const used = gem ? [gem] : results;
+  // OpenAI answered with enough titles → use ONLY OpenAI's; otherwise top up from the others in order.
+  const first = results.find((x) => x.nm === "openai" && x.titles.length >= Math.min(n, 3));
+  const used = first ? [first] : results;
   let titles: string[] = used.flatMap((x) => x.titles);
   let provider = used.map((x) => x.nm).join("+");
   if (!titles.length) {
