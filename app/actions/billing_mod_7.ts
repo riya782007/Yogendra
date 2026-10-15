@@ -1,7 +1,7 @@
 "use server";
 import {revalidateTag,  revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { orderReceivable, returnCreditsByOrder } from "@/lib/supabase/queries";
+import { orderReceivable, returnCreditsByOrder, attachInvoiceGrand } from "@/lib/supabase/queries";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm, getSession } from "@/lib/auth";
 import { getPricingFormula } from "@/lib/supabase/queries";
@@ -81,7 +81,7 @@ export async function receiveCustomerPaymentAction(input: {
   }
 
   // ---- CREDIT: money received. Oldest open bill first, as before. ----
-  const sel = "id,invoice_no,total,amount_paid,bill_type,gst_mode,status,pay_cash,pay_bank,created_at";
+  const sel = "id,invoice_no,total,amount_paid,bill_type,gst_mode,status,pay_cash,pay_bank,created_at,channel";
   const byId = input.customerId ? await sb.from("orders").select(sel).eq("customer_id", input.customerId).order("created_at", { ascending: true }).limit(200) : { data: [] as any[] };
   const byPhone = input.phone ? await sb.from("orders").select(sel).eq("customer_phone", input.phone).order("created_at", { ascending: true }).limit(200) : { data: [] as any[] };
   const seen = new Set<string>();
@@ -89,6 +89,7 @@ export async function receiveCustomerPaymentAction(input: {
     .filter((o) => (seen.has(o.id) ? false : (seen.add(o.id), true)))
     .filter((o) => o.status !== "cancelled")
     .sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
+  await attachInvoiceGrand(orders as any[]); // dealer bills: GST already inside the total
 
   const credits = await returnCreditsByOrder(orders.map((o) => o.id));
   const openDue = orders.reduce((s, o) => s + orderReceivable(o, credits.get(o.id) ?? 0), 0);
