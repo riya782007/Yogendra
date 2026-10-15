@@ -204,6 +204,7 @@ export async function suggestProductTitlesAction(input: { name: string; category
   try {
     let subcategoryName: string | undefined, styleName: string | undefined, polishes: string[] = [];
     let imageBase64: string | undefined, imageMime: string | undefined;
+    let avoidTitles: string[] = [];
     if (input.sku) {
       const p = await getProductBySku(input.sku);
       if (p) {
@@ -213,11 +214,19 @@ export async function suggestProductTitlesAction(input: { name: string; category
           const { data: st } = await supabaseServer().from("styles").select("name").eq("id", (p as any).style_id).maybeSingle();
           styleName = (st as any)?.name;
         }
-        const img = (await within(fetchProductImage(p), 2_500)) ?? {};
+        // Titles other designs of the same sub-category already carry, so the AI names what is different.
+        const subId = (p as any).subcategory_id;
+        const [img0, sib] = await Promise.all([
+          within(fetchProductImage(p), 2_500),
+          subId ? within(Promise.resolve(supabaseServer().from("products").select("name,sku").eq("subcategory_id", subId).neq("sku", p.sku).order("created_at", { ascending: false }).limit(40)), 1_500) : Promise.resolve(null),
+        ]);
+        const img = img0 ?? {} as any;
         imageBase64 = img.imageBase64; imageMime = img.imageMime;
+        avoidTitles = (((sib as any)?.data as any[]) ?? []).map((r) => preferredTitle({ name: r.name, sku: r.sku })).filter(Boolean) as string[];
       }
     }
     const { titles, provider, usedImage, errors } = await generateTitleOptions({
+      avoidTitles,
       name: nameForAi(name, skuStr), sku: input.sku || name, categoryName: input.category,
       subcategoryName, styleName, polishes, colors: [],
       keywords: (input.keywords ?? []).map((k) => k.trim()).filter(Boolean),
