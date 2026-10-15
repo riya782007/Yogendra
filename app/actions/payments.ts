@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
 import { GST_RATE } from "@/lib/business";
+import { attachInvoiceGrand } from "@/lib/supabase/queries";
 
 /** Record a payment (advance / partial / settlement) against an order, in rupees. */
 export async function recordPaymentAction(formData: FormData): Promise<void> {
@@ -65,15 +66,17 @@ export async function writeOffBillBalanceAction(formData: FormData): Promise<voi
   if (!orderId) return;
   const sb = supabaseServer();
   const { data } = await sb.from("orders")
-    .select("total,amount_paid,bill_type,gst_mode,status,admin_note").eq("id", orderId).maybeSingle();
+    .select("id,total,amount_paid,bill_type,gst_mode,status,admin_note,channel").eq("id", orderId).maybeSingle();
   const o = data as any;
   if (!o || o.status === "cancelled") return;
+  await attachInvoiceGrand([o]); // dealer bills: total already includes GST — use the printed grand
 
   // The grand total the customer actually owes, derived exactly as record_payment and the invoice do:
   // a GST tax invoice priced exclusive carries 3% on top, then rounds to the nearest rupee.
   const total = (o.total ?? 0) as number;
   const excl = String(o.bill_type ?? "") !== "cash" && (o.gst_mode == null || o.gst_mode === "exclusive");
-  const grand = Math.round((total + (excl ? Math.round((total * GST_RATE) / 100) : 0)) / 100) * 100;
+  const grand = typeof o.grand === "number" ? o.grand
+    : Math.round((total + (excl ? Math.round((total * GST_RATE) / 100) : 0)) / 100) * 100;
   const paid = (o.amount_paid ?? 0) as number;
   const shortfall = grand - paid;
   if (paid <= 0 || shortfall <= 0) return;
