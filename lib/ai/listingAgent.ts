@@ -242,6 +242,12 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
   const kw = (p.keywords ?? []).filter(Boolean).join(", ");
   const kind = typeLabel(p as any);
   const allowed = shopTypes(p as any);
+  // Owner, Oct 2026: "Generate 3-4 title me ache titles nh aa rhe — kafi similar aa rhe h sab designs ke."
+  // The model only ever saw ONE product, so every design in a sub-category got the same safe phrase.
+  // It is now shown the titles other designs of this sub-category already carry, asked to name what
+  // it actually sees that is DIFFERENT, and near-copies of those titles are dropped afterwards.
+  const avoid = [...new Set(((p as any).avoidTitles as string[] | undefined ?? [])
+    .map((t) => String(t ?? "").replace(/^\S+\s+/, "").trim()).filter((t) => t.split(/\s+/).length >= 2))].slice(0, 30);
   const userPrompt = [
     `You are BlytheDIVA SEO copywriter. Produce ${n} alternative website titles for ONE product as JSON {"titles":["…"]}.`,
     kind ? `THE PRODUCT IS A ${kind.toUpperCase()}. Every title is for this same single piece and must name it as a ${kind.replace(/\s*\(.*\)$/, "")}. Never call it any other kind of jewellery (earrings, necklace, anklet, clip, ring…), even if the photo shows a model wearing other pieces.` : ``,
@@ -250,7 +256,10 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
     `Category: ${p.categoryName ?? "Jewellery"}.${sub}${style}`,
     kw ? `Keywords: ${kw}.` : ``,
     `Each title starts with «${forcedName}», 5–7 words total, Title Case.`,
-    `Vary the wording between titles (different visible detail: stone/work, motif, polish or occasion) — but it is always the SAME piece and the SAME type.`,
+    wantVision ? `First look closely and list in "seen" 4-6 SPECIFIC things visible on THIS piece: stone colours by name (ruby red, emerald green, pink, white pearl, blue…), motif (peacock, lotus, leaf, paisley, coin, bell, floral, moon…), structure (layers, strands, drops, ghungroo, chain, tassel), work (kundan, meenakari, AD/CZ, polki, temple, oxidised, mirror, beads) and polish.` : ``,
+    `Each title must use a DIFFERENT item from "seen" — no two titles may share the same detail phrase. It is always the SAME piece and the SAME type.`,
+    avoid.length ? `Other designs in this shop ALREADY have these titles — your titles must describe what makes THIS design different and must NOT reuse their detail phrases:\n- ${avoid.join("\n- ")}` : ``,
+    `Answer as {"seen":["…"],"titles":["…"]}.`,
     `NEVER use colour-count words (Multi Color, Multicolour, Colourful) and NEVER use: ${FILLER_WORDS.join(", ")}.`,
     `Return ONLY JSON.`,
   ].filter(Boolean).join("\n");
@@ -278,7 +287,7 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
       const raw: any = parseModelJson(await fn({ ...args, timeoutMs }));
       const arr = Array.isArray(raw) ? raw
         : Array.isArray(raw?.titles) ? raw.titles
-        : (Object.values(raw ?? {}).find((v) => Array.isArray(v)) as any[] | undefined) ?? [];
+        : (Object.entries(raw ?? {}).find(([k, v]) => k !== "seen" && Array.isArray(v))?.[1] as any[] | undefined) ?? [];
       const all = arr.map((t: any) => String(typeof t === "object" && t ? (t.title ?? Object.values(t)[0] ?? "") : t ?? "").trim()).filter(Boolean);
       // Drop any title that names a different kind of piece than the shop's sub-category says.
       const cleaned = all.filter((t: string) => conflictingTypes(t, allowed).length === 0);
@@ -313,8 +322,18 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
   const seen = new Set<string>();
   titles = titles
     .map((t) => enforceName(cleanTitleWords(t), forcedName))
-    .filter((t) => { const k = t.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; })
-    .slice(0, n);
+    .filter((t) => { const k = t.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+  // Drop near-copies — of each other, and of titles other designs already carry — but never end up empty.
+  const words = (t: string) => new Set(t.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 2 && w !== forcedName.toLowerCase() && !["with", "and", "for", "the"].includes(w)));
+  const sim = (a: Set<string>, b: Set<string>) => { let i = 0; for (const w of a) if (b.has(w)) i++; return i / Math.max(1, a.size + b.size - i); };
+  const avoidW = avoid.map(words);
+  const kept: string[] = []; const keptW: Set<string>[] = [];
+  for (const t of titles) {
+    const w = words(t);
+    if (keptW.some((k) => sim(w, k) >= 0.75) || avoidW.some((k) => sim(w, k) >= 0.8)) continue;
+    kept.push(t); keptW.push(w);
+  }
+  titles = (kept.length >= Math.min(2, titles.length) ? kept : titles).slice(0, n);
   return { titles, provider, usedImage: wantVision, errors };
 }
 
