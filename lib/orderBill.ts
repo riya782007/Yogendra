@@ -57,3 +57,25 @@ export function taxFromBill(billType?: string | null, gstMode?: string | null): 
   if (String(billType ?? "").toLowerCase() === "cash") return "none";
   return gstMode === "exclusive" ? "exclusive" : "inclusive";
 }
+
+/**
+ * TRADE-PORTAL (dealer) BILLS — the one place `orders.total` already CONTAINS the GST.
+ *
+ * Owner, Oct 2026: "Bill GST include karke ₹8,751 ka hai, aur Sales record page par 8,751 me dobara GST
+ * add kar raha hai — sirf trade portal wholesale order me." The dealer checkout stores the amount the
+ * dealer agreed to (goods + 3% + shipping) in `orders.total` and marks the bill "exclusive" so the
+ * invoice adds the 3% to its pre-GST lines. Every screen that then did "exclusive ⇒ total + 3%" charged
+ * the GST a second time (sales record, outstanding, ledger). For these bills the grand total is worked
+ * out exactly like the printed invoice: pre-GST lines + charges (taken back to pre-tax) + 3%, to ₹1.
+ */
+export function isTradeExclusive(o: { channel?: string | null; bill_type?: string | null; gst_mode?: string | null }): boolean {
+  return String(o.channel ?? "").toLowerCase() === "wholesale"
+    && String(o.bill_type ?? "").toLowerCase() !== "cash"
+    && (o.gst_mode == null || o.gst_mode === "exclusive");
+}
+
+export function tradeInvoiceGrandPaise(linesPaise: number, charges: { packing?: number | null; courier?: number | null; adjustment?: number | null }, gstRate = 3): number {
+  const pre = (p?: number | null) => Math.round((Number(p) || 0) / (1 + gstRate / 100));
+  const taxable = Math.max(0, Math.round(linesPaise) + pre(charges.packing) + pre(charges.courier) + pre(charges.adjustment));
+  return Math.round((taxable + Math.round((taxable * gstRate) / 100)) / 100) * 100;
+}
