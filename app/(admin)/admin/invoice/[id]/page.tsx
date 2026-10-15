@@ -98,6 +98,12 @@ export default async function Invoice({ params }: { params: { id: string } }) {
   // Compare paid against the ROUNDED grand total the customer actually pays — so collecting the
   // shown amount settles the bill exactly (no 5–10 paise phantom balance from GST rounding).
   const balanceDue = Math.max(0, roundedTotal - paid);
+  // A short payment that was written off ("₹17,709 ka bill, ₹17,700 aaye, ₹9 write off") is recorded by
+  // writeOffBillBalanceAction as a line in the admin note. Show it as its own line so the bill reads
+  // "Received ₹17,700 · Written off ₹9" instead of a paid amount that was never received.
+  const writtenOff = Math.min(paid, [...String(order.admin_note ?? "").matchAll(/Balance ₹([\d,]+(?:\.\d+)?) written off/g)]
+    .reduce((s, m) => s + Math.round(Number(m[1].replace(/,/g, "")) * 100), 0));
+  const received = paid - writtenOff;
   const payStatus = paid <= 0 ? "Unpaid" : paid >= roundedTotal ? "Paid" : "Partial";
 
   const docTitle = isCash ? "CASH MEMO" : isProforma ? "PROFORMA INVOICE" : "TAX INVOICE";
@@ -304,7 +310,12 @@ export default async function Invoice({ params }: { params: { id: string } }) {
               )}
               {roundOff !== 0 && <div className="flex justify-between text-muted"><span>Round off</span><span>{formatPaise(roundOff)}</span></div>}
               <div className="grand-total flex justify-between font-semibold text-ink border-t border-sand pt-2 text-base"><span>Grand Total</span><span>{formatPaise(roundedTotal)}</span></div>
-              <div className="flex justify-between text-emerald-dark"><span>Amount paid</span><span>{formatPaise(paid)}</span></div>
+              {writtenOff > 0 ? (<>
+                <div className="flex justify-between text-emerald-dark"><span>Amount received</span><span>{formatPaise(received)}</span></div>
+                <div className="flex justify-between text-gold-dark"><span>Written off (discount)</span><span>{formatPaise(writtenOff)}</span></div>
+              </>) : (
+                <div className="flex justify-between text-emerald-dark"><span>Amount paid</span><span>{formatPaise(paid)}</span></div>
+              )}
               {(order.pay_cash > 0 || order.pay_bank > 0) && (order.pay_cash > 0 && order.pay_bank > 0) && (
                 <div className="flex justify-between text-[11px] text-muted"><span>— Cash {formatPaise(order.pay_cash)} · UPI/Bank {formatPaise(order.pay_bank)}</span><span /></div>
               )}
@@ -477,7 +488,7 @@ export default async function Invoice({ params }: { params: { id: string } }) {
                         : (order.payment_mode && !["pending", "cod"].includes(String(order.payment_mode).toLowerCase())) ? String(order.payment_mode).toUpperCase()
                         : "";
                       const useDash = !!paidAccountLabel || bothSplit;
-                      return <>{formatPaise(paid)} received{via ? (useDash ? ` — ${via}` : ` via ${via}`) : ""}. Bill is marked <b>Paid</b>.</>;
+                      return <>{formatPaise(received)} received{via ? (useDash ? ` — ${via}` : ` via ${via}`) : ""}.{writtenOff > 0 ? <> <b>{formatPaise(writtenOff)} written off</b> (discount, not received).</> : null} Bill is marked <b>Paid</b>.</>;
                     })()}
                   </p>
                 </div>
