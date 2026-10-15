@@ -37,8 +37,11 @@ export default async function SalesRecords({ searchParams }: { searchParams: { p
   //  • GST INCLUSIVE — the price already contains GST, so grand = total (do NOT add 3% again — that
   //    was the "₹2,030 dikha ke ₹2,091" bug).
   //  • GST EXCLUSIVE — grand = total + 3% GST, rounded to ₹1.
-  const withoutTax = (r: any) => r.total ?? 0;
+  // Dealer (trade-portal) bills carry `grand` = the printed grand total; their stored total already
+  // includes the 3% GST, so it is never added again (owner, Oct 2026: ₹8,751 bill shown with GST twice).
+  const withoutTax = (r: any) => typeof r.grand === "number" ? Math.round(r.grand / 1.03) : (r.total ?? 0);
   const withTax = (r: any) => {
+    if (typeof r.grand === "number") return r.grand;
     const t = r.total ?? 0;
     if (r.bill_type === "cash") return t;
     // Prices in the system ALREADY include GST, so the grand total = the price itself — never add 3% on
