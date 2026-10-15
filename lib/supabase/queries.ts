@@ -9,6 +9,7 @@ import { phoneDigits, recordMatchesShopperQuery } from "../phone";
 import { scoreQuery } from "../search";
 import { MANUAL_ADJUSTMENT_OR, isManualRow, ratePaise, valuePaise } from "../stockRecord";
 import { goodsValue } from "../salesValue";
+import { isTradeExclusive, tradeInvoiceGrandPaise } from "../orderBill";
 
 /**
  * PostgREST caps every select at 1000 rows (the `max-rows` default). With a 4000+ product
@@ -565,12 +566,42 @@ export async function getCustomerSpend(range?: { from?: string; to?: string }): 
  *  like the printed invoice) − amount paid − return credits (credit notes incl. their GST share).
  *  Fixes the client's two escalations: "GST chhod diya" (outstanding rose by the pre-tax total)
  *  and returns never reducing what the customer owes. */
-export function orderReceivable(o: { total?: number | null; amount_paid?: number | null; bill_type?: string | null; gst_mode?: string | null }, returnCredit = 0): number {
+export function orderReceivable(o: { total?: number | null; amount_paid?: number | null; bill_type?: string | null; gst_mode?: string | null; grand?: number | null }, returnCredit = 0): number {
   const total = o.total ?? 0;
-  const grand = o.bill_type === "gst" && (o.gst_mode ?? "exclusive") !== "inclusive"
+  // `grand` is attached by attachInvoiceGrand() for dealer (trade-portal) bills, whose total already
+  // includes GST — never add the 3% to those a second time.
+  const grand = typeof o.grand === "number" ? o.grand
+    : o.bill_type === "gst" && (o.gst_mode ?? "exclusive") !== "inclusive"
     ? Math.round((total + Math.round((total * 3) / 100)) / 100) * 100
     : total;
   return Math.max(0, grand - (o.amount_paid ?? 0) - returnCredit);
+}
+
+/** Attach `grand` (the printed invoice's grand total) to every dealer trade-portal bill in `rows`, so
+ *  screens never add GST again on a total that already contains it (see lib/orderBill). Rows need
+ *  id, channel, bill_type and gst_mode; other rows are left alone. */
+export async function attachInvoiceGrand<T extends { id: string; channel?: string | null; bill_type?: string | null; gst_mode?: string | null }>(rows: T[]): Promise<T[]> {
+  const trade = rows.filter((r) => isTradeExclusive(r));
+  if (!trade.length) return rows;
+  const sb = supabaseServer();
+  const ids = [...new Set(trade.map((r) => r.id))];
+  const lines = new Map<string, number>();
+  const extras = new Map<string, any>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const part = ids.slice(i, i + 200);
+    const [{ data: its }, { data: ex }] = await Promise.all([
+      sb.from("order_items").select("order_id,line_total,unit_price,qty").in("order_id", part),
+      sb.from("orders").select("id,extra_packing,extra_courier,extra_adjustment").in("id", part),
+    ]);
+    for (const it of ((its as any[]) ?? [])) lines.set(it.order_id, (lines.get(it.order_id) ?? 0) + (it.line_total ?? (it.unit_price ?? 0) * (it.qty ?? 0)));
+    for (const e of ((ex as any[]) ?? [])) extras.set(e.id, e);
+  }
+  for (const r of trade) {
+    if (!lines.has(r.id)) continue; // no lines found — leave the old rule rather than guess
+    const e = extras.get(r.id) ?? {};
+    (r as any).grand = tradeInvoiceGrandPaise(lines.get(r.id)!, { packing: e.extra_packing, courier: e.extra_courier, adjustment: e.extra_adjustment });
+  }
+  return rows;
 }
 
 /** Σ return credit (returns.amount, incl. GST share) per order id, for a set of orders. */
@@ -589,8 +620,8 @@ export async function returnCreditsByOrder(orderIds: string[]): Promise<Map<stri
  *  Σ bill total − amount paid). Important for wholesale credit tracking. */
 export async function getCreditors(): Promise<{ id: string | null; name: string; phone: string; outstanding: number; bills: number }[]> {
   const sb = supabaseServer();
-  const { data } = await sb.from("orders").select("id,customer_id,customer_name,customer_phone,total,amount_paid,bill_type,gst_mode,status");
-  const rows0 = ((data as any[]) ?? []).filter((o) => o.status !== "cancelled");
+  const { data } = await sb.from("orders").select("id,customer_id,customer_name,customer_phone,total,amount_paid,bill_type,gst_mode,status,channel");
+  const rows0 = await attachInvoiceGrand(((data as any[]) ?? []).filter((o) => o.status !== "cancelled"));
   const credits = await returnCreditsByOrder(rows0.map((o) => o.id));
   const map = new Map<string, { id: string | null; name: string; phone: string; outstanding: number; bills: number }>();
   for (const o of rows0) {
@@ -780,6 +811,7 @@ export async function getCustomerById(id: string) {
   // unpaid invoices roll up automatically. The DB column `credit_balance` is now a
   // *manual override* (advance received, store credit, hand-entered adjustment) — kept as
   // a fallback so existing data continues to display.
+  await attachInvoiceGrand(list as any[]);
   const custCredits = await returnCreditsByOrder(list.map((o: any) => o.id));
   const outstandingFromOrders = list
     .filter((o: any) => o.status !== "cancelled" && o.status !== "void")
@@ -900,6 +932,7 @@ export async function getOrdersPage(opts: { page?: number; pageSize?: number; q?
     for (const r of ((rets as any[]) ?? [])) if (r.ref_order_id) by.set(r.ref_order_id, (by.get(r.ref_order_id) ?? 0) + (r.qty ?? 0));
     for (const r of rows) r.returned_qty = by.get(r.id) ?? 0;
   }
+  await attachInvoiceGrand(rows); // dealer bills: grand total as printed (GST already inside total)
   return { rows, total: count ?? 0, page, pageSize };
 }
 
