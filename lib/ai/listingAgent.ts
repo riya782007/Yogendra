@@ -234,6 +234,22 @@ export function cleanTitleWords(t: string): string {
   return out.split(/\s+/).length >= 2 ? out : String(t ?? "").trim();
 }
 
+/** Finish families. A title may only name a finish the shop's own variants carry (owner, Oct 2026:
+ *  "Gold plated kundan choker ko oxidised ke 4 option de rha h"). */
+const FINISHES: [string, RegExp][] = [
+  ["oxidised", /\b(oxidi[sz]ed|german\s+silver|black\s+metal)\b/i],
+  ["rose gold", /\brose[\s-]?gold\b/i],
+  ["mehendi", /\bmeh(e|a)nd(i|ee)\b/i],
+  ["silver", /\bsilver(?!\s*(stone|bead))\b/i],
+  ["gold", /\b(gold(en)?|gold[\s-]plated|matte\s+gold)\b/i],
+];
+function finishesIn(text: string): string[] {
+  let t = String(text ?? "");
+  const out: string[] = [];
+  for (const [nm, re] of FINISHES) if (re.test(t)) { out.push(nm); t = t.replace(new RegExp(re.source, "gi"), " "); }
+  return out;
+}
+
 export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_500): Promise<{ titles: string[]; provider: string; usedImage: boolean; errors: string[] }> {
   const forcedName = pickDivaName(((p as any).sku as string) || p.name || "");
   const wantVision = !!p.imageBase64;
@@ -245,20 +261,28 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
   // Owner, Oct 2026: "Generate 3-4 title me ache titles nh aa rhe — kafi similar aa rhe h sab designs ke."
   // The model only ever saw ONE product, so every design in a sub-category got the same safe phrase.
   // It is now shown the titles other designs of this sub-category already carry, asked to name what
-  // it actually sees that is DIFFERENT, and near-copies of those titles are dropped afterwards.
+  // it actually sees, and near-copies are dropped afterwards. The FINISH is never left to the photo:
+  // it comes from the variants' polish ("Gold plated kundan choker ko oxidised ke 4 option" — the old
+  // prompt's examples literally said "Oxidised Silver"), and a title naming another finish is dropped.
+  const polishList = [...new Set((((p as any).polishes ?? []) as string[]).map((x) => String(x ?? "").trim()).filter(Boolean))];
+  const shopFinishes = new Set(polishList.flatMap((x) => finishesIn(x)));
+  const finishFact = polishList.length
+    ? `FINISH / POLISH (from the shop's stock — this is the TRUTH, the photo lighting can mislead): ${polishList.join(", ")}. Name only this finish; NEVER call it ${FINISHES.map(([f]) => f).filter((f) => !shopFinishes.has(f)).join(", ")}.`
+    : ``;
   const avoid = [...new Set(((p as any).avoidTitles as string[] | undefined ?? [])
     .map((t) => String(t ?? "").replace(/^\S+\s+/, "").trim()).filter((t) => t.split(/\s+/).length >= 2))].slice(0, 30);
   const userPrompt = [
     `You are BlytheDIVA SEO copywriter. Produce ${n} alternative website titles for ONE product as JSON {"titles":["…"]}.`,
     kind ? `THE PRODUCT IS A ${kind.toUpperCase()}. Every title is for this same single piece and must name it as a ${kind.replace(/\s*\(.*\)$/, "")}. Never call it any other kind of jewellery (earrings, necklace, anklet, clip, ring…), even if the photo shows a model wearing other pieces.` : ``,
-    `Write REGULAR, factual e-commerce titles a shopper would search for: material/work + the type + one real visible detail (e.g. "Kundan Choker Necklace Set with Maang Tikka", "Oxidised Silver Jhumka Earrings with Pearl Drops").`,
-    wantVision ? `Use the photo ONLY for colours, stones, work and polish of this piece.` : `Infer from fields.`,
+    `Write REGULAR, factual e-commerce titles a shopper would search for: finish + stone work + the type + one real visible detail (e.g. "Gold Plated Kundan Choker with Pink Drops", "Pearl Layered Rani Haar with Green Stones").`,
+    wantVision ? `Use the photo ONLY for the stones, colours and work of this piece (the finish comes from the shop data below).` : `Infer from fields.`,
     `Category: ${p.categoryName ?? "Jewellery"}.${sub}${style}`,
     kw ? `Keywords: ${kw}.` : ``,
     `Each title starts with «${forcedName}», 5–7 words total, Title Case.`,
-    wantVision ? `First look closely and list in "seen" 4-6 SPECIFIC things visible on THIS piece: stone colours by name (ruby red, emerald green, pink, white pearl, blue…), motif (peacock, lotus, leaf, paisley, coin, bell, floral, moon…), structure (layers, strands, drops, ghungroo, chain, tassel), work (kundan, meenakari, AD/CZ, polki, temple, oxidised, mirror, beads) and polish.` : ``,
-    `Each title must use a DIFFERENT item from "seen" — no two titles may share the same detail phrase. It is always the SAME piece and the SAME type.`,
-    avoid.length ? `Other designs in this shop ALREADY have these titles — your titles must describe what makes THIS design different and must NOT reuse their detail phrases:\n- ${avoid.join("\n- ")}` : ``,
+    finishFact,
+    wantVision ? `First look closely at the photo and list in "seen" 4-6 things that are REALLY visible on this piece: the actual stone colours, the motif or shape, how it is built (layers, drops, beads, chain) and the stone-setting work. Only what you can see — do not guess, do not invent.` : ``,
+    `Write the titles the way a jewellery shop owner would list this exact piece on Amazon or Myntra: plain, true and specific. Each title uses a different real detail from "seen". It is always the SAME piece and the SAME type.`,
+    avoid.length ? `For reference, other designs in the shop are titled like this — don't copy them word for word:\n- ${avoid.slice(0, 12).join("\n- ")}` : ``,
     `Answer as {"seen":["…"],"titles":["…"]}.`,
     `NEVER use colour-count words (Multi Color, Multicolour, Colourful) and NEVER use: ${FILLER_WORDS.join(", ")}.`,
     `Return ONLY JSON.`,
@@ -283,15 +307,16 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
   const timeoutMs = Math.max(2_000, budgetMs - 300);
   const runs = order.map(([nm, fn]) => (async () => {
     try {
-      const args = nm === "groq" ? { ...call, imageBase64: undefined, imageMime: undefined } : { ...call, imageDetail: "low" };
+      const args = nm === "groq" ? { ...call, imageBase64: undefined, imageMime: undefined } : { ...call, imageDetail: nm === "openai" ? "auto" : "low" };
       const raw: any = parseModelJson(await fn({ ...args, timeoutMs }));
       const arr = Array.isArray(raw) ? raw
         : Array.isArray(raw?.titles) ? raw.titles
         : (Object.entries(raw ?? {}).find(([k, v]) => k !== "seen" && Array.isArray(v))?.[1] as any[] | undefined) ?? [];
       const all = arr.map((t: any) => String(typeof t === "object" && t ? (t.title ?? Object.values(t)[0] ?? "") : t ?? "").trim()).filter(Boolean);
       // Drop any title that names a different kind of piece than the shop's sub-category says.
-      const cleaned = all.filter((t: string) => conflictingTypes(t, allowed).length === 0);
-      if (!cleaned.length) throw new Error(all.length ? `titles named the wrong type (${all[0].slice(0, 60)})` : "no titles in reply");
+      const cleaned = all.filter((t: string) => conflictingTypes(t, allowed).length === 0
+        && (!shopFinishes.size || finishesIn(t).every((f) => shopFinishes.has(f))));
+      if (!cleaned.length) throw new Error(all.length ? `titles named the wrong type or finish (${all[0].slice(0, 60)})` : "no titles in reply");
       results.push({ nm, titles: cleaned });
     } catch (e) {
       errors.push(`${nm}: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`);
