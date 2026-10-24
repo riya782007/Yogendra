@@ -38,7 +38,14 @@ export type LedgerRow = {
 type OrderLite = {
   id: string; total?: number | null; amount_paid?: number | null; invoice_no?: string | null;
   bill_type?: string | null; gst_mode?: string | null; status?: string | null; created_at: string;
+  channel?: string | null; admin_note?: string | null; grand?: number | null;
 };
+
+/** Short-payment write-offs recorded on the bill (writeOffBillBalanceAction notes them on admin_note). */
+function writtenOffPaise(note?: string | null): number {
+  return [...String(note ?? "").matchAll(/Balance ₹([\d,]+(?:\.\d+)?) written off/g)]
+    .reduce((s, m) => s + Math.round(Number(m[1].replace(/,/g, "")) * 100), 0);
+}
 
 /** Grand total of a bill exactly as printed (GST added on top for exclusive GST bills). */
 export const billGrand = (o: OrderLite) => orderReceivable({ ...o, amount_paid: 0 }, 0);
@@ -79,8 +86,12 @@ export async function getCustomerLedger(customerId: string, orders: OrderLite[],
     const inv = o.invoice_no || String(o.id).slice(0, 8).toUpperCase();
     out.push({ key: `b-${o.id}`, date: o.created_at, type: "bill", label: `Bill ${inv}`, href: `/admin/invoice/${o.id}`, debit: billGrand(o), credit: 0 });
     // Part of the bill marked paid with no account entry (old bills / write-offs) — on the bill date.
+    // A written-off shortfall is a discount, not money received — show it on its own line so the
+    // ledger reads "₹17,700 paid · ₹9 written off" instead of one "paid" figure that never arrived.
     const unlogged = (o.amount_paid ?? 0) - (paidLogged.get(o.id) ?? 0);
-    if (unlogged > 0) out.push({ key: `s-${o.id}`, date: o.created_at, type: "settled", label: `Paid on bill ${inv}`, href: `/admin/invoice/${o.id}`, debit: 0, credit: unlogged });
+    const wo = Math.min(Math.max(0, unlogged), writtenOffPaise(o.admin_note));
+    if (unlogged - wo > 0) out.push({ key: `s-${o.id}`, date: o.created_at, type: "settled", label: `Paid on bill ${inv}`, href: `/admin/invoice/${o.id}`, debit: 0, credit: unlogged - wo });
+    if (wo > 0) out.push({ key: `w-${o.id}`, date: o.created_at, type: "settled", label: `Written off · ${inv}`, href: `/admin/invoice/${o.id}`, note: "discount — not received", debit: 0, credit: wo });
   }
   const invOf = new Map(live.map((o) => [o.id, o.invoice_no || String(o.id).slice(0, 8).toUpperCase()]));
   for (const p of payRows) {
