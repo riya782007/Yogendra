@@ -79,3 +79,25 @@ export function tradeInvoiceGrandPaise(linesPaise: number, charges: { packing?: 
   const taxable = Math.max(0, Math.round(linesPaise) + pre(charges.packing) + pre(charges.courier) + pre(charges.adjustment));
   return Math.round((taxable + Math.round((taxable * gstRate) / 100)) / 100) * 100;
 }
+
+/**
+ * THE grand total of a bill, exactly as the printed invoice shows it — one rule for every screen
+ * (outstanding, customer ledger, receive-payment, write-off, top customers).
+ *
+ * Owner, Oct 2026: "Customer ledgers theek se banke nahi aa rahe." The ledger used its own rule:
+ * a GST bill with no GST mode pinned (every bill made from an estimate saved without GST, and most
+ * older bills) was taken as EXCLUSIVE and charged 3% on top, while the invoice — correctly — treats
+ * it as GST-inclusive. So each such bill sat 3% too high in the ledger and the outstanding amount.
+ *   · cash memo                → total
+ *   · dealer trade-portal bill → total (the dealer's total already contains the GST)
+ *   · GST, pinned exclusive    → total + 3%
+ *   · GST, inclusive / not set → total
+ * …rounded to ₹1 like the invoice. `grand` (from attachInvoiceGrand) wins when present.
+ */
+export function billGrandPaise(o: { total?: number | null; bill_type?: string | null; gst_mode?: string | null; channel?: string | null; grand?: number | null }, gstRate = 3): number {
+  if (typeof o.grand === "number") return o.grand;
+  const t = Math.max(0, Math.round(Number(o.total) || 0));
+  if (isTradeExclusive(o)) return Math.round(t / 100) * 100;
+  const raw = taxFromBill(o.bill_type, o.gst_mode) === "exclusive" ? t + Math.round((t * gstRate) / 100) : t;
+  return Math.round(raw / 100) * 100;
+}
