@@ -9,7 +9,7 @@ import { phoneDigits, recordMatchesShopperQuery } from "../phone";
 import { scoreQuery } from "../search";
 import { MANUAL_ADJUSTMENT_OR, isManualRow, ratePaise, valuePaise } from "../stockRecord";
 import { goodsValue } from "../salesValue";
-import { isTradeExclusive, tradeInvoiceGrandPaise } from "../orderBill";
+import { isTradeExclusive, tradeInvoiceGrandPaise, billGrandPaise } from "../orderBill";
 
 /**
  * PostgREST caps every select at 1000 rows (the `max-rows` default). With a 4000+ product
@@ -494,7 +494,7 @@ export async function getEmployeePerformance(range?: { from?: string; to?: strin
   // Exclude pending backorders (not sold yet — held like an estimate) and cancelled/refunded bills,
   // so a salesperson isn't credited for a sale that never actually happened.
   // `sales` = goods value only (no shipping / packing / GST — owner, Oct 2026); `billed` = full bill amount.
-  let q = sb.from("orders").select("sales_employee_id,total,amount_paid,created_at,status,is_backorder,bill_type,gst_mode,extra_packing,extra_courier,extra_adjustment").not("sales_employee_id", "is", null).or("is_backorder.is.null,is_backorder.eq.false").eq("cod_hold", false);
+  let q = sb.from("orders").select("sales_employee_id,total,amount_paid,created_at,status,is_backorder,bill_type,gst_mode,channel,extra_packing,extra_courier,extra_adjustment").not("sales_employee_id", "is", null).or("is_backorder.is.null,is_backorder.eq.false").eq("cod_hold", false);
   if (range?.from) q = q.gte("created_at", range.from);
   if (range?.to) q = q.lte("created_at", range.to);
   const { data } = await q;
@@ -544,7 +544,7 @@ export async function getCustomerSpend(range?: { from?: string; to?: string }): 
   const sb = supabaseServer();
   // Count EVERY bill the customer took — cash memos AND GST invoices — at its GOODS value (lib/salesValue):
   // shipping, packing and GST are overheads, not purchases, so they don't push anyone over a target.
-  let q = sb.from("orders").select("customer_id,total,bill_type,gst_mode,extra_packing,extra_courier,extra_adjustment,created_at,status,is_backorder").not("customer_id", "is", null).or("is_backorder.is.null,is_backorder.eq.false").eq("cod_hold", false);
+  let q = sb.from("orders").select("customer_id,total,bill_type,gst_mode,channel,extra_packing,extra_courier,extra_adjustment,created_at,status,is_backorder").not("customer_id", "is", null).or("is_backorder.is.null,is_backorder.eq.false").eq("cod_hold", false);
   if (range?.from) q = q.gte("created_at", range.from);
   if (range?.to) q = q.lte("created_at", range.to);
   const { data } = await q;
@@ -566,14 +566,11 @@ export async function getCustomerSpend(range?: { from?: string; to?: string }): 
  *  like the printed invoice) − amount paid − return credits (credit notes incl. their GST share).
  *  Fixes the client's two escalations: "GST chhod diya" (outstanding rose by the pre-tax total)
  *  and returns never reducing what the customer owes. */
-export function orderReceivable(o: { total?: number | null; amount_paid?: number | null; bill_type?: string | null; gst_mode?: string | null; grand?: number | null }, returnCredit = 0): number {
-  const total = o.total ?? 0;
-  // `grand` is attached by attachInvoiceGrand() for dealer (trade-portal) bills, whose total already
-  // includes GST — never add the 3% to those a second time.
-  const grand = typeof o.grand === "number" ? o.grand
-    : o.bill_type === "gst" && (o.gst_mode ?? "exclusive") !== "inclusive"
-    ? Math.round((total + Math.round((total * 3) / 100)) / 100) * 100
-    : total;
+export function orderReceivable(o: { total?: number | null; amount_paid?: number | null; bill_type?: string | null; gst_mode?: string | null; channel?: string | null; grand?: number | null }, returnCredit = 0): number {
+  // Same grand total the printed invoice shows (lib/orderBill billGrandPaise): GST is added on top only
+  // for a bill pinned EXCLUSIVE; a dealer bill's total already contains it; a bill with no GST mode set
+  // is inclusive — the old rule charged those 3% extra in the ledger and outstanding (Oct 2026).
+  const grand = billGrandPaise(o);
   return Math.max(0, grand - (o.amount_paid ?? 0) - returnCredit);
 }
 
@@ -799,9 +796,13 @@ export async function getCustomerById(id: string) {
   // Order history: linked customer_id plus any POS sales saved with the same phone.
   // (Two separate queries merged — avoids putting a raw phone into an or() filter.)
   const phone = (c as any).phone;
-  const sel = "id,total,amount_paid,invoice_no,channel,bill_type,gst_mode,payment_mode,status,created_at,customer_id,customer_phone";
-  const byId = await sb.from("orders").select(sel).eq("customer_id", id).order("created_at", { ascending: false }).limit(100);
-  const byPhone = phone ? await sb.from("orders").select(sel).eq("customer_phone", phone).order("created_at", { ascending: false }).limit(100) : { data: [] as any[] };
+  // The ledger needs the WHOLE history: the old 100-bill cap cut a regular dealer's oldest bills out,
+  // so the running balance started from the wrong place (owner: "ledgers theek se banke nahi aa rahe").
+  const sel = "id,total,amount_paid,invoice_no,channel,bill_type,gst_mode,payment_mode,status,created_at,customer_id,customer_phone,admin_note";
+  const [byId, byPhone] = await Promise.all([
+    sb.from("orders").select(sel).eq("customer_id", id).order("created_at", { ascending: false }).limit(3000),
+    phone ? sb.from("orders").select(sel).eq("customer_phone", phone).order("created_at", { ascending: false }).limit(3000) : Promise.resolve({ data: [] as any[] }),
+  ]);
   const seen = new Set<string>();
   const list = [...((byId.data as any[]) ?? []), ...((byPhone.data as any[]) ?? [])]
     .filter((o) => (seen.has(o.id) ? false : (seen.add(o.id), true)))
@@ -3063,7 +3064,7 @@ export async function getActivityLog(limit = 60) {
 // ---------- CRM + abandoned carts + SEO ----------
 export async function getCustomers() {
   const sb = supabaseServer();
-  const { data } = await sb.from("orders").select("customer_name,customer_phone,total,bill_type,gst_mode,status,is_backorder,cod_hold,created_at");
+  const { data } = await sb.from("orders").select("customer_name,customer_phone,total,bill_type,gst_mode,channel,status,is_backorder,cod_hold,created_at");
   const map = new Map<string, { name: string; phone: string | null; orders: number; spent: number; last: string }>();
   for (const o of (data as any[]) ?? []) {
     const name = (o.customer_name ?? "").trim(); if (!name) continue;
@@ -3073,7 +3074,7 @@ export async function getCustomers() {
     if (o.status === "cancelled" || o.status === "refunded" || o.is_backorder === true || o.cod_hold === true) continue;
     const t = o.total ?? 0;
     // Inclusive-GST bills already contain the tax in `total`; only exclusive bills add 3% on top.
-    const grand = o.bill_type === "cash" || o.gst_mode === "inclusive" ? Math.round(t / 100) * 100 : Math.round((t + Math.round(t * 0.03)) / 100) * 100;
+    const grand = billGrandPaise(o);
     const c = map.get(name) ?? { name, phone: o.customer_phone ?? null, orders: 0, spent: 0, last: o.created_at };
     c.orders++; c.spent += grand; if (o.created_at > c.last) c.last = o.created_at; if (!c.phone) c.phone = o.customer_phone ?? null;
     map.set(name, c);
