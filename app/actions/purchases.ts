@@ -225,10 +225,19 @@ export async function recordPurchaseAction(input: {
   const extra = (beforeGst - (Number(itemsTotal) || 0)) + gstAmt; // charges + gst on top of items
   const total = beforeGst + gstAmt;
   if (purchaseId && extra !== 0) {
-    await sb.from("purchases").update({
+    // Owner, Oct 2026: "Purchase me discount dala tha show nh kr rha." This one update carried the new
+    // total AND the breakdown columns; on a database without those columns PostgREST rejects the whole
+    // row, the error was swallowed, and the bill kept the items-only total — so the discount (and any
+    // packing/shipping/GST) silently vanished from the purchase and the supplier's balance. Now the
+    // total is always saved, even when the breakdown columns are missing (migration 0075 adds them).
+    const { error: brkErr } = await sb.from("purchases").update({
       total, extra_packing: packing, extra_courier: shipping, extra_adjustment: adjustment,
       gst_amount: gstAmt, gst_enabled: !!input.gst,
-    }).eq("id", purchaseId).then(() => {}, () => {});
+    }).eq("id", purchaseId);
+    if (brkErr) {
+      console.warn("purchase charge breakdown not saved — apply migration 0075:", brkErr.message);
+      await sb.from("purchases").update({ total }).eq("id", purchaseId).then(() => {}, () => {});
+    }
     // Keep the books in step: the RPC posted the ITEMS total to the ledger; add the extra (charges+GST).
     const { data: led } = await sb.from("ledger").select("balance").order("created_at", { ascending: false }).limit(1).maybeSingle();
     const bal = (led as any)?.balance ?? 0;
