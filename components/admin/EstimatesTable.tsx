@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { formatPaise } from "@/lib/pricing";
 import { billEstimateAction, denyEstimateAction, reopenEstimateAction, holdEstimateAction } from "@/app/actions/billing";
@@ -25,6 +25,10 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 export function EstimatesTable({ estimates, initialQuery = "", initialTab = "" }: { estimates: E[]; initialQuery?: string; initialTab?: string }) {
+  // Last salesperson picked on this device (POS / New estimate). Sent with "Bill" so a quote saved
+  // without a salesperson is still credited to someone in the staff sales ledger.
+  const [deviceEmp, setDeviceEmp] = useState("");
+  useEffect(() => { try { setDeviceEmp(localStorage.getItem("pos_sales_emp") ?? ""); } catch { /* storage blocked */ } }, []);
   const [tabKey, setTabKey] = useState(() => TABS.some((t) => t.key === initialTab) ? initialTab : (initialQuery ? "all" : "open"));
   const [q, setQ] = useState(initialQuery);
   const [sort, setSort] = useState("date_desc");
@@ -163,8 +167,8 @@ export function EstimatesTable({ estimates, initialQuery = "", initialTab = "" }
                   <div className="flex flex-wrap gap-1.5 justify-end items-center">
                     <Link href={`/admin/estimate/${e.id}`} className="px-2.5 py-1 rounded-full bg-ink/5 text-ink text-xs hover:bg-ink/10">🖶 Print</Link>
                     {(e.status === "open" || e.status === "held") && <>
-                      <form action={billEstimateAction}><input type="hidden" name="id" value={e.id} /><input type="hidden" name="bill_type" value="gst" /><button className="px-2.5 py-1 rounded-full bg-emerald/10 text-emerald text-xs font-medium hover:bg-emerald/20">Bill · GST →</button></form>
-                      <form action={billEstimateAction}><input type="hidden" name="id" value={e.id} /><input type="hidden" name="bill_type" value="cash" /><button className="px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-medium hover:bg-blue-100">Bill · Cash →</button></form>
+                      <form action={billEstimateAction}><input type="hidden" name="id" value={e.id} /><input type="hidden" name="bill_type" value="gst" /><input type="hidden" name="sales_employee_id" value={deviceEmp} /><button className="px-2.5 py-1 rounded-full bg-emerald/10 text-emerald text-xs font-medium hover:bg-emerald/20">Bill · GST →</button></form>
+                      <form action={billEstimateAction}><input type="hidden" name="id" value={e.id} /><input type="hidden" name="bill_type" value="cash" /><input type="hidden" name="sales_employee_id" value={deviceEmp} /><button className="px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-medium hover:bg-blue-100">Bill · Cash →</button></form>
                       {e.status === "open"
                         ? <form action={holdEstimateAction}><input type="hidden" name="id" value={e.id} /><button className="px-2.5 py-1 rounded-full bg-violet-100 text-violet-700 text-xs hover:bg-violet-200">⏸ Hold</button></form>
                         : <form action={reopenEstimateAction}><input type="hidden" name="id" value={e.id} /><button className="px-2.5 py-1 rounded-full bg-gold/15 text-gold-dark text-xs hover:bg-gold/25">▶ Resume</button></form>}
