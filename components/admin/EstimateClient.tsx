@@ -4,9 +4,11 @@ import { formatPaise } from "@/lib/pricing";
 import { GST_RATE } from "@/lib/business";
 import { createEstimateAction, posLookupAction } from "@/app/actions/billing";
 import { QtyField } from "@/components/admin/QtyField";
+import { quickAddEmployeeAction } from "@/app/actions/employees";
 
 type P = { sku: string; name: string; price: number; wholesale: number; parentSku?: string; parentName?: string };
 type Cust = { id: string; name: string; phone: string; type: string; gstin: string };
+type Emp = { id: string; name: string };
 type Line = { sku: string; name: string; price: number; wholesale: number; qty: number; override: string };
 
 // R = retail, W = wholesale — tier follows the selected customer (same as POS).
@@ -26,7 +28,27 @@ function scanBeep() {
   } catch { /* audio blocked — the on-screen banner still alerts */ }
 }
 
-export function EstimateClient({ products, customers = [] }: { products: P[]; customers?: Cust[] }) {
+export function EstimateClient({ products, customers = [], employees = [] }: { products: P[]; customers?: Cust[]; employees?: Emp[] }) {
+  // Salesperson — owner, Oct 2026: "Estimate me sales person ka record nhi aa rha." Same picker and the
+  // same remembered choice as the POS, so the bill made from this quote lands on their sales ledger.
+  const [emps, setEmps] = useState<Emp[]>(employees);
+  const [salesEmp, setSalesEmp] = useState("");
+  const [newEmp, setNewEmp] = useState("");
+  const [addingEmp, setAddingEmp] = useState(false);
+  useEffect(() => {
+    if (salesEmp) return;
+    let saved: string | null = null;
+    try { saved = localStorage.getItem("pos_sales_emp"); } catch { /* storage blocked */ }
+    const owner = emps.find((e) => (e.name ?? "").trim().toLowerCase() === "owner");
+    const pick = (saved && emps.some((e) => e.id === saved) ? saved : null) ?? owner?.id ?? emps[0]?.id ?? "";
+    if (pick) setSalesEmp(pick);
+  }, [emps, salesEmp]);
+  useEffect(() => { if (salesEmp) { try { localStorage.setItem("pos_sales_emp", salesEmp); } catch { /* ignore */ } } }, [salesEmp]);
+  async function addEmp() {
+    const n = newEmp.trim(); if (!n) return;
+    const r = await quickAddEmployeeAction(n);
+    if (r.ok && r.id) { setEmps((p) => (p.some((e) => e.id === r.id) ? p : [...p, { id: r.id!, name: r.name || n }])); setSalesEmp(r.id); setNewEmp(""); setAddingEmp(false); }
+  }
   const [q, setQ] = useState("");
   const [lines, setLines] = useState<Line[]>([]);
   const [name, setName] = useState("");
@@ -189,6 +211,7 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
    */
   async function save(allowDuplicate = false) {
     if (savingRef.current) return; // a second click in the same tick must not become a second quote
+    if (!salesEmp && emps.length) { setMsg('✕ Pick who made this estimate under "Sold by" first.'); return; }
     savingRef.current = true;
     setBusy(true); setMsg(""); setDupOf(null);
     try {
@@ -200,6 +223,7 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
         packingRupees: Number(packing) || 0, courierRupees: Number(courier) || 0, adjustmentRupees: Number(adjustment) || 0,
         gst,
         allowDuplicate,
+        salesEmployeeId: salesEmp || undefined,
       });
       if (res.ok && res.duplicate) {
         // The server found this exact cart already saved for this customer moments ago and handed
@@ -226,6 +250,24 @@ export function EstimateClient({ products, customers = [] }: { products: P[]; cu
   return (
     <div className="bg-white rounded-2xl p-6 shadow-card mb-6">
       <h2 className="font-medium text-ink mb-3">New estimate / quotation</h2>
+
+      {/* Sold by — who dealt with the customer (staff sales ledger). */}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <div className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm ${salesEmp ? "border-emerald" : "border-gold"}`}>
+          <span className="text-muted text-xs whitespace-nowrap">☺ Sold by<span className="text-rose">*</span></span>
+          <select value={salesEmp} onChange={(e) => setSalesEmp(e.target.value)} className="bg-transparent outline-none text-ink max-w-[160px]">
+            <option value="">— select —</option>
+            {emps.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+          <button type="button" onClick={() => setAddingEmp((v) => !v)} className="text-emerald-dark text-xs hover:underline whitespace-nowrap">＋ New</button>
+        </div>
+        {addingEmp && (
+          <span className="flex items-center gap-1">
+            <input value={newEmp} onChange={(e) => setNewEmp(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addEmp(); } }} placeholder="Type name" className="rounded-lg border border-sand px-2 py-1 text-xs w-32 outline-none focus:border-emerald" />
+            <button type="button" onClick={addEmp} disabled={!newEmp.trim()} className="text-xs px-2 py-1 rounded-lg bg-ink text-white disabled:opacity-50">Add</button>
+          </span>
+        )}
+      </div>
 
       {/* Customer first — drives the R/W price, same as billing. */}
       <div className="mb-3">
