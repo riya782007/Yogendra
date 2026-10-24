@@ -17,6 +17,10 @@ export default async function PurchaseDetail({ params, searchParams }: { params:
   // Returns already made to the supplier against this bill (debit notes).
   const { data: pRets } = await supabaseServer().from("returns").select("id,qty,amount,reason,created_at").eq("kind", "purchase").eq("ref_order_id", params.id).order("created_at", { ascending: false });
   const purchaseReturns = ((pRets as any[]) ?? []);
+  // Charges/discount/GST the books recorded for this bill. Bills saved before the fix kept an items-only
+  // total even though this ledger row has the real difference — use it so the bill reads correctly.
+  const { data: chLed } = await supabaseServer().from("ledger").select("debit").eq("kind", "purchase").eq("ref_id", params.id).like("note", "Purchase charges/GST%");
+  const ledgerExtra = ((chLed as any[]) ?? []).reduce((s, r) => s + (Number(r.debit) || 0), 0);
   // AUTHORITATIVE permission — the SAME check the save action enforces. Previously the form was shown
   // with the cookie-based `can()` while the action enforced DB-based `requirePerm()`; when those two
   // disagreed the form appeared but Save silently did nothing ("supplier save hone ke baad bhi change
@@ -25,6 +29,22 @@ export default async function PurchaseDetail({ params, searchParams }: { params:
   const savedFlag = searchParams?.saved;
   const ref = p.bill_no || String(p.id).slice(0, 8).toUpperCase();
   const fld = "rounded-xl border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-emerald";
+  // Items → charges → bill total, the way the supplier's bill reads.
+  const itemsTotal = items.reduce((s: number, it: any) => s + (it.unit_cost ?? 0) * (it.qty ?? 0), 0);
+  const adj = Number(p.extra_adjustment) || 0;
+  const named = [
+    { label: "Packing", paise: Number(p.extra_packing) || 0 },
+    { label: "Shipping / courier", paise: Number(p.extra_courier) || 0 },
+    { label: adj < 0 ? "Discount" : "Adjustment", paise: adj },
+    { label: "GST @3%", paise: Number(p.gst_amount) || 0 },
+  ].filter((c) => c.paise !== 0);
+  // Older bills saved before the breakdown columns existed: show the difference as one line, so the
+  // printed total still adds up and the owner can see that a discount / charge was applied.
+  const billTotal = (p.total ?? 0) === itemsTotal && ledgerExtra !== 0 ? itemsTotal + ledgerExtra : (p.total ?? 0);
+  const unexplained = billTotal - itemsTotal - named.reduce((s, c) => s + c.paise, 0);
+  const charges = unexplained !== 0
+    ? [...named, { label: unexplained < 0 ? "Discount (net of charges)" : "Charges / GST (net)", paise: unexplained }]
+    : named;
 
   return (
     <main className="p-4 sm:p-8 bg-cream/40 min-h-screen max-w-3xl">
@@ -84,10 +104,22 @@ export default async function PurchaseDetail({ params, searchParams }: { params:
               </tr>
             ))}
             <tr className="bg-cream/50 font-semibold">
-              <td className="p-3" colSpan={2}>Total · {items.length} line{items.length === 1 ? "" : "s"}</td>
+              <td className="p-3" colSpan={2}>Items · {items.length} line{items.length === 1 ? "" : "s"}</td>
               <td className="p-3 text-right whitespace-nowrap">{items.reduce((s: number, it: any) => s + (it.qty ?? 0), 0)} pcs</td>
               <td className="p-3"></td>
-              <td className="p-3 text-right">{formatPaise(p.total)}</td>
+              <td className="p-3 text-right">{formatPaise(itemsTotal)}</td>
+            </tr>
+            {/* Owner, Oct 2026: "Purchase me discount dala tha show nh kr rha. Shipping packing adjustment
+                GST sab show krna chahiye." The bill used to show one total only. */}
+            {charges.map((c) => (
+              <tr key={c.label} className="border-t border-sand/60">
+                <td className="p-3 text-muted" colSpan={4}>{c.label}</td>
+                <td className={`p-3 text-right ${c.paise < 0 ? "text-emerald-dark" : "text-ink"}`}>{c.paise < 0 ? "− " : "+ "}{formatPaise(Math.abs(c.paise))}</td>
+              </tr>
+            ))}
+            <tr className="bg-cream font-semibold border-t-2 border-sand">
+              <td className="p-3" colSpan={4}>Bill total</td>
+              <td className="p-3 text-right">{formatPaise(billTotal)}</td>
             </tr>
           </tbody>
         </table>
