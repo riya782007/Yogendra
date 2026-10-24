@@ -1,5 +1,5 @@
 export const dynamic = "force-dynamic";
-import { getEstimates, getCustomersDbCached } from "@/lib/supabase/queries";
+import { getEstimates, getCustomersDbCached, getEmployees } from "@/lib/supabase/queries";
 import { EstimateClient } from "@/components/admin/EstimateClient";
 import { EstimatesTable } from "@/components/admin/EstimatesTable";
 
@@ -14,9 +14,10 @@ export default async function Estimates({ searchParams }: { searchParams: { hold
   // preload the catalogue — EstimateClient searches/scans live against the server (posLookupAction),
   // so the page opens instantly and can still quote ANY SKU. Estimates load once; the table filters
   // client-side.
-  const [estimates, customers] = await Promise.all([
+  const [estimates, customers, employees] = await Promise.all([
     getEstimates({}),
     getCustomersDbCached(),
+    getEmployees({ activeOnly: true }).catch(() => []),
   ]);
   const custList = customers.map((c: any) => ({ id: c.id, name: c.name, phone: c.phone ?? "", type: c.type ?? "retail", gstin: c.gstin ?? "" }));
 
@@ -25,7 +26,7 @@ export default async function Estimates({ searchParams }: { searchParams: { hold
       <h1 className="font-display text-4xl text-ink mb-1">Estimates &amp; Quotations</h1>
       <p className="text-sm text-muted mb-6">Quote now; bill only when the customer confirms. Holding an estimate <b>reserves its stock</b> for the customer (set aside, not sellable) without billing — bill it when they collect, and any pieces they don&apos;t take return to stock.</p>
       {holdError && <div className="mb-5 rounded-xl border border-rose/40 bg-rose/5 px-4 py-3 text-sm text-rose">Couldn&apos;t hold this estimate — {holdError}</div>}
-      <EstimateClient products={[]} customers={custList} />
+      <EstimateClient products={[]} customers={custList} employees={(employees as any[]).map((e) => ({ id: e.id, name: e.name }))} />
       <EstimatesTable estimates={estimates as any} initialQuery={q} initialTab={tab} />
     </main>
   );
