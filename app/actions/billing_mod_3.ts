@@ -102,7 +102,7 @@ async function findRecentDuplicate(
   }
 }
 
-export async function createEstimateAction(input: { items: { sku: string; qty: number; priceRupees?: number }[]; customer: { name?: string; phone?: string }; packingRupees?: number; courierRupees?: number; adjustmentRupees?: number; gst?: "none" | "inclusive" | "exclusive"; allowDuplicate?: boolean }): Promise<{ ok: boolean; estimateId?: string; total?: number; error?: string; duplicate?: boolean }> {
+export async function createEstimateAction(input: { items: { sku: string; qty: number; priceRupees?: number }[]; customer: { name?: string; phone?: string }; packingRupees?: number; courierRupees?: number; adjustmentRupees?: number; gst?: "none" | "inclusive" | "exclusive"; allowDuplicate?: boolean; salesEmployeeId?: string }): Promise<{ ok: boolean; estimateId?: string; total?: number; error?: string; duplicate?: boolean }> {
   if (!(await requirePerm("estimates.create"))) return { ok: false, error: "Your role can't create estimates." };
   if (!input.items?.length) return { ok: false, error: "Add at least one item" };
   const sb = supabaseServer();
@@ -135,6 +135,10 @@ export async function createEstimateAction(input: { items: { sku: string; qty: n
     const patch: Record<string, unknown> = { ...gstPatch };
     if (hasCharges) { patch.extra_packing = xp; patch.extra_courier = xc; patch.extra_adjustment = xa; }
     if (input.customer?.phone) patch.customer_phone = input.customer.phone;
+    // Owner, Oct 2026: "Estimate me sales person ka record nhi aa rha." The quote now remembers who made
+    // it (needs migration 0075), and the bill made from it is credited to that person.
+    const salesEmp = input.salesEmployeeId?.trim() || null;
+    if (salesEmp) patch.sales_employee_id = salesEmp;
     const { error: patchErr } = await sb.from("estimates").update(patch).eq("id", estimateId);
     if (patchErr) {
       if (hasCharges) {
@@ -202,6 +206,13 @@ export async function billEstimateAction(formData: FormData) {
     if (Object.keys(carry).length) {
       const r = await (sb.from("orders") as any).update(carry).eq("id", orderId);
       if (r.error) console.warn("estimate→bill: could not carry tax details:", r.error.message);
+    }
+    // Salesperson: the one saved on the estimate, else whoever is billing it on this device (the bill
+    // buttons send the last salesperson used here), so estimate bills reach the staff sales ledger too.
+    const salesEmp = String((est as any)?.sales_employee_id ?? "").trim() || String(formData.get("sales_employee_id") ?? "").trim();
+    if (salesEmp) {
+      const r = await sb.from("orders").update({ sales_employee_id: salesEmp }).eq("id", orderId);
+      if (r.error) console.warn("estimate→bill: salesperson not saved:", r.error.message);
     }
     const xp = ((est as any)?.extra_packing) || 0, xc = ((est as any)?.extra_courier) || 0;
     const xa = (((est as any)?.extra_adjustment) || 0) + (((est as any)?.extra_tcs) || 0) - (((est as any)?.extra_discount) || 0);
