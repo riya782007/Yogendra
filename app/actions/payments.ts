@@ -1,7 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
-import { requirePerm } from "@/lib/auth";
+import { requirePerm, getSession } from "@/lib/auth";
 import { attachInvoiceGrand } from "@/lib/supabase/queries";
 import { billGrandPaise } from "@/lib/orderBill";
 
@@ -149,4 +149,67 @@ export async function setGstModeAction(formData: FormData): Promise<void> {
   if (!orderId) return;
   await supabaseServer().from("orders").update({ gst_mode }).eq("id", orderId);
   revalidatePath(`/admin/invoice/${orderId}`);
+}
+
+/**
+ * Delete a wrong payment / debit entry from a customer's ledger — owner only.
+ *
+ * Owner, Oct 2026: "record payment par galti se do baar click kar diya, ab ledger galat hai, edit ka
+ * koi option nahi. Owner ke paas entry delete ya change karne ka option hona chahiye."
+ * Undoes exactly what Receive payment did: each bill it settled gets that amount back as unpaid (cash or
+ * bank side, by the account it went into), the account entries are removed (so Bank & Cash drops the
+ * money too), and an advance or debit entry is simply removed. To correct an amount, delete the entry
+ * and record it again. Only entries that belong to THIS customer can be removed.
+ */
+export async function deleteLedgerEntryAction(formData: FormData): Promise<void> {
+  if (!getSession().isOwner) return;
+  const customerId = String(formData.get("customer_id") ?? "").trim();
+  const ids = String(formData.get("txn_ids") ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  if (!customerId || !ids.length) return;
+  const sb = supabaseServer();
+  const { data: cust } = await sb.from("customers").select("id,phone").eq("id", customerId).maybeSingle();
+  if (!cust) return;
+  const { data: rows } = await sb.from("payment_method_transactions").select("id,amount,direction,ref_type,ref_id,method_id,occurred_at").in("id", ids);
+  const txns = ((rows as any[]) ?? []);
+  if (!txns.length) return;
+
+  const orderIds = [...new Set(txns.filter((t) => t.ref_type === "order").map((t) => t.ref_id))];
+  const { data: ords } = orderIds.length
+    ? await sb.from("orders").select("id,customer_id,customer_phone,amount_paid,pay_cash,pay_bank,invoice_no").in("id", orderIds)
+    : { data: [] as any[] };
+  const orderById = new Map<string, any>(((ords as any[]) ?? []).map((o) => [o.id, o]));
+  const mine = (t: any) => t.ref_type === "customer"
+    ? t.ref_id === customerId
+    : t.ref_type === "order" && !!orderById.get(t.ref_id)
+      && (orderById.get(t.ref_id).customer_id === customerId || (!!(cust as any).phone && orderById.get(t.ref_id).customer_phone === (cust as any).phone));
+  const ok = txns.filter(mine);
+  if (!ok.length) return;
+
+  const methodIds = [...new Set(ok.map((t) => t.method_id).filter(Boolean))];
+  const { data: pms } = methodIds.length ? await sb.from("payment_methods").select("id,kind").in("id", methodIds) : { data: [] as any[] };
+  const isCash = new Map<string, boolean>(((pms as any[]) ?? []).map((m) => [m.id, String(m.kind ?? "").toLowerCase() === "cash"]));
+
+  // Money that had settled a bill goes back onto that bill as unpaid.
+  for (const t of ok) {
+    if (t.ref_type !== "order" || t.direction !== "in") continue;
+    const o = orderById.get(t.ref_id);
+    const amt = Number(t.amount) || 0;
+    const cash = isCash.get(t.method_id) ?? false;
+    const patch: Record<string, number> = { amount_paid: Math.max(0, (o.amount_paid ?? 0) - amt) };
+    if (cash) patch.pay_cash = Math.max(0, (o.pay_cash ?? 0) - amt); else patch.pay_bank = Math.max(0, (o.pay_bank ?? 0) - amt);
+    await sb.from("orders").update(patch).eq("id", o.id);
+    o.amount_paid = patch.amount_paid; if (cash) o.pay_cash = patch.pay_cash; else o.pay_bank = patch.pay_bank;
+  }
+  await sb.from("payment_method_transactions").delete().in("id", ok.map((t) => t.id));
+
+  const total = ok.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const bills = ok.filter((t) => t.ref_type === "order").map((t) => orderById.get(t.ref_id)?.invoice_no || String(t.ref_id).slice(0, 8).toUpperCase());
+  await sb.from("audit_log").insert({
+    actor: "owner", action: "ledger_entry_deleted", ref: customerId,
+    detail: `Deleted ledger entry ₹${Math.round(total / 100)} (${ok[0].direction === "in" ? "payment" : "debit"} dated ${String(ok[0].occurred_at).slice(0, 10)})${bills.length ? ` — bills reopened: ${bills.join(", ")}` : ""}`,
+  }).then(() => {}, () => {});
+
+  revalidatePath(`/admin/customer/${customerId}`); revalidatePath("/admin/creditors"); revalidatePath("/admin/sales");
+  revalidatePath("/admin/cashbook"); revalidatePath("/admin/payment-methods"); revalidatePath("/admin/customers");
+  for (const id of orderIds) revalidatePath(`/admin/invoice/${id}`);
 }
