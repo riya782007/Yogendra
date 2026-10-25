@@ -8,6 +8,7 @@ import { upsertCustomerAction, deleteCustomerAction } from "@/app/actions/custom
 import { approveWholesaleAction, regenWholesaleCodeAction } from "@/app/actions/wholesale";
 import { ReceivePaymentButton } from "@/components/admin/ReceivePaymentButton";
 import { getCustomerLedger } from "@/lib/customerLedger";
+import { deleteLedgerEntryAction } from "@/app/actions/payments";
 
 export const metadata = { title: "Owner Console · Customer" };
 
@@ -16,6 +17,7 @@ export default async function CustomerDetail({ params }: { params: { id: string 
   if (!data) notFound();
   const { customer: c, orders, totalSpent, orderCount, outstanding, creditAdjustment } = data;
   const canManage = can(getSession(), "customers.manage");
+  const isOwner = getSession().isOwner;
   const ledger = await getCustomerLedger(c.id, orders as any[], creditAdjustment);
   const dt = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit", timeZone: "Asia/Kolkata" });
   const drcr = (p: number) => `${formatPaise(Math.abs(p))} ${p > 0 ? "Dr" : p < 0 ? "Cr" : ""}`.trim();
@@ -102,6 +104,19 @@ export default async function CustomerDetail({ params }: { params: { id: string 
                   <td className="py-1.5 pr-2">
                     {r.href ? <Link href={r.href} className="text-ink hover:text-emerald">{r.label}</Link> : <span className="text-ink">{r.label}</span>}
                     {(r.account || r.note) && <span className="block text-[11px] text-muted">{[r.account, r.note].filter(Boolean).join(" · ")}</span>}
+                    {/* Owner only: remove a wrong entry (e.g. a payment recorded twice). Two steps so a
+                        stray tap can't delete anything. To change an amount: delete, then record again. */}
+                    {isOwner && r.txnIds?.length ? (
+                      <details className="inline-block mt-0.5">
+                        <summary className="text-[11px] text-rose/80 cursor-pointer hover:text-rose list-none">✕ Delete entry</summary>
+                        <form action={deleteLedgerEntryAction} className="mt-1 flex items-center gap-2">
+                          <input type="hidden" name="customer_id" value={c.id} />
+                          <input type="hidden" name="txn_ids" value={r.txnIds.join(",")} />
+                          <span className="text-[11px] text-muted">{r.credit ? "Bills it paid will show as unpaid again." : "This debit will be removed."}</span>
+                          <button className="text-[11px] px-2 py-0.5 rounded-full bg-rose text-white hover:opacity-90">Yes, delete {formatPaise(r.credit || r.debit)}</button>
+                        </form>
+                      </details>
+                    ) : null}
                   </td>
                   <td className="py-1.5 pr-2 text-right whitespace-nowrap">{r.debit ? formatPaise(r.debit) : ""}</td>
                   <td className="py-1.5 pr-2 text-right whitespace-nowrap text-emerald-dark">{r.credit ? formatPaise(r.credit) : ""}</td>
