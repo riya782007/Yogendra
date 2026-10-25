@@ -19,7 +19,12 @@ function paymentInstant(date?: string | null): { iso: string } | { error: string
   const todayIst = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
   if (d > todayIst) return { error: "The date can't be in the future." };
   if (d < "2015-01-01") return { error: "That date is too far back." };
-  return { iso: d === todayIst ? new Date().toISOString() : new Date(`${d}T12:00:00+05:30`).toISOString() };
+  if (d === todayIst) return { iso: new Date().toISOString() };
+  // Noon IST on that day, plus the current minute:second, so two receipts entered for the same past
+  // day stay two separate entries in the ledger (and either can be deleted on its own).
+  const now = new Date();
+  const mm = String(now.getUTCMinutes()).padStart(2, "0"), ss = String(now.getUTCSeconds()).padStart(2, "0");
+  return { iso: new Date(`${d}T12:${mm}:${ss}+05:30`).toISOString() };
 }
 
 /**
