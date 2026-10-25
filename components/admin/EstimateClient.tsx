@@ -6,10 +6,13 @@ import { createEstimateAction, posLookupAction } from "@/app/actions/billing";
 import { QtyField } from "@/components/admin/QtyField";
 import { quickAddEmployeeAction } from "@/app/actions/employees";
 
-type P = { sku: string; name: string; price: number; wholesale: number; parentSku?: string; parentName?: string };
+type P = { sku: string; name: string; price: number; wholesale: number; parentSku?: string; parentName?: string; qty?: number };
 type Cust = { id: string; name: string; phone: string; type: string; gstin: string };
 type Emp = { id: string; name: string };
-type Line = { sku: string; name: string; price: number; wholesale: number; qty: number; override: string };
+// `stock` = pieces available right now (same figure the POS shows). Only shown, never enforced: a quote
+// may ask for more than is in stock — the owner decides when billing (Oct 2026: "Estimates me available
+// quantity show honi chahiye").
+type Line = { sku: string; name: string; price: number; wholesale: number; qty: number; override: string; stock?: number };
 
 // R = retail, W = wholesale — tier follows the selected customer (same as POS).
 const TIER_LABEL: Record<string, string> = { retail: "R", wholesale: "W" };
@@ -103,7 +106,7 @@ export function EstimateClient({ products, customers = [], employees = [] }: { p
           const have = new Set(prev.map((x) => x.sku.toUpperCase()));
           const add = (hits as any[])
             .filter((h) => !have.has(String(h.sku).toUpperCase()))
-            .map((h) => ({ sku: h.sku, name: h.name, price: h.price, wholesale: h.wholesale, parentSku: h.parentSku, parentName: h.parentName }));
+            .map((h) => ({ sku: h.sku, name: h.name, price: h.price, wholesale: h.wholesale, parentSku: h.parentSku, parentName: h.parentName, qty: typeof h.qty === "number" ? h.qty : undefined }));
           return add.length ? [...prev, ...add] : prev;
         });
       }).catch(() => { /* search never blocks the counter */ });
@@ -147,7 +150,7 @@ export function EstimateClient({ products, customers = [], employees = [] }: { p
     setLines((prev) => {
       const ex = prev.find((l) => l.sku === p.sku);
       if (ex) return [{ ...ex, qty: ex.qty + 1 }, ...prev.filter((l) => l.sku !== p.sku)];
-      return [{ sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, qty: 1, override: "" }, ...prev];
+      return [{ sku: p.sku, name: p.name, price: p.price, wholesale: p.wholesale, qty: 1, override: "", stock: p.qty }, ...prev];
     });
     setQ("");
   };
@@ -155,7 +158,7 @@ export function EstimateClient({ products, customers = [], employees = [] }: { p
     const vars = pool.filter((p) => p.parentSku === parentSku);
     setLines((prev) => {
       const have = new Set(prev.map((l) => l.sku));
-      return [...vars.filter((v) => !have.has(v.sku)).map((v) => ({ sku: v.sku, name: v.name, price: v.price, wholesale: v.wholesale, qty: 1, override: "" })), ...prev];
+      return [...vars.filter((v) => !have.has(v.sku)).map((v) => ({ sku: v.sku, name: v.name, price: v.price, wholesale: v.wholesale, qty: 1, override: "", stock: v.qty })), ...prev];
     });
     setQ("");
   };
@@ -182,7 +185,7 @@ export function EstimateClient({ products, customers = [], employees = [] }: { p
     let hits: any[] = [];
     try { hits = ((await posLookupAction(code)) as any[]) ?? []; } catch { hits = []; }
     const dbExact = hits.find((h) => String(h.sku).toLowerCase() === lc);
-    if (dbExact) { add({ sku: dbExact.sku, name: dbExact.name, price: dbExact.price, wholesale: dbExact.wholesale, parentSku: dbExact.parentSku, parentName: dbExact.parentName } as P); setScanMsg(`✓ Added ${dbExact.sku}`); return; }
+    if (dbExact) { add({ sku: dbExact.sku, name: dbExact.name, price: dbExact.price, wholesale: dbExact.wholesale, parentSku: dbExact.parentSku, parentName: dbExact.parentName, qty: dbExact.qty } as P); setScanMsg(`✓ Added ${dbExact.sku}`); return; }
 
     // 3) Local substring match — auto-add when exactly ONE item matches, so a half/fragment like "wn84"
     //    resolves to its single hit "wn84-all". The exact-SKU lookup above already guarantees a real
@@ -192,7 +195,7 @@ export function EstimateClient({ products, customers = [], employees = [] }: { p
     if (fuzzy.length > 1) { scanFail(`“${code}” matches ${fuzzy.length} items — NOT added, pick the exact one from the list`); return; }
 
     // 4) A single live hit (non-exact) as a last resort.
-    if (hits.length === 1) { const pick = hits[0]; add({ sku: pick.sku, name: pick.name, price: pick.price, wholesale: pick.wholesale, parentSku: pick.parentSku, parentName: pick.parentName } as P); setScanMsg(`✓ Added ${pick.sku}`); return; }
+    if (hits.length === 1) { const pick = hits[0]; add({ sku: pick.sku, name: pick.name, price: pick.price, wholesale: pick.wholesale, parentSku: pick.parentSku, parentName: pick.parentName, qty: pick.qty } as P); setScanMsg(`✓ Added ${pick.sku}`); return; }
     scanFail(`“${code}” NOT found — nothing was added`);
   }
   /** A scan that added nothing: red banner + beep + clear the box so the owner immediately sees it. */
@@ -317,7 +320,7 @@ export function EstimateClient({ products, customers = [], employees = [] }: { p
                 <span className="text-[11px] text-emerald-dark/70">adds {pp.count} lines</span>
               </button>
             ))}
-            {matches.map((p) => <button key={p.sku} onClick={() => add(p)} className="w-full text-left px-4 py-2.5 text-sm hover:bg-emerald-mist flex justify-between"><span>{p.name} <span className="text-muted">· {p.sku}</span></span><span>{formatPaise(baseUnit(p))}</span></button>)}
+            {matches.map((p) => <button key={p.sku} onClick={() => add(p)} className="w-full text-left px-4 py-2.5 text-sm hover:bg-emerald-mist flex justify-between"><span>{p.name} <span className="text-muted">· {p.sku}</span></span><span className="whitespace-nowrap">{typeof p.qty === "number" && <span className={`text-xs mr-2 ${p.qty > 0 ? "text-emerald-dark" : "text-rose"}`}>{p.qty} in stock</span>}{formatPaise(baseUnit(p))}</span></button>)}
           </div>
         )}
       </div>
@@ -326,7 +329,13 @@ export function EstimateClient({ products, customers = [], employees = [] }: { p
         : <p className="mb-2 rounded-lg bg-rose/10 border border-rose/50 text-rose px-3 py-2 text-sm font-semibold flex items-center gap-2">⚠️ {scanMsg}</p>)}
       {lines.map((l) => (
         <div key={l.sku} className="flex items-center gap-2 border-b border-sand/60 py-2 text-sm">
-          <span className="flex-1 min-w-0 truncate">{l.name} <span className="text-muted">· {l.sku}</span></span>
+          <span className="flex-1 min-w-0 truncate">{l.name} <span className="text-muted">· {l.sku}</span>
+            {typeof l.stock === "number" && (
+              <span className={`block text-[11px] ${l.qty > l.stock ? "text-rose font-medium" : "text-emerald-dark"}`}>
+                Available: {l.stock}{l.qty > l.stock ? ` — ${l.qty - l.stock} short` : ""}
+              </span>
+            )}
+          </span>
           {/* Editable rate — placeholder is the tier price; type to override. */}
           <label className="inline-flex items-center gap-0.5 rounded-full border border-sand px-2 py-1" title="Edit rate">
             <span className="text-muted text-xs">₹</span>
