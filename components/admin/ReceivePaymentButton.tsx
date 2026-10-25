@@ -11,7 +11,7 @@
  * Owner (Oct 2026): "recieve payment me date dedo and debit credit types bna do" — every entry takes
  * a date, so a payment received last week (or last year) is booked on the day it really came in.
  */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { formatPaise } from "@/lib/pricing";
 import { receiveCustomerPaymentAction, listReceiveAccountsAction } from "@/app/actions/billing";
@@ -33,6 +33,11 @@ export function ReceivePaymentButton({ customerId, phone, customerName, outstand
   const [accountId, setAccountId] = useState<string>("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  // Owner, Oct 2026: "record payment par galti se do baar click kar diya — do baar lag gaya." After a
+  // save the box stayed open 2.5s with the button live, so a second tap recorded the money again.
+  // `saved` keeps the buttons off until the box is closed; the ref also stops two taps in one tick.
+  const [saved, setSaved] = useState(false);
+  const inFlight = useRef(false);
   const [msg, setMsg] = useState("");
   const [askAdvance, setAskAdvance] = useState(false);
   const canDebit = !!customerId;
@@ -46,7 +51,7 @@ export function ReceivePaymentButton({ customerId, phone, customerName, outstand
     }).catch(() => setAccounts([]));
   }, [open, accounts]);
 
-  function reset() { setAmount(""); setNote(""); setMsg(""); setAskAdvance(false); setKind("credit"); setDate(todayIst()); }
+  function reset() { setAmount(""); setNote(""); setMsg(""); setAskAdvance(false); setKind("credit"); setDate(todayIst()); setSaved(false); }
 
   async function submit(asAdvance = false) {
     const n = Number(amount);
@@ -55,13 +60,23 @@ export function ReceivePaymentButton({ customerId, phone, customerName, outstand
     const acct = (accounts ?? []).find((a) => a.id === accountId);
     if (!noMoney && !acct) { setMsg(kind === "credit" ? "Choose the account the money came into." : "Choose the account the money was paid from."); return; }
     if (noMoney && !note.trim()) { setMsg("Add a note — what is this debit for? (e.g. old balance)"); return; }
+    if (inFlight.current || saved) return;
+    inFlight.current = true;
     setBusy(true); setMsg("");
     const method = acct?.kind === "cash" ? "cash" : "bank";
-    const r = await receiveCustomerPaymentAction({
-      customerId, phone, amountRupees: n, method, methodId: noMoney ? null : acct!.id, note,
-      kind, date, asAdvance,
-    });
+    let r: Awaited<ReturnType<typeof receiveCustomerPaymentAction>>;
+    try {
+      r = await receiveCustomerPaymentAction({
+        customerId, phone, amountRupees: n, method, methodId: noMoney ? null : acct!.id, note,
+        kind, date, asAdvance,
+      });
+    } catch {
+      inFlight.current = false; setBusy(false);
+      setMsg("✕ No answer from the server — check the ledger before recording again."); return;
+    }
+    inFlight.current = false;
     setBusy(false);
+    if (r.ok) setSaved(true);
     if (!r.ok) {
       if (r.noOpenBills && canDebit) { setAskAdvance(true); setMsg(r.error ?? ""); return; }
       setMsg(`✕ ${r.error}`); return;
@@ -128,9 +143,9 @@ export function ReceivePaymentButton({ customerId, phone, customerName, outstand
             <div className="flex justify-end gap-2 mt-4">
               <button onClick={() => { setOpen(false); reset(); }} disabled={busy} className="px-4 py-2 rounded-xl bg-ink/5 text-ink text-sm hover:bg-ink/10 disabled:opacity-50">Close</button>
               {askAdvance ? (
-                <button onClick={() => submit(true)} disabled={busy} className="px-4 py-2 rounded-xl bg-gold text-ink text-sm hover:opacity-90 disabled:opacity-50">{busy ? "Saving…" : "Save as advance"}</button>
+                <button onClick={() => submit(true)} disabled={busy || saved} className="px-4 py-2 rounded-xl bg-gold text-ink text-sm hover:opacity-90 disabled:opacity-50">{busy ? "Saving…" : "Save as advance"}</button>
               ) : (
-                <button onClick={() => submit(false)} disabled={busy} className={`px-4 py-2 rounded-xl text-white text-sm disabled:opacity-50 ${kind === "credit" ? "bg-emerald hover:bg-emerald-dark" : "bg-rose hover:opacity-90"}`}>
+                <button onClick={() => submit(false)} disabled={busy || saved} className={`px-4 py-2 rounded-xl text-white text-sm disabled:opacity-50 ${kind === "credit" ? "bg-emerald hover:bg-emerald-dark" : "bg-rose hover:opacity-90"}`}>
                   {busy ? "Saving…" : kind === "credit" ? "Record payment" : "Add debit"}
                 </button>
               )}
