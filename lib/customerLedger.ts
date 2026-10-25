@@ -33,6 +33,8 @@ export type LedgerRow = {
   debit: number;             // paise
   credit: number;            // paise
   balance: number;           // paise, running (positive = customer owes)
+  /** payment_method_transactions ids behind this line — lets the owner delete a wrong entry. */
+  txnIds?: string[];
 };
 
 type OrderLite = {
@@ -57,20 +59,20 @@ export async function getCustomerLedger(customerId: string, orders: OrderLite[],
   const live = orders.filter((o) => o.status !== "cancelled" && o.status !== "void");
   const ids = live.map((o) => o.id);
 
-  const [pays, manual, rets] = await Promise.all([
-    ids.length
-      ? sb.from("payment_method_transactions").select("id,method_id,amount,occurred_at,note,ref_id,direction")
-          .eq("ref_type", "order").eq("direction", "in").in("ref_id", ids)
-      : Promise.resolve({ data: [] as any[] }),
-    sb.from("payment_method_transactions").select("id,method_id,amount,occurred_at,note,direction,txn_type")
+  // Bill-linked reads go in chunks: a long customer history as one in() list makes the request URL
+  // too long and the read fails, which would silently drop every payment from the ledger.
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += 150) chunks.push(ids.slice(i, i + 150));
+  const [paysParts, manual, retsParts] = await Promise.all([
+    Promise.all(chunks.map((c) => sb.from("payment_method_transactions").select("id,method_id,amount,occurred_at,note,ref_id,direction,txn_type,created_at")
+      .eq("ref_type", "order").eq("direction", "in").in("ref_id", c))),
+    sb.from("payment_method_transactions").select("id,method_id,amount,occurred_at,note,direction,txn_type,created_at")
       .eq("ref_type", "customer").eq("ref_id", customerId),
-    ids.length
-      ? sb.from("returns").select("id,ref_order_id,amount,created_at,reason").eq("kind", "sales").in("ref_order_id", ids)
-      : Promise.resolve({ data: [] as any[] }),
+    Promise.all(chunks.map((c) => sb.from("returns").select("id,ref_order_id,amount,created_at,reason").eq("kind", "sales").in("ref_order_id", c))),
   ]);
-  const payRows = ((pays as any).data as any[]) ?? [];
+  const payRows = paysParts.flatMap((r: any) => (r.data as any[]) ?? []);
   const manualRows = ((manual as any).data as any[]) ?? [];
-  const retRows = ((rets as any).data as any[]) ?? [];
+  const retRows = retsParts.flatMap((r: any) => (r.data as any[]) ?? []);
 
   const methodIds = [...new Set([...payRows, ...manualRows].map((p) => p.method_id).filter(Boolean))];
   const { data: methods } = methodIds.length
@@ -94,9 +96,54 @@ export async function getCustomerLedger(customerId: string, orders: OrderLite[],
     if (wo > 0) out.push({ key: `w-${o.id}`, date: o.created_at, type: "settled", label: `Written off · ${inv}`, href: `/admin/invoice/${o.id}`, note: "discount — not received", debit: 0, credit: wo });
   }
   const invOf = new Map(live.map((o) => [o.id, o.invoice_no || String(o.id).slice(0, 8).toUpperCase()]));
-  for (const p of payRows) {
-    out.push({ key: `p-${p.id}`, date: p.occurred_at, type: "payment", label: `Payment · ${invOf.get(p.ref_id) ?? "bill"}`,
-      href: `/admin/invoice/${p.ref_id}`, account: mName.get(p.method_id) ?? null, note: p.note ?? null, debit: 0, credit: p.amount ?? 0 });
+  /**
+   * ONE line per receipt, not one per bill it settled. Owner, Oct 2026: "maine customer se ₹2 lakh
+   * receive kiye to wo bill-wise entry karta hai — ek entry honi chahiye, is date ko itna amount mila."
+   * "Receive payment" spreads one amount over the oldest open bills and writes a row per bill (plus an
+   * advance row for any leftover), all with the same date and account, saved within a second or two.
+   * Those rows are grouped back into the single receipt they came from; the bills it settled are
+   * listed underneath. A payment taken at the counter on a single bill still shows as before.
+   */
+  const receiptRows = [
+    ...payRows.map((p) => ({ ...p, kind: "bill" as const })),
+    ...manualRows.filter((m) => m.direction === "in").map((m) => ({ ...m, kind: "advance" as const })),
+  ].sort((a, b) =>
+    String(a.occurred_at).localeCompare(String(b.occurred_at)) || String(a.method_id ?? "").localeCompare(String(b.method_id ?? "")) || String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")));
+  // A receipt settles bills oldest-first, so inside one receipt each next bill is newer than the last
+  // and no bill appears twice. A second receipt (e.g. the same amount recorded twice by mistake) starts
+  // again from the oldest open bill — that step backwards marks where one receipt ends and the next begins.
+  const billDate = new Map(live.map((o) => [o.id, o.created_at]));
+  const groups: (typeof receiptRows)[] = [];
+  for (const r of receiptRows) {
+    const g = groups[groups.length - 1];
+    const prev = g?.[g.length - 1];
+    const lastBill = g ? [...g].reverse().find((x) => x.kind === "bill") : undefined;
+    const sameReceipt = !!prev && prev.occurred_at === r.occurred_at && (prev.method_id ?? "") === (r.method_id ?? "")
+      && (prev.note ?? "") === (r.note ?? "")
+      && Math.abs(new Date(r.created_at ?? r.occurred_at).getTime() - new Date(prev.created_at ?? prev.occurred_at).getTime()) <= 4000
+      && prev.kind === "bill"
+      && !(r.kind === "bill" && g.some((x) => x.kind === "bill" && x.ref_id === r.ref_id))
+      && !(r.kind === "bill" && lastBill && String(billDate.get(r.ref_id) ?? "") < String(billDate.get(lastBill.ref_id) ?? ""));
+    if (sameReceipt) g.push(r); else groups.push([r]);
+  }
+  for (const g of groups) {
+    const total = g.reduce((s, r) => s + (r.amount ?? 0), 0);
+    const bills = g.filter((r) => r.kind === "bill");
+    const adv = g.filter((r) => r.kind === "advance").reduce((s, r) => s + (r.amount ?? 0), 0);
+    const single = g.length === 1 && bills.length === 1;
+    const billList = bills.map((r) => invOf.get(r.ref_id) ?? "bill");
+    const detail = [
+      !single && bills.length ? `Against ${billList.length} bill${billList.length === 1 ? "" : "s"}: ${billList.join(", ")}` : null,
+      adv > 0 && bills.length ? `₹${Math.round(adv / 100).toLocaleString("en-IN")} kept as advance` : null,
+      g[0].note ?? null,
+    ].filter(Boolean).join(" · ");
+    out.push({
+      key: `p-${g[0].id}`, date: g[0].occurred_at, type: bills.length ? "payment" : "advance",
+      label: single ? `Payment · ${billList[0]}` : bills.length ? "Payment received" : "Payment received (on account)",
+      href: single ? `/admin/invoice/${bills[0].ref_id}` : undefined,
+      account: mName.get(g[0].method_id) ?? null, note: detail || null, debit: 0, credit: total,
+      txnIds: g.map((r) => r.id),
+    });
   }
   for (const r of retRows) {
     if (!(r.amount > 0)) continue;
@@ -104,11 +151,11 @@ export async function getCustomerLedger(customerId: string, orders: OrderLite[],
       href: `/admin/invoice/${r.ref_order_id}`, note: r.reason ?? null, debit: 0, credit: r.amount });
   }
   for (const m of manualRows) {
-    const isIn = m.direction === "in";
-    out.push({ key: `m-${m.id}`, date: m.occurred_at, type: isIn ? "advance" : "debit",
-      label: isIn ? "Payment received (on account)" : (m.method_id ? "Paid to customer" : "Debit entry"),
+    if (m.direction === "in") continue; // money received on account is part of a receipt line above
+    out.push({ key: `m-${m.id}`, date: m.occurred_at, type: "debit",
+      label: m.method_id ? "Paid to customer" : "Debit entry",
       account: m.method_id ? (mName.get(m.method_id) ?? null) : null, note: m.note ?? null,
-      debit: isIn ? 0 : (m.amount ?? 0), credit: isIn ? (m.amount ?? 0) : 0 });
+      debit: m.amount ?? 0, credit: 0, txnIds: [m.id] });
   }
   if (manualAdjustment) {
     const first = out.reduce((d, r) => (r.date < d ? r.date : d), new Date().toISOString());
