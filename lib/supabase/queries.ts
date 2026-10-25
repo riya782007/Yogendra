@@ -606,10 +606,15 @@ export async function returnCreditsByOrder(orderIds: string[]): Promise<Map<stri
   const m = new Map<string, number>();
   if (!orderIds.length) return m;
   const sb = supabaseServer();
-  const { data } = await sb.from("returns").select("ref_order_id,amount").eq("kind", "sales").in("ref_order_id", orderIds);
-  for (const r of ((data as any[]) ?? [])) {
-    if (!r.ref_order_id) continue;
-    m.set(r.ref_order_id, (m.get(r.ref_order_id) ?? 0) + (r.amount ?? 0));
+  // In chunks: a long customer history (or every order, for Creditors) as one in() list makes the
+  // request URL too long and the read fails — silently dropping every return credit.
+  const ids = [...new Set(orderIds)];
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data } = await sb.from("returns").select("ref_order_id,amount").eq("kind", "sales").in("ref_order_id", ids.slice(i, i + 200));
+    for (const r of ((data as any[]) ?? [])) {
+      if (!r.ref_order_id) continue;
+      m.set(r.ref_order_id, (m.get(r.ref_order_id) ?? 0) + (r.amount ?? 0));
+    }
   }
   return m;
 }
