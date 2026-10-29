@@ -52,7 +52,7 @@ export default async function TradeDashboard() {
   const packedP = loadTradeCatalogSafe().catch(() => ({
     list: [] as any[], hasMore: false, facets: [] as TradeFacet[], colourOptions: [] as string[], minOrder: WHOLESALE_MIN, minRupees: "3,000", payInfo: null as any, wholesaleTiers: [] as any[],
   }));
-  const historyP = session ? getWholesaleOrderHistory(session.id).catch(() => []) : Promise.resolve([]);
+  const historyP = session ? getWholesaleOrderHistory(session.id, session.phone).catch(() => []) : Promise.resolve([]);
   // A logged-in dealer gets their un-finished cart back. It lives in `abandoned_carts` (captured for
   // the owner's follow-up list) and is keyed to their phone, so logging in from ANY device restores
   // it - previously a cart lived only in React state behind a browser cookie and was lost with the
@@ -70,7 +70,8 @@ export default async function TradeDashboard() {
 
   const [packed, history, promos, categories, dealer, savedCart] = await Promise.all([packedP, historyP, promosP, catsP, dealerP, savedCartP]);
   const { list, hasMore, facets, colourOptions, minOrder, minRupees, payInfo, wholesaleTiers } = packed;
-  const outstanding = (history as any[]).reduce((s, h) => s + Math.max(0, (h.total ?? 0) - (h.amountPaid ?? 0)), 0);
+  // A cancelled bill is not owed.
+  const outstanding = (history as any[]).filter((h) => String(h.status ?? "").toLowerCase() !== "cancelled").reduce((s, h) => s + Math.max(0, (h.total ?? 0) - (h.amountPaid ?? 0)), 0);
 
   return (
     <div className="max-w-7xl mx-auto px-5 py-8">
