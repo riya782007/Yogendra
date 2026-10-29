@@ -984,18 +984,42 @@ export async function getLastPurchaseCosts(): Promise<{ byProduct: Record<string
   return { byProduct, byVariant };
 }
 
-/** A wholesale customer's past orders (with line items) — for history + one-click reorder. */
-export async function getWholesaleOrderHistory(customerId: string) {
+/** A dealer's purchase history (with line items) — for the trade portal's History tab, "Your Orders"
+ *  and one-click reorder. Owner, Oct 2026: "dealers must be able to see their purchase history once they
+ *  log in." It used to list only the last 20 TRADE-PORTAL orders, so everything the dealer bought at the
+ *  counter (POS / estimate bills) was missing. Now: every bill on the dealer's account — linked by id or
+ *  by the same phone — newest first. `total` is the bill's grand total exactly as printed (lib/orderBill),
+ *  so "Due" matches the invoice whatever channel the bill came from. */
+export async function getWholesaleOrderHistory(customerId: string, phone?: string | null) {
   const sb = supabaseServer();
-  const { data: orders } = await sb.from("orders")
-    .select("id,total,amount_paid,status,payment_ref,created_at,invoice_no, order_items(qty, product:products(sku,name))")
-    .eq("customer_id", customerId).eq("channel", "wholesale")
-    .order("created_at", { ascending: false }).limit(20);
-  return ((orders as any[]) ?? []).map((o) => ({
-    id: o.id as string, total: (o.total ?? 0) as number, amountPaid: (o.amount_paid ?? 0) as number,
+  const base = "id,total,amount_paid,status,payment_ref,created_at,invoice_no,channel,bill_type,gst_mode,customer_phone,is_backorder";
+  const digits = String(phone ?? "").replace(/\D/g, "");
+  const tail = digits.slice(-10);
+  const read = (sel: string) => Promise.all([
+    sb.from("orders").select(sel).eq("customer_id", customerId).order("created_at", { ascending: false }).limit(150),
+    tail.length >= 8
+      ? sb.from("orders").select(sel).ilike("customer_phone", `%${tail}`).order("created_at", { ascending: false }).limit(150)
+      : Promise.resolve({ data: [] as any[], error: null }),
+  ]);
+  // Colour per line where the database can embed the variant; otherwise the plain product line.
+  let [byId, byPhone] = await read(`${base}, order_items(qty, product:products(sku,name), variant:variants(sku,color))`);
+  if ((byId as any).error || (byPhone as any).error) [byId, byPhone] = await read(`${base}, order_items(qty, product:products(sku,name))`);
+  const seen = new Set<string>();
+  const orders = [...(((byId as any).data as any[]) ?? []), ...(((byPhone as any).data as any[]) ?? [])]
+    .filter((o) => (seen.has(o.id) ? false : (seen.add(o.id), true)))
+    .filter((o) => !o.is_backorder)
+    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+    .slice(0, 150);
+  return orders.map((o) => ({
+    id: o.id as string, total: billGrandPaise(o), amountPaid: (o.amount_paid ?? 0) as number,
     status: (o.status ?? "placed") as string, paymentRef: (o.payment_ref ?? null) as string | null,
     created_at: o.created_at as string, invoice_no: (o.invoice_no ?? null) as string | null,
-    items: ((o.order_items as any[]) ?? []).map((it) => ({ sku: it.product?.sku as string, name: it.product?.name as string, qty: it.qty as number })).filter((x) => x.sku),
+    channel: (o.channel ?? "") as string,
+    items: ((o.order_items as any[]) ?? []).map((it) => ({
+      sku: (it.variant?.sku ?? it.product?.sku) as string,
+      name: `${it.product?.name ?? ""}${it.variant?.color ? ` – ${it.variant.color}` : ""}` as string,
+      qty: it.qty as number,
+    })).filter((x) => x.sku),
   }));
 }
 
