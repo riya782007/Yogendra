@@ -63,8 +63,14 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets =
   const [filterBusy, setFilterBusy] = useState(false);
   const catalog = useMemo(() => remote ?? [...products, ...extra], [remote, products, extra]);
   const seenRef = useRef<Map<string, P>>(new Map());
-  // One saved cart per dealer on a shared phone/PC (guests share one).
-  const cartKey = `${CART_KEY}:${(customerPhone || "guest").replace(/\D/g, "") || "guest"}`;
+  /**
+   * ONE cart per device. Owner, Oct 2026: "visitors make the cart and then refresh — they lose the cart and
+   * have to reselect." The key used to include the dealer's phone ("guest" before signing in), so the
+   * moment a visitor gave their number in the popup (which signs an approved dealer in) or the session
+   * changed, the page looked under a different key and the cart they had built seemed to vanish. It is
+   * now one key per browser; older per-phone copies are still read once, so nothing saved is lost.
+   */
+  const cartKey = CART_KEY;
   const recoveredRef = useRef(false);  // a cart-recovery link filled the cart
   const restoredRef = useRef(false);   // the cart was already filled from a saved copy
   const skipVisReset = useRef(false);
@@ -153,7 +159,16 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets =
     if (viewRestored.current) return;
     viewRestored.current = true;
     try {
-      const c = JSON.parse(localStorage.getItem(cartKey) || "null");
+      // This browser's cart; if none yet, the newest copy saved under an older per-phone/guest key.
+      let c = JSON.parse(localStorage.getItem(cartKey) || "null");
+      if (!c || !c.qty || !Object.keys(c.qty).length) {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i) ?? "";
+          if (!k.startsWith(`${CART_KEY}:`)) continue;
+          const o = JSON.parse(localStorage.getItem(k) || "null");
+          if (o?.qty && Object.keys(o.qty).length && (!c || (o.t ?? 0) > (c.t ?? 0))) c = o;
+        }
+      }
       if (!recoveredRef.current && c && Date.now() - (c.t ?? 0) < 7 * 864e5 && c.qty && Object.keys(c.qty).length) {
         for (const r of (c.rows ?? []) as P[]) if (r?.sku) seenRef.current.set(r.sku.toUpperCase(), r);
         setExtra((prev) => {
@@ -331,11 +346,22 @@ export function WholesaleCatalog({ products, hasMore: hasMore0 = false, facets =
   };
 
   // Keep the cart on this device and the screen state for this tab (see "COME BACK TO THE SAME SCREEN").
+  // `hadItems`: only an EMPTIED cart clears the saved copy. On the first render the restored cart has not
+  // reached state yet (qty is still {}), and clearing then wiped the saved cart on every refresh whenever
+  // the restore didn't land in the same pass.
+  const hadItems = useRef(false);
   useEffect(() => {
     if (!viewRestored.current) return;
     try {
       const ls = Object.entries(qty).filter(([, n]) => n > 0);
-      if (!ls.length) { localStorage.removeItem(cartKey); return; }
+      if (!ls.length) {
+        if (hadItems.current) {
+          localStorage.removeItem(cartKey);
+          for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i) ?? ""; if (k.startsWith(`${CART_KEY}:`)) localStorage.removeItem(k); }
+        }
+        return;
+      }
+      hadItems.current = true;
       const rows = ls.map(([sku]) => bySku.get(sku.toUpperCase())).filter(Boolean);
       localStorage.setItem(cartKey, JSON.stringify({ t: Date.now(), qty: Object.fromEntries(ls), rows }));
     } catch { /* storage full / blocked — the cart still works, it just won't survive a reload */ }
