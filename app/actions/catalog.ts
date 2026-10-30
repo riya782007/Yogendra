@@ -120,7 +120,43 @@ export type NewProduct = {
    *  these take precedence over the legacy `colors` comma-list shortcut. */
   variants?: VariantInput[];
 };
-export type RowResult = { row: number; ok: boolean; sku?: string; error?: string };
+export type RowResult = { row: number; ok: boolean; sku?: string; error?: string; warning?: string };
+
+/**
+ * COLOURS COME ONLY FROM THE COLOURS LIST. Owner, Oct 2026: "Excel se upload karte hain aur SKU ke aage
+ * colour likhte hain — agar wo colour list me nahi hai to har baar naya colour ban jaata hai (spelling
+ * galti ya kuch aur), naye barcode print ho jaate hain. List update kar di hai — jo colour list me nahi
+ * hai wo bane hi nahi, red mark dikhaye."
+ * An import used to add any typed colour as a new variant (with a made-up barcode) AND write it into the
+ * master list. Now a colour is matched to the list ignoring case and spacing ("red", "RED " → "Red"); a
+ * colour that isn't on the list is NOT created — the row reports it in red with the closest listed
+ * colour, and the design keeps only its listed colours. New colours are added on the Colours page.
+ */
+async function colourMaster(sb: ReturnType<typeof supabaseServer>): Promise<Map<string, string>> {
+  const { data } = await sb.from("variant_options").select("value").eq("kind", "color");
+  const m = new Map<string, string>();
+  for (const r of ((data as any[]) ?? [])) {
+    const v = String(r.value ?? "").trim();
+    if (v) m.set(colourKey(v), v);
+  }
+  return m;
+}
+const colourKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+function closestColour(typed: string, master: Map<string, string>): string | null {
+  const a = colourKey(typed);
+  if (!a) return null;
+  let best: string | null = null, bestD = Infinity;
+  for (const [k, v] of master) {
+    // Levenshtein distance, capped — enough to catch "Mehandi"/"Mehendi", "Gren"/"Green", "Maroon1"/"Maroon".
+    const dp = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+    for (let j = 1; j <= k.length; j++) dp[0][j] = j;
+    for (let i = 1; i <= a.length; i++) for (let j = 1; j <= k.length; j++)
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === k[j - 1] ? 0 : 1));
+    const d = dp[a.length][k.length];
+    if (d < bestD) { bestD = d; best = v; }
+  }
+  return best && bestD <= Math.max(2, Math.floor(a.length / 3)) ? best : null;
+}
 
 async function insertOne(sb: ReturnType<typeof supabaseServer>, formula: any, n: NewProduct, skuNum: number, publish = false): Promise<RowResult> {
   if (!n.name) return { row: skuNum, ok: false, error: "Missing name" };
@@ -139,9 +175,34 @@ async function insertOne(sb: ReturnType<typeof supabaseServer>, formula: any, n:
   // ----- Decide variant strategy -----
   // 1) Explicit variants[] from the Upload form (preferred — has colour+size+polish+prices).
   // 2) Legacy `colors` comma-list shortcut (kept for back-compat with AI/CSV import).
-  const explicitVariants = n.type === "configurable"
+  let explicitVariants = n.type === "configurable"
     ? (n.variants ?? []).filter((v) => ((v.color ?? "").trim() || (v.size ?? "").trim() || (v.polish ?? "").trim()))
     : [];
+
+  // Colours must be on the Colours list (see colourMaster). Matched ones take the list's spelling;
+  // unknown ones are dropped and reported. A design whose every colour is unknown is not created.
+  let warning: string | undefined;
+  let colours = n.colors ?? [];
+  const perColourQty = Math.floor(n.qty / Math.max(1, colours.length));
+  const typedColours = [...explicitVariants.map((v) => (v.color ?? "").trim()), ...(n.type === "configurable" ? colours.map((c) => c.trim()) : [])].filter(Boolean);
+  if (typedColours.length) {
+    const master = await colourMaster(sb);
+    if (master.size) {
+      const unknown = [...new Set(typedColours.filter((c) => !master.has(colourKey(c))))];
+      const canon = (c: string) => master.get(colourKey(c)) ?? c;
+      const isKnown = (c?: string | null) => !(c ?? "").trim() || master.has(colourKey(c ?? ""));
+      if (unknown.length) {
+        const list = unknown.map((u) => { const g = closestColour(u, master); return g ? `“${u}” (did you mean ${g}?)` : `“${u}”`; }).join(", ");
+        explicitVariants = explicitVariants.filter((v) => isKnown(v.color));
+        colours = colours.filter((c) => isKnown(c));
+        const nothingLeft = n.type === "configurable" && explicitVariants.length === 0 && colours.length === 0;
+        if (nothingLeft) return { row: skuNum, ok: false, error: `not created — colour ${list} is not in your Colours list. Fix the spelling in the sheet, or add the colour on the Colours page first.` };
+        warning = `colour ${list} not in your Colours list — not created. Fix the spelling or add it on the Colours page, then add that colour.`;
+      }
+      explicitVariants = explicitVariants.map((v) => ((v.color ?? "").trim() ? { ...v, color: canon((v.color ?? "").trim()) } : v));
+      colours = colours.map((c) => canon(c.trim()));
+    }
+  }
   const useExplicit = explicitVariants.length > 0;
 
   if (useExplicit) {
@@ -164,6 +225,7 @@ async function insertOne(sb: ReturnType<typeof supabaseServer>, formula: any, n:
   // loss) and it keeps the product header in sync with the Variants tab.
   const productQty = useExplicit
     ? explicitVariants.reduce((s, v) => s + Math.max(0, Math.floor(Number(v.qty) || 0)), 0)
+    : warning && n.type === "configurable" && colours.length ? perColourQty * colours.length // skipped colours' stock is not counted
     : Math.max(0, n.qty);
 
   // Incomplete products (no photo yet) stay DRAFT so they never appear on the storefront
@@ -253,22 +315,21 @@ async function insertOne(sb: ReturnType<typeof supabaseServer>, formula: any, n:
     // suggestions next time (same behaviour as addVariantAction's rememberOptions).
     const optRows: { kind: string; value: string }[] = [];
     for (const v of explicitVariants) {
-      const c = (v.color ?? "").trim(), z = (v.size ?? "").trim();
-      if (c) optRows.push({ kind: "color", value: c });
+      const z = (v.size ?? "").trim();
       if (z) optRows.push({ kind: "size", value: z });
-      // polish is a fixed list (Colours page) — never grown from a product save
+      // colour and polish are fixed lists (Colours page) — never grown from a product save
     }
     if (optRows.length) await sb.from("variant_options").upsert(optRows, { onConflict: "kind,value", ignoreDuplicates: true });
-  } else if (n.type === "configurable" && n.colors.length) {
-    const per = Math.floor(n.qty / Math.max(1, n.colors.length));
+  } else if (n.type === "configurable" && colours.length) {
+    const per = perColourQty;
     // Bulk colours-comma shortcut: also honour the canonical colour code so old import
     // paths print proper barcodes (BD2024-RED instead of BD2024-RED5).
     const legacyCodes = await getColorCodeMap();
-    const legacySkus = await uniqueSkus(n.colors.map((c) => {
+    const legacySkus = await uniqueSkus(colours.map((c) => {
       const code = legacyCodes[c.toLowerCase()] ?? barcodeCodeForColor(c) ?? c.slice(0, 3).toUpperCase();
       return { sku: `${sku}-${code}`, manual: false };
     }));
-    const { data: vs, error: lvErr } = await sb.from("variants").insert(n.colors.map((c, i) => (
+    const { data: vs, error: lvErr } = await sb.from("variants").insert(colours.map((c, i) => (
       { product_id: prod!.id, color: c, sku: legacySkus[i], qty: per }
     ))).select("id, qty");
     // This error used to be ignored: the colours were lost, the empty product stayed, and the import
@@ -279,14 +340,12 @@ async function insertOne(sb: ReturnType<typeof supabaseServer>, formula: any, n:
       return { row: skuNum, ok: false, error: `${sku}: colours could not be saved — ${lvErr.message}` };
     }
     for (const v of (vs as any[]) ?? []) if (v.qty > 0) opening.push({ product_id: prod!.id, variant_id: v.id, delta: v.qty, kind: "opening", source: "create", reason: "Opening stock" });
-    // Also remember the colours so they appear as suggestions on the Variants tab later.
-    const optRows = n.colors.map((c) => ({ kind: "color", value: c.trim() })).filter((r) => r.value);
-    if (optRows.length) await sb.from("variant_options").upsert(optRows, { onConflict: "kind,value", ignoreDuplicates: true });
+    // Colours are NOT written back to the master list — it is managed on the Colours page only.
   } else if (n.qty > 0) {
     opening.push({ product_id: prod!.id, delta: n.qty, kind: "opening", source: "create", reason: "Opening stock" });
   }
   if (opening.length) await sb.from("stock_adjustments").insert(opening);
-  return { row: skuNum, ok: true, sku };
+  return { row: skuNum, ok: true, sku, warning };
 }
 
 export async function createProductAction(p: NewProduct): Promise<RowResult> {
@@ -1092,7 +1151,7 @@ export async function createProductFullAction(
     await sb.from("variant_channel_settings").upsert(vcs, { onConflict: "variant_id,channel" }).then(() => {}, () => {});
     // remember any new master values for autocomplete
     const optRows: { kind: string; value: string }[] = [];
-    for (const v of resolved) { if (v.color) optRows.push({ kind: "color", value: v.color.trim() }); if (v.size) optRows.push({ kind: "size", value: v.size.trim() }); /* polish: fixed list, never grown here */ }
+    for (const v of resolved) { if (v.size) optRows.push({ kind: "size", value: v.size.trim() }); /* colour + polish: fixed lists (Colours page), never grown here */ }
     if (optRows.length) await sb.from("variant_options").upsert(optRows, { onConflict: "kind,value", ignoreDuplicates: true }).then(() => {}, () => {});
   } else if (productQty > 0) {
     opening.push({ product_id: productId, delta: productQty, kind: "opening", source: "create", reason: "Opening stock", created_by: "owner" });
