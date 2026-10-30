@@ -55,7 +55,8 @@ function toPaise(v: FormDataEntryValue | null): number | null {
 /** Remember any new colour/size/polish value so the master list grows itself. */
 async function rememberOptions(sb: ReturnType<typeof supabaseServer>, o: { color?: string; size?: string; polish?: string }) {
   const rows: { kind: string; value: string }[] = [];
-  if (o.color) rows.push({ kind: "color", value: o.color });
+  // Colour is NOT remembered either: typos were becoming new colours with their own barcodes
+  // (owner, Oct 2026). The colour list is managed on the Colours page only.
   if (o.size) rows.push({ kind: "size", value: o.size });
   // Polish is NOT remembered: the list is fixed and managed on the Colours page (owner, Oct 2026 —
   // typed values like "g", "m", "meh" were becoming polishes).
