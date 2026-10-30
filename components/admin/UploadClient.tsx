@@ -38,7 +38,7 @@ async function fileToCsv(f: File): Promise<string> {
 }
 
 type Cat = { id: string; name: string };
-type LogLine = { text: string; status: "run" | "ok" | "err" };
+type LogLine = { text: string; status: "run" | "ok" | "err" | "warn" };
 type VariantOptions = { color: string[]; size: string[]; polish: string[] };
 type ColorCodeMap = Record<string, string>;
 
@@ -121,7 +121,7 @@ export function UploadClient({
   const vInput = "rounded-lg border border-sand bg-white px-2.5 py-1.5 text-sm outline-none focus:border-emerald transition-colors";
   const catName = cats.find((c) => c.id === catId)?.name;
   const push = (line: LogLine) => setLog((l) => [...l, line]);
-  const patchLast = (status: "ok" | "err", text?: string) => setLog((l) => l.map((x, i) => i === l.length - 1 ? { text: text ?? x.text, status } : x));
+  const patchLast = (status: "ok" | "err" | "warn", text?: string) => setLog((l) => l.map((x, i) => i === l.length - 1 ? { text: text ?? x.text, status } : x));
 
   // Live totals so the owner can see at a glance what they're about to create.
   const realVariants = useMemo(() => variants.filter(isRealVariant), [variants]);
@@ -246,6 +246,7 @@ export function UploadClient({
       const res = await createProductWithImageAction(fd);
       if (!res.ok) { patchLast("err", `Failed: ${res.error}`); toast(res.error ?? "Could not add", "error"); return; }
       patchLast("ok", `Created ${res.sku} ✓ · saved as draft — publish it from the catalogue when ready`);
+      if ((res as any).warning) { push({ text: `⚠ ${res.sku}: ${(res as any).warning}`, status: "warn" }); toast("Some colours were not in your Colours list — see the red line", "error"); }
 
       // Pillar 16 — attach any per-variant photos picked in the editor. We resolve the
       // freshly-created variants by SKU, match each editor row by colour/size/polish, and
@@ -299,16 +300,18 @@ export function UploadClient({
       patchLast("ok", `Found ${rows.length} product${rows.length === 1 ? "" : "s"}${usedAi ? " · AI mapped your columns" : ""}`);
       setProgress({ done: 0, total: rows.length });
 
-      let created = 0;
+      let created = 0, flagged = 0;
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i];
         push({ text: `Creating ${i + 1} of ${rows.length}: ${r.name}…`, status: "run" });
         const res = await createOneRowAction(catId, r);
-        if (res.ok) { created++; patchLast("ok", `Created ${res.sku} — ${r.name} ✓`); if (writeAi && res.sku) await writeAiPage(res.sku, r.name); }
+        if (res.ok && res.warning) { created++; flagged++; patchLast("warn", `Created ${res.sku} — ${r.name}, but ${res.warning}`); if (writeAi && res.sku) await writeAiPage(res.sku, r.name); }
+        else if (res.ok) { created++; patchLast("ok", `Created ${res.sku} — ${r.name} ✓`); if (writeAi && res.sku) await writeAiPage(res.sku, r.name); }
         else patchLast("err", `Skipped ${r.name}: ${res.error}`);
         setProgress({ done: i + 1, total: rows.length });
       }
       push({ text: `Done — ${created} of ${rows.length} products saved as drafts in ${catName}. Add photos (or Show them) to publish ✓`, status: "ok" });
+      if (flagged) push({ text: `⚠ ${flagged} design${flagged === 1 ? "" : "s"} had colours that are not in your Colours list — those colours were NOT created (red lines above).`, status: "warn" });
       toast(`${created} products added`);
       setCsv("");
     } catch (e) {
@@ -591,8 +594,8 @@ export function UploadClient({
             )}
             <div className="max-h-56 overflow-y-auto space-y-1 text-sm">
               {log.map((l, i) => (
-                <div key={i} className={`flex items-start gap-2 ${l.status === "err" ? "text-rose" : l.status === "ok" ? "text-emerald-dark" : "text-muted"}`}>
-                  <span className="w-4 text-center shrink-0">{l.status === "ok" ? "✓" : l.status === "err" ? "✕" : "◔"}</span>
+                <div key={i} className={`flex items-start gap-2 ${l.status === "err" ? "text-rose" : l.status === "warn" ? "text-rose font-medium bg-rose/10 rounded px-1" : l.status === "ok" ? "text-emerald-dark" : "text-muted"}`}>
+                  <span className="w-4 text-center shrink-0">{l.status === "ok" ? "✓" : l.status === "err" ? "✕" : l.status === "warn" ? "⚠" : "◔"}</span>
                   <span>{l.text}</span>
                 </div>
               ))}
