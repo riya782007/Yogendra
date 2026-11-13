@@ -43,12 +43,12 @@ export function financialYearStart(now = new Date()): string {
   return new Date(Date.UTC(y, 3, 1) - 330 * 60_000).toISOString();
 }
 
-export type AdjustmentValueSummary = { addedPaise: number; removedPaise: number; netPaise: number; addedPcs: number; removedPcs: number; rows: number; unpriced: number; from: string; to?: string };
+export type AdjustmentValueSummary = { addedPaise: number; removedPaise: number; netPaise: number; addedPcs: number; removedPcs: number; rows: number; unpriced: number; /** Bill-less sales returns left out of the totals (they are stock coming back, not a gain). */ returnsExcluded: number; from: string; to?: string };
 
 /** Totals of every hand-made change between `from` and `to` (default: this financial year to date). */
 export async function getAdjustmentValueSummary(from = financialYearStart(), to?: string): Promise<AdjustmentValueSummary> {
   const sb = supabaseServer();
-  const out: AdjustmentValueSummary = { addedPaise: 0, removedPaise: 0, netPaise: 0, addedPcs: 0, removedPcs: 0, rows: 0, unpriced: 0, from, to };
+  const out: AdjustmentValueSummary = { addedPaise: 0, removedPaise: 0, netPaise: 0, addedPcs: 0, removedPcs: 0, rows: 0, unpriced: 0, returnsExcluded: 0, from, to };
   for (let off = 0; off < 50_000; off += 1000) {
     let q = sb.from("stock_adjustments").select("delta,kind,ref_id, product:products(base_wholesale)")
       .or(MANUAL_ADJUSTMENT_OR).gte("created_at", from);
@@ -56,6 +56,9 @@ export async function getAdjustmentValueSummary(from = financialYearStart(), to?
     const { data } = await q.order("created_at", { ascending: true }).range(off, off + 999);
     const rows = (data as any[]) ?? [];
     for (const r of rows) {
+      // A sales return (no bill) puts a sold piece BACK on the shelf — the sale it reverses already
+      // counted, so it is not a gain/profit. Still listed in the register; just not in these totals.
+      if (r.kind === "return") { out.returnsExcluded++; continue; }
       out.rows++;
       const v = valuePaise(r);
       if (r.delta > 0) out.addedPcs += r.delta; else out.removedPcs += -r.delta;
