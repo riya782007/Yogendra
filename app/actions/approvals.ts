@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requirePerm } from "@/lib/auth";
+import { refundSalesReturn } from "@/lib/salesRefund";
 
 const hashOtp = (otp: string) => `h:${otp}`; // demo hashing; swap for bcrypt/argon in prod
 
@@ -49,8 +50,13 @@ export async function decideApprovalAction(formData: FormData) {
     }
     const p_items = ((p.items ?? []) as any[]).map((i) => ({ product_id: i.product_id, qty: i.qty, variant_id: i.variantSku ? (vmap.get(String(i.variantSku).toUpperCase()) ?? null) : null }));
     if (p.orderId && p_items.length) {
-      const { error } = await sb.rpc("record_sales_return", { p_order_id: p.orderId, p_reason: p.reason ?? "Approved return", p_items });
+      const { data: ret, error } = await sb.rpc("record_sales_return", { p_order_id: p.orderId, p_reason: p.reason ?? "Approved return", p_items });
       if (!error) {
+        // The refund account staff picked in the return dialog — money goes out only once the owner approves.
+        if (p.refundMethodId) {
+          await refundSalesReturn({ orderId: p.orderId, returnId: (ret as any)?.return_id ?? null, methodId: p.refundMethodId, by: "staff" }).catch(() => {});
+          revalidatePath("/admin/cashbook");
+        }
         await sb.from("audit_log").insert({ actor: "system", action: "applied", ref: id, detail: `sales return processed for order ${p.orderId}` });
         revalidatePath("/admin/returns");
       }
