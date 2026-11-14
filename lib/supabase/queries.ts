@@ -1151,6 +1151,18 @@ export async function getCashBankLedger(opts: { from?: string; to?: string } = {
       method: isCash ? null : (p.mode || "Bank / UPI"),
     });
   }
+  // Refunds paid out on sales returns (lib/salesRefund) — money out of the chosen account.
+  const rres = await (sb.from("payment_method_transactions").select("id,amount,occurred_at,note,method:payment_methods(name,kind)")
+    .eq("ref_type", "sales_return").eq("direction", "out") as any)
+    .gte("occurred_at", opts.from ?? "1970-01-01").lte("occurred_at", opts.to ?? "2999-12-31").order("occurred_at", { ascending: false }).limit(3000);
+  for (const r of ((rres.data as any[]) ?? [])) {
+    const isCash = String(r.method?.kind ?? "").toLowerCase() === "cash";
+    moves.push({
+      date: r.occurred_at, label: r.note || "Refund on return", link: "/admin/returns",
+      cash: isCash ? -(r.amount ?? 0) : 0, bank: isCash ? 0 : -(r.amount ?? 0),
+      method: isCash ? null : (r.method?.name ?? "Bank / UPI"),
+    });
+  }
   moves.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   return { moves };
 }
