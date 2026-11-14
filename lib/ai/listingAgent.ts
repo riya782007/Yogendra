@@ -73,13 +73,26 @@ function conflictingTypes(title: string, allowed: string[]): string[] {
   return typesIn(title).filter((t) => !ok.has(t));
 }
 
-/** Human label for prompts, e.g. "Choti (hair-braid accessory)". */
-function typeLabel(p: { subcategoryName?: string | null; styleName?: string | null; categoryName?: string | null }): string {
+/** Catch-all shop buckets that say nothing about WHAT the piece is ("Other Accessories"). Echoing them
+ *  into a prompt made the models write "Khyati Gold Other Accessories with Blue Drops" (Nov 2026). */
+const GENERIC_BUCKET = /^\s*(other|others|misc|miscellaneous|general|accessor(y|ies)|other\s+accessor(y|ies)|jewell?e?ry|fashion\s+jewell?e?ry|artificial\s+jewell?e?ry|all|new|uncategori[sz]ed)\s*$/i;
+const isGeneric = (s?: string | null) => !s || GENERIC_BUCKET.test(String(s).trim());
+const TYPE_NOUN: Record<string, string> = {
+  "waist belt": "Kamarband (waist belt)", "hair accessory": "Hair Accessory", "maang tikka": "Maang Tikka", "nose pin": "Nose Pin",
+  choti: "Choti (hair-braid accessory)", necklace: "Necklace", earrings: "Earrings", anklet: "Anklet", ring: "Ring", bracelet: "Bracelet",
+};
+
+/** Human label for prompts, e.g. "Choti (hair-braid accessory)". Skips catch-all buckets and reads the
+ *  real type from the style / product name instead; "" when nothing specific is known. */
+function typeLabel(p: { subcategoryName?: string | null; styleName?: string | null; categoryName?: string | null; name?: string | null }): string {
   const sub = (p.subcategoryName ?? "").trim();
   const style = (p.styleName ?? "").trim();
-  const base = sub || style || (p.categoryName ?? "").trim();
+  const cat = (p.categoryName ?? "").trim();
+  let base = [sub, style].find((x) => x && !isGeneric(x)) ?? "";
+  if (!base) { const t = typesIn(p.name)[0]; if (t) base = TYPE_NOUN[t] ?? t; }
+  if (!base && cat && !isGeneric(cat)) base = cat;
   if (!base) return "";
-  return /choti|parandi/i.test(base) ? `${base} (hair-braid accessory)` : base;
+  return /choti|parandi/i.test(base) && !/\(/.test(base) ? `${base} (hair-braid accessory)` : base;
 }
 
 function enforceName(title: string, forced: string): string {
@@ -275,6 +288,7 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
     `You are BlytheDIVA SEO copywriter. Produce ${n} alternative website titles for ONE product as JSON {"titles":["…"]}.`,
     kind ? `THE PRODUCT IS A ${kind.toUpperCase()}. Every title is for this same single piece and must name it as a ${kind.replace(/\s*\(.*\)$/, "")}. Never call it any other kind of jewellery (earrings, necklace, anklet, clip, ring…), even if the photo shows a model wearing other pieces.` : ``,
     `Write REGULAR, factual e-commerce titles a shopper would search for: finish + stone work + the type + one real visible detail (e.g. "Gold Plated Kundan Choker with Pink Drops", "Pearl Layered Rani Haar with Green Stones").`,
+    !kind ? `The shop filed this piece under a catch-all bucket (${[(p as any).subcategoryName, p.categoryName].filter(Boolean).join(" / ") || "Accessories"}), so work out the real type of piece from the product name${wantVision ? " and photo" : ""} (e.g. kamarband / waist belt, hair clip, brooch) and name it plainly. NEVER write the words "Other Accessories" or "Accessories" as the type.` : ``,
     wantVision ? `Use the photo ONLY for the stones, colours and work of this piece (the finish comes from the shop data below).` : `Infer from fields.`,
     `Category: ${p.categoryName ?? "Jewellery"}.${sub}${style}`,
     kw ? `Keywords: ${kw}.` : ``,
@@ -314,7 +328,7 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
         : (Object.entries(raw ?? {}).find(([k, v]) => k !== "seen" && Array.isArray(v))?.[1] as any[] | undefined) ?? [];
       const all = arr.map((t: any) => String(typeof t === "object" && t ? (t.title ?? Object.values(t)[0] ?? "") : t ?? "").trim()).filter(Boolean);
       // Drop any title that names a different kind of piece than the shop's sub-category says.
-      const cleaned = all.filter((t: string) => conflictingTypes(t, allowed).length === 0
+      const cleaned = all.filter((t: string) => !/\bother\s+accessor(y|ies)\b/i.test(t) && conflictingTypes(t, allowed).length === 0
         && (!shopFinishes.size || finishesIn(t).every((f) => shopFinishes.has(f))));
       if (!cleaned.length) throw new Error(all.length ? `titles named the wrong type or finish (${all[0].slice(0, 60)})` : "no titles in reply");
       results.push({ nm, titles: cleaned });
@@ -325,14 +339,17 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
   // Wait for all, but never past the budget; stop early once a vision model has given enough.
   await Promise.race([
     Promise.all(runs),
-    new Promise<void>((r) => { const tick = () => { if (Date.now() - t0 >= budgetMs) return r(); if (results.some((x) => x.nm === "openai" && x.titles.length >= Math.min(n, 3))) return r(); setTimeout(tick, 150); }; tick(); }),
+    new Promise<void>((r) => { const tick = () => { if (Date.now() - t0 >= budgetMs) return r(); const enough = Math.min(n, 3); if (results.some((x) => x.nm === "openai" && x.titles.length >= enough)) return r(); if (wantVision && (!openaiConfigured() || errors.some((e) => e.startsWith("openai:"))) && results.some((x) => x.nm === "gemini" && x.titles.length >= enough)) return r(); setTimeout(tick, 150); }; tick(); }),
   ]);
   if (Date.now() - t0 >= budgetMs) for (const [nm] of order) if (!results.some((x) => x.nm === nm) && !errors.some((e) => e.startsWith(nm + ":"))) errors.push(`${nm}: too slow`);
   const rank = (nm: string) => (nm === "openai" ? 0 : nm === "gemini" ? 1 : 2);
   results.sort((x, y) => rank(x.nm) - rank(y.nm));
   // OpenAI answered with enough titles → use ONLY OpenAI's; otherwise top up from the others in order.
   const first = results.find((x) => x.nm === "openai" && x.titles.length >= Math.min(n, 3));
-  const used = first ? [first] : results;
+  // OpenAI out (no credit / not set) → Gemini is the next model that actually SEES the photo; Groq is
+  // text-only and writes generic titles, so it only tops up when Gemini gave too few.
+  const gem = !first && wantVision ? results.find((x) => x.nm === "gemini" && x.titles.length >= Math.min(n, 3)) : undefined;
+  const used = first ? [first] : gem ? [gem] : results;
   let titles: string[] = used.flatMap((x) => x.titles);
   let provider = used.map((x) => x.nm).join("+");
   if (!titles.length) {
