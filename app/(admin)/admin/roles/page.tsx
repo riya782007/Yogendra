@@ -3,6 +3,7 @@ import { getRoles } from "@/lib/supabase/queries";
 import { createRoleAction, updateRoleAction, deleteRoleAction, regenerateRolePasscodeAction } from "@/app/actions/rbac";
 import { RoleForm } from "@/components/admin/RoleForm";
 import { PasscodeChip } from "@/components/admin/PasscodeChip";
+import { RolePasscodeEditor } from "@/components/admin/RolePasscodeEditor";
 import { permLabel } from "@/lib/permissions";
 
 export const metadata = { title: "Owner Console · Roles & Permissions" };
@@ -44,6 +45,7 @@ export default async function Roles() {
             </summary>
             <div className="border-t border-sand px-5 py-4">
               <RoleForm action={updateRoleAction} id={r.id} initialName={r.name} initialPerms={r.permissions ?? []} submitLabel="Save changes" />
+              <RolePasscodeEditor id={r.id} />
               <div className="mt-3 flex items-center gap-4">
                 <form action={regenerateRolePasscodeAction}>
                   <input type="hidden" name="id" value={r.id} />
