@@ -7,10 +7,11 @@ import { requirePerm, getSession } from "@/lib/auth";
 import { getPricingFormula } from "@/lib/supabase/queries";
 import { resolvePrices, overridesOf } from "@/lib/pricing";
 import { isCodOrder } from "@/lib/orderPayment";
+import { refundSalesReturn, billPaidAccount } from "@/lib/salesRefund";
 
 const OWNER_OTP = () => process.env.OWNER_OTP ?? "482913";
 
-export async function recordReturnAction(input: { orderId: string; reason: string; items: { product_id: string; variantSku?: string; qty: number }[] }): Promise<{ ok: boolean; qty?: number; error?: string; pending?: boolean }> {
+export async function recordReturnAction(input: { orderId: string; reason: string; items: { product_id: string; variantSku?: string; qty: number }[]; refundMethodId?: string | null }): Promise<{ ok: boolean; qty?: number; error?: string; pending?: boolean; refunded?: number; refundAccount?: string | null }> {
   if (!(await requirePerm("billing.refund"))) return { ok: false, error: "Your role can't process returns/refunds." };
   if (!input.items?.length) return { ok: false, error: "Select items to return" };
   if (!input.reason?.trim()) return { ok: false, error: "Capture a return reason" };
@@ -19,7 +20,7 @@ export async function recordReturnAction(input: { orderId: string; reason: strin
   if (!getSession().isOwner) {
     await sb.from("approvals").insert({
       action: "sales_return",
-      payload: { orderId: input.orderId, reason: input.reason, items: input.items.map((i) => ({ product_id: i.product_id, qty: i.qty, variantSku: i.variantSku ?? null })) },
+      payload: { orderId: input.orderId, reason: input.reason, refundMethodId: input.refundMethodId ?? null, items: input.items.map((i) => ({ product_id: i.product_id, qty: i.qty, variantSku: i.variantSku ?? null })) },
       status: "pending",
       otp_hash: `h:${OWNER_OTP()}`,
     });
@@ -36,10 +37,19 @@ export async function recordReturnAction(input: { orderId: string; reason: strin
   const p_items = input.items.map((i) => ({ product_id: i.product_id, qty: i.qty, variant_id: i.variantSku ? (vBySku.get(i.variantSku.toUpperCase()) ?? null) : null }));
   const { data, error } = await sb.rpc("record_sales_return", { p_order_id: input.orderId, p_reason: input.reason, p_items });
   if (error) return { ok: false, error: error.message };
+  // Money handed back goes OUT of the account chosen in the dialog (Cash / UPI / Kotak / HDFC) — see lib/salesRefund.
+  const refund = await refundSalesReturn({ orderId: input.orderId, returnId: (data as any)?.return_id ?? null, methodId: input.refundMethodId }).catch(() => ({ amount: 0, account: null }));
+  if (refund.amount > 0) { revalidatePath("/admin/cashbook"); revalidatePath(`/admin/invoice/${input.orderId}`); }
   revalidatePath("/admin/returns"); revalidatePath("/admin/dashboard"); revalidatePath("/admin/sales");
   revalidatePath("/admin/stock-movements"); revalidatePath("/admin/catalogue"); revalidatePath("/admin/inventory");
   revalidatePath("/admin/creditors"); revalidatePath("/shop"); revalidateTag("storefront"); revalidatePath("/admin/customers");
-  return { ok: true, qty: (data as any)?.qty };
+  return { ok: true, qty: (data as any)?.qty, refunded: refund.amount, refundAccount: refund.account };
+}
+
+/** For the return dialog: the bill's paid amount and the account it was paid into (default refund account). */
+export async function returnRefundDefaultsAction(orderId: string): Promise<{ paid: number; methodId: string | null }> {
+  if (!(await requirePerm("billing.refund"))) return { paid: 0, methodId: null };
+  return billPaidAccount(orderId);
 }
 
 export async function cancelOrderAction(orderId: string, reason?: string): Promise<{ ok: boolean; error?: string; already?: boolean }> {
