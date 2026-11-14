@@ -9,7 +9,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { formatPaise } from "@/lib/pricing";
-import { fetchOrderForReturnAction, recordReturnAction } from "@/app/actions/billing";
+import { fetchOrderForReturnAction, recordReturnAction, listReceiveAccountsAction, returnRefundDefaultsAction } from "@/app/actions/billing";
 
 type Item = { qty: number; returned: number; returnable: number; product: { id: string; name: string; sku: string }; variant: { sku: string; color: string | null } | null };
 const lineKey = (it: Item) => `${it.product.id}::${it.variant?.sku ?? ""}`;
@@ -23,11 +23,24 @@ export function SalesReturnButton({ orderId, invoiceNo }: { orderId: string; inv
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  // Which account the refund goes OUT of (Cash / UPI / Kotak / HDFC …). "" = no money back (credit only).
+  const [accounts, setAccounts] = useState<{ id: string; name: string; isDefault: boolean; kind: string }[]>([]);
+  const [refundFrom, setRefundFrom] = useState("");
+  const [paid, setPaid] = useState(0);
 
   async function openDialog(e: React.MouseEvent) {
     e.stopPropagation();
     setOpen(true); setLoading(true); setMsg(""); setQty({}); setReason("");
-    const r = await fetchOrderForReturnAction(orderId);
+    const [r, accs, def] = await Promise.all([
+      fetchOrderForReturnAction(orderId),
+      listReceiveAccountsAction().catch(() => []),
+      returnRefundDefaultsAction(orderId).catch(() => ({ paid: 0, methodId: null as string | null })),
+    ]);
+    setAccounts(accs);
+    setPaid(def.paid);
+    // Default: the account the bill was paid into; else Cash. An unpaid bill has nothing to refund.
+    const cash = accs.find((a) => a.kind?.toLowerCase() === "cash") ?? accs.find((a) => a.isDefault);
+    setRefundFrom(def.paid > 0 ? (def.methodId && accs.some((a) => a.id === def.methodId) ? def.methodId : cash?.id ?? "") : "");
     setLoading(false);
     if (r.ok && r.order) setItems(r.order.items);
     else { setItems(null); setMsg(r.error ?? "Couldn't load the bill."); }
@@ -42,10 +55,13 @@ export function SalesReturnButton({ orderId, invoiceNo }: { orderId: string; inv
     if (!sel.length) { setMsg("Set a return qty on at least one line."); return; }
     if (!reason.trim()) { setMsg("Add a return reason."); return; }
     setBusy(true); setMsg("");
-    const res = await recordReturnAction({ orderId, reason, items: sel });
+    const res = await recordReturnAction({ orderId, reason, items: sel, refundMethodId: refundFrom || null });
     setBusy(false);
     if (res.ok && res.pending) { setMsg("⏳ Sent to the owner for approval."); }
-    else if (res.ok) { setMsg(`✓ Return recorded · ${res.qty} pcs restocked`); router.refresh(); }
+    else if (res.ok) {
+      const money = res.refunded && res.refunded > 0 ? ` · ${formatPaise(res.refunded)} refunded from ${res.refundAccount}` : refundFrom ? " · nothing to refund (bill not paid)" : "";
+      setMsg(`✓ Return recorded · ${res.qty} pcs restocked${money}`); router.refresh();
+    }
     else { setMsg(`✕ ${res.error}`); return; }
     setTimeout(() => setOpen(false), 1400);
   }
@@ -97,6 +113,19 @@ export function SalesReturnButton({ orderId, invoiceNo }: { orderId: string; inv
                 {items.some((it) => it.returnable > 0) && (
                   <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (damaged, wrong colour, customer changed mind…)"
                     className="w-full rounded-xl border border-sand px-3.5 py-2.5 text-sm bg-white outline-none focus:border-emerald mt-3" />
+                )}
+                {items.some((it) => it.returnable > 0) && (
+                  <label className="block mt-3 text-xs text-muted">
+                    Refund paid from <span className="text-muted">(the account the money went back out of)</span>
+                    <select value={refundFrom} onChange={(e) => setRefundFrom(e.target.value)}
+                      className="w-full mt-1 rounded-xl border border-sand px-3.5 py-2.5 text-sm bg-white text-ink outline-none focus:border-emerald">
+                      {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                      <option value="">No refund — keep as credit / adjust in balance</option>
+                    </select>
+                    <span className="block mt-1 text-[11px]">
+                      {paid > 0 ? "Refund = value of the returned pieces (only what the customer had paid)." : "This bill isn't paid yet — the return just lowers what the customer owes."}
+                    </span>
+                  </label>
                 )}
                 <div className="flex items-center justify-between gap-2 mt-4">
                   <span className="text-xs text-muted">{msg}</span>
