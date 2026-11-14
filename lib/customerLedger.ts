@@ -73,8 +73,16 @@ export async function getCustomerLedger(customerId: string, orders: OrderLite[],
   const payRows = paysParts.flatMap((r: any) => (r.data as any[]) ?? []);
   const manualRows = ((manual as any).data as any[]) ?? [];
   const retRows = retsParts.flatMap((r: any) => (r.data as any[]) ?? []);
+  // Money paid back on a return (lib/salesRefund) — a debit that cancels the return's credit.
+  const retIds = retRows.map((r) => r.id);
+  const refundRows: any[] = [];
+  for (let i = 0; i < retIds.length; i += 150) {
+    const { data } = await sb.from("payment_method_transactions").select("id,method_id,amount,occurred_at,ref_id")
+      .eq("ref_type", "sales_return").eq("direction", "out").in("ref_id", retIds.slice(i, i + 150));
+    refundRows.push(...((data as any[]) ?? []));
+  }
 
-  const methodIds = [...new Set([...payRows, ...manualRows].map((p) => p.method_id).filter(Boolean))];
+  const methodIds = [...new Set([...payRows, ...manualRows, ...refundRows].map((p) => p.method_id).filter(Boolean))];
   const { data: methods } = methodIds.length
     ? await sb.from("payment_methods").select("id,name").in("id", methodIds)
     : { data: [] as any[] };
@@ -149,6 +157,13 @@ export async function getCustomerLedger(customerId: string, orders: OrderLite[],
     if (!(r.amount > 0)) continue;
     out.push({ key: `r-${r.id}`, date: r.created_at, type: "return", label: `Return · ${invOf.get(r.ref_order_id) ?? "bill"}`,
       href: `/admin/invoice/${r.ref_order_id}`, note: r.reason ?? null, debit: 0, credit: r.amount });
+  }
+  const retOrder = new Map(retRows.map((r) => [r.id, r.ref_order_id]));
+  for (const f of refundRows) {
+    const oid = retOrder.get(f.ref_id);
+    out.push({ key: `f-${f.id}`, date: f.occurred_at, type: "debit", label: `Refund paid · ${invOf.get(oid) ?? "return"}`,
+      href: oid ? `/admin/invoice/${oid}` : undefined, account: mName.get(f.method_id) ?? null, note: "money given back on return",
+      debit: f.amount ?? 0, credit: 0 });
   }
   for (const m of manualRows) {
     if (m.direction === "in") continue; // money received on account is part of a receipt line above
