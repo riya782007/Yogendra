@@ -5,6 +5,7 @@ import { formatPaise } from "@/lib/pricing";
 import { Pager } from "@/components/admin/Pager";
 import { SalesReturnButton } from "@/components/admin/SalesReturnButton";
 import { getSession, can } from "@/lib/auth";
+import { supabaseServer } from "@/lib/supabase/server";
 
 export const metadata = { title: "Owner Console · Sales Records" };
 const PAGE_SIZE = 25;
@@ -50,6 +51,21 @@ export default async function SalesRecords({ searchParams }: { searchParams: { p
     if (r.gst_mode === "exclusive") return Math.round((t + Math.round(t * 0.03)) / 100) * 100;
     return Math.round(t / 100) * 100;
   };
+  // Owner (Nov 2026): "Just likha aajaye ki payment konse account me gyi h" — which account(s) each
+  // bill's money was received into (Cash / UPI / Kotak / HDFC …), from the per-account payment ledger.
+  const paidInto = new Map<string, string[]>();
+  if (rows.length) {
+    const { data: tx } = await supabaseServer().from("payment_method_transactions")
+      .select("ref_id,amount,method:payment_methods(name)").eq("ref_type", "order").eq("direction", "in")
+      .in("ref_id", rows.map((r: any) => r.id));
+    for (const t of ((tx as any[]) ?? [])) {
+      const name = String(t.method?.name ?? "").trim();
+      if (!name) continue;
+      const list = paidInto.get(t.ref_id) ?? [];
+      if (!list.includes(name)) list.push(name);
+      paidInto.set(t.ref_id, list);
+    }
+  }
   const pageSumNoTax = rows.reduce((s: number, r: any) => s + withoutTax(r), 0);
   const pageSumWithTax = rows.reduce((s: number, r: any) => s + withTax(r), 0);
   const sel = "rounded-xl border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-emerald";
@@ -96,12 +112,12 @@ export default async function SalesRecords({ searchParams }: { searchParams: { p
             <th className="p-3"><Link href={sortHref("inv", true)} className={thLink}>Invoice / Order{arrow("inv")}</Link></th>
             <th className="p-3"><Link href={sortHref("date", false)} className={thLink}>Date{arrow("date")}</Link></th>
             <th className="p-3"><Link href={sortHref("name", true)} className={thLink}>Customer{arrow("name")}</Link></th>
-            <th className="p-3">Channel</th><th className="p-3">Bill</th><th className="p-3">Status</th><th className="p-3">Return</th>
+            <th className="p-3">Channel</th><th className="p-3">Bill</th><th className="p-3">Status</th><th className="p-3">Paid into</th><th className="p-3">Return</th>
             <th className="p-3 text-right">Without tax</th>
             <th className="p-3 text-right"><Link href={sortHref("amount", false)} className={thLink}>With tax{arrow("amount")}</Link></th>
           </tr></thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan={9} className="p-4 text-muted">No sales match these filters.</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={10} className="p-4 text-muted">No sales match these filters.</td></tr>}
             {rows.map((r: any) => (
               <tr key={r.id} className="border-t border-sand/60 hover:bg-cream/40">
                 <td className="p-3"><Link href={`/admin/invoice/${r.id}`} className="text-emerald nav-link font-medium">{r.invoice_no || String(r.id).slice(0, 8).toUpperCase()} ↗</Link>{r.source_tag === "estimate"
@@ -112,6 +128,7 @@ export default async function SalesRecords({ searchParams }: { searchParams: { p
                 <td className="p-3"><span className={`px-2 py-0.5 rounded-full text-xs capitalize ${CH_STYLE[r.channel] ?? "bg-cream text-muted"}`}>{r.channel}</span></td>
                 <td className="p-3 text-xs uppercase text-muted">{r.bill_type === "cash" ? "Cash memo" : "GST"}</td>
                 <td className="p-3">{(() => { if (r.status === "cancelled") return <span className="px-2 py-0.5 rounded-full text-xs bg-rose/10 text-rose">Cancelled</span>; const paid = r.amount_paid ?? 0; const st = paid <= 0 ? "Unpaid" : paid >= r.total ? "Paid" : "Partial"; const cls: Record<string, string> = { Paid: "bg-emerald-mist text-emerald-dark", Partial: "bg-gold/15 text-gold-dark", Unpaid: "bg-rose/10 text-rose" }; return <span className={`px-2 py-0.5 rounded-full text-xs ${cls[st]}`}>{st}</span>; })()}</td>
+                <td className="p-3 text-xs text-ink whitespace-nowrap">{(() => { const acc = paidInto.get(r.id) ?? []; if (acc.length) return acc.join(" + "); if ((r.amount_paid ?? 0) > 0 && r.payment_mode) return <span className="capitalize">{r.payment_mode}</span>; return <span className="text-muted">—</span>; })()}</td>
                 <td className="p-3">
                   {r.status === "cancelled" ? <span className="text-muted text-xs">—</span> : (
                     <div className="flex items-center gap-1.5">
@@ -125,7 +142,7 @@ export default async function SalesRecords({ searchParams }: { searchParams: { p
               </tr>
             ))}
           </tbody>
-          {rows.length > 0 && <tfoot><tr className="border-t border-sand bg-cream/40"><td colSpan={7} className="p-3 text-right text-muted">This page</td><td className="p-3 text-right font-semibold text-muted tabular-nums"><span className="sensitive">{formatPaise(pageSumNoTax)}</span></td><td className="p-3 text-right font-semibold text-ink tabular-nums"><span className="sensitive">{formatPaise(pageSumWithTax)}</span></td></tr></tfoot>}
+          {rows.length > 0 && <tfoot><tr className="border-t border-sand bg-cream/40"><td colSpan={8} className="p-3 text-right text-muted">This page</td><td className="p-3 text-right font-semibold text-muted tabular-nums"><span className="sensitive">{formatPaise(pageSumNoTax)}</span></td><td className="p-3 text-right font-semibold text-ink tabular-nums"><span className="sensitive">{formatPaise(pageSumWithTax)}</span></td></tr></tfoot>}
         </table>
       </div>
       <Pager basePath="/admin/sales" params={{ q, amount, channel, from, to, sort }} page={page} pageSize={PAGE_SIZE} total={total} />
