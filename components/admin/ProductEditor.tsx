@@ -100,6 +100,8 @@ export function ProductEditor({
   // clear "add a photo" banner — because without an image the model can only echo the category (that's
   // what produced vague "Gold Hand Accessorie" titles; a photo yields ChatGPT-level "…Bracelet Watch…").
   const [titlesUsedPhoto, setTitlesUsedPhoto] = useState<boolean | null>(null);
+  // Which AI wrote the titles, and why any other one failed (e.g. OpenAI out of credit).
+  const [titleEngine, setTitleEngine] = useState<{ provider: string; notes: string[] } | null>(null);
 
   async function suggestTitles() {
     setSuggestingTitles(true); setTitleOptions([]);
@@ -110,6 +112,7 @@ export function ProductEditor({
       if (res.ok && res.titles?.length) {
         setTitleOptions(res.titles);
         setTitlesUsedPhoto(!!res.usedImage);
+        setTitleEngine({ provider: res.provider ?? "", notes: res.notes ?? [] });
         if (res.usedImage) toast(`${res.titles.length} titles suggested — from the photo 📸. Pick the best one.`);
         else toast("⚠ No photo on this product — titles are only guessed from the category and will be vague. Add a photo (Photos tab) for accurate, ChatGPT-level titles.", "error");
       } else toast(res.error ?? "Couldn't suggest titles", "error");
@@ -331,6 +334,10 @@ export function ProductEditor({
                 )}
                 {titlesUsedPhoto === true && (
                   <p className="mb-2 text-[11px] text-emerald-dark">📸 Read from the product photo — like ChatGPT.</p>
+                )}
+                {titleEngine && (
+                  <p className="mb-2 text-[11px] text-muted">Written by <b className="text-ink">{titleEngine.provider.split("+").map((x) => x === "openai" ? "OpenAI" : x === "gemini" ? "Gemini" : x === "groq" ? "Groq" : x).join(" + ")}</b>
+                    {titleEngine.notes.length > 0 && <span className="block text-rose">Not answered: {titleEngine.notes.join(" · ")}</span>}</p>
                 )}
                 <p className="text-xs font-medium text-ink mb-2">Pick the best title <span className="text-muted font-normal">— it becomes the product name &amp; display title right away. Description is unchanged until you edit it or use Auto title + description.</span></p>
                 <div className="space-y-1.5">
