@@ -196,7 +196,7 @@ export async function suggestProductTitleAction(input: { name: string; category?
   }
 }
 
-export async function suggestProductTitlesAction(input: { name: string; category?: string; keywords?: string[]; sku?: string; count?: number }): Promise<{ ok: boolean; titles?: string[]; provider?: string; usedImage?: boolean; error?: string }> {
+export async function suggestProductTitlesAction(input: { name: string; category?: string; keywords?: string[]; sku?: string; count?: number }): Promise<{ ok: boolean; titles?: string[]; provider?: string; usedImage?: boolean; notes?: string[]; error?: string }> {
   if (!(await requirePerm("catalog.edit"))) return { ok: false, error: "not permitted" };
   const name = (input.name ?? "").trim();
   const skuStr = (input.sku ?? "").trim();
@@ -236,7 +236,9 @@ export async function suggestProductTitlesAction(input: { name: string; category
     if (!clean.length || provider === "deterministic") {
       return { ok: false, error: `The AI didn't answer, so no titles were suggested${errors.length ? ` (${errors.join("; ")})` : ""}. Try again in a minute.` };
     }
-    return { ok: true, titles: clean, provider, usedImage };
+    // `notes` = why any model did not answer (e.g. "openai: 429 quota") — shown under the titles so a
+    // dead API key / used-up credit is visible instead of silently falling back to a weaker model.
+    return { ok: true, titles: clean, provider, usedImage, notes: errors };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Could not suggest titles" };
   }
