@@ -22,7 +22,7 @@ import { normalizeListing, parseModelJson } from "./normalizeListing";
 
 const TYPES: [string, RegExp][] = [
   ["choti", /\b(choti|chotis|parandi|paranda|braid)\b/i],
-  ["necklace", /\b(necklace|choker|haar|rani\s*haar|mala|neckpiece)\b/i],
+  ["necklace", /\b(necklace|choker|haar|rani\s*haar|mala|neckpiece|(round|long|short|high|v|u)[\s-]*neck(\s*sets?)?|neck\s*sets?)\b/i],
   ["earrings", /\b(earrings?|jhumk[ai]s?|jhumkas|studs?|danglers?|chandbali|bali|ear\s*cuffs?|tops)\b/i],
   ["anklet", /\b(anklets?|payal|pajeb)\b/i],
   ["ring", /\b(finger\s*rings?|rings?)\b/i],
@@ -242,8 +242,9 @@ const TITLE_STRIP = new RegExp(
     "multi[\\s-]*colou?r(?:ed|s)?", "multicolou?r(?:ed)?", "colou?rful",
     ...FILLER_WORDS.filter((w) => !/multi/.test(w)),
   ].join("|") + ")\\b", "gi");
-export function cleanTitleWords(t: string): string {
-  const out = String(t ?? "").replace(TITLE_STRIP, " ").replace(/\s*[,&]\s*(?=[,&]|$)/g, " ").replace(/\s{2,}/g, " ").trim();
+const FILLER_STRIP = new RegExp("\\b(" + FILLER_WORDS.filter((w) => !/multi/.test(w)).join("|") + ")\\b", "gi");
+export function cleanTitleWords(t: string, keepColourWords = false): string {
+  const out = String(t ?? "").replace(keepColourWords ? FILLER_STRIP : TITLE_STRIP, " ").replace(/\s*[,&]\s*(?=[,&]|$)/g, " ").replace(/\s{2,}/g, " ").trim();
   return out.split(/\s+/).length >= 2 ? out : String(t ?? "").trim();
 }
 
@@ -261,6 +262,16 @@ function finishesIn(text: string): string[] {
   const out: string[] = [];
   for (const [nm, re] of FINISHES) if (re.test(t)) { out.push(nm); t = t.replace(new RegExp(re.source, "gi"), " "); }
   return out;
+}
+
+/** The word a shopper searches for, from the shop's own sub-category name. Owner, Nov 2026: titles said
+ *  "Round Neck Sets" (the shop's internal bucket) where Myntra / ChatGPT say "Kundan Necklace Set". */
+function seoTypeNoun(kind: string): string {
+  const k = kind.replace(/\s*\(.*\)$/, "").trim();
+  if (/choker/i.test(k)) return /set/i.test(k) ? "Choker Set" : "Choker";
+  if (/rani\s*haar|long\s*(neck|haar)/i.test(k)) return /set/i.test(k) ? "Long Necklace Set" : "Long Necklace";
+  if (/neck/i.test(k)) return /set/i.test(k) || /neck\s*sets?$/i.test(k) ? "Necklace Set" : "Necklace";
+  return k;
 }
 
 export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_500): Promise<{ titles: string[]; provider: string; usedImage: boolean; errors: string[] }> {
@@ -284,25 +295,31 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
     : ``;
   const avoid = [...new Set(((p as any).avoidTitles as string[] | undefined ?? [])
     .map((t) => String(t ?? "").replace(/^\S+\s+/, "").trim()).filter((t) => t.split(/\s+/).length >= 2))].slice(0, 30);
+  const seoKind = kind ? seoTypeNoun(kind) : "";
+  // Owner, Nov 2026 ("Nothing better" — and ChatGPT gave "Multicolour Kundan Necklace Set with Maang
+  // Tikka"): the old prompt made every title pick ONE different stone colour ("…with Red Oval Stone",
+  // "…with Turquoise Circles"), banned "Multicolour", echoed the shop's bucket name ("Round Neck Sets")
+  // and dropped any title close to another design's — which threw away exactly the standard search
+  // phrasing Myntra/Amazon titles use. Now it writes them the way a marketplace SEO title is written.
   const userPrompt = [
-    `You are BlytheDIVA SEO copywriter. Produce ${n} alternative website titles for ONE product as JSON {"titles":["…"]}.`,
-    kind ? `THE PRODUCT IS A ${kind.toUpperCase()}. Every title is for this same single piece and must name it as a ${kind.replace(/\s*\(.*\)$/, "")}. Never call it any other kind of jewellery (earrings, necklace, anklet, clip, ring…), even if the photo shows a model wearing other pieces.` : ``,
-    `Write REGULAR, factual e-commerce titles a shopper would search for: finish + stone work + the type + one real visible detail (e.g. "Gold Plated Kundan Choker with Pink Drops", "Pearl Layered Rani Haar with Green Stones").`,
-    !kind ? `The shop filed this piece under a catch-all bucket (${[(p as any).subcategoryName, p.categoryName].filter(Boolean).join(" / ") || "Accessories"}), so work out the real type of piece from the product name${wantVision ? " and photo" : ""} (e.g. kamarband / waist belt, hair clip, brooch) and name it plainly. NEVER write the words "Other Accessories" or "Accessories" as the type.` : ``,
-    wantVision ? `Use the photo ONLY for the stones, colours and work of this piece (the finish comes from the shop data below).` : `Infer from fields.`,
-    `Category: ${p.categoryName ?? "Jewellery"}.${sub}${style}`,
-    kw ? `Keywords: ${kw}.` : ``,
-    `Each title starts with «${forcedName}», 5–7 words total, Title Case.`,
+    `You are an expert Myntra / Amazon / Meesho jewellery SEO copywriter for BlytheDIVA (artificial jewellery, Sadar Bazar Delhi).`,
+    `Write ${n} of the BEST search-optimised product titles for ONE piece, as JSON.`,
+    kind ? `THE PRODUCT IS A ${kind.toUpperCase()} — in shopper words: "${seoKind}". Every title names it as ${seoKind}${/set/i.test(seoKind) ? " (a set)" : ""}, never as another kind of jewellery.` : ``,
+    !kind ? `The shop filed this piece under a catch-all bucket (${[(p as any).subcategoryName, p.categoryName].filter(Boolean).join(" / ") || "Accessories"}), so work out the real type from the product name${wantVision ? " and photo" : ""} (e.g. kamarband / waist belt, hair clip, brooch) and name it plainly. NEVER write "Other Accessories" or "Accessories" as the type.` : ``,
+    `Shop data — Category: ${p.categoryName ?? "Jewellery"}.${sub}${style}${kw ? ` Keywords: ${kw}.` : ""}`,
     finishFact,
-    wantVision ? `First look closely at the photo and list in "seen" 4-6 things that are REALLY visible on this piece: the actual stone colours, the motif or shape, how it is built (layers, drops, beads, chain) and the stone-setting work. Only what you can see — do not guess, do not invent.` : ``,
-    `Write the titles the way a jewellery shop owner would list this exact piece on Amazon or Myntra: plain, true and specific. Each title uses a different real detail from "seen". It is always the SAME piece and the SAME type.`,
-    avoid.length ? `For reference, other designs in the shop are titled like this — don't copy them word for word:\n- ${avoid.slice(0, 12).join("\n- ")}` : ``,
-    `Answer as {"seen":["…"],"titles":["…"]}.`,
-    `NEVER use colour-count words (Multi Color, Multicolour, Colourful) and NEVER use: ${FILLER_WORDS.join(", ")}.`,
-    `Return ONLY JSON.`,
+    wantVision
+      ? `STEP 1 — study the photo and fill "seen": the stone WORK (Kundan, Polki, American Diamond/AD, Pearl, Meenakari, Temple, Jadau, Mirror, Beads…), the stone colours (if several colours → "Multicolour"), the shape/style (choker, layered, rani haar, round neck, bib…), and EVERY piece included in the set (necklace, earrings, maang tikka, ring…). Only what is really visible.`
+      : `Use only the shop data and product name; do not invent stones or pieces.`,
+    `STEP 2 — titles. Pattern: [Colour/Finish] + [Stone work] + [${seoKind || "Type"}] + "with" [included pieces / key feature] (+ occasion word like Bridal, Wedding, Festive, Traditional, Ethnic when it fits).`,
+    `Good examples of the style (for a different piece): "Multicolour Kundan Necklace Set with Maang Tikka", "Traditional Antique Gold Kundan Bridal Jewellery Set", "Pearl Layered Rani Haar Set with Jhumka Earrings", "Green Stone Kundan Choker Set with Earrings".`,
+    `Each title starts with «${forcedName}», then 6–9 words, Title Case, under 80 characters. Use the real search words a buyer types (Kundan, Necklace Set, Maang Tikka, Earrings, Bridal, Traditional, Ethnic).`,
+    `Make the ${n} titles different by ANGLE (pieces included / work / occasion / style), all describing the WHOLE piece truthfully — never pick one stone colour out of a multicolour piece.`,
+    `"Multicolour" is allowed when the stones really are several colours. NEVER use: ${FILLER_WORDS.filter((w) => !/multi/.test(w)).join(", ")}.`,
+    `Answer ONLY as minified JSON: {"seen":["…"],"titles":["…"]}.`,
   ].filter(Boolean).join("\n");
   const SYSTEM = "Return only valid minified JSON.";
-  const call = { system: SYSTEM, user: userPrompt, json: true, imageBase64: p.imageBase64, imageMime: p.imageMime, temperature: 0.95 };
+  const call = { system: SYSTEM, user: userPrompt, json: true, imageBase64: p.imageBase64, imageMime: p.imageMime, temperature: 0.6 };
   const order: [string, (a: any) => Promise<string>][] = [];
   // Owner, Oct 2026: OpenAI is the FIRST choice for title suggestions (reads the photo + category +
   // sub-category + style); Gemini, then Groq, only fill in if OpenAI is not set up or doesn't answer.
@@ -363,7 +380,7 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
   }
   const seen = new Set<string>();
   titles = titles
-    .map((t) => enforceName(cleanTitleWords(t), forcedName))
+    .map((t) => enforceName(cleanTitleWords(t, true), forcedName))
     .filter((t) => { const k = t.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
   // Drop near-copies — of each other, and of titles other designs already carry — but never end up empty.
   const words = (t: string) => new Set(t.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 2 && w !== forcedName.toLowerCase() && !["with", "and", "for", "the"].includes(w)));
@@ -372,7 +389,9 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
   const kept: string[] = []; const keptW: Set<string>[] = [];
   for (const t of titles) {
     const w = words(t);
-    if (keptW.some((k) => sim(w, k) >= 0.75) || avoidW.some((k) => sim(w, k) >= 0.8)) continue;
+    // Only exact-ish repeats are dropped: standard search phrasing ("Kundan Necklace Set with Maang Tikka")
+    // is SUPPOSED to look alike across designs, so other designs' titles no longer knock a good one out.
+    if (keptW.some((k) => sim(w, k) >= 0.9) || avoidW.some((k) => sim(w, k) >= 0.95)) continue;
     kept.push(t); keptW.push(w);
   }
   titles = (kept.length >= Math.min(2, titles.length) ? kept : titles).slice(0, n);
