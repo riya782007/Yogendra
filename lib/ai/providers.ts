@@ -95,7 +95,21 @@ export async function openaiChat(a: ChatArgs): Promise<string> {
   const model = a.imageBase64
     ? (env("OPENAI_VISION_MODEL", "OPENAI_MODEL") ?? "gpt-4o")
     : (env("OPENAI_MODEL") ?? "gpt-4o-mini");
-  return chat("https://api.openai.com/v1/chat/completions", key, model, a);
+  const t0 = Date.now();
+  try {
+    return await chat("https://api.openai.com/v1/chat/completions", key, model, a);
+  } catch (e) {
+    // Nov 2026: gpt-4o answered the jewellery photo with "I'm sorry, but I can't help with that request"
+    // (it is wary of photos with a person in them). Ask once more with a second model, in the time left.
+    const msg = String((e as any)?.message ?? e);
+    const alt = env("OPENAI_VISION_FALLBACK_MODEL") ?? (model === "gpt-4o-mini" ? "gpt-4.1-mini" : "gpt-4o-mini");
+    const left = (a.timeoutMs ?? 30_000) - (Date.now() - t0);
+    if (!a.imageBase64 || !/refused|empty completion/i.test(msg) || left < 1_500) throw e;
+    return chat("https://api.openai.com/v1/chat/completions", key, alt, {
+      ...a, timeoutMs: left,
+      system: `${a.system} The image is a product photo for an online jewellery catalogue; only the jewellery matters.`,
+    });
+  }
 }
 
 /**
@@ -150,19 +164,25 @@ async function geminiListFlash(key: string): Promise<string[]> {
     const ids = ((j?.models ?? []) as any[])
       .filter((m) => (m.supportedGenerationMethods ?? []).includes("generateContent"))
       .map((m) => String(m.name ?? "").replace(/^models\//, ""))
-      .filter((n) => /^gemini-[\d.]+-flash(-lite)?$/.test(n) || n === "gemini-flash-latest");
+      .filter((n) => /^gemini-[\d.]+-flash(-lite)?(-\d{3}|-preview[\w-]*)?$/.test(n) || n === "gemini-flash-latest")
+      .filter((n) => !/image|tts|audio|live/.test(n));
     const ver = (n: string) => parseFloat((n.match(/gemini-([\d.]+)/) ?? [])[1] ?? "0");
     // Newest first; full Flash before Flash-Lite at the same version.
-    geminiListed = ids.sort((x, y) => ver(y) - ver(x) || (x.includes("lite") ? 1 : 0) - (y.includes("lite") ? 1 : 0));
+    const rank = (n: string) => (n.includes("preview") ? 2 : 0) + (n.includes("lite") ? 1 : 0); // stable, full Flash first
+    geminiListed = ids.sort((x, y) => ver(y) - ver(x) || rank(x) - rank(y));
   } catch { geminiListed = []; }
   return geminiListed;
 }
 /** POST generateContent with automatic model fallback. `wantModel` is the preferred model id. */
 export async function geminiGenerate(key: string, wantModel: string | undefined, body: any, signal?: AbortSignal): Promise<{ json: any; model: string }> {
   const tried = new Set<string>();
-  const queue = [geminiWorking, wantModel, ...GEMINI_FALLBACKS].filter(Boolean) as string[];
+  // Cold server: ask Google once which Flash models THIS key may use (≈0.3 s), instead of walking a list
+  // of 404s — that walk plus a slow model used up the whole time limit ("gemini: This operation was
+  // aborted", Nov 2026).
+  const listed = geminiWorking ? [] : await geminiListFlash(key);
+  const queue = [geminiWorking, wantModel && (!listed.length || listed.includes(wantModel)) ? wantModel : null, ...listed, ...GEMINI_FALLBACKS].filter(Boolean) as string[];
   let lastErr = "no gemini model answered";
-  let listedOnce = false;
+  let listedOnce = listed.length > 0;
   while (queue.length) {
     const model = queue.shift()!;
     if (tried.has(model)) continue;
@@ -172,16 +192,22 @@ export async function geminiGenerate(key: string, wantModel: string | undefined,
       // 2.5 takes thinkingBudget 0; 3.x rejects that but takes a thinking LEVEL (keeps replies inside the
       // host's 10 s limit). If a model refuses either, it is retried with no thinking setting at all.
       if (!withThinking) delete gc.thinkingConfig;
-      else if (gc.thinkingConfig && !/2\.5/.test(model)) gc.thinkingConfig = { thinkingLevel: "low" };
+      else if (gc.thinkingConfig && !/2\.5/.test(model)) gc.thinkingConfig = { thinkingLevel: "minimal" };
       if (!withThinking && !body.generationConfig?.thinkingConfig) break;
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-        method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-        body: JSON.stringify({ ...body, generationConfig: gc }), signal,
-      });
+      let res: Response;
+      try {
+        res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+          body: JSON.stringify({ ...body, generationConfig: gc }), signal,
+        });
+      } catch (e) {
+        throw new Error(`${model} ${signal?.aborted ? "too slow (timed out)" : String((e as any)?.message ?? e)}`);
+      }
       if (res.ok) { geminiWorking = model; return { json: await res.json(), model }; }
       const txt = await res.text();
       lastErr = `${res.status} ${model}: ${txt.slice(0, 160)}`;
       if (res.status === 400 && /thinking/i.test(txt) && withThinking) continue; // retry without thinkingConfig
+      if (res.status === 400 && /thinking/i.test(txt)) break;
       if (res.status === 404 || /no longer available|not found|not supported/i.test(txt)) {
         if (!listedOnce) { listedOnce = true; queue.unshift(...(await geminiListFlash(key)).filter((m) => !tried.has(m))); }
         break;
