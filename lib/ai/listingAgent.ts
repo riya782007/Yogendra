@@ -21,6 +21,10 @@ import { normalizeListing, parseModelJson } from "./normalizeListing";
  */
 
 const TYPES: [string, RegExp][] = [
+  // A bridal set is several pieces worn together (necklace, earrings, maang tikka, often a nath / passa).
+  // Owner, Nov 2026: a "Bridal Sets" piece was treated as a plain necklace, so ChatGPT-style titles
+  // naming its Nath or Maang Tikka were thrown away as "wrong type".
+  ["bridal set", /\b(bridal\s*(jewell?e?ry\s*)?sets?|dulhan\s*sets?|wedding\s*(jewell?e?ry\s*)?sets?)\b/i],
   ["choti", /\b(choti|chotis|parandi|paranda|braid)\b/i],
   ["necklace", /\b(necklace|choker|haar|rani\s*haar|mala|neckpiece|(round|long|short|high|v|u)[\s-]*neck(\s*sets?)?|neck\s*sets?)\b/i],
   ["earrings", /\b(earrings?|jhumk[ai]s?|jhumkas|studs?|danglers?|chandbali|bali|ear\s*cuffs?|tops)\b/i],
@@ -43,6 +47,7 @@ const TYPES: [string, RegExp][] = [
 /** Types a "set" may legitimately name alongside its main piece. */
 const GOES_WITH: Record<string, string[]> = {
   necklace: ["earrings", "maang tikka", "ring", "pendant"],
+  "bridal set": ["necklace", "earrings", "maang tikka", "nose pin", "ring", "passa", "bracelet", "hathphool", "armlet", "waist belt", "pendant"],
   choti: ["hair accessory"],
   "hair accessory": ["choti"],
   bracelet: ["ring", "watch"],
@@ -268,6 +273,7 @@ function finishesIn(text: string): string[] {
  *  "Round Neck Sets" (the shop's internal bucket) where Myntra / ChatGPT say "Kundan Necklace Set". */
 function seoTypeNoun(kind: string): string {
   const k = kind.replace(/\s*\(.*\)$/, "").trim();
+  if (/bridal|dulhan|wedding/i.test(k)) return "Bridal Jewellery Set";
   if (/choker/i.test(k)) return /set/i.test(k) ? "Choker Set" : "Choker";
   if (/rani\s*haar|long\s*(neck|haar)/i.test(k)) return /set/i.test(k) ? "Long Necklace Set" : "Long Necklace";
   if (/neck/i.test(k)) return /set/i.test(k) || /neck\s*sets?$/i.test(k) ? "Necklace Set" : "Necklace";
@@ -312,11 +318,12 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
     `Shop data — Category: ${p.categoryName ?? "Jewellery"}.${sub}${style}${kw ? ` Keywords: ${kw}.` : ""}`,
     finishFact,
     wantVision
-      ? `STEP 1 — study the photo and fill "seen": the stone WORK (Kundan, Polki, American Diamond/AD, Pearl, Meenakari, Temple, Jadau, Mirror, Beads…), the stone colours (if several colours → "Multicolour"), the shape/style (choker, layered, rani haar, round neck, bib…), and EVERY piece included in the set (necklace, earrings, maang tikka, ring…). Only what is really visible.`
+      ? `STEP 1 — study the photo and fill "seen": the stone WORK (Kundan, Polki, American Diamond/AD, Pearl, Meenakari, Temple, Jadau, Mirror, Beads…), the stone colours (if several colours → "Multicolour"), the shape/style (choker, layered, rani haar, round neck, bib…), pearls / drops / hangings, and EVERY piece included in the set (necklace or choker, earrings, maang tikka, nath / nose ring, passa, ring…). Tell Kundan from Polki (uncut, flat, glassy) and name pearls when they are there. Only what is really visible.`
       : `There is NO photo: use only the shop data and product name. Do not invent stones, colours, finishes (gold / silver / rose gold) or pieces that the data does not state — lean on the type, the stone work named in the data, and occasion words (Traditional, Bridal, Ethnic, Festive).`,
     `STEP 2 — titles. Pattern: [Colour/Finish] + [Stone work] + [${seoKind || "Type"}] + "with" [included pieces / key feature] (+ occasion word like Bridal, Wedding, Festive, Traditional, Ethnic when it fits).`,
-    `Good examples of the style (for a different piece): "Multicolour Kundan Necklace Set with Maang Tikka", "Traditional Antique Gold Kundan Bridal Jewellery Set", "Pearl Layered Rani Haar Set with Jhumka Earrings", "Green Stone Kundan Choker Set with Earrings".`,
-    `Each title starts with «${forcedName}», then 6–9 words, Title Case, under 80 characters. Use the real search words a buyer types (Kundan, Necklace Set, Maang Tikka, Earrings, Bridal, Traditional, Ethnic).`,
+    `Good examples of the style (for a different piece): "Multicolour Kundan Necklace Set with Maang Tikka", "Traditional Antique Gold Kundan Bridal Jewellery Set", "Pearl Layered Rani Haar Set with Jhumka Earrings", "Green Stone Kundan Choker Set with Earrings", "Traditional Bridal Kundan Polki Pearl Choker Necklace Set with Maang Tikka and Nath".`,
+    `Use the FULL detail: work (Kundan / Polki / Pearl) + shape (Choker / Rani Haar) + every included piece. Longer, richer titles (8–13 words) rank better than short ones.`,
+    `Each title starts with «${forcedName}», then 7–13 words, Title Case, under 110 characters. Use the real search words a buyer types (Kundan, Necklace Set, Maang Tikka, Earrings, Bridal, Traditional, Ethnic).`,
     `Make the ${n} titles different by ANGLE (pieces included / work / occasion / style), all describing the WHOLE piece truthfully — never pick one stone colour out of a multicolour piece.`,
     `"Multicolour" is allowed when the stones really are several colours. NEVER use: ${FILLER_WORDS.filter((w) => !/multi/.test(w)).join(", ")}.`,
     `Answer ONLY as minified JSON: {"seen":["…"],"titles":["…"]}.`,
@@ -343,7 +350,7 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
   const timeoutMs = Math.max(2_000, budgetMs - 300);
   const runs = order.map(([nm, fn]) => (async () => {
     try {
-      const args = nm === "groq" ? { ...call, user: textPrompt, imageBase64: undefined, imageMime: undefined } : { ...call, imageDetail: nm === "openai" ? "auto" : "low" };
+      const args = nm === "groq" ? { ...call, user: textPrompt, imageBase64: undefined, imageMime: undefined } : { ...call, imageDetail: nm === "openai" ? "high" : "low" };
       const raw: any = parseModelJson(await fn({ ...args, timeoutMs }));
       const arr = Array.isArray(raw) ? raw
         : Array.isArray(raw?.titles) ? raw.titles
