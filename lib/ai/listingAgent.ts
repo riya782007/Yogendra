@@ -75,7 +75,12 @@ function conflictingTypes(title: string, allowed: string[]): string[] {
   if (!allowed.length) return [];
   const ok = new Set<string>(allowed);
   for (const a of allowed) for (const g of GOES_WITH[a] ?? []) ok.add(g);
-  return typesIn(title).filter((t) => !ok.has(t));
+  const named = typesIn(title);
+  // A title that names the shop's own type may also list the other pieces of the set — "Kundan Choker
+  // Necklace Set with Maang Tikka and Nath" is a necklace set, not a nose pin. Nov 2026: such titles
+  // were thrown out because "Nath" / "Nose Ring" / "Ring" counted as a different kind of jewellery.
+  if (named.some((t) => allowed.includes(t) || (allowed.includes("bridal set") && t === "necklace"))) return [];
+  return named.filter((t) => !ok.has(t));
 }
 
 /** Catch-all shop buckets that say nothing about WHAT the piece is ("Other Accessories"). Echoing them
