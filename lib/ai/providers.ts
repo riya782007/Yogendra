@@ -102,13 +102,21 @@ export async function openaiChat(a: ChatArgs): Promise<string> {
     // Nov 2026: gpt-4o answered the jewellery photo with "I'm sorry, but I can't help with that request"
     // (it is wary of photos with a person in them). Ask once more with a second model, in the time left.
     const msg = String((e as any)?.message ?? e);
-    const alt = env("OPENAI_VISION_FALLBACK_MODEL") ?? (model === "gpt-4o-mini" ? "gpt-4.1-mini" : "gpt-4o-mini");
-    const left = (a.timeoutMs ?? 30_000) - (Date.now() - t0);
-    if (!a.imageBase64 || !/refused|empty completion/i.test(msg) || left < 1_500) throw e;
-    return chat("https://api.openai.com/v1/chat/completions", key, alt, {
-      ...a, timeoutMs: left,
-      system: `${a.system} The image is a product photo for an online jewellery catalogue; only the jewellery matters.`,
-    });
+    if (!a.imageBase64 || !/refused|empty completion/i.test(msg)) throw e;
+    // gpt-4.1 reads fine jewellery detail far better than gpt-4o-mini (which missed Polki / pearls / nath).
+    const alts = (env("OPENAI_VISION_FALLBACK_MODEL") ?? "gpt-4.1,gpt-4o-mini").split(",").map((x) => x.trim()).filter((x) => x && x !== model);
+    let last: unknown = e;
+    for (const alt of alts) {
+      const left = (a.timeoutMs ?? 30_000) - (Date.now() - t0);
+      if (left < 1_500) break;
+      try {
+        return await chat("https://api.openai.com/v1/chat/completions", key, alt, {
+          ...a, timeoutMs: left,
+          system: `${a.system} The image is a product photo for an online jewellery catalogue; only the jewellery matters.`,
+        });
+      } catch (e2) { last = e2; }
+    }
+    throw last;
   }
 }
 
