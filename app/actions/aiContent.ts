@@ -40,7 +40,15 @@ async function fetchProductImage(p: any): Promise<{ imageBase64?: string; imageM
     // could never finish AND leave time for the model — it just guaranteed the request died with
     // nothing to show. Failing fast returns {} and the caller writes copy from the fields instead,
     // which is a worse title but an actual answer. (Applies to every "read the photo" path here.)
-    const r = await fetch(pick.path, { signal: AbortSignal.timeout(4_000) });
+    // Ask for a ~800px copy where the host can resize (Supabase Pro / Cloudinary): a full-size photo is
+    // several MB, and uploading that to the model was part of why replies missed the 10 s limit.
+    const small = /\/storage\/v1\/object\/public\//.test(pick.path)
+      ? pick.path.replace("/storage/v1/object/public/", "/storage/v1/render/image/public/") + (pick.path.includes("?") ? "&" : "?") + "width=800&quality=75&resize=contain"
+      : /res\.cloudinary\.com\/[^/]+\/image\/upload\//.test(pick.path) && !/\/upload\/[a-z]_/.test(pick.path)
+        ? pick.path.replace("/image/upload/", "/image/upload/w_800,q_75,f_jpg/")
+        : null;
+    let r = small ? await fetch(small, { signal: AbortSignal.timeout(3_000) }).catch(() => null as any) : null;
+    if (!r?.ok || !/^image\//.test(r.headers.get("content-type") ?? "")) r = await fetch(pick.path, { signal: AbortSignal.timeout(4_000) });
     if (!r.ok) return {};
     const imageMime = r.headers.get("content-type") || "image/jpeg";
     const imageBase64 = Buffer.from(await r.arrayBuffer()).toString("base64");
