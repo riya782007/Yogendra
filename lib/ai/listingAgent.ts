@@ -313,7 +313,7 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
     finishFact,
     wantVision
       ? `STEP 1 — study the photo and fill "seen": the stone WORK (Kundan, Polki, American Diamond/AD, Pearl, Meenakari, Temple, Jadau, Mirror, Beads…), the stone colours (if several colours → "Multicolour"), the shape/style (choker, layered, rani haar, round neck, bib…), and EVERY piece included in the set (necklace, earrings, maang tikka, ring…). Only what is really visible.`
-      : `Use only the shop data and product name; do not invent stones or pieces.`,
+      : `There is NO photo: use only the shop data and product name. Do not invent stones, colours, finishes (gold / silver / rose gold) or pieces that the data does not state — lean on the type, the stone work named in the data, and occasion words (Traditional, Bridal, Ethnic, Festive).`,
     `STEP 2 — titles. Pattern: [Colour/Finish] + [Stone work] + [${seoKind || "Type"}] + "with" [included pieces / key feature] (+ occasion word like Bridal, Wedding, Festive, Traditional, Ethnic when it fits).`,
     `Good examples of the style (for a different piece): "Multicolour Kundan Necklace Set with Maang Tikka", "Traditional Antique Gold Kundan Bridal Jewellery Set", "Pearl Layered Rani Haar Set with Jhumka Earrings", "Green Stone Kundan Choker Set with Earrings".`,
     `Each title starts with «${forcedName}», then 6–9 words, Title Case, under 80 characters. Use the real search words a buyer types (Kundan, Necklace Set, Maang Tikka, Earrings, Bridal, Traditional, Ethnic).`,
