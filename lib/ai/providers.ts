@@ -56,8 +56,11 @@ async function chat(endpoint: string, key: string, model: string, a: ChatArgs): 
     });
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
     const j: any = await res.json();
-    const content = j?.choices?.[0]?.message?.content;
-    if (!content) throw new Error("empty completion");
+    const msg = j?.choices?.[0]?.message;
+    const content = msg?.content;
+    // Say WHY it is empty (a refusal, a length cut-off, a reasoning model that spent its tokens) —
+    // "empty completion" alone hid the cause on the owner's title screen (Nov 2026).
+    if (!content) throw new Error(`empty completion from ${model}${msg?.refusal ? ` — refused: ${String(msg.refusal).slice(0, 80)}` : ""} (finish: ${j?.choices?.[0]?.finish_reason ?? "?"})`);
     return content;
   } finally { clearTimeout(t); }
 }
@@ -128,40 +131,90 @@ export async function openaiTranscribe(audio: Buffer, mime: string, filename = "
 
 export function geminiTextConfigured() { return !!geminiTextKey(); }
 
-/** Gemini text reasoning (gemini-2.5-flash) — fast, capable, uses the existing GEMINI_API_KEY. */
+/**
+ * GEMINI MODEL RESOLUTION. Nov 2026: Google closed gemini-2.5-flash to new projects — every call came
+ * back "404 This model models/gemini-2.5-flash is no longer available to new users", so photo-reading
+ * title suggestions silently fell through to Groq (text-only, which guesses the stones). Gemini 3.x also
+ * rejects `thinkingBudget: 0` with a 400. Now: try the configured model, then current Flash models; on a
+ * 404 ask the API which models this key can use and pick the newest Flash; drop thinkingConfig when a
+ * model refuses it. The model that worked is remembered for the life of the server.
+ */
+const GEMINI_FALLBACKS = ["gemini-3.6-flash", "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-flash-latest", "gemini-2.5-flash"];
+let geminiWorking: string | null = null;
+let geminiListed: string[] | null = null;
+async function geminiListFlash(key: string): Promise<string[]> {
+  if (geminiListed) return geminiListed;
+  try {
+    const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200", { headers: { "x-goog-api-key": key }, signal: AbortSignal.timeout(3_000) });
+    const j: any = r.ok ? await r.json() : {};
+    const ids = ((j?.models ?? []) as any[])
+      .filter((m) => (m.supportedGenerationMethods ?? []).includes("generateContent"))
+      .map((m) => String(m.name ?? "").replace(/^models\//, ""))
+      .filter((n) => /^gemini-[\d.]+-flash(-lite)?$/.test(n) || n === "gemini-flash-latest");
+    const ver = (n: string) => parseFloat((n.match(/gemini-([\d.]+)/) ?? [])[1] ?? "0");
+    // Newest first; full Flash before Flash-Lite at the same version.
+    geminiListed = ids.sort((x, y) => ver(y) - ver(x) || (x.includes("lite") ? 1 : 0) - (y.includes("lite") ? 1 : 0));
+  } catch { geminiListed = []; }
+  return geminiListed;
+}
+/** POST generateContent with automatic model fallback. `wantModel` is the preferred model id. */
+export async function geminiGenerate(key: string, wantModel: string | undefined, body: any, signal?: AbortSignal): Promise<{ json: any; model: string }> {
+  const tried = new Set<string>();
+  const queue = [geminiWorking, wantModel, ...GEMINI_FALLBACKS].filter(Boolean) as string[];
+  let lastErr = "no gemini model answered";
+  let listedOnce = false;
+  while (queue.length) {
+    const model = queue.shift()!;
+    if (tried.has(model)) continue;
+    tried.add(model);
+    for (const withThinking of [true, false]) {
+      const gc = { ...(body.generationConfig ?? {}) };
+      // 2.5 takes thinkingBudget 0; 3.x rejects that but takes a thinking LEVEL (keeps replies inside the
+      // host's 10 s limit). If a model refuses either, it is retried with no thinking setting at all.
+      if (!withThinking) delete gc.thinkingConfig;
+      else if (gc.thinkingConfig && !/2\.5/.test(model)) gc.thinkingConfig = { thinkingLevel: "low" };
+      if (!withThinking && !body.generationConfig?.thinkingConfig) break;
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+        body: JSON.stringify({ ...body, generationConfig: gc }), signal,
+      });
+      if (res.ok) { geminiWorking = model; return { json: await res.json(), model }; }
+      const txt = await res.text();
+      lastErr = `${res.status} ${model}: ${txt.slice(0, 160)}`;
+      if (res.status === 400 && /thinking/i.test(txt) && withThinking) continue; // retry without thinkingConfig
+      if (res.status === 404 || /no longer available|not found|not supported/i.test(txt)) {
+        if (!listedOnce) { listedOnce = true; queue.unshift(...(await geminiListFlash(key)).filter((m) => !tried.has(m))); }
+        break;
+      }
+      throw new Error(lastErr); // auth / quota / bad request: another model won't help
+    }
+  }
+  throw new Error(lastErr);
+}
+
+/** Gemini text + vision — uses the existing GEMINI_API_KEY; the model is resolved by geminiGenerate. */
 export async function geminiChat(a: ChatArgs): Promise<string> {
   const key = geminiTextKey(); if (!key) throw new Error("no gemini key");
-  // Vision (photo attached) can use a stronger model + needs more time to read fine detail; text stays fast.
-  const model = a.imageBase64
-    ? (env("GEMINI_VISION_MODEL", "GEMINI_TEXT_MODEL") ?? "gemini-2.5-flash")
-    : (env("GEMINI_TEXT_MODEL") ?? "gemini-2.5-flash");
+  const want = a.imageBase64 ? env("GEMINI_VISION_MODEL", "GEMINI_TEXT_MODEL") : env("GEMINI_TEXT_MODEL");
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), a.timeoutMs ?? (a.imageBase64 ? 30_000 : 18_000));
   try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-      body: JSON.stringify({
-        contents: [{
-          role: "user",
-          parts: [
-            { text: `${a.system}\n\nUser command: ${a.user}` },
-            ...(a.imageBase64 ? [{ inline_data: { mime_type: a.imageMime ?? "image/jpeg", data: a.imageBase64 } }] : []),
-          ],
-        }],
-        generationConfig: {
-          temperature: a.temperature ?? 0.3, ...(a.json ? { responseMimeType: "application/json" } : {}),
-          // Gemini 2.5 Flash "thinks" by default (often 5-15 s before the first word). Product copy and
-          // titles don't need it, and it pushed every request past the host's 10-second limit.
-          ...(/flash/i.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
-        },
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-    const j: any = await res.json();
+    const { json: j } = await geminiGenerate(key, want, {
+      contents: [{
+        role: "user",
+        parts: [
+          { text: `${a.system}\n\nUser command: ${a.user}` },
+          ...(a.imageBase64 ? [{ inline_data: { mime_type: a.imageMime ?? "image/jpeg", data: a.imageBase64 } }] : []),
+        ],
+      }],
+      generationConfig: {
+        temperature: a.temperature ?? 0.3, ...(a.json ? { responseMimeType: "application/json" } : {}),
+        // 2.5 Flash "thinks" for 5-15 s by default; switch it off there (newer models drop this field).
+        thinkingConfig: { thinkingBudget: 0 },
+      },
+    }, controller.signal);
     const text = (j?.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text ?? "").join("");
-    if (!text) throw new Error("empty completion");
+    if (!text) throw new Error(`empty completion (${j?.candidates?.[0]?.finishReason ?? j?.promptFeedback?.blockReason ?? "no reason"})`);
     return text;
   } finally { clearTimeout(t); }
 }
