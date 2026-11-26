@@ -23,18 +23,28 @@ export function SkuInput({
   const [justPicked, setJustPicked] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
   const tRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Owner, Nov 2026 (Returns page video): "I am not doing anything and the list keeps changing". Each
+  // keystroke fired a search, and the answers came back OUT OF ORDER — the list for "kpe" landed after
+  // the one for "kpe5815" and replaced it. Only the answer for the latest text is shown now.
+  const seqRef = useRef(0);
+  const typedRef = useRef(false);
 
   useEffect(() => {
+    const my = ++seqRef.current;
     if (justPicked) { setJustPicked(false); return; } // don't re-search the value we just selected
+    // Only search what the person TYPED — not a value the page filled in itself (e.g. the canonical SKU
+    // after a lookup), which popped the list open while nobody was touching the keyboard.
+    if (!typedRef.current) { setOpen(false); return; }
     const q = value.trim();
     if (q.length < 2) { setOpts([]); setOpen(false); return; }
     if (tRef.current) clearTimeout(tRef.current);
     tRef.current = setTimeout(async () => {
       try {
         const r = await searchSkusAction(q);
+        if (my !== seqRef.current) return; // a newer keystroke has superseded this answer
         setOpts(r); setHi(0); setOpen(r.length > 0);
       } catch { /* ignore */ }
-    }, 180);
+    }, 250);
     return () => { if (tRef.current) clearTimeout(tRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
@@ -51,7 +61,8 @@ export function SkuInput({
     <div ref={boxRef} className="relative">
       <input
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => { typedRef.current = true; onChange(e.target.value); }}
+        onBlur={() => { typedRef.current = false; }}
         onFocus={() => { if (opts.length) setOpen(true); }}
         onKeyDown={(e) => {
           if (!open || !opts.length) return;
