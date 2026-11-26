@@ -5,7 +5,7 @@
  * leaves the shelf and a debit note opens so it can be printed / WhatsApp'd to the vendor.
  * Bill-linked purchase returns stay on PurchaseReturnClient / PurchaseReturnButton.
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createOpenPurchaseReturnAction, lookupPurchaseReturnSkuAction } from "@/app/actions/openReturns";
 import { SkuInput } from "@/components/admin/SkuInput";
@@ -34,16 +34,26 @@ export function OpenPurchaseReturnClient({
   const inp = "rounded-xl border border-sand bg-white px-3 py-2 text-sm outline-none focus:border-emerald";
   const setLine = (i: number, patch: Partial<Line>) => setLines((p) => p.map((l, k) => (k === i ? { ...l, ...patch } : l)));
 
-  async function onSku(i: number, sku: string) {
-    setLine(i, { sku, hint: undefined });
+  // The stock/cost lookup used to run on EVERY keystroke and print "SKU not found" while the SKU was
+  // still being typed (and older answers could land after newer ones). Now it waits until typing
+  // pauses, and only the answer for what is in the box right now is used.
+  const lookTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
+  const latest = useRef<Record<number, string>>({});
+  function onSku(i: number, sku: string) {
+    setLine(i, { sku, hint: undefined, onHand: undefined });
+    latest.current[i] = sku;
+    clearTimeout(lookTimers.current[i]);
     if (sku.trim().length < 2) return;
+    lookTimers.current[i] = setTimeout(() => { lookupLine(i, sku); }, 600);
+  }
+  async function lookupLine(i: number, sku: string) {
     const r = await lookupPurchaseReturnSkuAction(sku);
-    if (!r.ok) { setLine(i, { sku, hint: r.error }); return; }
+    if (latest.current[i] !== sku) return; // the box has changed since — ignore this answer
+    if (!r.ok) { setLine(i, { hint: r.error }); return; }
     const rupees = r.lastCostPaise ? String(r.lastCostPaise / 100) : "";
     const label = [r.name, r.color].filter(Boolean).join(" · ");
-    setLines((p) => p.map((l, k) => k !== i ? l : ({
-      ...l,
-      sku: r.sku ?? sku,
+    setLines((p) => p.map((l, k) => k !== i || l.sku !== sku ? l : ({
+      ...l, // the box keeps exactly what was typed/picked — rewriting it re-opened the search list
       unitCostRupees: l.unitCostRupees || rupees,
       onHand: r.qty,
       hint: `${label}${r.qty != null ? ` · ${r.qty} in stock` : ""}`,
