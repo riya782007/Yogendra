@@ -301,9 +301,12 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
   // "…with Turquoise Circles"), banned "Multicolour", echoed the shop's bucket name ("Round Neck Sets")
   // and dropped any title close to another design's — which threw away exactly the standard search
   // phrasing Myntra/Amazon titles use. Now it writes them the way a marketplace SEO title is written.
-  const userPrompt = [
+  // Built twice: with the photo for the vision models, and without it for Groq (text-only) — Groq was
+  // given the photo instructions without the photo and invented stones ("Silver Mirror", "Pearl").
+  const buildPrompt = (wantVision: boolean) => [
     `You are an expert Myntra / Amazon / Meesho jewellery SEO copywriter for BlytheDIVA (artificial jewellery, Sadar Bazar Delhi).`,
     `Write ${n} of the BEST search-optimised product titles for ONE piece, as JSON.`,
+    wantVision ? `The photo is a catalogue shot of artificial jewellery (it may be worn by a model). Describe ONLY the jewellery — never the person.` : ``,
     kind ? `THE PRODUCT IS A ${kind.toUpperCase()} — in shopper words: "${seoKind}". Every title names it as ${seoKind}${/set/i.test(seoKind) ? " (a set)" : ""}, never as another kind of jewellery.` : ``,
     !kind ? `The shop filed this piece under a catch-all bucket (${[(p as any).subcategoryName, p.categoryName].filter(Boolean).join(" / ") || "Accessories"}), so work out the real type from the product name${wantVision ? " and photo" : ""} (e.g. kamarband / waist belt, hair clip, brooch) and name it plainly. NEVER write "Other Accessories" or "Accessories" as the type.` : ``,
     `Shop data — Category: ${p.categoryName ?? "Jewellery"}.${sub}${style}${kw ? ` Keywords: ${kw}.` : ""}`,
@@ -318,6 +321,8 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
     `"Multicolour" is allowed when the stones really are several colours. NEVER use: ${FILLER_WORDS.filter((w) => !/multi/.test(w)).join(", ")}.`,
     `Answer ONLY as minified JSON: {"seen":["…"],"titles":["…"]}.`,
   ].filter(Boolean).join("\n");
+  const userPrompt = buildPrompt(wantVision);
+  const textPrompt = buildPrompt(false);
   const SYSTEM = "Return only valid minified JSON.";
   const call = { system: SYSTEM, user: userPrompt, json: true, imageBase64: p.imageBase64, imageMime: p.imageMime, temperature: 0.6 };
   const order: [string, (a: any) => Promise<string>][] = [];
@@ -338,7 +343,7 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
   const timeoutMs = Math.max(2_000, budgetMs - 300);
   const runs = order.map(([nm, fn]) => (async () => {
     try {
-      const args = nm === "groq" ? { ...call, imageBase64: undefined, imageMime: undefined } : { ...call, imageDetail: nm === "openai" ? "auto" : "low" };
+      const args = nm === "groq" ? { ...call, user: textPrompt, imageBase64: undefined, imageMime: undefined } : { ...call, imageDetail: nm === "openai" ? "auto" : "low" };
       const raw: any = parseModelJson(await fn({ ...args, timeoutMs }));
       const arr = Array.isArray(raw) ? raw
         : Array.isArray(raw?.titles) ? raw.titles
