@@ -5,6 +5,7 @@
  * "choose the best generation strategy" step.
  */
 import "server-only";
+import { geminiGenerate } from "./providers";
 
 export type Detected = { category: string; material: string; style: string; attributes: string[] };
 
@@ -54,23 +55,16 @@ export async function detectJewellery(opts: { imageUrl?: string; hint?: string; 
     return fallback;
   }
 
-  const model = process.env.GEMINI_TEXT_MODEL ?? "gemini-2.5-flash";
+  const model = process.env.GEMINI_TEXT_MODEL; // resolved (with fallback) by geminiGenerate
   const sys = `You are a jewellery merchandiser. Inspect the image and classify the piece. Respond with STRICT JSON only:
 {"category": one of [${CATS.join(", ")}], "material": one of [${MATERIALS.join(", ")}], "style": one of [${STYLES.join(", ")}], "attributes": up to 6 short tags}.`;
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), opts.timeoutMs ?? 18_000);
   try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ inline_data: { mime_type: mime, data: base64 } }, { text: sys }] }],
-        generationConfig: { temperature: 0.2, responseMimeType: "application/json" },
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) return fallback;
-    const j: any = await res.json();
+    const { json: j } = await geminiGenerate(key, model, {
+      contents: [{ role: "user", parts: [{ inline_data: { mime_type: mime, data: base64 } }, { text: sys }] }],
+      generationConfig: { temperature: 0.2, responseMimeType: "application/json" },
+    }, controller.signal);
     const text = (j?.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text ?? "").join("");
     const parsed = JSON.parse(text);
     return {
