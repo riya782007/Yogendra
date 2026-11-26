@@ -368,7 +368,12 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
   // Wait for all, but never past the budget; stop early once a vision model has given enough.
   await Promise.race([
     Promise.all(runs),
-    new Promise<void>((r) => { const tick = () => { if (Date.now() - t0 >= budgetMs) return r(); const enough = Math.min(n, 3); if (results.some((x) => x.nm === "openai" && x.titles.length >= enough)) return r(); if (wantVision && (!openaiConfigured() || errors.some((e) => e.startsWith("openai:"))) && results.some((x) => x.nm === "gemini" && x.titles.length >= enough)) return r(); setTimeout(tick, 150); }; tick(); }),
+    new Promise<void>((r) => { const tick = () => { if (Date.now() - t0 >= budgetMs) return r(); const enough = Math.min(n, 3);
+      // Both photo-reading models get to answer (each sees different detail — Polki, pearls, a nath);
+      // stop early only once every vision model has answered or failed.
+      const visionDone = ["openai", "gemini"].every((nm) => !order.some(([o]) => o === nm) || results.some((x) => x.nm === nm) || errors.some((e) => e.startsWith(nm + ":")));
+      if (wantVision && visionDone && results.some((x) => x.nm !== "groq" && x.titles.length >= enough)) return r();
+      if (!wantVision && results.some((x) => x.nm === "openai" && x.titles.length >= enough)) return r(); if (wantVision && (!openaiConfigured() || errors.some((e) => e.startsWith("openai:"))) && results.some((x) => x.nm === "gemini" && x.titles.length >= enough)) return r(); setTimeout(tick, 150); }; tick(); }),
   ]);
   if (Date.now() - t0 >= budgetMs) for (const [nm] of order) if (!results.some((x) => x.nm === nm) && !errors.some((e) => e.startsWith(nm + ":"))) errors.push(`${nm}: too slow`);
   const rank = (nm: string) => (nm === "openai" ? 0 : nm === "gemini" ? 1 : 2);
@@ -378,8 +383,13 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
   // OpenAI out (no credit / not set) → Gemini is the next model that actually SEES the photo; Groq is
   // text-only and writes generic titles, so it only tops up when Gemini gave too few.
   const gem = !first && wantVision ? results.find((x) => x.nm === "gemini" && x.titles.length >= Math.min(n, 3)) : undefined;
-  const used = first ? [first] : gem ? [gem] : results;
-  let titles: string[] = used.flatMap((x) => x.titles);
+  const vision = wantVision ? results.filter((x) => x.nm !== "groq" && x.titles.length) : [];
+  const used = vision.length ? vision : first ? [first] : gem ? [gem] : results;
+  // Owner, Nov 2026 (bridal set: ChatGPT said "Kundan Polki Pearl Choker … with Maang Tikka and Nath",
+  // ours said "Kundan Necklace Set with Earrings"): the titles that name the MOST real detail go first.
+  const DETAIL = /\b(kundan|polki|pearls?|moti|meenakari|jadau|temple|american\s+diamond|ad|mirror|choker|rani\s+haar|layered|maang\s+tikka|tikka|nath|nose\s+ring|passa|jhumkas?|earrings?|ring|bridal|green|red|pink|maroon|blue|white|ruby|emerald|antique|rajwadi)\b/gi;
+  const richness = (t: string) => new Set((t.match(DETAIL) ?? []).map((w) => w.toLowerCase())).size;
+  let titles: string[] = used.flatMap((x) => x.titles).sort((a, b) => richness(b) - richness(a));
   let provider = used.map((x) => x.nm).join("+");
   if (!titles.length) {
     const t = (templateContent(p) as GeneratedContent).title;
