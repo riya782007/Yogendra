@@ -352,6 +352,91 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
   const t0 = Date.now();
   const errors: string[] = [];
   const results: { nm: string; titles: string[] }[] = [];
+  const keep = (all: string[]) => all.filter((t: string) => !/\bother\s+accessor(y|ies)\b/i.test(t) && conflictingTypes(t, allowed).length === 0
+    && (!shopFinishes.size || finishesIn(t).every((f) => shopFinishes.has(f))));
+  const titlesFrom = (raw: any): string[] => {
+    const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.titles) ? raw.titles
+      : (Object.entries(raw ?? {}).find(([k, v]) => k !== "seen" && Array.isArray(v))?.[1] as any[] | undefined) ?? [];
+    return arr.map((t: any) => String(typeof t === "object" && t ? (t.title ?? Object.values(t)[0] ?? "") : t ?? "").trim()).filter(Boolean);
+  };
+
+  /*
+   * TWO-STAGE TITLES (owner, Nov 2026: "image Gemini se decode ho, phir category / style / sub-category
+   * aur Gemini ki reading OpenAI aur Groq ko jaaye, aur titles bilkul ChatGPT jaise aayein").
+   *   Stage 1 — ONE vision model studies the photo and writes a structured jewellery reading
+   *             (work, stones, colours, shape, every piece in the set). Gemini first; OpenAI's vision
+   *             model only if Gemini is out (quota / busy).
+   *   Stage 2 — OpenAI and Groq, in parallel, write ChatGPT-style marketplace titles from that reading
+   *             plus the shop's own data (category, sub-category, style, polish, keywords).
+   * If stage 1 fails entirely, the older one-step path below still runs.
+   */
+  let twoStage = false;
+  let describedBy = "";
+  if (wantVision && (geminiTextConfigured() || openaiConfigured()) && (openaiConfigured() || groqConfigured())) {
+    const readPrompt = [
+      `You are an expert Indian jewellery cataloguer. Study ONLY the jewellery in this photo (ignore the person, clothes and background).`,
+      `Return minified JSON: {"type":"","work":[],"stones":[],"stoneColours":[],"pearls":"","shape":"","pieces":[],"earringStyle":"","motifs":[],"finishSeen":"","look":"","summary":""}`,
+      `- work: stone-setting / craft — Kundan, Polki (uncut, flat, glassy), Jadau, Meenakari, American Diamond (AD), Temple, Oxidised, Beads, Mirror… (as many as apply).`,
+      `- stones / stoneColours: e.g. emerald-green stones, ruby-red, white polki; say "multicolour" if many colours.`,
+      `- pearls: none / pearl drops / pearl strings / pearl hangings.`,
+      `- shape: choker, collar, round neck, rani haar (long), layered, bib, pendant…`,
+      `- pieces: EVERY piece of the set that is visible — necklace/choker, earrings, maang tikka, nath (nose ring), passa, ring, bangles…`,
+      `- earringStyle: jhumka, chandbali, studs, drops… ; look: bridal / traditional / festive / everyday / royal (rajwadi).`,
+      `- summary: one sentence a jeweller would say about this piece.`,
+      `Only what is really visible. Shop context (may help): category ${p.categoryName ?? "Jewellery"}${(p as any).subcategoryName ? `, sub-category ${(p as any).subcategoryName}` : ""}${(p as any).styleName ? `, style ${(p as any).styleName}` : ""}.`,
+    ].join("\n");
+    const readBudget = Math.max(2_500, Math.min(5_000, budgetMs - 3_200));
+    let reading: any = null;
+    const readers: [string, (a: any) => Promise<string>][] = [];
+    if (geminiTextConfigured()) readers.push(["gemini", geminiChat]);
+    if (openaiConfigured()) readers.push(["openai", openaiChat]);
+    for (const [nm, fn] of readers) {
+      const left = readBudget - (Date.now() - t0);
+      if (left < 1_500) break;
+      try {
+        reading = parseModelJson(await fn({ system: "Return only valid minified JSON.", user: readPrompt, json: true, imageBase64: p.imageBase64, imageMime: p.imageMime, imageDetail: "high", temperature: 0.2, timeoutMs: left }));
+        if (reading && typeof reading === "object") { describedBy = nm; break; }
+      } catch (e) {
+        errors.push(`${nm} (photo): ${String(e instanceof Error ? e.message : e).slice(0, 110)}`);
+      }
+    }
+    if (reading && describedBy) {
+      const m = Math.max(n + 2, 6);
+      const writePrompt = [
+        `You are an expert e-commerce SEO copywriter for Indian jewellery on Myntra, Amazon, Flipkart and Meesho — write like ChatGPT does when asked for "Best SEO Title Options for Myntra".`,
+        `PRODUCT FACTS`,
+        `- Shop category: ${p.categoryName ?? "Jewellery"}${(p as any).subcategoryName ? ` · sub-category: ${(p as any).subcategoryName}` : ""}${(p as any).styleName ? ` · style: ${(p as any).styleName}` : ""}.`,
+        kind ? `- It IS a ${seoKind} (${kind}). Never call it another kind of jewellery.` : ``,
+        polishList.length ? `- Finish / polish (from stock, the truth): ${polishList.join(", ")}. Use only this finish word; never ${FINISHES.map(([f]) => f).filter((f) => !shopFinishes.has(f)).join(", ")}.` : ``,
+        kw ? `- Owner's keywords: ${kw}.` : ``,
+        `- Photo reading by a jewellery expert (the truth for stones, pieces and shape): ${JSON.stringify(reading).slice(0, 1_200)}`,
+        ``,
+        `Write ${m} titles as JSON {"titles":["…"]}.`,
+        `- Each starts with «${forcedName}», then 8–14 words in Title Case (under 115 characters).`,
+        `- Pack the real search words: look (Traditional / Bridal / Royal / Festive) + work (Kundan, Polki, Jadau…) + stones / pearls + shape (Choker / Rani Haar…) + "Necklace Set" or the type + "with" the other pieces (Earrings, Maang Tikka, Nath, Ring).`,
+        `- Style like: "Traditional Bridal Kundan Polki Pearl Choker Necklace Set with Maang Tikka and Nath", "Heavy Rajwadi Kundan Polki Bridal Necklace Set with Pearl Hanging", "Antique Kundan Choker Set with Earrings Maang Tikka and Nose Ring".`,
+        `- Every title must be true to the photo reading and the facts; each takes a different angle (pieces / work / occasion / shape). No filler words (${FILLER_WORDS.filter((w) => !/multi/.test(w)).slice(0, 12).join(", ")}).`,
+        `Return ONLY the JSON.`,
+      ].filter(Boolean).join("\n");
+      const writers: [string, (a: any) => Promise<string>, any][] = [];
+      if (openaiConfigured()) writers.push(["openai", openaiChat, { model: process.env.OPENAI_TITLE_MODEL ?? "gpt-4o" }]);
+      if (groqConfigured()) writers.push(["groq", groqChat, {}]);
+      const left = Math.max(1_500, budgetMs - (Date.now() - t0) - 250);
+      await Promise.all(writers.map(async ([nm, fn, extra]) => {
+        try {
+          const all = titlesFrom(parseModelJson(await fn({ system: "Return only valid minified JSON.", user: writePrompt, json: true, temperature: 0.7, timeoutMs: left, ...extra })));
+          const cleaned = keep(all);
+          if (!cleaned.length) throw new Error(all.length ? `titles named the wrong type or finish (${all[0].slice(0, 60)})` : "no titles in reply");
+          results.push({ nm, titles: cleaned });
+        } catch (e) {
+          errors.push(`${nm}: ${String(e instanceof Error ? e.message : e).slice(0, 110)}`);
+        }
+      }));
+      twoStage = results.length > 0;
+    }
+  }
+
+  if (!twoStage) {
   const timeoutMs = Math.max(2_000, budgetMs - 300);
   const runs = order.map(([nm, fn]) => (async () => {
     try {
@@ -381,6 +466,7 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
       if (!wantVision && results.some((x) => x.nm === "openai" && x.titles.length >= enough)) return r(); if (wantVision && (!openaiConfigured() || errors.some((e) => e.startsWith("openai:"))) && results.some((x) => x.nm === "gemini" && x.titles.length >= enough)) return r(); setTimeout(tick, 150); }; tick(); }),
   ]);
   if (Date.now() - t0 >= budgetMs) for (const [nm] of order) if (!results.some((x) => x.nm === nm) && !errors.some((e) => e.startsWith(nm + ":"))) errors.push(`${nm}: too slow`);
+  }
   const rank = (nm: string) => (nm === "openai" ? 0 : nm === "gemini" ? 1 : 2);
   results.sort((x, y) => rank(x.nm) - rank(y.nm));
   // OpenAI answered with enough titles → use ONLY OpenAI's; otherwise top up from the others in order.
@@ -389,13 +475,14 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
   // text-only and writes generic titles, so it only tops up when Gemini gave too few.
   const gem = !first && wantVision ? results.find((x) => x.nm === "gemini" && x.titles.length >= Math.min(n, 3)) : undefined;
   const vision = wantVision ? results.filter((x) => x.nm !== "groq" && x.titles.length) : [];
-  const used = vision.length ? vision : first ? [first] : gem ? [gem] : results;
+  const used = twoStage ? results : vision.length ? vision : first ? [first] : gem ? [gem] : results;
   // Owner, Nov 2026 (bridal set: ChatGPT said "Kundan Polki Pearl Choker … with Maang Tikka and Nath",
   // ours said "Kundan Necklace Set with Earrings"): the titles that name the MOST real detail go first.
   const DETAIL = /\b(kundan|polki|pearls?|moti|meenakari|jadau|temple|american\s+diamond|ad|mirror|choker|rani\s+haar|layered|maang\s+tikka|tikka|nath|nose\s+ring|passa|jhumkas?|earrings?|ring|bridal|green|red|pink|maroon|blue|white|ruby|emerald|antique|rajwadi)\b/gi;
   const richness = (t: string) => new Set((t.match(DETAIL) ?? []).map((w) => w.toLowerCase())).size;
   let titles: string[] = used.flatMap((x) => x.titles).sort((a, b) => richness(b) - richness(a));
-  let provider = used.map((x) => x.nm).join("+");
+  const pretty = (x: string) => (x === "openai" ? "OpenAI" : x === "gemini" ? "Gemini" : x === "groq" ? "Groq" : x);
+  let provider = twoStage ? `${pretty(describedBy)} (photo) → ${used.map((x) => pretty(x.nm)).join(" + ")}` : used.map((x) => x.nm).join("+");
   if (!titles.length) {
     const t = (templateContent(p) as GeneratedContent).title;
     if (t) titles = [t];
