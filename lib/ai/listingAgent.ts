@@ -385,21 +385,37 @@ export async function generateTitleOptions(p: ProductLike, n = 4, budgetMs = 6_5
       `- summary: one sentence a jeweller would say about this piece.`,
       `Only what is really visible. Shop context (may help): category ${p.categoryName ?? "Jewellery"}${(p as any).subcategoryName ? `, sub-category ${(p as any).subcategoryName}` : ""}${(p as any).styleName ? `, style ${(p as any).styleName}` : ""}.`,
     ].join("\n");
-    const readBudget = Math.max(2_500, Math.min(5_000, budgetMs - 3_200));
+    // Gemini and OpenAI read the photo AT THE SAME TIME; the first good reading wins (Gemini is
+    // preferred when both arrive together). Nov 2026 live test: Gemini alone was busy / slow (503,
+    // time-outs) and used the whole time limit, so nothing was left to write titles.
+    const readBudget = Math.max(2_500, Math.min(4_800, budgetMs - 3_500));
     let reading: any = null;
-    const readers: [string, (a: any) => Promise<string>][] = [];
-    if (geminiTextConfigured()) readers.push(["gemini", geminiChat]);
-    if (openaiConfigured()) readers.push(["openai", openaiChat]);
-    for (const [nm, fn] of readers) {
-      const left = readBudget - (Date.now() - t0);
-      if (left < 1_500) break;
-      try {
-        reading = parseModelJson(await fn({ system: "Return only valid minified JSON.", user: readPrompt, json: true, imageBase64: p.imageBase64, imageMime: p.imageMime, imageDetail: "high", temperature: 0.2, timeoutMs: left }));
-        if (reading && typeof reading === "object") { describedBy = nm; break; }
-      } catch (e) {
-        errors.push(`${nm} (photo): ${String(e instanceof Error ? e.message : e).slice(0, 110)}`);
+    const readers: [string, (a: any) => Promise<string>, any][] = [];
+    if (geminiTextConfigured()) readers.push(["gemini", geminiChat, {}]);
+    if (openaiConfigured()) readers.push(["openai", openaiChat, { model: process.env.OPENAI_READ_MODEL ?? "gpt-4.1" }]);
+    const got: Record<string, any> = {};
+    await new Promise<void>((done) => {
+      let pending = readers.length;
+      const finish = () => { if (--pending <= 0) done(); };
+      const timer = setTimeout(done, readBudget);
+      for (const [nm, fn, extra] of readers) {
+        fn({ system: "Return only valid minified JSON.", user: readPrompt, json: true, imageBase64: p.imageBase64, imageMime: p.imageMime, imageDetail: "high", temperature: 0.2, timeoutMs: readBudget, ...extra })
+          .then((raw) => {
+            const r = parseModelJson(raw);
+            if (r && typeof r === "object") {
+              got[nm] = r;
+              // Gemini's reading is what the owner asked for; take OpenAI's only if Gemini isn't back yet
+              // after a short grace period.
+              if (nm === "gemini" || !readers.some(([o]) => o === "gemini")) { clearTimeout(timer); done(); }
+              else setTimeout(() => { clearTimeout(timer); done(); }, 700);
+            }
+          })
+          .catch((e) => { errors.push(`${nm} (photo): ${String(e instanceof Error ? e.message : e).slice(0, 110)}`); })
+          .finally(finish);
       }
-    }
+    });
+    if (got.gemini) { reading = got.gemini; describedBy = "gemini"; }
+    else if (got.openai) { reading = got.openai; describedBy = "openai"; }
     if (reading && describedBy) {
       const m = Math.max(n + 2, 6);
       const writePrompt = [
