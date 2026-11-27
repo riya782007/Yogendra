@@ -29,6 +29,8 @@ type ChatArgs = {
   temperature?: number;
   /** Provider-specific request fields (e.g. Groq reasoning_effort). */
   extra?: Record<string, unknown>;
+  /** Force a specific model for this call (otherwise the provider's default / env model). */
+  model?: string;
 };
 
 async function chat(endpoint: string, key: string, model: string, a: ChatArgs): Promise<string> {
@@ -92,9 +94,9 @@ export async function openaiChat(a: ChatArgs): Promise<string> {
   // When a PHOTO is attached the model must actually SEE fine jewellery detail, so route vision calls
   // to a full multimodal model (gpt-4o) — gpt-4o-mini reads photos poorly and yields vague titles.
   // Text-only calls stay on the cheap model. Both are overridable via env.
-  const model = a.imageBase64
+  const model = a.model ?? (a.imageBase64
     ? (env("OPENAI_VISION_MODEL", "OPENAI_MODEL") ?? "gpt-4o")
-    : (env("OPENAI_MODEL") ?? "gpt-4o-mini");
+    : (env("OPENAI_MODEL") ?? "gpt-4o-mini"));
   const t0 = Date.now();
   try {
     return await chat("https://api.openai.com/v1/chat/completions", key, model, a);
