@@ -239,7 +239,7 @@ export async function suggestProductTitlesAction(input: { name: string; category
       subcategoryName, styleName, polishes, colors: [],
       keywords: (input.keywords ?? []).map((k) => k.trim()).filter(Boolean),
       imageBase64, imageMime,
-    } as any, Math.min(4, Math.max(3, input.count ?? 4)), Math.max(3_000, 8_500 - (Date.now() - t0)));
+    } as any, Math.min(4, Math.max(3, input.count ?? 4)), Math.max(3_000, 9_000 - (Date.now() - t0)));
     const clean = titles.map((t) => stripCode(t, skuStr) || t).filter(Boolean);
     if (!clean.length || provider === "deterministic") {
       return { ok: false, error: `The AI didn't answer, so no titles were suggested${errors.length ? ` (${errors.join("; ")})` : ""}. Try again in a minute.` };
