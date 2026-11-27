@@ -104,7 +104,7 @@ export async function openaiChat(a: ChatArgs): Promise<string> {
     // Nov 2026: gpt-4o answered the jewellery photo with "I'm sorry, but I can't help with that request"
     // (it is wary of photos with a person in them). Ask once more with a second model, in the time left.
     const msg = String((e as any)?.message ?? e);
-    if (!a.imageBase64 || !/refused|empty completion/i.test(msg)) throw e;
+    if (!a.imageBase64 || !/refused|empty completion|model_not_found|does not exist|\b404\b/i.test(msg)) throw e;
     // gpt-4.1 reads fine jewellery detail far better than gpt-4o-mini (which missed Polki / pearls / nath).
     const alts = (env("OPENAI_VISION_FALLBACK_MODEL") ?? "gpt-4.1,gpt-4o-mini").split(",").map((x) => x.trim()).filter((x) => x && x !== model);
     let last: unknown = e;
